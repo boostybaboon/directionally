@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tone.js Example</title>
+    <link rel="icon" href="favicon.ico" type="image/x-icon">
+    <style>
+        #c {
+            width: 100%;
+            height: 600px;
+            /* Adjust the height as needed */
+        }
+
+        #content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        button {
+            margin: 10px;
+        }
+
+        #slider-container {
+            margin: 20px;
+            width: 80%;
+        }
+    </style>
+    <script type="importmap">
+        {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.172.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.172.0/examples/jsm/"
+        }
+        }
+    </script>    
+    <script type="module">
+        import * as Tone from 'https://cdn.skypack.dev/tone';
+
+
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const setupButton = document.getElementById('setup');
+            const playPauseButton = document.getElementById('tone-play-pause-toggle');
+            const rewindButton = document.getElementById('tone-rewind');
+            const slider = document.getElementById('position-slider');
+            var frameRate = 20;
+            let isPlaying = false;
+            let isSetup = false;
+            let currentPosition = 0.0;
+
+            let animationDict = {};
+            let mixers = [];
+            let renderer, scene, camera, clock, controls;
+
+
+            const setupTone = async () => {
+                if (!isSetup) {
+                    await Tone.start();
+                    Tone.setContext(new Tone.Context({ lookAhead: 0 }));
+                    Tone.getDraw().anticipation = 0.5;
+                    isSetup = true;
+                }
+            };
+
+            const logObjectDetails = (obj) => {
+                console.log("Object:", obj);
+                console.log("Properties and Methods:");
+                console.log(Object.getOwnPropertyNames(obj));
+                console.log("Property Descriptors:");
+                console.log(Object.getOwnPropertyDescriptors(obj));
+            };
+
+            const createAxis = (scene) => {
+                const axisLength = 10;
+
+                // Create X axis
+                const xAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(0, 0, 0),
+                    new THREE.Vector3(axisLength, 0, 0)
+                ]);
+                const xAxisMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
+                const xAxis = new THREE.Line(xAxisGeometry, xAxisMaterial);
+                scene.add(xAxis);
+
+                // Create Y axis
+                const yAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(0, 0, 0),
+                    new THREE.Vector3(0, axisLength, 0)
+                ]);
+                const yAxisMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+                const yAxis = new THREE.Line(yAxisGeometry, yAxisMaterial);
+                scene.add(yAxis);
+
+                // Create Z axis
+                const zAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(0, 0, 0),
+                    new THREE.Vector3(0, 0, axisLength)
+                ]);
+                const zAxisMaterial = new THREE.LineBasicMaterial({ color: 0x0000ff });
+                const zAxis = new THREE.Line(zAxisGeometry, zAxisMaterial);
+                scene.add(zAxis);
+
+                // Create labels
+                const createLabel = (text, position) => {
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    context.font = '48px Arial'; // Increase font size
+                    context.fillStyle = 'black'; // Change fill style to black
+                    context.fillText(text, 0, 48); // Adjust text position
+
+                    const texture = new THREE.CanvasTexture(canvas);
+                    const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+                    const sprite = new THREE.Sprite(spriteMaterial);
+                    sprite.position.copy(position);
+                    sprite.scale.set(4, 2, 1); // Adjust scale to make the label bigger
+                    scene.add(sprite);
+                };
+
+                createLabel('X', new THREE.Vector3(axisLength - 1, 0, 0)); // Adjust position
+                createLabel('Y', new THREE.Vector3(0, axisLength - 1, 0)); // Adjust position
+                createLabel('Z', new THREE.Vector3(0, 0, axisLength - 1)); // Adjust position
+            };            
+            
+            const setupScene = () => {
+                const canvas = document.querySelector("#c");
+                renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+                renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+
+                scene = new THREE.Scene();
+                //set background colour to indigo
+                scene.background = new THREE.Color(0x33334c);
+
+                camera = new THREE.PerspectiveCamera(45.8366, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+                camera.position.set(0, 5, -30);
+                camera.lookAt(0, 3, 0);
+
+                // controls = new OrbitControls(camera, renderer.domElement);
+                // controls.enableDamping = true; // Enable damping (inertia)
+                // controls.dampingFactor = 0.25; // Damping factor
+                // controls.screenSpacePanning = false; // Disable panning
+
+                // Add Ambient Light
+                // const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // Soft white light
+                // scene.add(ambientLight);
+
+                const light1 = new THREE.DirectionalLight(0xffffff, 1.5);
+                light1.position.set(0, 20, 0);
+                scene.add(light1);
+
+                const light2 = new THREE.HemisphereLight(0xffffff, 0x444444 , 2.5);
+                light2.position.set(0, 20, -20);
+                scene.add(light2);
+
+                //door
+                const doorGeometry = new THREE.BoxGeometry(2, 4, 0.1);
+                const doorMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 });
+                const door = new THREE.Mesh(doorGeometry, doorMaterial);
+                door.position.set(-1, 0, 0);
+                scene.add(door);
+
+                const hinge = new THREE.Object3D();
+                hinge.position.y = 2;
+                hinge.add(door);
+                scene.add(hinge);
+
+                //lights
+                const sphereGeometry = new THREE.SphereGeometry(0.2, 32, 32);
+                const sphereMaterial = new THREE.MeshStandardMaterial({ color: 0x808080, emissive: 0xffffff });
+                const sphereLight = new THREE.Mesh(sphereGeometry, sphereMaterial);
+                sphereLight.position.set(2, 3, 0.1);
+
+                var sphereLights = [sphereLight];
+                //lightPositions makes no sense, but I'm transliterating from the babylon example
+                var lightPositions = [-2, 3, 6.9]
+
+                sphereLights.push(sphereLight.clone());
+                sphereLights[1].position.set(lightPositions[0], lightPositions[1], lightPositions[2]);
+                scene.add(sphereLights[1]);
+
+                //spotlights
+                let spotLights = [];
+                var lightDirections = [-0.5, -0.25, 1, 0, 0, -1]
+                for (var i = 0; i < sphereLights.length; i++) {
+                    spotLights[i] = new THREE.SpotLight(0xffffff, 0, 0, Math.PI / 8, 0, 2);
+                    spotLights[i].position.copy(sphereLights[i].position);
+                    spotLights[i].lookAt(new THREE.Vector3(lightDirections[3 * i], lightDirections[3 * i + 1], lightDirections[3 * i + 2]));
+                    spotLights[i].color.set(0xffffff);
+                    scene.add(spotLights[i]);
+                }
+
+                const groundGeometry = new THREE.PlaneGeometry(50, 50);
+                const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 });
+                const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+                ground.rotation.x = -Math.PI / 2;
+                scene.add(ground);
+
+                const wallGeometry = new THREE.BoxGeometry(8, 6, 0.1);
+                const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 });
+                const wall1 = new THREE.Mesh(wallGeometry, wallMaterial);
+                wall1.position.set(-6, 3, 0);
+                scene.add(wall1);
+
+                const wall2 = wall1.clone();
+                wall2.scale.set(0.5, 1, 1);
+                wall2.position.set(2, 3, 0);
+                scene.add(wall2);
+
+                const wall3 = wall1.clone();
+                wall3.scale.set(0.25, 0.33, 1);
+                wall3.position.set(-1, 5, 0);
+                scene.add(wall3);
+
+                const wall4 = wall1.clone();
+                wall4.scale.set(1.75, 1, 1);
+                wall4.position.set(-3, 3, 7);
+                scene.add(wall4);
+
+                const wall5 = wall1.clone();
+                wall5.scale.set(0.875, 1, 1);
+                wall5.rotation.y = Math.PI / 2;
+                wall5.position.set(-10, 3, 3.5);
+                scene.add(wall5);
+
+                const wall6 = wall5.clone();
+                wall6.position.set(4, 3, 3.5);
+                scene.add(wall6);
+
+                const roof = wall1.clone();
+                roof.scale.set(1.75, 1.1667, 1);
+                roof.rotation.x = Math.PI / 2;
+                roof.position.set(-3, 6, 3.5);
+                scene.add(roof);
+
+                createAxis(scene);
+
+                // Animations
+                const frameRate = 20;
+
+                // Camera rotation animation
+                const rotateTimes = [0, 5];
+                // Quaternion values for 0 and 180 degrees rotation around the Y-axis
+                const rotateValues = [
+                    0, 1, 0, 0,   // Quaternion for 180 degrees around Y-axis
+                    0, 0, 0, 1  // Quaternion for 0 degrees (identity quaternion)
+                ];                
+                const rotateTrack = new THREE.QuaternionKeyframeTrack('.quaternion', rotateTimes, rotateValues);
+                const rotateClip = new THREE.AnimationClip('rotate', -1, [rotateTrack]);
+                const rotateMixer = new THREE.AnimationMixer(camera);
+                const rotateAction = rotateMixer.clipAction(rotateClip).setLoop(THREE.LoopOnce);; //AnimationAction
+                rotateAction.clampWhenFinished = true;
+                rotateAction.play();
+                rotateAction.paused = true;
+                mixers.push(rotateMixer);
+
+                // Camera move forward animation
+                const moveTimes1 = [0, 3];
+                const moveValues1 = [0, 5, -30, 0, 2, -10];
+                const moveTrack1 = new THREE.VectorKeyframeTrack('.position', moveTimes1, moveValues1);
+                const moveClip1 = new THREE.AnimationClip('movein1', -1, [moveTrack1]);
+                const moveMixer1 = new THREE.AnimationMixer(camera);
+                const moveAction1 = moveMixer1.clipAction(moveClip1).setLoop(THREE.LoopOnce); //AnimationAction
+                moveAction1.clampWhenFinished = true;
+                moveAction1.play();
+                moveAction1.paused = true;
+                mixers.push(moveMixer1);
+
+                // Camera move forward animation (second part)
+                const moveTimes2 = [0, 3];
+                const moveValues2 = [0, 2, -10, -2, 2, 3];
+                const moveTrack2 = new THREE.VectorKeyframeTrack('.position', moveTimes2, moveValues2);
+                const moveClip2 = new THREE.AnimationClip('movein2', -1, [moveTrack2]);
+                const moveMixer2 = new THREE.AnimationMixer(camera);
+                const moveAction2 = moveMixer2.clipAction(moveClip2).setLoop(THREE.LoopOnce);; //AnimationAction
+                moveAction2.clampWhenFinished = true;
+                moveAction2.play();
+                moveAction2.paused = true;
+                mixers.push(moveMixer2);
+
+                // Store animations in the dictionary
+                animationDict["cameramove"] = [
+                    { anim: moveAction1, start: 0, end: 3 },
+                    { anim: moveAction2, start: 5, end: 8 }
+                ];
+                animationDict["camerarot"] = [{ anim: rotateAction, start: 9, end: 14 }];
+
+                const createAnimation = (object, anim_name, property, times, values) => {
+                    const track = new THREE.KeyframeTrack(property, times, values);
+                    const clip = new THREE.AnimationClip('clip'+anim_name, -1, [track]);
+                    const mixer = new THREE.AnimationMixer(object); //AnimationAction
+                    const action = mixer.clipAction(clip).setLoop(THREE.LoopOnce);
+                    action.clampWhenFinished = true;
+                    action.play();
+                    action.paused = true;
+                    mixers.push(mixer);
+                    return action;
+                };
+
+                const doorSweep1 = createAnimation(hinge, "a1", '.rotation[y]', [0, 2], [0, Math.PI / 3]);
+                const doorSweep2 = createAnimation(hinge, "a2", '.rotation[y]', [0, 2], [Math.PI / 3, 0]);
+
+                animationDict["doorsweep"] = [
+                    { anim: doorSweep1, start: 3, end: 5 },
+                    { anim: doorSweep2, start: 13, end: 15 }
+                ];
+
+                const lightBrighten1 = createAnimation(spotLights[0], "a3", '.intensity', [0, 3], [0, 1]);
+                const lightDim1 = createAnimation(spotLights[0], "a4", '.intensity', [0, 1], [1, 0]);
+                const lightBrighten2 = createAnimation(spotLights[1], "a5", '.intensity', [0, 3], [0, 1]);
+                const lightDim2 = createAnimation(spotLights[1], "a6", '.intensity', [0, 1], [1, 0]);
+
+                animationDict["spotlight0intensity"] = [
+                    { anim: lightBrighten1, start: 7, end: 10 },
+                    { anim: lightDim1, start: 14, end: 15 }
+                ];
+                animationDict["spotlight1intensity"] = [
+                    { anim: lightBrighten2, start: 7, end: 10 },
+                    { anim: lightDim2, start: 14, end: 15 }
+                ];
+
+                Object.values(animationDict).forEach((animGroup) => {
+                    animGroup.forEach((anim) => {
+                        Tone.getTransport().schedule((time) => {
+                            Tone.getDraw().schedule(() => {
+                                console.log("Starting animation", anim.anim.getClip().name, "at time", time);
+                                anim.anim.enabled = true;
+                                anim.anim.time = 0;
+                                anim.anim.paused = false;
+                            }, time);
+                        }, anim.start);
+                    });
+                });
+
+                setSequenceTo(0);
+
+                clock = new THREE.Clock();
+                renderer.setAnimationLoop( animate );
+
+				//
+
+				window.addEventListener( 'resize', onWindowResize );
+
+			}
+
+            const animate = () => {
+				const delta = clock.getDelta();
+                mixers.forEach(mixer => mixer.update(delta));
+                if (controls) controls.update();
+                renderer.render(scene, camera);
+            };
+
+            function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+            const updatePosition = () => {
+                const currentTime = Tone.getTransport().seconds;
+                document.getElementById('current-position').textContent = `Position: ${currentTime.toFixed(2)}`;
+                slider.value = currentTime;
+            };
+
+            const playSequence = () => {
+                let currentTime = Tone.getTransport().seconds;
+                Object.values(animationDict).forEach((animationList) => {
+                    animationList.forEach((anim) => {
+                        if (anim.start < currentTime && currentTime < anim.end) {
+                            anim.anim.paused = false;
+                        }
+                    });
+                });
+                Tone.getTransport().start();
+            };
+
+            const pauseSequence = () => {
+                Tone.getTransport().pause();
+                updatePosition();
+
+                let currentTime = Tone.getTransport().seconds;
+                /*******Pause Clips**********/
+                Object.values(animationDict).forEach((animationList) => {
+                    animationList.forEach((anim) => {
+                        if (anim.start < currentTime && currentTime < anim.end) {
+                            anim.anim.paused = true;
+                        }
+                    });
+                });
+            };
+
+            const pauseAndDisableAll = () => {
+                Object.values(animationDict).forEach((animationList) => {
+                    animationList.forEach((anim) => {
+                        anim.anim.enabled = false;
+                        anim.anim.time = 0;
+                        anim.anim.paused = true;
+                    });
+                });
+            };
+
+            const setSequenceTo = (time) => {
+                Tone.getTransport().seconds = time;
+                updatePosition();
+
+                pauseAndDisableAll();
+
+                Object.entries(animationDict).forEach(([key, animationList]) => {
+                    for (let i = 0; i < animationList.length; i++) {
+                        const anim = animationList[i];
+                        if (time < anim.start) {
+                            anim.anim.enabled = true;
+                            anim.anim.time = 0;
+                            break;
+                        } else if (time >= anim.start && time < anim.end) {
+                            anim.anim.enabled = true;
+                            anim.anim.time = (time - anim.start);
+                            break;
+                        } else if (i === animationList.length - 1) {
+                            anim.anim.enabled = true;
+                            anim.anim.time = (anim.end - anim.start);
+                        }
+                    }
+                });
+            };
+
+            const rewindSequence = () => {
+                //possibly pause then restart after setting time to 0...
+
+                Tone.getTransport().seconds = 0.0;
+                updatePosition();
+
+                setSequenceTo(0);
+            };
+
+            setupButton.addEventListener('click', async () => {
+                await setupTone();
+                setupScene();
+                setupButton.disabled = true;
+                //slider.disabled = true;
+                playPauseButton.disabled = false;
+                rewindButton.disabled = false;
+            });
+
+            playPauseButton.addEventListener('click', () => {
+                if (!isPlaying) {
+                    playSequence();
+                    playPauseButton.textContent = 'Pause';
+                } else {
+                    pauseSequence();
+                    playPauseButton.textContent = 'Play';
+                }
+                isPlaying = !isPlaying;
+                //slider.disabled = isPlaying;
+            });
+
+            rewindButton.addEventListener('click', rewindSequence);
+
+            slider.addEventListener('input', (event) => {
+                const time = parseFloat(event.target.value);
+                const wasPlaying = isPlaying;
+                if (wasPlaying) {
+                    pauseSequence();
+                }
+                setSequenceTo(time);
+                if (wasPlaying) {
+                    playSequence();
+                }
+            });
+
+            // Function to update the slider based on Tone.js transport time
+            const updateSlider = () => {
+                if (isPlaying) {
+                    const currentTime = Tone.getTransport().seconds;
+                    slider.value = currentTime;
+                }
+                requestAnimationFrame(updateSlider);
+            };
+
+            // Start the update loop
+            requestAnimationFrame(updateSlider);
+
+            playPauseButton.disabled = true;
+            rewindButton.disabled = true;
+        });
+    </script>
+</head>
+
+<body>
+    <div id="content">
+        <div><canvas id="c"></canvas></div>
+        <button id="setup">Setup Tone & Load Scene and Sequence</button>
+        <div>Play/Pause: <button id="tone-play-pause-toggle">Play</button></div>
+        <div><button id="tone-rewind">Rewind</button></div>
+        <div id="current-position">Position: 0.00</div>
+        <div id="slider-container">
+            <input type="range" id="position-slider" min="0" max="16" step="0.01" value="0">
+        </div>
+    </div>
+</body>
+
+</html>

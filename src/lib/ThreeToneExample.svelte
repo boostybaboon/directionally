@@ -5,16 +5,16 @@
 
   let canvas: HTMLCanvasElement;
   let frameRate = 20;
-  let isPlaying = false;
-  let isSetup = false;
+  let isPlaying = $state<boolean>(false);
+  let isSetup = $state<boolean>(false);
   let animationDict: { [key: string]: { anim: THREE.AnimationAction; start: number; end: number }[] } = {};
   let mixers: THREE.AnimationMixer[] = [];
   let renderer: THREE.WebGLRenderer;
   let scene: THREE.Scene;
   let camera: THREE.PerspectiveCamera;
   let clock: THREE.Clock;
-  let currentPosition = 0;
-  let sliderValue = 0;
+  let currentPosition = $state<number>(0);
+  let sliderValue = $state<number>(0);
 
   const setupTone = async () => {
     if (!isSetup) {
@@ -24,6 +24,60 @@
       isSetup = true;
     }
   };
+
+  const createAxis = (scene: THREE.Scene) => {
+      const axisLength = 10;
+
+      // Create X axis
+      const xAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(0, 0, 0),
+          new THREE.Vector3(axisLength, 0, 0)
+      ]);
+      const xAxisMaterial = new THREE.LineBasicMaterial({ color: 0xff0000 });
+      const xAxis = new THREE.Line(xAxisGeometry, xAxisMaterial);
+      scene.add(xAxis);
+
+      // Create Y axis
+      const yAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(0, 0, 0),
+          new THREE.Vector3(0, axisLength, 0)
+      ]);
+      const yAxisMaterial = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+      const yAxis = new THREE.Line(yAxisGeometry, yAxisMaterial);
+      scene.add(yAxis);
+
+      // Create Z axis
+      const zAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(0, 0, 0),
+          new THREE.Vector3(0, 0, axisLength)
+      ]);
+      const zAxisMaterial = new THREE.LineBasicMaterial({ color: 0x0000ff });
+      const zAxis = new THREE.Line(zAxisGeometry, zAxisMaterial);
+      scene.add(zAxis);
+
+      // Create labels
+      const createLabel = (text: string, position: THREE.Vector3Like) => {
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          if (context) {
+            context.font = '48px Arial'; // Increase font size
+            context.fillStyle = 'black'; // Change fill style to black
+            context.fillText(text, 0, 48); // Adjust text position
+          }
+
+          const texture = new THREE.CanvasTexture(canvas);
+          const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+          const sprite = new THREE.Sprite(spriteMaterial);
+          sprite.position.copy(position);
+          sprite.scale.set(4, 2, 1); // Adjust scale to make the label bigger
+          scene.add(sprite);
+      };
+
+      createLabel('X', new THREE.Vector3(axisLength - 1, 0, 0)); // Adjust position
+      createLabel('Y', new THREE.Vector3(0, axisLength - 1, 0)); // Adjust position
+      createLabel('Z', new THREE.Vector3(0, 0, axisLength - 1)); // Adjust position
+  };            
+
 
   const setupScene = () => {
     renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
@@ -133,7 +187,7 @@
     const rotateTrack = new THREE.QuaternionKeyframeTrack('.quaternion', rotateTimes, rotateValues);
     const rotateClip = new THREE.AnimationClip('rotate', -1, [rotateTrack]);
     const rotateMixer = new THREE.AnimationMixer(camera);
-    const rotateAction = rotateMixer.clipAction(rotateClip).setLoop(THREE.LoopOnce);
+    const rotateAction = rotateMixer.clipAction(rotateClip).setLoop(THREE.LoopOnce, 1);
     rotateAction.clampWhenFinished = true;
     rotateAction.play();
     rotateAction.paused = true;
@@ -144,7 +198,7 @@
     const moveTrack1 = new THREE.VectorKeyframeTrack('.position', moveTimes1, moveValues1);
     const moveClip1 = new THREE.AnimationClip('movein1', -1, [moveTrack1]);
     const moveMixer1 = new THREE.AnimationMixer(camera);
-    const moveAction1 = moveMixer1.clipAction(moveClip1).setLoop(THREE.LoopOnce);
+    const moveAction1 = moveMixer1.clipAction(moveClip1).setLoop(THREE.LoopOnce, 1);
     moveAction1.clampWhenFinished = true;
     moveAction1.play();
     moveAction1.paused = true;
@@ -155,7 +209,7 @@
     const moveTrack2 = new THREE.VectorKeyframeTrack('.position', moveTimes2, moveValues2);
     const moveClip2 = new THREE.AnimationClip('movein2', -1, [moveTrack2]);
     const moveMixer2 = new THREE.AnimationMixer(camera);
-    const moveAction2 = moveMixer2.clipAction(moveClip2).setLoop(THREE.LoopOnce);
+    const moveAction2 = moveMixer2.clipAction(moveClip2).setLoop(THREE.LoopOnce, 1);
     moveAction2.clampWhenFinished = true;
     moveAction2.play();
     moveAction2.paused = true;
@@ -171,7 +225,7 @@
       const track = new THREE.KeyframeTrack(property, times, values);
       const clip = new THREE.AnimationClip('clip' + anim_name, -1, [track]);
       const mixer = new THREE.AnimationMixer(object);
-      const action = mixer.clipAction(clip).setLoop(THREE.LoopOnce);
+      const action = mixer.clipAction(clip).setLoop(THREE.LoopOnce, 1);
       action.clampWhenFinished = true;
       action.play();
       action.paused = true;
@@ -316,7 +370,9 @@
 
   const handleSetupClick = async () => {
     await setupTone();
+    console.log('Tone setup complete');
     setupScene();
+    isSetup = true;
   };
 
   const handlePlayPauseClick = () => {
@@ -347,6 +403,7 @@
   onMount(() => {
     requestAnimationFrame(updateSlider);
   });
+
 </script>
 
 <style>
@@ -373,11 +430,11 @@
 
 <div id="content">
   <div><canvas bind:this={canvas} id="c"></canvas></div>
-  <button on:click={handleSetupClick}>Setup Tone & Load Scene and Sequence</button>
-  <div>Play/Pause: <button on:click={handlePlayPauseClick}>{isPlaying ? 'Pause' : 'Play'}</button></div>
-  <div><button on:click={handleRewindClick}>Rewind</button></div>
+  <button onclick={handleSetupClick} disabled={isSetup}>Setup Tone & Load Scene and Sequence</button>
+  <div>Play/Pause: <button onclick={handlePlayPauseClick} disabled={!isSetup}>{isPlaying ? 'Pause' : 'Play'}</button></div>
+  <div><button onclick={handleRewindClick} disabled={!isSetup}>Rewind</button></div>
   <div>Position: {currentPosition.toFixed(2)}</div>
   <div id="slider-container">
-    <input type="range" min="0" max="16" step="0.01" bind:value={sliderValue} on:input={handleSliderInput}>
+    <input type="range" min="0" max="16" step="0.01" bind:value={sliderValue} oninput={handleSliderInput} disabled={!isSetup}>
   </div>
 </div>
