@@ -4,7 +4,6 @@
   import * as THREE from 'three';
 
   let canvas: HTMLCanvasElement;
-  let frameRate = 20;
   let isPlaying = $state<boolean>(false);
   let isSetup = $state<boolean>(false);
   let animationDict: { [key: string]: { anim: THREE.AnimationAction; start: number; end: number }[] } = {};
@@ -177,8 +176,6 @@
 
     createAxis(scene);
 
-    const frameRate = 20;
-
     const rotateTimes = [0, 5];
     const rotateValues = [
       0, 1, 0, 0,
@@ -323,7 +320,7 @@
     Object.values(animationDict).forEach((animationList) => {
       animationList.forEach((anim) => {
         anim.anim.enabled = false;
-        anim.anim.time = 0;
+        anim.anim.getMixer().setTime(0);
         anim.anim.paused = true;
       });
     });
@@ -336,20 +333,35 @@
     pauseAndDisableAll();
 
     Object.entries(animationDict).forEach(([key, animationList]) => {
-      for (let i = 0; i < animationList.length; i++) {
+      console.log('anim target', key);
+      for (let i = animationList.length - 1; i >= 0; i--) {
         const anim = animationList[i];
-        if (time < anim.start) {
+
+        if (i === 0) {
           anim.anim.enabled = true;
           anim.anim.time = 0;
-          break;
-        } else if (time >= anim.start && time < anim.end) {
-          anim.anim.enabled = true;
-          anim.anim.time = (time - anim.start);
-          break;
-        } else if (i === animationList.length - 1) {
+          console.log('setting first anim to its end point', anim);
+        }
+
+        if (time < anim.start) {
+          // future animation has no effect on current time of scene
+          continue;
+        }
+        
+        if (time >= anim.end) {
           anim.anim.enabled = true;
           anim.anim.time = (anim.end - anim.start);
+          console.log('setting to end point of previous anim', anim);
+          break;
+        } 
+        
+        if (time >= anim.start && time < anim.end) {
+          anim.anim.enabled = true;
+          anim.anim.time = (time - anim.start);
+          console.log('setting current anim to its current point', anim);
+          break;
         }
+        
       }
     });
   };
@@ -365,7 +377,6 @@
       const currentTime = Tone.getTransport().seconds;
       sliderValue = currentTime;
     }
-    requestAnimationFrame(updateSlider);
   };
 
   const handleSetupClick = async () => {
@@ -401,7 +412,7 @@
   };
 
   onMount(() => {
-    requestAnimationFrame(updateSlider);
+
   });
 
 </script>
