@@ -2,12 +2,20 @@
   import * as Tone from 'tone';
   import * as THREE from 'three';
   import { onMount } from 'svelte';
+  import type { Model } from './Model';
+  import { SceneUtils } from './SceneUtils';
 
   let canvas: HTMLCanvasElement;
   let renderer: THREE.WebGLRenderer;
 
   // TODO - should this be a type?
   let animationDict: { [key: string]: { anim: THREE.AnimationAction; start: number; end: number }[] } = {};
+
+  let mixers: THREE.AnimationMixer[] = [];
+  let scene: THREE.Scene;
+  let clock: THREE.Clock;
+  // TODO multiple cameras
+  let camera: THREE.PerspectiveCamera;
 
   let isToneSetup = $state<boolean>(false);
   let isPlaying = $state<boolean>(false);
@@ -35,7 +43,58 @@
   };
 
   //need a method to load a model into the scene, and set up the animations
-  
+  const loadModel = (model: Model) => {
+
+    mixers = [];
+    animationDict = {};
+
+    scene = new THREE.Scene();
+
+    // for each camera in the model (at present only one) add to our cameras
+    camera = SceneUtils.createCamera(model.camera);
+
+    //for each asset in model, add the asset to the scene
+    model.assets.forEach((asset) => {
+      SceneUtils.addAsset(scene, asset);
+    });
+
+    //for each animation in model, add the animation to the animationDict
+    //and add its mixer to the mixers array
+    model.actions.forEach((action) => {
+      SceneUtils.addAction(animationDict, mixers, action);
+    });
+
+    Object.values(animationDict).forEach((animGroup) => {
+      animGroup.forEach((anim) => {
+        Tone.getTransport().schedule((time) => {
+          Tone.getDraw().schedule(() => {
+            anim.anim.enabled = true;
+            anim.anim.time = 0;
+            anim.anim.paused = false;
+          }, time);
+        }, anim.start);
+      });
+    });
+
+    setSequenceTo(0);
+
+    clock = new THREE.Clock();
+    renderer.setAnimationLoop(animate);
+
+    window.addEventListener('resize', onWindowResize);
+  };
+
+  const animate = () => {
+    const delta = clock.getDelta();
+    mixers.forEach(mixer => mixer.update(delta));
+    renderer.render(scene, camera);
+  };
+
+  function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
 
   const playSequence = () => {
     let currentTime = Tone.getTransport().seconds;
