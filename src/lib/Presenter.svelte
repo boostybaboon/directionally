@@ -15,7 +15,7 @@
   let scene: THREE.Scene;
   let clock: THREE.Clock;
   // TODO multiple cameras
-  let camera: THREE.PerspectiveCamera;
+  let camera: THREE.Camera;
 
   let isToneSetup = $state<boolean>(false);
   let isPlaying = $state<boolean>(false);
@@ -27,12 +27,6 @@
     renderer.setSize(canvas.clientWidth, canvas.clientHeight);
   });
 
-  const handleSetupClick = async () => {
-    await setupTone();
-    console.log('Tone setup complete');
-    isToneSetup = true;
-  };
-
   const setupTone = async () => {
     if (!isToneSetup) {
       await Tone.start();
@@ -43,10 +37,14 @@
   };
 
   //need a method to load a model into the scene, and set up the animations
-  const loadModel = (model: Model) => {
+  export async function loadModel(model: Model) {
+    if (!isToneSetup) {
+      await setupTone();
+    }
 
     mixers = [];
     animationDict = {};
+    Tone.getTransport().cancel();
 
     scene = new THREE.Scene();
 
@@ -55,7 +53,8 @@
 
     //for each asset in model, add the asset to the scene
     model.assets.forEach((asset) => {
-      SceneUtils.addAsset(scene, asset);
+      const sceneObject = SceneUtils.sceneObjectForAsset(asset);
+      scene.add(sceneObject);
     });
 
     //for each animation in model, add the animation to the animationDict
@@ -91,8 +90,10 @@
   };
 
   function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
+    if (camera instanceof THREE.PerspectiveCamera) {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+    }
     renderer.setSize(window.innerWidth, window.innerHeight);
   }
 
@@ -214,34 +215,33 @@
 </script>
 
 <style>
-    #c {
-      width: 100%;
-      height: 600px;
-    }
+  #c {
+    width: 100%;
+    height: 600px;
+  }
+
+  #content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  button {
+    margin: 10px;
+  }
+
+  #slider-container {
+    margin: 20px;
+    width: 80%;
+  }
+</style>
   
-    #content {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-  
-    button {
-      margin: 10px;
-    }
-  
-    #slider-container {
-      margin: 20px;
-      width: 80%;
-    }
-  </style>
-  
-  <div id="content">
-    <div><canvas bind:this={canvas} id="c"></canvas></div>
-    <button onclick={handleSetupClick} disabled={isToneSetup}>Initialise Tone</button>
-    <div>Play/Pause: <button onclick={handlePlayPauseClick} disabled={!isToneSetup}>{isPlaying ? 'Pause' : 'Play'}</button></div>
-    <div><button onclick={handleRewindClick} disabled={!isToneSetup}>Rewind</button></div>
-    <div>Position: {currentPosition.toFixed(2)}</div>
-    <div id="slider-container">
-      <input type="range" min="0" max="16" step="0.01" bind:value={sliderValue} oninput={handleSliderInput} disabled={!isToneSetup}>
-    </div>
+<div id="content">
+  <div><canvas bind:this={canvas} id="c"></canvas></div>
+  <div>Play/Pause: <button onclick={handlePlayPauseClick} disabled={!isToneSetup}>{isPlaying ? 'Pause' : 'Play'}</button></div>
+  <div><button onclick={handleRewindClick} disabled={!isToneSetup}>Rewind</button></div>
+  <div>Position: {currentPosition.toFixed(2)}</div>
+  <div id="slider-container">
+    <input type="range" min="0" max="16" step="0.01" bind:value={sliderValue} oninput={handleSliderInput} disabled={!isToneSetup}>
   </div>
+</div>
