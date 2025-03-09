@@ -60,7 +60,17 @@
     //for each animation in model, add the animation to the animationDict
     //and add its mixer to the mixers array
     model.actions.forEach((action) => {
-      SceneUtils.addAction(animationDict, mixers, action);
+      var sceneObject = scene.getObjectByName(action.target);
+      if (!sceneObject) {
+        //is action.target the name of the camera?
+        if (action.target === camera.name) {
+          sceneObject = camera;
+        } else {
+          console.error(`Could not find object with name ${action.target}`);
+          return; // from this iteration of the loop
+        }
+      }
+      SceneUtils.addAction(animationDict, mixers, sceneObject, action);
     });
 
     Object.values(animationDict).forEach((animGroup) => {

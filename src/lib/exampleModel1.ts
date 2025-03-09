@@ -3,18 +3,25 @@ import {
     CameraType, 
     AssetType, 
     GeometryType, 
-    MaterialType } from './Model';
+    MaterialType,
+    KeyframeTrackType,
+} from './Model';
+
 import { 
     type PerspectiveCameraData, 
     type DirectionalLightData, 
     type MeshData, 
     type BoxGeometryData, 
     type MeshStandardMaterialData,
+    type NumberKeyframeTrackData,
+    type Camera,
+    type Action,
     LoopStyles
 } from './Model';
 
 const camera = {
     type: CameraType.PerspectiveCamera,
+    name: 'camera1',
     config: {
         fov: 75,
         aspect: 2,
@@ -23,11 +30,12 @@ const camera = {
         position: [2, 5, 5],
         lookAt: [0, 0, 0]
     } as PerspectiveCameraData
-};
+} as Camera;
 
 const assets = [
     {
         type: AssetType.DirectionalLight,
+        name: 'light1',
         config: {
             color: 0xffffff,
             intensity: 1,
@@ -36,6 +44,7 @@ const assets = [
     },
     {
         type: AssetType.Mesh,
+        name: 'plane1',
         config: {
             geometryType: GeometryType.PlaneGeometry,
             geometry: {
@@ -52,6 +61,7 @@ const assets = [
     },
     {
         type: AssetType.Mesh,
+        name: 'box1',
         config: {
             geometryType: GeometryType.BoxGeometry,
             geometry: {
@@ -72,13 +82,16 @@ const assets = [
 const actions = [
     {
         name: 'rotate',
-        target: 'camera',
+        target: 'camera1',
+        keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
+        keyframeTrackData: {
         property: '.rotation[y]',
         times: [0, 5],
         values: [0, Math.PI * 2],
+        } as NumberKeyframeTrackData,
         loop: LoopStyles.LoopRepeat,
         clampWhenFinished: false
-    }
+    } as Action
 ];
 
 export const exampleModel1 = new Model(camera, assets, actions);
