@@ -3,7 +3,6 @@ import type {
   Camera, 
   Asset, 
   Action, 
-  LoopStyle
 } from './Model';
 import { 
   cameraPresenters, 

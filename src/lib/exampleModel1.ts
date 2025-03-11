@@ -48,8 +48,8 @@ const assets = [
         config: {
             geometryType: GeometryType.PlaneGeometry,
             geometry: {
-                width: 10,
-                height: 10
+                width: 100,
+                height: 100
             },
             materialType: MaterialType.MeshStandardMaterial,
             material: {
@@ -85,9 +85,9 @@ const actions = [
         target: 'camera1',
         keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
         keyframeTrackData: {
-        property: '.rotation[y]',
-        times: [0, 5],
-        values: [0, Math.PI * 2],
+          property: '.rotation[y]',
+          times: [0, 5],
+          values: [0, Math.PI * 2],
         } as NumberKeyframeTrackData,
         loop: LoopStyle.LoopRepeat,
         repetitions: Infinity,
