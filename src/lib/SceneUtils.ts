@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import type { 
   Camera, 
   Asset, 
-  Action 
+  Action, 
+  LoopStyle
 } from './Model';
 import { 
   cameraPresenters, 
@@ -29,7 +30,18 @@ export class SceneUtils {
   }
 
   static addAction(
-    animationDict: { [key: string]: { anim: THREE.AnimationAction; start: number; end: number }[] },
+    // TODO should be a type to match what's in Presenter.svelte
+    animationDict: 
+    { 
+      [key: string]: 
+      { 
+        anim: THREE.AnimationAction; 
+        start: number; 
+        end: number 
+        loop: THREE.AnimationActionLoopStyles;
+        repetitions: number;
+      }[] 
+    },
     mixers: THREE.AnimationMixer[],
     target: THREE.Object3D,
     action: Action
@@ -39,7 +51,7 @@ export class SceneUtils {
     const track = presenter.getKeyframeTrack();
     const clip = new THREE.AnimationClip(action.name, -1, [track]);
     const mixer = new THREE.AnimationMixer(target);
-    const animAction = mixer.clipAction(clip).setLoop(loopStyles[action.loop], 1);
+    const animAction = mixer.clipAction(clip).setLoop(loopStyles[action.loop], action.repetitions);
     animAction.clampWhenFinished = action.clampWhenFinished;
     animAction.play();
     animAction.paused = true;
@@ -47,7 +59,9 @@ export class SceneUtils {
     animationDict[action.name] = [{ 
       anim: animAction, 
       start: action.keyframeTrackData.times[0], 
-      end: action.keyframeTrackData.times[action.keyframeTrackData.times.length - 1] 
+      end: action.keyframeTrackData.times[action.keyframeTrackData.times.length - 1],
+      loop: loopStyles[action.loop],
+      repetitions: action.repetitions
     }];
   }
 }

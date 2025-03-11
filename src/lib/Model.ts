@@ -271,7 +271,7 @@ export const assetPresenters: { [key: string]: new (name: string, data: any) => 
   // Add other asset types and their presenters here
 };
 
-export enum LoopStyles {
+export enum LoopStyle {
   LoopRepeat,
   LoopOnce,
   LoopPingPong,
@@ -352,9 +352,9 @@ export const keyframeTrackPresenters: { [key: string]: new (data: any) => IPrese
 };
 
 export const loopStyles: { [key: string]: THREE.AnimationActionLoopStyles } = {
-  [LoopStyles.LoopRepeat]: THREE.LoopRepeat,
-  [LoopStyles.LoopOnce]: THREE.LoopOnce,
-  [LoopStyles.LoopPingPong]: THREE.LoopPingPong,
+  [LoopStyle.LoopRepeat]: THREE.LoopRepeat,
+  [LoopStyle.LoopOnce]: THREE.LoopOnce,
+  [LoopStyle.LoopPingPong]: THREE.LoopPingPong,
 };
 
 export type Action = {
@@ -362,7 +362,8 @@ export type Action = {
   target: string;
   keyframeTrackType: KeyframeTrackType;
   keyframeTrackData: KeyframeTrackData;
-  loop: LoopStyles;
+  loop: LoopStyle;
+  repetitions: number;
   clampWhenFinished: boolean;
 };
 

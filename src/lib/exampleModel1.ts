@@ -16,7 +16,7 @@ import {
     type NumberKeyframeTrackData,
     type Camera,
     type Action,
-    LoopStyles
+    LoopStyle
 } from './Model';
 
 const camera = {
@@ -89,7 +89,8 @@ const actions = [
         times: [0, 5],
         values: [0, Math.PI * 2],
         } as NumberKeyframeTrackData,
-        loop: LoopStyles.LoopRepeat,
+        loop: LoopStyle.LoopRepeat,
+        repetitions: Infinity,
         clampWhenFinished: false
     } as Action
 ];

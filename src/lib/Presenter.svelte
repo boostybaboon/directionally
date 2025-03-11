@@ -9,7 +9,17 @@
   let renderer: THREE.WebGLRenderer;
 
   // TODO - should this be a type?
-  let animationDict: { [key: string]: { anim: THREE.AnimationAction; start: number; end: number }[] } = {};
+  let animationDict: 
+  {
+    [key: string]: 
+    { 
+      anim: THREE.AnimationAction; 
+      start: number; 
+      end: number;
+      loop: THREE.AnimationActionLoopStyles;
+      repetitions: number;
+    }[] 
+  } = {};
 
   let mixers: THREE.AnimationMixer[] = [];
   let scene: THREE.Scene;
@@ -111,7 +121,7 @@
     let currentTime = Tone.getTransport().seconds;
     Object.values(animationDict).forEach((animationList) => {
       animationList.forEach((anim) => {
-        if (anim.start < currentTime && currentTime < anim.end) {
+      if (anim.start < currentTime && (currentTime < anim.end || anim.loop === THREE.LoopRepeat || anim.loop === THREE.LoopPingPong)) {
           anim.anim.paused = false;
         }
       });
@@ -132,9 +142,7 @@
     let currentTime = Tone.getTransport().seconds;
     Object.values(animationDict).forEach((animationList) => {
       animationList.forEach((anim) => {
-        if (anim.start < currentTime && currentTime < anim.end) {
-          anim.anim.paused = true;
-        }
+        anim.anim.paused = true;
       });
     });
   };
@@ -178,9 +186,18 @@
         
         if (time >= anim.end) {
           anim.anim.enabled = true;
-          anim.anim.time = (anim.end - anim.start);
+          if (anim.loop === THREE.LoopOnce) {
+            anim.anim.time = (anim.end - anim.start);
+          } else if (anim.loop === THREE.LoopPingPong) {
+            anim.anim.time = (time - anim.start) % (2 * (anim.end - anim.start));
+            if (anim.anim.time > (anim.end - anim.start)) {
+              anim.anim.time = (2 * (anim.end - anim.start)) - anim.anim.time;
+            }
+          } else if (anim.loop === THREE.LoopRepeat) {
+            anim.anim.time = (time - anim.start) % (anim.end - anim.start);
+          }
           break;
-        } 
+        }
         
         if (time >= anim.start && time < anim.end) {
           anim.anim.enabled = true;
