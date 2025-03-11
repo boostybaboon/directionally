@@ -192,6 +192,7 @@
             anim.anim.time = (time - anim.start) % (2 * (anim.end - anim.start));
             if (anim.anim.time > (anim.end - anim.start)) {
               anim.anim.time = (2 * (anim.end - anim.start)) - anim.anim.time;
+              anim.anim.timeScale = -1;
             }
           } else if (anim.loop === THREE.LoopRepeat) {
             anim.anim.time = (time - anim.start) % (anim.end - anim.start);

@@ -87,8 +87,8 @@ const actions = [
     keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
     keyframeTrackData: {
       property: '.position[y]',
-      times: [0, 1, 2],
-      values: [0, 2, 0],
+      times: [0, 1],
+      values: [0, 2],
     } as NumberKeyframeTrackData,
     loop: LoopStyle.LoopPingPong,
     repetitions: Infinity,
