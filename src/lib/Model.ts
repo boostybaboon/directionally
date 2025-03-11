@@ -315,7 +315,6 @@ export class NumberKeyframeTrackPresenter implements IPresentableKeyframeTrack {
   }
 
   getKeyframeTrack(): THREE.KeyframeTrack {
-    console.log(this.config);
     return new THREE.NumberKeyframeTrack(this.config.property, this.config.times, this.config.values);
   }
 }
