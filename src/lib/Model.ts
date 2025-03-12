@@ -274,7 +274,8 @@ export const assetPresenters: { [key: string]: new (name: string, data: any) => 
 export enum LoopStyle {
   LoopRepeat,
   LoopOnce,
-  LoopPingPong,
+  //LoopPingPong, TODO - implement this, but by reversing the KeyframeTrack data, not by using the THREE.LoopPingPong constant
+  //as it's hard to correctly set a pingponged animation to time t and have it start correctly
 }
 
 export enum KeyframeTrackType {
@@ -353,7 +354,6 @@ export const keyframeTrackPresenters: { [key: string]: new (data: any) => IPrese
 export const loopStyles: { [key: string]: THREE.AnimationActionLoopStyles } = {
   [LoopStyle.LoopRepeat]: THREE.LoopRepeat,
   [LoopStyle.LoopOnce]: THREE.LoopOnce,
-  [LoopStyle.LoopPingPong]: THREE.LoopPingPong,
 };
 
 export type Action = {

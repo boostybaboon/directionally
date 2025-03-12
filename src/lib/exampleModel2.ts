@@ -87,10 +87,10 @@ const actions = [
     keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
     keyframeTrackData: {
       property: '.position[y]',
-      times: [0, 1],
-      values: [0, 2],
+      times: [0, 1, 2],
+      values: [0, 2, 0],
     } as NumberKeyframeTrackData,
-    loop: LoopStyle.LoopPingPong,
+    loop: LoopStyle.LoopRepeat,
     repetitions: Infinity,
     clampWhenFinished: false
   } as Action,

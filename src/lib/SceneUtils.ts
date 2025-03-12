@@ -8,7 +8,7 @@ import {
   cameraPresenters, 
   assetPresenters, 
   keyframeTrackPresenters, 
-  loopStyles 
+  loopStyles
 } from './Model';
 
 export class SceneUtils {
@@ -50,7 +50,7 @@ export class SceneUtils {
     const track = presenter.getKeyframeTrack();
     const clip = new THREE.AnimationClip(action.name, -1, [track]);
     const mixer = new THREE.AnimationMixer(target);
-    const animAction = mixer.clipAction(clip).setLoop(loopStyles[action.loop], action.repetitions);
+    var animAction = mixer.clipAction(clip).setLoop(loopStyles[action.loop], action.repetitions);
     animAction.clampWhenFinished = action.clampWhenFinished;
     animAction.play();
     animAction.paused = true;

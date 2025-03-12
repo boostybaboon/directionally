@@ -121,7 +121,7 @@
     let currentTime = Tone.getTransport().seconds;
     Object.values(animationDict).forEach((animationList) => {
       animationList.forEach((anim) => {
-      if (anim.start < currentTime && (currentTime < anim.end || anim.loop === THREE.LoopRepeat || anim.loop === THREE.LoopPingPong)) {
+      if (anim.start < currentTime && (currentTime < anim.end || anim.loop === THREE.LoopRepeat)) {
           anim.anim.paused = false;
         }
       });
@@ -188,12 +188,6 @@
           anim.anim.enabled = true;
           if (anim.loop === THREE.LoopOnce) {
             anim.anim.time = (anim.end - anim.start);
-          } else if (anim.loop === THREE.LoopPingPong) {
-            anim.anim.time = (time - anim.start) % (2 * (anim.end - anim.start));
-            if (anim.anim.time > (anim.end - anim.start)) {
-              anim.anim.time = (2 * (anim.end - anim.start)) - anim.anim.time;
-              anim.anim.timeScale = -1;
-            }
           } else if (anim.loop === THREE.LoopRepeat) {
             anim.anim.time = (time - anim.start) % (anim.end - anim.start);
           }
