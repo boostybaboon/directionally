@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
 
 type JSONValue = string | number | boolean | { [key: string]: JSONValue } | JSONValue[];
 
@@ -63,6 +65,7 @@ export enum AssetType {
   SpotLight,
   Mesh,
   Group,
+  GLTF,
 }
 
 export type Asset = {
@@ -72,7 +75,7 @@ export type Asset = {
 };
 
 export type IPresentableAsset = {
-  getPresentableAsset(): THREE.Object3D;
+  getPresentableAsset(): Promise<THREE.Object3D>;
 }
 
 export type DirectionalLightData = {
@@ -91,11 +94,13 @@ export class DirectionalLightPresenter implements IPresentableAsset {
     this.config = config;
   }
 
-  getPresentableAsset(): THREE.Object3D {
-    const light = new THREE.DirectionalLight(this.config.color, this.config.intensity);
-    light.position.set(...this.config.position);
-    light.name = this.name;
-    return light;
+  getPresentableAsset(): Promise<THREE.Object3D> {
+    return new Promise((resolve) => {
+      const light = new THREE.DirectionalLight(this.config.color, this.config.intensity);
+      light.position.set(...this.config.position);
+      light.name = this.name;
+      resolve(light);
+    });
   }
 }
 
@@ -115,12 +120,14 @@ export class HemisphereLightPresenter implements IPresentableAsset {
     this.config = config;
   }
 
-  getPresentableAsset(): THREE.Object3D {
-    const light = new THREE.HemisphereLight(this.config.skyColor, this.config.groundColor, this.config.intensity);
-    light.position.set(...this.config.position);
-    light.name = this.name;
-    return light;
-  }
+  getPresentableAsset(): Promise<THREE.Object3D> {
+    return new Promise((resolve) => {
+      const light = new THREE.HemisphereLight(this.config.skyColor, this.config.groundColor, this.config.intensity);
+      light.position.set(...this.config.position);
+      light.name = this.name;
+      resolve(light);
+    });
+  }  
 }
 
 export enum GeometryType {
@@ -164,6 +171,11 @@ export type MeshData = {
   rotation: [number, number, number];
 }
 
+export type GLTFData = {
+  url: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+}
 
 export interface IPresentableGeometry {
   getGeometry(): THREE.BufferGeometry;
@@ -246,21 +258,51 @@ export class MeshPresenter implements IPresentableAsset {
     this.config = config;
   }
 
-  getPresentableAsset(): THREE.Object3D {
-    const geometryPresenterClass = geometryPresenters[this.config.geometryType];
-    const geometryPresenter = new geometryPresenterClass(this.config.geometry);
-    const geometry = geometryPresenter.getGeometry();
+  getPresentableAsset(): Promise<THREE.Object3D> {
+    return new Promise((resolve) => {
+      const geometryPresenterClass = geometryPresenters[this.config.geometryType];
+      const geometryPresenter = new geometryPresenterClass(this.config.geometry);
+      const geometry = geometryPresenter.getGeometry();
 
-    const materialPresenterClass = materialPresenters[this.config.materialType];
-    const materialPresenter = new materialPresenterClass(this.config.material);
-    const material = materialPresenter.getMaterial();
+      const materialPresenterClass = materialPresenters[this.config.materialType];
+      const materialPresenter = new materialPresenterClass(this.config.material);
+      const material = materialPresenter.getMaterial();
 
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.set(...this.config.position);
-    mesh.rotation.set(...this.config.rotation);
-    mesh.name = this.name;
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(...this.config.position);
+      mesh.rotation.set(...this.config.rotation);
+      mesh.name = this.name;
 
-    return mesh;
+      resolve(mesh);
+    });
+  }
+}
+
+export class GTLFPresenter implements IPresentableAsset {
+  name: string;
+  config: GLTFData;
+
+  constructor(name: string, config: GLTFData) {
+    this.name = name;
+    this.config = config;
+  }
+
+  async getPresentableAsset(): Promise<THREE.Object3D> {
+    const loader = new GLTFLoader();
+    const model = new THREE.Object3D(); // Fallback to an empty Object3D
+    model.name
+
+    try {
+      const gltf = await loader.loadAsync(this.config.url);
+      const model = gltf.scene;
+      model.name = this.name;
+      model.position.set(...this.config.position);
+      model.rotation.set(...this.config.rotation);
+      return model;
+    } catch (error) {
+      console.error('Failed to load model:', error);
+      return new THREE.Object3D(); // Fallback to an empty Object3D if the model fails to load
+    }
   }
 }
 
@@ -268,6 +310,7 @@ export const assetPresenters: { [key: string]: new (name: string, data: any) => 
   [AssetType.DirectionalLight]: DirectionalLightPresenter,
   [AssetType.HemisphereLight]: HemisphereLightPresenter,
   [AssetType.Mesh]: MeshPresenter,
+  [AssetType.GLTF]: GTLFPresenter,
   // Add other asset types and their presenters here
 };
 
@@ -356,15 +399,50 @@ export const loopStyles: { [key: string]: THREE.AnimationActionLoopStyles } = {
   [LoopStyle.LoopOnce]: THREE.LoopOnce,
 };
 
+export enum ActionType {
+  Keyframe,
+  GLTF,
+}
+
 export type Action = {
+  type: ActionType;
   name: string;
   target: string;
+  config: JSONObject;
+}
+
+export type KeyframeActionData = {
   keyframeTrackType: KeyframeTrackType;
-  keyframeTrackData: KeyframeTrackData;
+  keyframeTrackData: JSONObject;
   loop: LoopStyle;
   repetitions: number;
   clampWhenFinished: boolean;
+}
+
+export type GLTFActionData = {
+  animationName: string;
+  startTime: number;
+  endTime: number;
+}
+
+export type AnimationDict = {
+  [key: string]: {
+    anim: THREE.AnimationAction;
+    start: number;
+    end: number;
+    loop: THREE.AnimationActionLoopStyles;
+    repetitions: number;
+  }[];
 };
+
+export type IPresentableAction = {
+  addAction(
+    animationDict: AnimationDict, 
+    mixers: THREE.AnimationMixer[], 
+    target: THREE.Object3D, 
+    action: Action
+  ): void;
+}
 
 export class Model {
   camera: Camera;

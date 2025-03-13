@@ -2,24 +2,13 @@
   import * as Tone from 'tone';
   import * as THREE from 'three';
   import { onMount } from 'svelte';
-  import type { Model } from './Model';
+  import type { AnimationDict, Model } from './Model';
   import { SceneUtils } from './SceneUtils';
 
   let canvas: HTMLCanvasElement;
   let renderer: THREE.WebGLRenderer;
 
-  // TODO - should this be a type?
-  let animationDict: 
-  {
-    [key: string]: 
-    { 
-      anim: THREE.AnimationAction; 
-      start: number; 
-      end: number;
-      loop: THREE.AnimationActionLoopStyles;
-      repetitions: number;
-    }[] 
-  } = {};
+  let animationDict: AnimationDict = {};
 
   let mixers: THREE.AnimationMixer[] = [];
   let scene: THREE.Scene;
@@ -61,11 +50,14 @@
     // for each camera in the model (at present only one) add to our cameras
     camera = SceneUtils.createCamera(model.camera);
 
-    //for each asset in model, add the asset to the scene
-    model.assets.forEach((asset) => {
-      const sceneObject = SceneUtils.sceneObjectForAsset(asset);
+    // Load all assets and wait for them to be added to the scene
+    const assetPromises = model.assets.map(async (asset) => {
+      const sceneObject = await SceneUtils.sceneObjectForAsset(asset);
       scene.add(sceneObject);
+      console.log('adding scene object: ', sceneObject);
     });
+
+    await Promise.all(assetPromises);
 
     //for each animation in model, add the animation to the animationDict
     //and add its mixer to the mixers array
