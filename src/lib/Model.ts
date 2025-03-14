@@ -513,11 +513,22 @@ export class GLTFActionPresenter implements IPresentableAction {
 
     const clip = target.animations.find((animation) => animation.name === this.config.animationName);
 
+    console.log('target: ', target);
+
+    //print out animation names
+    target.animations.forEach((animation) => {
+      console.log('Animation name:', animation.name);
+    });
+
     if (clip) {
       const action = mixer.clipAction(clip);
       action.loop = THREE.LoopRepeat;
       action.clampWhenFinished = false;
       action.play();
+      console.log('Playing animation:', this.config.animationName);
+    }
+    else {
+      console.error('Animation not found:', this.config.animationName);
     }
   }
 }

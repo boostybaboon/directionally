@@ -110,7 +110,7 @@
       });
     });
 
-    setSequenceTo(0);
+    //setSequenceTo(0);
 
     clock = new THREE.Clock();
     renderer.setAnimationLoop(animate);
