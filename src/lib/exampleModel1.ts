@@ -5,6 +5,8 @@ import {
     GeometryType, 
     MaterialType,
     KeyframeTrackType,
+    ActionType,
+    type KeyframeActionData,
 } from './Model';
 
 import { 
@@ -81,18 +83,21 @@ const assets = [
 
 const actions = [
     {
+        type: ActionType.Keyframe,
         name: 'rotate',
         target: 'camera1',
-        keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
-        keyframeTrackData: {
-          property: '.rotation[y]',
-          times: [0, 5],
-          values: [0, Math.PI * 2],
-        } as NumberKeyframeTrackData,
-        loop: LoopStyle.LoopRepeat,
-        repetitions: Infinity,
-        clampWhenFinished: false
-    } as Action
+        config: {
+            keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
+            keyframeTrackData: {
+                property: '.rotation[y]',
+                times: [0, 5],
+                values: [0, Math.PI * 2],
+            } as NumberKeyframeTrackData,
+            loop: LoopStyle.LoopRepeat,
+            repetitions: Infinity,
+            clampWhenFinished: false
+        } as KeyframeActionData
+    }
 ];
 
 export const exampleModel1 = new Model(camera, assets, actions);

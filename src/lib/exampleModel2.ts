@@ -5,6 +5,8 @@ import {
   GeometryType, 
   MaterialType,
   KeyframeTrackType,
+  type KeyframeActionData,
+  ActionType,
 } from './Model';
 
 import { 
@@ -82,18 +84,21 @@ const assets = [
 
 const actions = [
   {
+    type: ActionType.Keyframe,
     name: 'bounce',
     target: 'sphere1',
-    keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
-    keyframeTrackData: {
-      property: '.position[y]',
-      times: [0, 1, 2],
-      values: [0, 2, 0],
-    } as NumberKeyframeTrackData,
-    loop: LoopStyle.LoopRepeat,
-    repetitions: Infinity,
-    clampWhenFinished: false
-  } as Action,
+    config: {
+      keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
+      keyframeTrackData: {
+        property: '.position[y]',
+        times: [0, 1, 2],
+        values: [0, 2, 0],
+      } as NumberKeyframeTrackData,
+      loop: LoopStyle.LoopRepeat,
+      repetitions: Infinity,
+      clampWhenFinished: false
+    } as KeyframeActionData,
+  }
 ];
 
 export const exampleModel2 = new Model(camera, assets, actions);

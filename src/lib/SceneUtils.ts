@@ -2,13 +2,15 @@ import * as THREE from 'three';
 import type { 
   Camera, 
   Asset, 
-  Action, 
+  Action,
+  AnimationDict, 
 } from './Model';
 import { 
   cameraPresenters, 
   assetPresenters, 
   keyframeTrackPresenters, 
-  loopStyles
+  loopStyles,
+  actionPresenters
 } from './Model';
 
 export class SceneUtils {
@@ -20,7 +22,7 @@ export class SceneUtils {
     return presentableCamera;
   }
 
-  static sceneObjectForAsset(asset: Asset): THREE.Object3D {
+  static sceneObjectForAsset(asset: Asset): Promise<THREE.Object3D> {
     const presenterClass = assetPresenters[asset.type];
     const presenter = new presenterClass(asset.name, asset.config);
     let presentableAsset = presenter.getPresentableAsset();
@@ -29,38 +31,49 @@ export class SceneUtils {
   }
 
   static addAction(
-    // TODO should be a type to match what's in Presenter.svelte
-    animationDict: 
-    { 
-      [key: string]: 
-      { 
-        anim: THREE.AnimationAction; 
-        start: number; 
-        end: number 
-        loop: THREE.AnimationActionLoopStyles;
-        repetitions: number;
-      }[] 
-    },
+    animationDict: AnimationDict,
     mixers: THREE.AnimationMixer[],
     target: THREE.Object3D,
     action: Action
   ): void {
-    const presenterClass = keyframeTrackPresenters[action.keyframeTrackType];
-    const presenter = new presenterClass(action.keyframeTrackData);
-    const track = presenter.getKeyframeTrack();
-    const clip = new THREE.AnimationClip(action.name, -1, [track]);
-    const mixer = new THREE.AnimationMixer(target);
-    var animAction = mixer.clipAction(clip).setLoop(loopStyles[action.loop], action.repetitions);
-    animAction.clampWhenFinished = action.clampWhenFinished;
-    animAction.play();
-    animAction.paused = true;
-    mixers.push(mixer);
-    animationDict[action.name] = [{ 
-      anim: animAction, 
-      start: action.keyframeTrackData.times[0], 
-      end: action.keyframeTrackData.times[action.keyframeTrackData.times.length - 1],
-      loop: loopStyles[action.loop],
-      repetitions: action.repetitions
-    }];
+    const presenterClass = actionPresenters[action.type];
+    const presenter = new presenterClass(action.name, action.config);
+    presenter.addAction(animationDict, mixers, target, action);
   }
+
+  // static addActionOrig(
+  //   // TODO should be a type to match what's in Presenter.svelte
+  //   animationDict: 
+  //   { 
+  //     [key: string]: 
+  //     { 
+  //       anim: THREE.AnimationAction; 
+  //       start: number; 
+  //       end: number 
+  //       loop: THREE.AnimationActionLoopStyles;
+  //       repetitions: number;
+  //     }[] 
+  //   },
+  //   mixers: THREE.AnimationMixer[],
+  //   target: THREE.Object3D,
+  //   action: Action
+  // ): void {
+  //   const presenterClass = keyframeTrackPresenters[action.keyframeTrackType];
+  //   const presenter = new presenterClass(action.keyframeTrackData);
+  //   const track = presenter.getKeyframeTrack();
+  //   const clip = new THREE.AnimationClip(action.name, -1, [track]);
+  //   const mixer = new THREE.AnimationMixer(target);
+  //   var animAction = mixer.clipAction(clip).setLoop(loopStyles[action.loop], action.repetitions);
+  //   animAction.clampWhenFinished = action.clampWhenFinished;
+  //   animAction.play();
+  //   animAction.paused = true;
+  //   mixers.push(mixer);
+  //   animationDict[action.name] = [{ 
+  //     anim: animAction, 
+  //     start: action.keyframeTrackData.times[0], 
+  //     end: action.keyframeTrackData.times[action.keyframeTrackData.times.length - 1],
+  //     loop: loopStyles[action.loop],
+  //     repetitions: action.repetitions
+  //   }];
+  // }
 }

@@ -21,9 +21,33 @@
   let currentPosition = $state<number>(0);
   let sliderValue = $state<number>(0);
 
+  // Function to initialize the custom console.log
+  function initializeCustomConsoleLog() {
+    const logPanel = document.getElementById('log-panel');
+
+    if (logPanel) {
+      const originalConsoleLog = console.log;
+
+      console.log = function (...args) {
+        // Call the original console.log function
+        originalConsoleLog.apply(console, args);
+
+        // Append the log message to the log panel
+        const message = args.map(arg => (typeof arg === 'object' ? JSON.stringify(arg) : arg)).join(' ');
+        const logEntry = document.createElement('div');
+        logEntry.textContent = message;
+        logPanel.appendChild(logEntry);
+
+        // Scroll to the bottom of the log panel
+        logPanel.scrollTop = logPanel.scrollHeight;
+      };
+    }
+  }
+  
   onMount(() => {
     renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
     renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+    initializeCustomConsoleLog();
   });
 
   const setupTone = async () => {
@@ -54,7 +78,7 @@
     const assetPromises = model.assets.map(async (asset) => {
       const sceneObject = await SceneUtils.sceneObjectForAsset(asset);
       scene.add(sceneObject);
-      console.log('adding scene object: ', sceneObject);
+      //console.log('adding scene object: ', sceneObject);
     });
 
     await Promise.all(assetPromises);
@@ -248,6 +272,15 @@
     margin: 20px;
     width: 80%;
   }
+
+  #log-panel {
+    width: 100%;
+    height: 200px;
+    overflow-y: scroll;
+    border: 1px solid #ccc;
+    background-color: #f9f9f9;
+    padding: 10px;
+  }
 </style>
   
 <div id="content">
@@ -258,4 +291,5 @@
   <div id="slider-container">
     <input type="range" min="0" max="16" step="0.01" bind:value={sliderValue} oninput={handleSliderInput} disabled={!isToneSetup}>
   </div>
+  <div id="log-panel"></div>
 </div>

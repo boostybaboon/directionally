@@ -444,6 +444,91 @@ export type IPresentableAction = {
   ): void;
 }
 
+//this is all a bit confused - config is within the action later passed to addAction
+//TODO sort out this confusion
+//TODO in fact to handle the different key frame track types (number, vector, quaternion) 
+//we further need to get the right presenter for the keyframe track type
+export class KeyframeActionPresenter implements IPresentableAction {
+  name: string;
+  config: KeyframeActionData;
+
+  constructor(name: string, config: KeyframeActionData) {
+    this.name = name;
+    this.config = config;
+  }
+
+  addAction(
+    animationDict: AnimationDict, 
+    mixers: THREE.AnimationMixer[], 
+    target: THREE.Object3D, 
+    action: Action
+  ): void {
+    const keyframeTrackPresenterClass = keyframeTrackPresenters[this.config.keyframeTrackType];
+    const keyframeTrackPresenter = new keyframeTrackPresenterClass(this.config.keyframeTrackData);
+    const keyframeTrack = keyframeTrackPresenter.getKeyframeTrack();
+
+    const mixer = new THREE.AnimationMixer(target);
+    mixers.push(mixer);
+
+    const clip = new THREE.AnimationClip(this.name, -1, [keyframeTrack]);
+    const animAction = mixer.clipAction(clip);
+
+    animAction.loop = loopStyles[this.config.loop];
+    animAction.repetitions = this.config.repetitions;
+    animAction.clampWhenFinished = this.config.clampWhenFinished;
+
+    if (!animationDict[target.name]) {
+      animationDict[target.name] = [];
+    }
+
+    animationDict[target.name].push({
+      anim: animAction,
+      start: keyframeTrack.times[0],// action.config.keyframeTrackData.times[0],
+      end: keyframeTrack.times[keyframeTrack.times.length - 1],// action.config.keyframeTrackData.times[action.config.keyframeTrackData.times.length - 1],
+      loop: loopStyles[this.config.loop],
+      repetitions: this.config.repetitions,
+    });
+  }
+}
+
+export class GLTFActionPresenter implements IPresentableAction {
+  name: string;
+  config: GLTFActionData;
+
+  constructor(name: string, config: GLTFActionData) {
+    this.name = name;
+    this.config = config;
+  }
+
+  addAction(
+    animationDict: AnimationDict, 
+    mixers: THREE.AnimationMixer[], 
+    target: THREE.Object3D, 
+    action: Action
+  ): void {
+    const mixer = new THREE.AnimationMixer(target);
+    mixers.push(mixer);
+
+    console.log('adding gltf animation', this.config.animationName);
+
+    const clip = target.animations.find((animation) => animation.name === this.config.animationName);
+    //console.log(target.animations);
+    if (clip) {
+      //console.log('found clip', clip);
+      const action = mixer.clipAction(clip);
+      action.loop = THREE.LoopRepeat;
+      action.clampWhenFinished = false;
+      action.play();
+    }
+  }
+}
+
+export const actionPresenters: { [key: string]: new (name: string, data: any) => IPresentableAction } = {
+  [ActionType.Keyframe]: KeyframeActionPresenter,
+  [ActionType.GLTF]: GLTFActionPresenter,
+  // Add other action types and their presenters here
+};
+
 export class Model {
   camera: Camera;
   assets: Asset[];
