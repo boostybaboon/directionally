@@ -20,7 +20,7 @@ export class SceneUtils {
     return presentableCamera;
   }
 
-  static sceneObjectForAsset(asset: Asset): Promise<THREE.Object3D> {
+  static sceneObjectForAsset(asset: Asset): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
     const presenterClass = assetPresenters[asset.type];
     const presenter = new presenterClass(asset.name, asset.config);
     let presentableAsset = presenter.getPresentableAsset();
@@ -32,10 +32,11 @@ export class SceneUtils {
     animationDict: AnimationDict,
     mixers: THREE.AnimationMixer[],
     target: THREE.Object3D,
-    action: Action
+    action: Action,
+    meshAnimationClips: THREE.AnimationClip[]
   ): void {
     const presenterClass = actionPresenters[action.type];
     const presenter = new presenterClass(action.name, action.config);
-    presenter.addAction(animationDict, mixers, target, action);
+    presenter.addAction(animationDict, mixers, target, action, meshAnimationClips);
   }
 }

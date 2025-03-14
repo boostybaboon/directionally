@@ -10,6 +10,8 @@
 
   let animationDict: AnimationDict = {};
 
+  let modelAnimationClips: { [key: string]: THREE.AnimationClip[] } = {};
+
   let mixers: THREE.AnimationMixer[] = [];
   let scene: THREE.Scene;
   let clock: THREE.Clock;
@@ -77,7 +79,8 @@
     // Load all assets and wait for them to be added to the scene
     const assetPromises = model.assets.map(async (asset) => {
       const sceneObject = await SceneUtils.sceneObjectForAsset(asset);
-      scene.add(sceneObject);
+      scene.add(sceneObject[0]);
+      modelAnimationClips[asset.name] = sceneObject[1];
     });
 
     await Promise.all(assetPromises);
@@ -95,7 +98,7 @@
           return; // from this iteration of the loop
         }
       }
-      SceneUtils.addAction(animationDict, mixers, sceneObject, action);
+      SceneUtils.addAction(animationDict, mixers, sceneObject, action, modelAnimationClips[action.target]);
     });
 
     Object.values(animationDict).forEach((animGroup) => {
@@ -110,7 +113,7 @@
       });
     });
 
-    //setSequenceTo(0);
+    setSequenceTo(0);
 
     clock = new THREE.Clock();
     renderer.setAnimationLoop(animate);

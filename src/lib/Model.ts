@@ -75,7 +75,7 @@ export type Asset = {
 };
 
 export type IPresentableAsset = {
-  getPresentableAsset(): Promise<THREE.Object3D>;
+  getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]>;
 }
 
 export type DirectionalLightData = {
@@ -94,12 +94,12 @@ export class DirectionalLightPresenter implements IPresentableAsset {
     this.config = config;
   }
 
-  getPresentableAsset(): Promise<THREE.Object3D> {
+  getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
     return new Promise((resolve) => {
       const light = new THREE.DirectionalLight(this.config.color, this.config.intensity);
       light.position.set(...this.config.position);
       light.name = this.name;
-      resolve(light);
+      resolve([light, []]);
     });
   }
 }
@@ -120,12 +120,12 @@ export class HemisphereLightPresenter implements IPresentableAsset {
     this.config = config;
   }
 
-  getPresentableAsset(): Promise<THREE.Object3D> {
+  getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
     return new Promise((resolve) => {
       const light = new THREE.HemisphereLight(this.config.skyColor, this.config.groundColor, this.config.intensity);
       light.position.set(...this.config.position);
       light.name = this.name;
-      resolve(light);
+      resolve([light, []]);
     });
   }  
 }
@@ -258,7 +258,7 @@ export class MeshPresenter implements IPresentableAsset {
     this.config = config;
   }
 
-  getPresentableAsset(): Promise<THREE.Object3D> {
+  getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
     return new Promise((resolve) => {
       const geometryPresenterClass = geometryPresenters[this.config.geometryType];
       const geometryPresenter = new geometryPresenterClass(this.config.geometry);
@@ -273,7 +273,7 @@ export class MeshPresenter implements IPresentableAsset {
       mesh.rotation.set(...this.config.rotation);
       mesh.name = this.name;
 
-      resolve(mesh);
+      resolve([mesh, []]);
     });
   }
 }
@@ -287,21 +287,21 @@ export class GTLFPresenter implements IPresentableAsset {
     this.config = config;
   }
 
-  async getPresentableAsset(): Promise<THREE.Object3D> {
+  async getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
     const loader = new GLTFLoader();
     const model = new THREE.Object3D(); // Fallback to an empty Object3D
-    model.name
-
+    
     try {
       const gltf = await loader.loadAsync(this.config.url);
       const model = gltf.scene;
+      const animations = gltf.animations;
       model.name = this.name;
       model.position.set(...this.config.position);
       model.rotation.set(...this.config.rotation);
-      return model;
+      return [model, animations];
     } catch (error) {
       console.error('Failed to load model:', error);
-      return new THREE.Object3D(); // Fallback to an empty Object3D if the model fails to load
+      return [new THREE.Object3D(), []]; // Fallback to an empty Object3D if the model fails to load
     }
   }
 }
@@ -440,7 +440,8 @@ export type IPresentableAction = {
     animationDict: AnimationDict, 
     mixers: THREE.AnimationMixer[], 
     target: THREE.Object3D, 
-    action: Action
+    action: Action,
+    meshAnimationClips: THREE.AnimationClip[],
   ): void;
 }
 
@@ -461,7 +462,8 @@ export class KeyframeActionPresenter implements IPresentableAction {
     animationDict: AnimationDict, 
     mixers: THREE.AnimationMixer[], 
     target: THREE.Object3D, 
-    action: Action
+    action: Action,
+    meshAnimationClips: THREE.AnimationClip[],
   ): void {
     const keyframeTrackPresenterClass = keyframeTrackPresenters[this.config.keyframeTrackType];
     const keyframeTrackPresenter = new keyframeTrackPresenterClass(this.config.keyframeTrackData);
@@ -506,18 +508,19 @@ export class GLTFActionPresenter implements IPresentableAction {
     animationDict: AnimationDict, 
     mixers: THREE.AnimationMixer[], 
     target: THREE.Object3D, 
-    action: Action
+    action: Action,
+    meshAnimationClips: THREE.AnimationClip[],
   ): void {
     const mixer = new THREE.AnimationMixer(target);
     mixers.push(mixer);
 
-    const clip = target.animations.find((animation) => animation.name === this.config.animationName);
+    const clip = meshAnimationClips.find((meshClip) => meshClip.name === this.config.animationName);
 
     console.log('target: ', target);
 
     //print out animation names
-    target.animations.forEach((animation) => {
-      console.log('Animation name:', animation.name);
+    meshAnimationClips.forEach((meshClip) => {
+      console.log('Animation clip name:', meshClip.name);
     });
 
     if (clip) {
