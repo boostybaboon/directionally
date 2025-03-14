@@ -476,6 +476,8 @@ export class KeyframeActionPresenter implements IPresentableAction {
     animAction.loop = loopStyles[this.config.loop];
     animAction.repetitions = this.config.repetitions;
     animAction.clampWhenFinished = this.config.clampWhenFinished;
+    animAction.play();
+    animAction.paused = true;
 
     if (!animationDict[target.name]) {
       animationDict[target.name] = [];
@@ -509,12 +511,9 @@ export class GLTFActionPresenter implements IPresentableAction {
     const mixer = new THREE.AnimationMixer(target);
     mixers.push(mixer);
 
-    console.log('adding gltf animation', this.config.animationName);
-
     const clip = target.animations.find((animation) => animation.name === this.config.animationName);
-    //console.log(target.animations);
+
     if (clip) {
-      //console.log('found clip', clip);
       const action = mixer.clipAction(clip);
       action.loop = THREE.LoopRepeat;
       action.clampWhenFinished = false;

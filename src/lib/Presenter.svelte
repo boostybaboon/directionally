@@ -78,7 +78,6 @@
     const assetPromises = model.assets.map(async (asset) => {
       const sceneObject = await SceneUtils.sceneObjectForAsset(asset);
       scene.add(sceneObject);
-      //console.log('adding scene object: ', sceneObject);
     });
 
     await Promise.all(assetPromises);
