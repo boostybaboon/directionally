@@ -1,3 +1,4 @@
+import type { Vector } from 'three/examples/jsm/Addons.js';
 import { 
   Model, 
   CameraType, 
@@ -90,7 +91,7 @@ const actions = [
                  5, 0, 5,
                  5, 0, 0,
                  0, 0, 0],
-      } as NumberKeyframeTrackData,
+      } as VectorKeyframeTrackData,
       loop: LoopStyle.LoopRepeat,
       repetitions: Infinity,
       clampWhenFinished: false,
@@ -104,8 +105,8 @@ const actions = [
       keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
       keyframeTrackData: {
         property: '.rotation[y]',
-        times: [0, 2, 4, 6, 8],
-        values: [0, Math.PI/2.0, Math.PI, 3.0*Math.PI/2.0, 0,],
+        times: [0.0, 1.9, 2.0, 3.9, 4.0, 5.9, 6.0, 7.9, 8.0],
+        values: [0, 0, Math.PI/2.0, Math.PI/2.0, Math.PI, Math.PI, 3.0*Math.PI/2.0, 3.0*Math.PI/2.0, 0,],
       } as NumberKeyframeTrackData,
       loop: LoopStyle.LoopRepeat,
       repetitions: Infinity,

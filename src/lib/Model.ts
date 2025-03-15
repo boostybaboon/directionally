@@ -481,11 +481,15 @@ export class KeyframeActionPresenter implements IPresentableAction {
     animAction.play();
     animAction.paused = true;
 
-    if (!animationDict[target.name]) {
-      animationDict[target.name] = [];
+    const animationDictKey = target.name+'_'+this.config.keyframeTrackData.property;
+
+    console.log('animationDictKey:', animationDictKey);
+
+    if (!animationDict[animationDictKey]) {
+      animationDict[animationDictKey] = [];
     }
 
-    animationDict[target.name].push({
+    animationDict[animationDictKey].push({
       anim: animAction,
       start: keyframeTrack.times[0],// action.config.keyframeTrackData.times[0],
       end: keyframeTrack.times[keyframeTrack.times.length - 1],// action.config.keyframeTrackData.times[action.config.keyframeTrackData.times.length - 1],
@@ -529,6 +533,23 @@ export class GLTFActionPresenter implements IPresentableAction {
       action.clampWhenFinished = false;
       action.play();
       console.log('Playing animation:', this.config.animationName);
+
+      const animationDictKey = target.name+'_'+this.config.animationName;
+
+      if (!animationDict[animationDictKey]) {
+        animationDict[animationDictKey] = [];
+      }
+
+      console.log('duration of clip:', clip.duration);
+
+      animationDict[animationDictKey].push({
+        anim: action,
+        //TODO - what to really do about start and end times given definition in the clip and the action model??
+        start: this.config.startTime,
+        end: clip.duration,
+        loop: THREE.LoopRepeat,
+        repetitions: Infinity
+      });
     }
     else {
       console.error('Animation not found:', this.config.animationName);
