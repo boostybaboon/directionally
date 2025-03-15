@@ -10,6 +10,7 @@ import {
   ActionType,
   type KeyframeActionData,
   type GLTFActionData,
+  type VectorKeyframeTrackData,
 } from './Model';
 
 import { 
@@ -30,7 +31,7 @@ const camera = {
     aspect: 2,
     near: 0.1,
     far: 1000,
-    position: [3, 10, 10],
+    position: [3, 10, 20],
     lookAt: [0, 0, 0]
   } as PerspectiveCameraData
 } as Camera;
@@ -52,8 +53,8 @@ const assets = [
     config: {
         geometryType: GeometryType.PlaneGeometry,
         geometry: {
-            width: 10,
-            height: 10
+            width: 20,
+            height: 20
         },
         materialType: MaterialType.MeshStandardMaterial,
         material: {
@@ -77,14 +78,34 @@ const assets = [
 const actions = [
   {
     type: ActionType.Keyframe,
-    name: 'bounce',
+    name: 'walkPosition',
+    target: 'robot1',
+    config: {
+      keyframeTrackType: KeyframeTrackType.VectorKeyframeTrack,
+      keyframeTrackData: {
+        property: '.position',
+        times: [0, 2, 4, 6, 8],
+        values: [0, 0, 0, 
+                 0, 0, 5,
+                 5, 0, 5,
+                 5, 0, 0,
+                 0, 0, 0],
+      } as NumberKeyframeTrackData,
+      loop: LoopStyle.LoopRepeat,
+      repetitions: Infinity,
+      clampWhenFinished: false,
+    } as KeyframeActionData,
+  },
+  {
+    type: ActionType.Keyframe,
+    name: 'walkRotation1',
     target: 'robot1',
     config: {
       keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
       keyframeTrackData: {
-        property: '.position[y]',
-        times: [0, 1, 2],
-        values: [0, 2, 0],
+        property: '.rotation[y]',
+        times: [0, 2, 4, 6, 8],
+        values: [0, Math.PI/2.0, Math.PI, 3.0*Math.PI/2.0, 0,],
       } as NumberKeyframeTrackData,
       loop: LoopStyle.LoopRepeat,
       repetitions: Infinity,
