@@ -252,13 +252,80 @@
     }
   };
 
+  // Function to create a speech bubble using SpriteMaterial
+  function createSpeechBubble(text: string) {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) return;
+
+    const fontSize = 48; // Increase the font size
+    const borderSize = 2;
+    const baseWidth = 300; // Base width for the text
+    const font = `${fontSize}px Arial`;
+    context.font = font;
+
+    // Measure the text width
+    const textWidth = context.measureText(text).width;
+    const doubleBorderSize = borderSize * 2;
+    const width = baseWidth + doubleBorderSize;
+    const height = fontSize + doubleBorderSize;
+    canvas.width = width;
+    canvas.height = height;
+
+    // Set font again after resizing canvas
+    context.font = font;
+    context.textBaseline = 'middle';
+    context.textAlign = 'center';
+
+    // Draw background
+    context.fillStyle = 'white';
+    context.fillRect(0, 0, width, height);
+
+    // Draw text
+    const scaleFactor = Math.min(1, baseWidth / textWidth);
+    context.translate(width / 2, height / 2);
+    context.scale(scaleFactor, 1);
+    context.fillStyle = 'black';
+    context.fillText(text, 0, 0);
+
+    // Create texture and sprite material
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+
+    const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
+    const sprite = new THREE.Sprite(spriteMaterial);
+
+    // Scale the sprite
+    const labelBaseScale = 0.01;
+    sprite.scale.set(canvas.width * labelBaseScale, canvas.height * labelBaseScale, 1);
+
+    // Attach the sprite to the robot
+    const robot = scene.getObjectByName('robot1');
+    if (robot) {
+      sprite.position.set(0, 5, 0); // Adjust the position as needed
+      robot.add(sprite);
+    }
+
+    // Remove the speech bubble after 3 seconds
+    setTimeout(() => {
+      if (robot) {
+        robot.remove(sprite);
+      }
+    }, 3000);
+  }
+
   // Example of speech synthesis api
   function speak() {
     const voices = speechSynthesis.getVoices();
-    //console.log(voices);
+    console.log(voices);
     const utterance = new SpeechSynthesisUtterance('Hello, I am a robot!');
     speechSynthesis.speak(utterance);
+
+    createSpeechBubble('Hello, I am a robot!');
   }
+
 </script>
 
 <style>
@@ -300,6 +367,6 @@
   <div id="slider-container">
     <input type="range" min="0" max="16" step="0.01" bind:value={sliderValue} oninput={handleSliderInput} disabled={!isToneSetup}>
   </div>
-  <!-- <div><button onclick={speak}>Speak</button></div> -->
+  <div><button onclick={speak}>Speak</button></div>
   <div id="log-panel"></div>
 </div>
