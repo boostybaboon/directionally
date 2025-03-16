@@ -252,6 +252,13 @@
     }
   };
 
+  // Example of speech synthesis api
+  function speak() {
+    const voices = speechSynthesis.getVoices();
+    //console.log(voices);
+    const utterance = new SpeechSynthesisUtterance('Hello, I am a robot!');
+    speechSynthesis.speak(utterance);
+  }
 </script>
 
 <style>
@@ -293,5 +300,6 @@
   <div id="slider-container">
     <input type="range" min="0" max="16" step="0.01" bind:value={sliderValue} oninput={handleSliderInput} disabled={!isToneSetup}>
   </div>
+  <!-- <div><button onclick={speak}>Speak</button></div> -->
   <div id="log-panel"></div>
 </div>

@@ -483,8 +483,6 @@ export class KeyframeActionPresenter implements IPresentableAction {
 
     const animationDictKey = target.name+'_'+this.config.keyframeTrackData.property;
 
-    console.log('animationDictKey:', animationDictKey);
-
     if (!animationDict[animationDictKey]) {
       animationDict[animationDictKey] = [];
     }
@@ -520,27 +518,17 @@ export class GLTFActionPresenter implements IPresentableAction {
 
     const clip = meshAnimationClips.find((meshClip) => meshClip.name === this.config.animationName);
 
-    console.log('target: ', target);
-
-    //print out animation names
-    meshAnimationClips.forEach((meshClip) => {
-      console.log('Animation clip name:', meshClip.name);
-    });
-
     if (clip) {
       const action = mixer.clipAction(clip);
       action.loop = THREE.LoopRepeat;
       action.clampWhenFinished = false;
       action.play();
-      console.log('Playing animation:', this.config.animationName);
 
       const animationDictKey = target.name+'_'+this.config.animationName;
 
       if (!animationDict[animationDictKey]) {
         animationDict[animationDictKey] = [];
       }
-
-      console.log('duration of clip:', clip.duration);
 
       animationDict[animationDictKey].push({
         anim: action,

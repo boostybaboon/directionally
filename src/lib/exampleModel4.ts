@@ -11,13 +11,13 @@ import {
   type KeyframeActionData,
   type GLTFActionData,
   type VectorKeyframeTrackData,
+  type QuaternionKeyframeTrackData,
 } from './Model';
 
 import { 
   type PerspectiveCameraData, 
   type HemisphereLightData, 
   type MeshStandardMaterialData,
-  type NumberKeyframeTrackData,
   type Camera,
   LoopStyle
 } from './Model';
@@ -89,7 +89,7 @@ const actions = [
                  7.5,   0, 7.5,
                  7.5,   0,   0,
                    0,   0,   0,],
-} as VectorKeyframeTrackData,
+      } as VectorKeyframeTrackData,
       loop: LoopStyle.LoopRepeat,
       repetitions: Infinity,
       clampWhenFinished: false,
@@ -100,21 +100,21 @@ const actions = [
     name: 'walkRotation1',
     target: 'robot1',
     config: {
-      keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
+      keyframeTrackType: KeyframeTrackType.QuaternionKeyframeTrack,
       keyframeTrackData: {
-        property: '.rotation[y]',
+        property: '.quaternion',
         times: [0.0, 1.6, 2.0, 3.6, 4.0, 5.6, 6.0, 7.6, 8.0],
         values: [
-          0,
-          0,
-          Math.PI/2, 
-          Math.PI/2, 
-          Math.PI, 
-          Math.PI, 
-          3*Math.PI/2, 
-          3*Math.PI/2, 
-          0,],
-      } as NumberKeyframeTrackData,
+          0, 0, 0, 0, 
+          0, 0, 0, 0,
+          0, Math.SQRT2/2, 0, Math.SQRT2/2.0, 
+          0, Math.SQRT2/2, 0, Math.SQRT2/2.0, 
+          0, 1, 0, 0, 
+          0, 1, 0, 0,
+          0, Math.SQRT2/2, 0, -Math.SQRT2/2.0, 
+          0, Math.SQRT2/2, 0, -Math.SQRT2/2.0, 
+          0, 0, 0, 0,],
+      } as QuaternionKeyframeTrackData,
       loop: LoopStyle.LoopRepeat,
       repetitions: Infinity,
       clampWhenFinished: false,
@@ -132,4 +132,4 @@ const actions = [
   },
 ];
 
-export const exampleModel3 = new Model(camera, assets, actions);
+export const exampleModel4 = new Model(camera, assets, actions);
