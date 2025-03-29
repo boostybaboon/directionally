@@ -383,7 +383,7 @@ export class QuaternionKeyframeTrackPresenter implements IPresentableKeyframeTra
   }
 
   getKeyframeTrack(): THREE.KeyframeTrack {
-    return new THREE.QuaternionKeyframeTrack(this.config.property, this.config.times, this.config.values);
+    return new THREE.QuaternionKeyframeTrack(this.config.property, this.config.times, this.config.values, THREE.InterpolateSmooth);
   }
 }
 
