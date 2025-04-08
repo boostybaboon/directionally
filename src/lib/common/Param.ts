@@ -45,15 +45,17 @@ export class FloatParam extends Param {
 
 export class Vector3Param extends Param {
     private _value: Vector3;
+    private _defaultValue: Vector3;
 
     constructor(
         title: string,
         help: string,
-        public readonly defaultValue: Vector3
+        defaultValue: Vector3
     ) {
         super(title, help);
+        this._defaultValue = defaultValue.clone();
         this._value = defaultValue.clone();
-        console.log('Vector3Param created with value:', this._value);
+        console.log('Vector3Param created with default value:', this._defaultValue);
     }
 
     get value(): Vector3 {
@@ -63,10 +65,17 @@ export class Vector3Param extends Param {
     set value(newValue: Vector3) {
         console.log('Vector3Param value being set to:', newValue);
         this._value.copy(newValue);
-        this.defaultValue.copy(newValue);
         if (this.onChange) {
             this.onChange(newValue);
         }
+    }
+
+    get defaultValue(): Vector3 {
+        return this._defaultValue;
+    }
+
+    resetToDefault(): void {
+        this.value = this._defaultValue.clone();
     }
 }
 
@@ -88,7 +97,13 @@ export class ColorParam extends Param {
 
     set value(newColor: Color) {
         this._value.copy(newColor);
-        this.defaultValue.copy(newColor);
+        if (this.onChange) {
+            this.onChange(newColor);
+        }
+    }
+
+    resetToDefault(): void {
+        this.value = this.defaultValue.clone();
     }
 }
 

@@ -1,7 +1,7 @@
 import { Mesh } from "three";
 import { Object3DAsset } from "../Object3DAsset";
 import { BufferGeometryAsset } from "../../Geometry/BufferGeometry/BufferGeometryAsset";
-import { MaterialAsset } from "../../Material/Material/MaterialAsset";
+import { MaterialAsset } from "../../Material/MaterialAsset";
 
 export class MeshAsset extends Object3DAsset {
     private _mesh: Mesh;

@@ -14,8 +14,14 @@ export class Object3DAsset {
         this.position = new Vector3Param(
             "Position",
             "https://threejs.org/docs/index.html#api/en/core/Object3D.position",
-            this._object3D.position
+            this._object3D.position.clone()
         );
+        
+        // Set up position change handler
+        this.position.onChange = (newPosition) => {
+            this._object3D.position.copy(newPosition);
+        };
+        
         // Initialize with default values
         this._up = new Vector3(0, 1, 0);
         this._lookAt = new Vector3(0, 0, -1);

@@ -17,6 +17,11 @@ export class HemisphereLightAsset extends LightAsset {
             "https://threejs.org/docs/#api/en/lights/HemisphereLight.groundColor",
             this._hemisphereLight.groundColor
         );
+
+        // Set up watcher to propagate groundColor changes to the underlying light
+        this.groundColor.onChange = () => {
+            this._hemisphereLight.groundColor.copy(this.groundColor.value);
+        };
     }
 
     /**

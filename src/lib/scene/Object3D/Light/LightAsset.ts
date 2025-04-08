@@ -23,13 +23,17 @@ export class LightAsset extends Object3DAsset {
             this._light.intensity
         );
 
-        // Set up a watcher to propagate intensity changes to the underlying light
-        Object.defineProperty(this.intensity, 'value', {
-            get: () => this._light.intensity,
-            set: (value: number) => {
-                this._light.intensity = value;
+        // Set up watchers to propagate changes to the underlying light
+        this.color.onChange = () => {
+            this._light.color.copy(this.color.value);
+        };
+
+        this.intensity.onChange = () => {
+            if (this.intensity.value < 0) {
+                throw new Error("Intensity must be non-negative");
             }
-        });
+            this._light.intensity = this.intensity.value;
+        };
     }
 
     /**
