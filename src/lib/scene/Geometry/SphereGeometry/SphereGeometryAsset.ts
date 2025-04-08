@@ -1,5 +1,5 @@
 import { SphereGeometry } from "three";
-import { BufferGeometryAsset } from "../BufferGeometry/BufferGeometry";
+import { BufferGeometryAsset } from "../BufferGeometry/BufferGeometryAsset";
 import { FloatParam, IntParam } from "$lib/common/Param";
 
 export class SphereGeometryAsset extends BufferGeometryAsset {

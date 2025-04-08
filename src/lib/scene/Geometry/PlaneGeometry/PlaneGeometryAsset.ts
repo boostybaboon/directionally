@@ -1,5 +1,5 @@
 import { PlaneGeometry } from "three";
-import { BufferGeometryAsset } from "../BufferGeometry/BufferGeometry";
+import { BufferGeometryAsset } from "../BufferGeometry/BufferGeometryAsset";
 import { FloatParam } from "$lib/common/Param";
 
 export class PlaneGeometryAsset extends BufferGeometryAsset {
