@@ -1,6 +1,8 @@
 import type { Vector3, Color } from "three";
 
 export class Param {
+    onChange?: (value: any) => void;
+
     constructor(
         public readonly title: string,
         public readonly help: string  
@@ -35,6 +37,9 @@ export class FloatParam extends Param {
             this.validator(value);
         }
         this.valueInternal = value;
+        if (this.onChange) {
+            this.onChange(value);
+        }
     }
 }
 
@@ -86,5 +91,35 @@ export class IntensityParam extends FloatParam {
             Infinity,  // max: no practical upper limit
             defaultValue
         );
+    }
+}
+
+export class IntParam extends FloatParam {
+    constructor(
+        name: string,
+        documentation: string,
+        min: number,
+        max: number,
+        initialValue: number
+    ) {
+        // Ensure min, max, and initial value are integers
+        const intMin = Math.ceil(min);
+        const intMax = Math.floor(max);
+        const intInitialValue = Math.round(initialValue);
+
+        super(name, documentation, intMin, intMax, intInitialValue);
+    }
+
+    set value(newValue: number) {
+        // Validate before rounding
+        if (newValue < this.min || newValue > this.max) {
+            throw new Error(`Value out of range: ${newValue}`);
+        }
+        // Round to nearest integer before setting
+        super.value = Math.round(newValue);
+    }
+
+    get value(): number {
+        return Math.round(super.value);
     }
 }

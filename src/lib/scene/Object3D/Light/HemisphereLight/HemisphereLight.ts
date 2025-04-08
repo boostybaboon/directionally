@@ -1,5 +1,5 @@
 import { HemisphereLight } from "three";
-import { LightAsset } from "../Light";
+import { LightAsset } from "../LightAsset";
 import { ColorParam } from "$lib/common/Param";
 
 export class HemisphereLightAsset extends LightAsset {

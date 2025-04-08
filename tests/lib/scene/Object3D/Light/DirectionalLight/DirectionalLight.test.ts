@@ -7,7 +7,7 @@ describe("DirectionalLight", () => {
         const light = new DirectionalLightAsset();
         
         expect(light.color.value.getHex()).toBe(0xffffff);
-        expect(light.intensity).toBe(1);
+        expect(light.intensity.value).toBe(1);
     });
 
     it("should set and get color correctly", () => {
@@ -24,9 +24,9 @@ describe("DirectionalLight", () => {
         const light = new DirectionalLightAsset();
         const newIntensity = 2.5;
         
-        light.setIntensity(newIntensity);
+        light.intensity.value = newIntensity;
         
-        expect(light.intensity).toBe(newIntensity);
+        expect(light.intensity.value).toBe(newIntensity);
         expect(light.getDirectionalLight().intensity).toBe(newIntensity);
     });
 

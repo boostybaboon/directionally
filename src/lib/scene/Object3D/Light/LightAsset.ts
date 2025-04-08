@@ -1,11 +1,11 @@
 import { Light } from "three";
 import { Object3DAsset } from "../Object3DAsset";
-import { ColorParam } from "$lib/common/Param";
+import { ColorParam, IntensityParam } from "$lib/common/Param";
 
 export class LightAsset extends Object3DAsset {
     private _light: Light;
     color: ColorParam;
-    intensity: number;
+    intensity: IntensityParam;
 
     constructor(light: Light) {
         super(light);
@@ -17,7 +17,19 @@ export class LightAsset extends Object3DAsset {
             this._light.color
         );
         
-        this.intensity = this._light.intensity;
+        this.intensity = new IntensityParam(
+            "Intensity",
+            "https://threejs.org/docs/index.html#api/en/lights/Light.intensity",
+            this._light.intensity
+        );
+
+        // Set up a watcher to propagate intensity changes to the underlying light
+        Object.defineProperty(this.intensity, 'value', {
+            get: () => this._light.intensity,
+            set: (value: number) => {
+                this._light.intensity = value;
+            }
+        });
     }
 
     /**
@@ -25,14 +37,5 @@ export class LightAsset extends Object3DAsset {
      */
     getLight(): Light {
         return this._light;
-    }
-
-    /**
-     * Set the light's intensity
-     * @param value The new intensity value
-     */
-    setIntensity(value: number): void {
-        this.intensity = value;
-        this._light.intensity = value;
     }
 } 
