@@ -14,69 +14,79 @@ export class PlaneGeometryAsset extends BufferGeometryAsset {
         widthSegments: number = 1, // Three.js default
         heightSegments: number = 1  // Three.js default
     ) {
+        // Create initial geometry with constructor values
         const geometry = new PlaneGeometry(width, height, widthSegments, heightSegments);
         super(geometry);
 
-        // Expose only the properties we want users to be able to modify
+        // Initialize parameters with correct min/max values
         this.width = new FloatParam(
             "Width",
             "https://threejs.org/docs/#api/en/geometries/PlaneGeometry.width",
-            0,  // min
-            Infinity,  // max
-            1   // default matches Three.js
+            width,   // default from constructor
+            0,      // min
+            Infinity  // max - no upper limit
         );
 
         this.height = new FloatParam(
             "Height",
             "https://threejs.org/docs/#api/en/geometries/PlaneGeometry.height",
-            0,
-            Infinity,
-            1
+            height,  // default from constructor
+            0,      // min
+            Infinity  // max - no upper limit
         );
 
         this.widthSegments = new IntParam(
             "Width Segments",
             "https://threejs.org/docs/#api/en/geometries/PlaneGeometry.widthSegments",
-            1,  // min
-            Infinity,
-            1   // default matches Three.js
+            1,      // min
+            Infinity,  // max - no upper limit
+            widthSegments  // default from constructor
         );
 
         this.heightSegments = new IntParam(
             "Height Segments",
             "https://threejs.org/docs/#api/en/geometries/PlaneGeometry.heightSegments",
-            1,
-            Infinity,
-            1
+            1,      // min
+            Infinity,  // max - no upper limit
+            heightSegments  // default from constructor
         );
-
-        // Set initial values from constructor
-        this.width.value = width;
-        this.height.value = height;
-        this.widthSegments.value = widthSegments;
-        this.heightSegments.value = heightSegments;
 
         // Set up change handlers to update the geometry
         this.width.onChange = () => this.updateGeometry();
         this.height.onChange = () => this.updateGeometry();
         this.widthSegments.onChange = () => this.updateGeometry();
         this.heightSegments.onChange = () => this.updateGeometry();
+
+        // Set initial values
+        this.width.value = width;
+        this.height.value = height;
+        this.widthSegments.value = widthSegments;
+        this.heightSegments.value = heightSegments;
     }
 
-    private updateGeometry() {
+    getPlaneGeometry(): PlaneGeometry {
+        return this.getGeometry() as PlaneGeometry;
+    }
+
+    protected updateGeometry(): void {
+        // Create a new geometry with the current parameter values
         const newGeometry = new PlaneGeometry(
             this.width.value,
             this.height.value,
             this.widthSegments.value,
             this.heightSegments.value
         );
-        this.getGeometry().copy(newGeometry);
-    }
 
-    /**
-     * Get the underlying Three.js PlaneGeometry instance
-     */
-    getPlaneGeometry(): PlaneGeometry {
-        return this.getGeometry() as PlaneGeometry;
+        // Get the existing geometry and copy the new one's attributes
+        const geometry = this.getPlaneGeometry();
+        geometry.copy(newGeometry);
+
+        // Force update the parameters
+        Object.assign(geometry.parameters, {
+            width: this.width.value,
+            height: this.height.value,
+            widthSegments: this.widthSegments.value,
+            heightSegments: this.heightSegments.value
+        });
     }
 } 

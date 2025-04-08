@@ -20,20 +20,23 @@ export class LightAsset extends Object3DAsset {
         this.intensity = new IntensityParam(
             "Intensity",
             "https://threejs.org/docs/index.html#api/en/lights/Light.intensity",
-            this._light.intensity
+            1  // Default intensity
         );
 
         // Set up watchers to propagate changes to the underlying light
-        this.color.onChange = () => {
-            this._light.color.copy(this.color.value);
-        };
+        this.color.onChange = () => this.updateLight();
+        this.intensity.onChange = () => this.updateLight();
 
-        this.intensity.onChange = () => {
-            if (this.intensity.value < 0) {
-                throw new Error("Intensity must be non-negative");
-            }
-            this._light.intensity = this.intensity.value;
-        };
+        // Initialize light properties
+        this.updateLight();
+    }
+
+    /**
+     * Update the underlying Three.js light with current parameter values
+     */
+    protected updateLight(): void {
+        this._light.color.copy(this.color.value);
+        this._light.intensity = this.intensity.value;
     }
 
     /**

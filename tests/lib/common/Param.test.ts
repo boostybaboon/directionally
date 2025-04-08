@@ -29,8 +29,13 @@ describe("IntParam", () => {
     it("should enforce min/max constraints with integer values", () => {
         const param = new IntParam("test", "doc", 1, 10, 5);
         
-        expect(() => param.value = 0.7).toThrow();  // Rounds to 1, but still below min
-        expect(() => param.value = 10.2).toThrow(); // Rounds to 10, at max
+        expect(() => param.value = 0.2).toThrow();  // Rounds to 0, below min
         expect(() => param.value = 10.7).toThrow(); // Rounds to 11, above max
+        
+        param.value = 0.7;
+        expect(param.value).toBe(1);  // Rounds to 1, within range
+        
+        param.value = 10.2;
+        expect(param.value).toBe(10); // Rounds to 10, within range
     });
 }); 

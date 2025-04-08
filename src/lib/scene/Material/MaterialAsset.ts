@@ -17,9 +17,9 @@ export class MaterialAsset {
         this.opacity = new FloatParam(
             "Opacity",
             "https://threejs.org/docs/#api/en/materials/Material.opacity",
-            0,  // min
-            1,  // max
-            1.0 // default matches Three.js
+            1.0, // default matches Three.js
+            0,   // min
+            1    // max
         );
 
         this.transparent = new BooleanParam(

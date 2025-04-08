@@ -3,6 +3,8 @@ import { Object3DAsset } from "../Object3DAsset";
 import { BufferGeometryAsset } from "../../Geometry/BufferGeometry/BufferGeometryAsset";
 import { MaterialAsset } from "../../Material/MaterialAsset";
 import { Vector3Param } from "$lib/common/Param";
+import { Asset } from "../../../common/Asset";
+import type { PropertyDescriptor } from "../../../common/Asset";
 
 export class MeshAsset extends Object3DAsset {
     private _mesh: Mesh;
@@ -11,10 +13,10 @@ export class MeshAsset extends Object3DAsset {
     rotation: Vector3Param;
     scale: Vector3Param;
 
-    constructor(geometry: BufferGeometryAsset, material: MaterialAsset) {
-        const mesh = new Mesh(geometry.getGeometry(), material.getMaterial());
-        super(mesh);
-        this._mesh = mesh;
+    constructor(geometry: BufferGeometryAsset, material: MaterialAsset, mesh?: Mesh) {
+        const threeMesh = mesh || new Mesh(geometry.getGeometry(), material.getMaterial());
+        super(threeMesh);
+        this._mesh = threeMesh;
         this._geometry = geometry;
         this._material = material;
 
@@ -39,9 +41,16 @@ export class MeshAsset extends Object3DAsset {
         this.scale.onChange = (newScale) => {
             this._mesh.scale.copy(newScale);
         };
-        
-        // Debug: Log initial position
-        console.log('MeshAsset created with initial position:', this._mesh.position);
+
+        // Update the mesh when geometry or material changes
+        this.updateGeometry();
+        this.updateMaterial();
+    }
+
+    getProperties(): Map<string, PropertyDescriptor> {
+        // MeshAsset doesn't have any properties of its own
+        // It inherits Object3D properties and delegates to geometry and material
+        return new Map();
     }
 
     /**
@@ -71,5 +80,19 @@ export class MeshAsset extends Object3DAsset {
     setRotationFromEuler(x: number, y: number, z: number): void {
         const newRotation = new Vector3(x, y, z);
         this.rotation.value = newRotation;
+    }
+
+    /**
+     * Update the mesh's geometry from the geometry asset
+     */
+    private updateGeometry(): void {
+        this._mesh.geometry = this._geometry.getGeometry();
+    }
+
+    /**
+     * Update the mesh's material from the material asset
+     */
+    private updateMaterial(): void {
+        this._mesh.material = this._material.getMaterial();
     }
 } 

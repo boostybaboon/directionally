@@ -1,6 +1,7 @@
 import { MeshStandardMaterial, Color } from "three";
 import { MaterialAsset } from "../MaterialAsset";
 import { ColorParam, FloatParam, BooleanParam } from "$lib/common/Param";
+import type { PropertyDescriptor } from "../../../common/Asset";
 
 export class MeshStandardMaterialAsset extends MaterialAsset {
     color: ColorParam;
@@ -34,50 +35,59 @@ export class MeshStandardMaterialAsset extends MaterialAsset {
         // Expose only the properties we want users to be able to modify
         this.color = new ColorParam(
             "Color",
-            "https://threejs.org/docs/#api/en/materials/MeshStandardMaterial.color",
+            "The base color of the material",
             new Color(color)
         );
 
         this.roughness = new FloatParam(
             "Roughness",
-            "https://threejs.org/docs/#api/en/materials/MeshStandardMaterial.roughness",
-            0,  // min
-            1,  // max
-            1.0 // default matches Three.js
+            "How rough the material appears (0 = smooth, 1 = rough)",
+            roughness,
+            0,
+            1,
+            (value: number) => {
+                if (value < 0 || value > 1) throw new Error("Roughness must be between 0 and 1");
+            }
         );
 
         this.metalness = new FloatParam(
             "Metalness",
-            "https://threejs.org/docs/#api/en/materials/MeshStandardMaterial.metalness",
-            0,  // min
-            1,  // max
-            0.0 // default matches Three.js
+            "How metallic the material appears (0 = non-metal, 1 = metal)",
+            metalness,
+            0,
+            1,
+            (value: number) => {
+                if (value < 0 || value > 1) throw new Error("Metalness must be between 0 and 1");
+            }
         );
 
         this.emissive = new ColorParam(
             "Emissive",
-            "https://threejs.org/docs/#api/en/materials/MeshStandardMaterial.emissive",
+            "The emissive color of the material",
             new Color(emissive)
         );
 
         this.emissiveIntensity = new FloatParam(
             "Emissive Intensity",
-            "https://threejs.org/docs/#api/en/materials/MeshStandardMaterial.emissiveIntensity",
-            0,  // min
-            Infinity,  // max
-            1.0 // default matches Three.js
+            "Intensity of the emissive light",
+            emissiveIntensity,
+            0,
+            Infinity,
+            (value: number) => {
+                if (value < 0) throw new Error("Emissive intensity must be non-negative");
+            }
         );
 
         this.wireframe = new BooleanParam(
             "Wireframe",
-            "https://threejs.org/docs/#api/en/materials/MeshStandardMaterial.wireframe",
-            false
+            "Render geometry as wireframe",
+            wireframe
         );
 
         this.flatShading = new BooleanParam(
             "Flat Shading",
-            "https://threejs.org/docs/#api/en/materials/MeshStandardMaterial.flatShading",
-            false
+            "Use flat shading instead of smooth shading",
+            flatShading
         );
 
         // Set initial values from constructor
@@ -97,6 +107,88 @@ export class MeshStandardMaterialAsset extends MaterialAsset {
         this.emissiveIntensity.onChange = () => this.updateMaterial();
         this.wireframe.onChange = () => this.updateMaterial();
         this.flatShading.onChange = () => this.updateMaterial();
+    }
+
+    getProperties(): Map<string, PropertyDescriptor> {
+        const properties = new Map<string, PropertyDescriptor>();
+
+        // Add color property
+        properties.set('color', {
+            title: 'Color',
+            help: 'The base color of the material',
+            type: 'color',
+            defaultValue: this.color.defaultValue,
+            value: this.color.value,
+            onChange: (value: Color) => this.color.value = value
+        });
+
+        // Add roughness property
+        properties.set('roughness', {
+            title: 'Roughness',
+            help: 'How rough the material appears (0 = smooth, 1 = rough)',
+            type: 'float',
+            min: 0,
+            max: 1,
+            defaultValue: this.roughness.defaultValue,
+            value: this.roughness.value,
+            onChange: (value: number) => this.roughness.value = value
+        });
+
+        // Add metalness property
+        properties.set('metalness', {
+            title: 'Metalness',
+            help: 'How metallic the material appears (0 = non-metal, 1 = metal)',
+            type: 'float',
+            min: 0,
+            max: 1,
+            defaultValue: this.metalness.defaultValue,
+            value: this.metalness.value,
+            onChange: (value: number) => this.metalness.value = value
+        });
+
+        // Add emissive property
+        properties.set('emissive', {
+            title: 'Emissive',
+            help: 'The emissive color of the material',
+            type: 'color',
+            defaultValue: this.emissive.defaultValue,
+            value: this.emissive.value,
+            onChange: (value: Color) => this.emissive.value = value
+        });
+
+        // Add emissiveIntensity property
+        properties.set('emissiveIntensity', {
+            title: 'Emissive Intensity',
+            help: 'Intensity of the emissive light',
+            type: 'float',
+            min: 0,
+            max: Infinity,
+            defaultValue: this.emissiveIntensity.defaultValue,
+            value: this.emissiveIntensity.value,
+            onChange: (value: number) => this.emissiveIntensity.value = value
+        });
+
+        // Add wireframe property
+        properties.set('wireframe', {
+            title: 'Wireframe',
+            help: 'Render geometry as wireframe',
+            type: 'boolean',
+            defaultValue: this.wireframe.defaultValue,
+            value: this.wireframe.value,
+            onChange: (value: boolean) => this.wireframe.value = value
+        });
+
+        // Add flatShading property
+        properties.set('flatShading', {
+            title: 'Flat Shading',
+            help: 'Use flat shading instead of smooth shading',
+            type: 'boolean',
+            defaultValue: this.flatShading.defaultValue,
+            value: this.flatShading.value,
+            onChange: (value: boolean) => this.flatShading.value = value
+        });
+
+        return properties;
     }
 
     /**

@@ -2,8 +2,10 @@
 
 import { Vector3Param } from "../../common/Param";
 import { Vector3, Quaternion, MathUtils, Object3D, Euler, Matrix4 } from "three";
+import { Asset } from "../../common/Asset";
+import type { PropertyDescriptor } from "../../common/Asset";
 
-export class Object3DAsset {
+export class Object3DAsset extends Asset {
     public readonly object3D: Object3D;
     public readonly position: Vector3Param;
     public readonly rotation: Vector3Param;
@@ -12,45 +14,56 @@ export class Object3DAsset {
     private _lastUpLookAt: { up: Vector3, lookAt: Vector3 } | null = null;
 
     constructor(object3D: Object3D = new Object3D()) {
+        super();
         this.object3D = object3D;
         
         // Initialize position parameter
+        const initialPosition = new Vector3();
+        initialPosition.copy(object3D.position);
         this.position = new Vector3Param(
             "Position",
             "The position of the object in 3D space",
-            new Vector3(0, 0, 0)
+            initialPosition
         );
         
         // Initialize rotation parameter (in radians)
+        const initialRotation = new Vector3(
+            object3D.rotation.x,
+            object3D.rotation.y,
+            object3D.rotation.z
+        );
         this.rotation = new Vector3Param(
             "Rotation",
             "The rotation of the object in Euler angles (radians)",
-            new Vector3(0, 0, 0)
+            initialRotation
         );
         
         // Initialize scale parameter
+        const initialScale = new Vector3();
+        initialScale.copy(object3D.scale);
         this.scale = new Vector3Param(
             "Scale",
             "The scale of the object along each axis",
-            new Vector3(1, 1, 1)
+            initialScale
         );
 
         // Set up change handlers
-        this.position.onChange = (newValue) => {
-            this.object3D.position.copy(newValue);
-        };
-
-        this.rotation.onChange = (newValue) => {
-            this.object3D.rotation.set(newValue.x, newValue.y, newValue.z);
-            this._lastRotationMethod = 'euler';
+        this.position.onChange = () => this.updateObject3D();
+        this.rotation.onChange = () => {
+            this._lastRotationMethod = null;
             this._lastUpLookAt = null;
+            this.updateObject3D();
         };
-
-        this.scale.onChange = (newValue) => {
-            this.object3D.scale.copy(newValue);
-        };
+        this.scale.onChange = () => this.updateObject3D();
 
         // Initialize object3D properties
+        this.updateObject3D();
+    }
+
+    /**
+     * Update the underlying Three.js Object3D with current parameter values
+     */
+    protected updateObject3D(): void {
         this.object3D.position.copy(this.position.value);
         this.object3D.rotation.set(
             this.rotation.value.x,
@@ -75,6 +88,7 @@ export class Object3DAsset {
             up: up.clone(),
             lookAt: lookAt.clone()
         };
+        this.updateObject3D();
     }
 
     /**
@@ -94,6 +108,7 @@ export class Object3DAsset {
         this.rotation.value.copy(this.object3D.rotation);
         this._lastRotationMethod = 'euler';
         this._lastUpLookAt = null;
+        this.updateObject3D();
     }
 
     /**
@@ -108,6 +123,7 @@ export class Object3DAsset {
         this.rotation.value.copy(this.object3D.rotation);
         this._lastRotationMethod = 'axisAngle';
         this._lastUpLookAt = null;
+        this.updateObject3D();
     }
 
     /**
@@ -180,5 +196,41 @@ export class Object3DAsset {
      */
     getObject3D(): Object3D {
         return this.object3D;
+    }
+
+    getProperties(): Map<string, PropertyDescriptor> {
+        const properties = new Map<string, PropertyDescriptor>();
+
+        // Add position properties
+        properties.set('position', {
+            title: 'Position',
+            help: 'The position of the object in 3D space',
+            type: 'vector3',
+            defaultValue: this.position.defaultValue,
+            value: this.position.value,
+            onChange: (value: Vector3) => this.position.value = value
+        });
+
+        // Add rotation properties
+        properties.set('rotation', {
+            title: 'Rotation',
+            help: 'The rotation of the object in Euler angles (radians)',
+            type: 'vector3',
+            defaultValue: this.rotation.defaultValue,
+            value: this.rotation.value,
+            onChange: (value: Vector3) => this.rotation.value = value
+        });
+
+        // Add scale properties
+        properties.set('scale', {
+            title: 'Scale',
+            help: 'The scale of the object along each axis',
+            type: 'vector3',
+            defaultValue: this.scale.defaultValue,
+            value: this.scale.value,
+            onChange: (value: Vector3) => this.scale.value = value
+        });
+
+        return properties;
     }
 }

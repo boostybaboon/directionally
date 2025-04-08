@@ -1,6 +1,8 @@
 import { SphereGeometry } from "three";
 import { BufferGeometryAsset } from "../BufferGeometry/BufferGeometryAsset";
 import { FloatParam, IntParam } from "$lib/common/Param";
+import { Asset } from "../../../common/Asset";
+import type { PropertyDescriptor } from "../../../common/Asset";
 
 export class SphereGeometryAsset extends BufferGeometryAsset {
     radius: FloatParam;
@@ -12,13 +14,13 @@ export class SphereGeometryAsset extends BufferGeometryAsset {
     thetaLength: FloatParam;
 
     constructor(
-        radius: number = 1,  // Three.js default
-        widthSegments: number = 32, // Three.js default
-        heightSegments: number = 16, // Three.js default
-        phiStart: number = 0, // Three.js default
-        phiLength: number = Math.PI * 2, // Three.js default
-        thetaStart: number = 0, // Three.js default
-        thetaLength: number = Math.PI // Three.js default
+        radius: number = 1,
+        widthSegments: number = 32,
+        heightSegments: number = 16,
+        phiStart: number = 0,
+        phiLength: number = Math.PI * 2,
+        thetaStart: number = 0,
+        thetaLength: number = Math.PI
     ) {
         const geometry = new SphereGeometry(
             radius,
@@ -31,71 +33,77 @@ export class SphereGeometryAsset extends BufferGeometryAsset {
         );
         super(geometry);
 
-        // Expose only the properties we want users to be able to modify
+        // Initialize parameters
         this.radius = new FloatParam(
             "Radius",
-            "https://threejs.org/docs/#api/en/geometries/SphereGeometry.radius",
-            0,  // min
-            Infinity,  // max
-            1   // default matches Three.js
+            "The radius of the sphere",
+            radius,
+            0,
+            Infinity,
+            (value: number) => {
+                if (value < 0) throw new Error("Radius must be non-negative");
+            }
         );
 
         this.widthSegments = new IntParam(
             "Width Segments",
-            "https://threejs.org/docs/#api/en/geometries/SphereGeometry.widthSegments",
-            3,  // min (sphere needs at least 3 segments)
+            "Number of horizontal segments",
+            3,
             Infinity,
-            32  // default matches Three.js
+            widthSegments
         );
 
         this.heightSegments = new IntParam(
             "Height Segments",
-            "https://threejs.org/docs/#api/en/geometries/SphereGeometry.heightSegments",
-            2,  // min (sphere needs at least 2 segments)
+            "Number of vertical segments",
+            2,
             Infinity,
-            16  // default matches Three.js
+            heightSegments
         );
 
         this.phiStart = new FloatParam(
             "Phi Start",
-            "https://threejs.org/docs/#api/en/geometries/SphereGeometry.phiStart",
+            "Horizontal starting angle",
+            phiStart,
             0,
             Math.PI * 2,
-            0
+            (value: number) => {
+                if (value < 0 || value > Math.PI * 2) throw new Error("Phi start must be between 0 and 2π");
+            }
         );
 
         this.phiLength = new FloatParam(
             "Phi Length",
-            "https://threejs.org/docs/#api/en/geometries/SphereGeometry.phiLength",
+            "Horizontal sweep angle size",
+            phiLength,
             0,
             Math.PI * 2,
-            Math.PI * 2
+            (value: number) => {
+                if (value < 0 || value > Math.PI * 2) throw new Error("Phi length must be between 0 and 2π");
+            }
         );
 
         this.thetaStart = new FloatParam(
             "Theta Start",
-            "https://threejs.org/docs/#api/en/geometries/SphereGeometry.thetaStart",
+            "Vertical starting angle",
+            thetaStart,
             0,
             Math.PI,
-            0
+            (value: number) => {
+                if (value < 0 || value > Math.PI) throw new Error("Theta start must be between 0 and π");
+            }
         );
 
         this.thetaLength = new FloatParam(
             "Theta Length",
-            "https://threejs.org/docs/#api/en/geometries/SphereGeometry.thetaLength",
+            "Vertical sweep angle size",
+            thetaLength,
             0,
             Math.PI,
-            Math.PI
+            (value: number) => {
+                if (value < 0 || value > Math.PI) throw new Error("Theta length must be between 0 and π");
+            }
         );
-
-        // Set initial values from constructor
-        this.radius.value = radius;
-        this.widthSegments.value = widthSegments;
-        this.heightSegments.value = heightSegments;
-        this.phiStart.value = phiStart;
-        this.phiLength.value = phiLength;
-        this.thetaStart.value = thetaStart;
-        this.thetaLength.value = thetaLength;
 
         // Set up change handlers to update the geometry
         this.radius.onChange = () => this.updateGeometry();
@@ -129,5 +137,47 @@ export class SphereGeometryAsset extends BufferGeometryAsset {
      */
     getSphereGeometry(): SphereGeometry {
         return this.getGeometry() as SphereGeometry;
+    }
+
+    getProperties(): Map<string, PropertyDescriptor> {
+        const properties = new Map<string, PropertyDescriptor>();
+
+        // Add radius property
+        properties.set('radius', {
+            title: 'Radius',
+            help: 'The radius of the sphere',
+            type: 'float',
+            min: 0,
+            max: Infinity,
+            defaultValue: this.radius.defaultValue,
+            value: this.radius.value,
+            onChange: (value) => this.radius.value = value
+        });
+
+        // Add widthSegments property
+        properties.set('widthSegments', {
+            title: 'Width Segments',
+            help: 'Number of horizontal segments',
+            type: 'int',
+            min: 3,
+            max: Infinity,
+            defaultValue: this.widthSegments.defaultValue,
+            value: this.widthSegments.value,
+            onChange: (value) => this.widthSegments.value = value
+        });
+
+        // Add heightSegments property
+        properties.set('heightSegments', {
+            title: 'Height Segments',
+            help: 'Number of vertical segments',
+            type: 'int',
+            min: 2,
+            max: Infinity,
+            defaultValue: this.heightSegments.defaultValue,
+            value: this.heightSegments.value,
+            onChange: (value) => this.heightSegments.value = value
+        });
+
+        return properties;
     }
 } 

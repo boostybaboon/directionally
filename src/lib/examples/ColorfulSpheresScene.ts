@@ -43,9 +43,7 @@ export function createColorfulSpheresScene() {
         const material = new MeshStandardMaterialAsset();
         material.color.value = new Color(config.color);
         const sphere = new MeshAsset(sphereGeometry, material);
-        console.log('Setting sphere position to:', config.position);
         sphere.position.value = new Vector3(...config.position);
-        console.log('Sphere position after setting:', sphere.position.value);
         spheres.push(sphere);
     });
 
