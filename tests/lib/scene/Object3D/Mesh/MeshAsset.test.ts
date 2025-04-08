@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { MeshAsset } from "$lib/scene/Object3D/Mesh/MeshAsset";
 import { PlaneGeometryAsset } from "$lib/scene/Geometry/PlaneGeometry/PlaneGeometryAsset";
 import { MeshStandardMaterialAsset } from "$lib/scene/Material/MeshStandardMaterial/MeshStandardMaterialAsset";
-import { Color, Vector3 } from "three";
+import { Color, Vector3, MeshStandardMaterial, PlaneGeometry } from "three";
 
 describe("MeshAsset", () => {
     let mesh: MeshAsset;
@@ -31,12 +31,12 @@ describe("MeshAsset", () => {
 
     it("should update material when material properties change", () => {
         material.color.value = new Color(0xff0000);
-        expect(mesh.getMesh().material.color.getHex()).toBe(0xff0000);
+        expect((mesh.getMesh().material as MeshStandardMaterial).color.getHex()).toBe(0xff0000);
     });
 
     it("should update geometry when geometry properties change", () => {
         geometry.width.value = 2;
-        expect(mesh.getMesh().geometry.parameters.width).toBe(2);
+        expect((mesh.getMesh().geometry as PlaneGeometry).parameters.width).toBe(2);
     });
 
     it("should update rotation when rotation is set", () => {
@@ -56,7 +56,7 @@ describe("MeshAsset", () => {
     });
 
     it("should set rotation from Euler angles", () => {
-        mesh.setRotationFromEuler(Math.PI/2, Math.PI/4, Math.PI/6);
+        mesh.setRotationFromEuler(90, 45, 30);
         expect(mesh.getMesh().rotation.x).toBe(Math.PI/2);
         expect(mesh.getMesh().rotation.y).toBe(Math.PI/4);
         expect(mesh.getMesh().rotation.z).toBe(Math.PI/6);

@@ -10,8 +10,6 @@ export class MeshAsset extends Object3DAsset {
     private _mesh: Mesh;
     private _geometry: BufferGeometryAsset;
     private _material: MaterialAsset;
-    rotation: Vector3Param;
-    scale: Vector3Param;
 
     constructor(geometry: BufferGeometryAsset, material: MaterialAsset, mesh?: Mesh) {
         const threeMesh = mesh || new Mesh(geometry.getGeometry(), material.getMaterial());
@@ -19,28 +17,6 @@ export class MeshAsset extends Object3DAsset {
         this._mesh = threeMesh;
         this._geometry = geometry;
         this._material = material;
-
-        // Initialize rotation and scale parameters
-        this.rotation = new Vector3Param(
-            "Rotation",
-            "https://threejs.org/docs/#api/en/core/Object3D.rotation",
-            new Vector3(0, 0, 0)
-        );
-
-        this.scale = new Vector3Param(
-            "Scale",
-            "https://threejs.org/docs/#api/en/core/Object3D.scale",
-            new Vector3(1, 1, 1)
-        );
-
-        // Set up change handlers
-        this.rotation.onChange = (newRotation) => {
-            this._mesh.rotation.setFromVector3(newRotation);
-        };
-
-        this.scale.onChange = (newScale) => {
-            this._mesh.scale.copy(newScale);
-        };
 
         // Update the mesh when geometry or material changes
         this.updateGeometry();
@@ -72,14 +48,6 @@ export class MeshAsset extends Object3DAsset {
      */
     getMaterial(): MaterialAsset {
         return this._material;
-    }
-
-    /**
-     * Set rotation using Euler angles (in radians)
-     */
-    setRotationFromEuler(x: number, y: number, z: number): void {
-        const newRotation = new Vector3(x, y, z);
-        this.rotation.value = newRotation;
     }
 
     /**
