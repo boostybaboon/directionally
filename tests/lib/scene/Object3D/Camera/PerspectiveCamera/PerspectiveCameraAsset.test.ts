@@ -1,21 +1,22 @@
 import { describe, it, expect } from 'vitest';
 import { PerspectiveCameraAsset } from '$lib/scene/Object3D/Camera/PerspectiveCamera/PerspectiveCameraAsset';
+import { PerspectiveCamera } from 'three';
 
 describe('PerspectiveCameraAsset', () => {
   it('should initialize with default values', () => {
     const camera = new PerspectiveCameraAsset();
 
-    expect(camera.fov.value).toBe(50); // Default FOV
-    expect(camera.aspect.value).toBe(1); // Default aspect ratio
-    expect(camera.near.value).toBe(0.1); // Default near plane
-    expect(camera.far.value).toBe(2000); // Default far plane
+    expect(camera.fov).toBe(50); // Default FOV
+    expect(camera.aspect).toBe(1); // Default aspect ratio
+    expect(camera.near).toBe(0.1); // Default near plane
+    expect(camera.far).toBe(2000); // Default far plane
   });
 
   it('should throw an error if near >= far', () => {
     const camera = new PerspectiveCameraAsset();
 
     expect(() => {
-      camera.near.value = 2500; // Invalid: near >= far
+      camera.near = 2500; // Invalid: near >= far
     }).toThrowError('Near plane (2500) must be less than far plane (2000).');
   });
 
@@ -23,17 +24,34 @@ describe('PerspectiveCameraAsset', () => {
     const camera = new PerspectiveCameraAsset();
 
     expect(() => {
-      camera.far.value = 0.05; // Invalid: far <= near
+      camera.far = 0.05; // Invalid: far <= near
     }).toThrowError('Far plane (0.05) must be greater than near plane (0.1).');
   });
 
   it('should allow valid near and far values', () => {
     const camera = new PerspectiveCameraAsset();
 
-    camera.near.value = 0.5; // Valid
-    camera.far.value = 1000; // Valid
+    camera.near = 0.5; // Valid
+    camera.far = 1000; // Valid
 
-    expect(camera.near.value).toBe(0.5);
-    expect(camera.far.value).toBe(1000);
+    expect(camera.near).toBe(0.5);
+    expect(camera.far).toBe(1000);
+  });
+
+  it('should update the underlying Three.js camera when properties change', () => {
+    const threeCamera = new PerspectiveCamera();
+    const camera = new PerspectiveCameraAsset(threeCamera);
+
+    camera.fov = 60;
+    expect(threeCamera.fov).toBe(60);
+
+    camera.aspect = 2;
+    expect(threeCamera.aspect).toBe(2);
+
+    camera.near = 1;
+    expect(threeCamera.near).toBe(1);
+
+    camera.far = 1000;
+    expect(threeCamera.far).toBe(1000);
   });
 });

@@ -1,4 +1,4 @@
-import type { Vector3 } from "three";
+import type { Vector3, Color } from "three";
 
 export class Param {
     constructor(
@@ -48,5 +48,43 @@ export class Vector3Param extends Param {
     ) {
         super(title, help);
         this.value = defaultValue;
+    }
+}
+
+export class ColorParam extends Param {
+    private _value: Color;
+
+    constructor(
+        title: string,
+        help: string,
+        public readonly defaultValue: Color
+    ) {
+        super(title, help);
+        this._value = defaultValue.clone();
+    }
+
+    get value(): Color {
+        return this._value;
+    }
+
+    set value(newColor: Color) {
+        this._value.copy(newColor);
+        this.defaultValue.copy(newColor);
+    }
+}
+
+export class IntensityParam extends FloatParam {
+    constructor(
+        title: string,
+        help: string,
+        defaultValue: number = 1.0
+    ) {
+        super(
+            title,
+            help,
+            0,  // min: lights can't have negative intensity
+            Infinity,  // max: no practical upper limit
+            defaultValue
+        );
     }
 }
