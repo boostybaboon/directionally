@@ -1,7 +1,8 @@
 import { Material, FrontSide, BackSide, DoubleSide } from "three";
 import { FloatParam, BooleanParam, IntParam } from "$lib/common/Param";
+import { Asset, PropertyDescriptor } from "$lib/common/Asset";
 
-export class MaterialAsset {
+export class MaterialAsset extends Asset {
     private _material: Material;
     opacity: FloatParam;
     transparent: BooleanParam;
@@ -11,6 +12,7 @@ export class MaterialAsset {
     needsUpdate: BooleanParam;
 
     constructor(material: Material) {
+        super();
         this._material = material;
 
         // Initialize parameters with Three.js defaults
@@ -89,5 +91,15 @@ export class MaterialAsset {
      */
     getMaterial(): Material {
         return this._material;
+    }
+
+    getProperties(): Map<string, PropertyDescriptor> {
+        const properties = new Map<string, PropertyDescriptor>();
+        properties.set("opacity", this.opacity.getPropertyDescriptor());
+        properties.set("transparent", this.transparent.getPropertyDescriptor());
+        properties.set("visible", this.visible.getPropertyDescriptor());
+        properties.set("side", this.side.getPropertyDescriptor());
+        properties.set("needsUpdate", this.needsUpdate.getPropertyDescriptor());
+        return properties;
     }
 } 

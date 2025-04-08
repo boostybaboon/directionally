@@ -1,4 +1,5 @@
 import { Vector3, Color } from "three";
+import type { PropertyDescriptor } from "./Asset";
 
 export type ParamType = 'int' | 'float' | 'vector3' | 'color' | 'boolean';
 
@@ -50,6 +51,19 @@ export abstract class Param<T> {
 
     set onChange(handler: (value: T) => void) {
         this._onChange = handler;
+    }
+
+    getPropertyDescriptor(): PropertyDescriptor {
+        return {
+            title: this._title,
+            help: this._help,
+            type: this.getType(),
+            value: this._value,
+            defaultValue: this._defaultValue,
+            onChange: (value: T) => {
+                this.value = value;
+            }
+        };
     }
 }
 

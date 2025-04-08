@@ -5,6 +5,7 @@ import { MaterialAsset } from "../../Material/MaterialAsset";
 import { Vector3Param } from "$lib/common/Param";
 import { Asset } from "../../../common/Asset";
 import type { PropertyDescriptor } from "../../../common/Asset";
+import type { HierarchicalProperties } from "../../../common/Asset";
 
 export class MeshAsset extends Object3DAsset {
     private _mesh: Mesh;
@@ -21,12 +22,32 @@ export class MeshAsset extends Object3DAsset {
         // Update the mesh when geometry or material changes
         this.updateGeometry();
         this.updateMaterial();
+
+        // Set up change handlers for geometry and material
+        (this._geometry as Asset).getProperties().forEach((prop: PropertyDescriptor, key: string) => {
+            if (prop.onChange) {
+                const originalOnChange = prop.onChange;
+                prop.onChange = (value: any) => {
+                    originalOnChange(value);
+                    this.updateGeometry();
+                };
+            }
+        });
+
+        (this._material as Asset).getProperties().forEach((prop: PropertyDescriptor, key: string) => {
+            if (prop.onChange) {
+                const originalOnChange = prop.onChange;
+                prop.onChange = (value: any) => {
+                    originalOnChange(value);
+                    this.updateMaterial();
+                };
+            }
+        });
     }
 
     getProperties(): Map<string, PropertyDescriptor> {
-        // MeshAsset doesn't have any properties of its own
-        // It inherits Object3D properties and delegates to geometry and material
-        return new Map();
+        // MeshAsset inherits properties from Object3DAsset
+        return super.getProperties();
     }
 
     /**
@@ -62,5 +83,31 @@ export class MeshAsset extends Object3DAsset {
      */
     private updateMaterial(): void {
         this._mesh.material = this._material.getMaterial();
+    }
+
+    getHierarchicalProperties(title: string): HierarchicalProperties {
+        const result: HierarchicalProperties = {
+            title,
+            properties: this.getProperties(),
+            children: []
+        };
+
+        // Add Object3D properties first
+        const object3DProps: HierarchicalProperties = {
+            title: 'Object3D',
+            properties: super.getProperties(),
+            children: []
+        };
+        result.children.push(object3DProps);
+
+        // Add Geometry properties second
+        const geometryProps = this._geometry.getHierarchicalProperties('Geometry');
+        result.children.push(geometryProps);
+
+        // Add Material properties last
+        const materialProps = this._material.getHierarchicalProperties('Material');
+        result.children.push(materialProps);
+
+        return result;
     }
 } 

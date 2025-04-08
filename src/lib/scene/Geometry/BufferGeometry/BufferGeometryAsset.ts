@@ -1,9 +1,11 @@
 import { BufferGeometry } from "three";
+import { Asset, PropertyDescriptor } from "$lib/common/Asset";
 
-export class BufferGeometryAsset {
+export class BufferGeometryAsset extends Asset {
     private _geometry: BufferGeometry;
 
     constructor(geometry: BufferGeometry) {
+        super();
         this._geometry = geometry;
     }
 
@@ -19,5 +21,10 @@ export class BufferGeometryAsset {
      */
     protected setGeometry(geometry: BufferGeometry): void {
         this._geometry = geometry;
+    }
+
+    getProperties(): Map<string, PropertyDescriptor> {
+        // BufferGeometry doesn't have any parameters in the base class
+        return new Map<string, PropertyDescriptor>();
     }
 } 

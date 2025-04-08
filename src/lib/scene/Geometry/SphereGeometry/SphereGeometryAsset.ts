@@ -143,39 +143,39 @@ export class SphereGeometryAsset extends BufferGeometryAsset {
         const properties = new Map<string, PropertyDescriptor>();
 
         // Add radius property
-        properties.set('radius', {
-            title: 'Radius',
-            help: 'The radius of the sphere',
-            type: 'float',
-            min: 0,
-            max: Infinity,
+        properties.set("radius", {
+            title: this.radius.title,
+            help: this.radius.help,
+            type: "float",
+            min: this.radius.min,
+            max: this.radius.max,
             defaultValue: this.radius.defaultValue,
             value: this.radius.value,
-            onChange: (value) => this.radius.value = value
+            onChange: (value: number) => this.radius.value = value
         });
 
         // Add widthSegments property
-        properties.set('widthSegments', {
-            title: 'Width Segments',
-            help: 'Number of horizontal segments',
-            type: 'int',
-            min: 3,
-            max: Infinity,
+        properties.set("widthSegments", {
+            title: this.widthSegments.title,
+            help: this.widthSegments.help,
+            type: "int",
+            min: this.widthSegments.min,
+            max: this.widthSegments.max,
             defaultValue: this.widthSegments.defaultValue,
             value: this.widthSegments.value,
-            onChange: (value) => this.widthSegments.value = value
+            onChange: (value: number) => this.widthSegments.value = value
         });
 
         // Add heightSegments property
-        properties.set('heightSegments', {
-            title: 'Height Segments',
-            help: 'Number of vertical segments',
-            type: 'int',
-            min: 2,
-            max: Infinity,
+        properties.set("heightSegments", {
+            title: this.heightSegments.title,
+            help: this.heightSegments.help,
+            type: "int",
+            min: this.heightSegments.min,
+            max: this.heightSegments.max,
             defaultValue: this.heightSegments.defaultValue,
             value: this.heightSegments.value,
-            onChange: (value) => this.heightSegments.value = value
+            onChange: (value: number) => this.heightSegments.value = value
         });
 
         return properties;

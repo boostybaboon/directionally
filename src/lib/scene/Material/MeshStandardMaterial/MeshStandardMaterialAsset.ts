@@ -113,34 +113,34 @@ export class MeshStandardMaterialAsset extends MaterialAsset {
         const properties = new Map<string, PropertyDescriptor>();
 
         // Add color property
-        properties.set('color', {
-            title: 'Color',
-            help: 'The base color of the material',
-            type: 'color',
+        properties.set("color", {
+            title: this.color.title,
+            help: this.color.help,
+            type: "color",
             defaultValue: this.color.defaultValue,
             value: this.color.value,
             onChange: (value: Color) => this.color.value = value
         });
 
         // Add roughness property
-        properties.set('roughness', {
-            title: 'Roughness',
-            help: 'How rough the material appears (0 = smooth, 1 = rough)',
-            type: 'float',
-            min: 0,
-            max: 1,
+        properties.set("roughness", {
+            title: this.roughness.title,
+            help: this.roughness.help,
+            type: "float",
+            min: this.roughness.min,
+            max: this.roughness.max,
             defaultValue: this.roughness.defaultValue,
             value: this.roughness.value,
             onChange: (value: number) => this.roughness.value = value
         });
 
         // Add metalness property
-        properties.set('metalness', {
-            title: 'Metalness',
-            help: 'How metallic the material appears (0 = non-metal, 1 = metal)',
-            type: 'float',
-            min: 0,
-            max: 1,
+        properties.set("metalness", {
+            title: this.metalness.title,
+            help: this.metalness.help,
+            type: "float",
+            min: this.metalness.min,
+            max: this.metalness.max,
             defaultValue: this.metalness.defaultValue,
             value: this.metalness.value,
             onChange: (value: number) => this.metalness.value = value

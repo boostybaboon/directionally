@@ -21,7 +21,7 @@ export class Object3DAsset extends Asset {
         const initialPosition = new Vector3();
         initialPosition.copy(object3D.position);
         this.position = new Vector3Param(
-            "Position",
+        "Position",
             "The position of the object in 3D space",
             initialPosition
         );
@@ -200,37 +200,9 @@ export class Object3DAsset extends Asset {
 
     getProperties(): Map<string, PropertyDescriptor> {
         const properties = new Map<string, PropertyDescriptor>();
-
-        // Add position properties
-        properties.set('position', {
-            title: 'Position',
-            help: 'The position of the object in 3D space',
-            type: 'vector3',
-            defaultValue: this.position.defaultValue,
-            value: this.position.value,
-            onChange: (value: Vector3) => this.position.value = value
-        });
-
-        // Add rotation properties
-        properties.set('rotation', {
-            title: 'Rotation',
-            help: 'The rotation of the object in Euler angles (radians)',
-            type: 'vector3',
-            defaultValue: this.rotation.defaultValue,
-            value: this.rotation.value,
-            onChange: (value: Vector3) => this.rotation.value = value
-        });
-
-        // Add scale properties
-        properties.set('scale', {
-            title: 'Scale',
-            help: 'The scale of the object along each axis',
-            type: 'vector3',
-            defaultValue: this.scale.defaultValue,
-            value: this.scale.value,
-            onChange: (value: Vector3) => this.scale.value = value
-        });
-
+        properties.set('position', this.position.getPropertyDescriptor());
+        properties.set('rotation', this.rotation.getPropertyDescriptor());
+        properties.set('scale', this.scale.getPropertyDescriptor());
         return properties;
     }
 }
