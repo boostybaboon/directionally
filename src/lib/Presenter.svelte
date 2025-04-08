@@ -2,21 +2,17 @@
   import * as Tone from 'tone';
   import * as THREE from 'three';
   import { onMount } from 'svelte';
-  import type { AnimationDict, Model } from './Model';
-  import { SceneUtils } from './SceneUtils';
+  import type { Object3DAsset } from './scene/Object3D/Object3DAsset';
+  import type { PerspectiveCamera } from 'three';
 
   let canvas: HTMLCanvasElement;
   let renderer: THREE.WebGLRenderer;
 
-  let animationDict: AnimationDict = {};
-
-  let modelAnimationClips: { [key: string]: THREE.AnimationClip[] } = {};
-
+  let animationDict: { [key: string]: any[] } = {};
   let mixers: THREE.AnimationMixer[] = [];
   let scene: THREE.Scene;
   let clock: THREE.Clock;
-  // TODO multiple cameras
-  let camera: THREE.Camera;
+  let camera: PerspectiveCamera | null = null;
 
   let isToneSetup = $state<boolean>(false);
   let isPlaying = $state<boolean>(false);
@@ -61,8 +57,8 @@
     }
   };
 
-  //need a method to load a model into the scene, and set up the animations
-  export async function loadModel(model: Model) {
+  // New loadModel function that works with our asset system
+  export async function loadModel(newCamera: PerspectiveCamera, assets: Object3DAsset[], actions: any[] = []) {
     if (!isToneSetup) {
       await setupTone();
     }
@@ -72,46 +68,16 @@
     Tone.getTransport().cancel();
 
     scene = new THREE.Scene();
+    camera = newCamera;
 
-    // for each camera in the model (at present only one) add to our cameras
-    camera = SceneUtils.createCamera(model.camera);
-
-    // Load all assets and wait for them to be added to the scene
-    const assetPromises = model.assets.map(async (asset) => {
-      const sceneObject = await SceneUtils.sceneObjectForAsset(asset);
-      scene.add(sceneObject[0]);
-      modelAnimationClips[asset.name] = sceneObject[1];
+    // Add all assets to the scene
+    assets.forEach(asset => {
+      const object3D = asset.getObject3D();
+      scene.add(object3D);
     });
 
-    await Promise.all(assetPromises);
-
-    //for each animation in model, add the animation to the animationDict
-    //and add its mixer to the mixers array
-    model.actions.forEach((action) => {
-      var sceneObject = scene.getObjectByName(action.target);
-      if (!sceneObject) {
-        //is action.target the name of the camera?
-        if (action.target === camera.name) {
-          sceneObject = camera;
-        } else {
-          console.error(`Could not find object with name ${action.target}`);
-          return; // from this iteration of the loop
-        }
-      }
-      SceneUtils.addAction(animationDict, mixers, sceneObject, action, modelAnimationClips[action.target]);
-    });
-
-    Object.values(animationDict).forEach((animGroup) => {
-      animGroup.forEach((anim) => {
-        Tone.getTransport().schedule((time) => {
-          Tone.getDraw().schedule(() => {
-            anim.anim.enabled = true;
-            anim.anim.time = 0;
-            anim.anim.paused = false;
-          }, time);
-        }, anim.start);
-      });
-    });
+    // TODO: Handle animations when we implement them
+    // For now, we just have an empty actions array
 
     setSequenceTo(0);
 
@@ -122,12 +88,14 @@
   };
 
   const animate = () => {
+    if (!camera) return; // Guard against uninitialized camera
     const delta = clock.getDelta();
     mixers.forEach(mixer => mixer.update(delta));
     renderer.render(scene, camera);
   };
 
   function onWindowResize() {
+    if (!camera) return; // Guard against uninitialized camera
     if (camera instanceof THREE.PerspectiveCamera) {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
@@ -175,14 +143,6 @@
     });
   };
 
-  // TODO - need to think this method through, this is the crucial method in the presenter
-  // I do not currently understand why getMixer().setTime(0) works above but not here
-  // but with this arrangement, I do not get the bug when stepping back into an already 
-  // completed animation (door suddenly closing in the babylon example when rewinding back to 5s)
-  // It's something to do with getMixer().setTime being designed to reset the animation to a time whilst
-  // scaling by the timeScale (which gets set to 0 when paused, so scaling gets screwed up if paused)
-  // but anim.time setting the local time without any scaling applied
-  // Need to set up an isolated test to understand this fully
   const setSequenceTo = (time: number) => {
     Tone.getTransport().seconds = time;
     updatePosition();
@@ -329,44 +289,49 @@
 </script>
 
 <style>
-  #c {
+  .controls {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+  }
+
+  canvas {
     width: 100%;
-    height: 600px;
-  }
-
-  #content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-
-  button {
-    margin: 10px;
-  }
-
-  #slider-container {
-    margin: 20px;
-    width: 80%;
+    height: 100%;
   }
 
   #log-panel {
-    width: 100%;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
     height: 200px;
-    overflow-y: scroll;
-    border: 1px solid #ccc;
-    background-color: #f9f9f9;
-    padding: 10px;
+    background: rgba(0, 0, 0, 0.5);
+    color: white;
+    overflow-y: auto;
+    padding: 1rem;
+    font-family: monospace;
   }
 </style>
-  
-<div id="content">
-  <div><canvas bind:this={canvas} id="c"></canvas></div>
-  <div>Play/Pause: <button onclick={handlePlayPauseClick} disabled={!isToneSetup}>{isPlaying ? 'Pause' : 'Play'}</button></div>
-  <div><button onclick={handleRewindClick} disabled={!isToneSetup}>Rewind</button></div>
-  <div>Position: {currentPosition.toFixed(2)}</div>
-  <div id="slider-container">
-    <input type="range" min="0" max="16" step="0.01" bind:value={sliderValue} oninput={handleSliderInput} disabled={!isToneSetup}>
-  </div>
-  <div><button onclick={speak}>Speak</button></div>
-  <div id="log-panel"></div>
+
+<div class="controls">
+  <button on:click={handlePlayPauseClick}>{isPlaying ? 'Pause' : 'Play'}</button>
+  <button on:click={handleRewindClick}>Rewind</button>
+  <input 
+    type="range" 
+    min="0" 
+    max="10" 
+    step="0.1" 
+    bind:value={sliderValue} 
+    on:input={handleSliderInput}
+  />
+  <span>Time: {currentPosition.toFixed(1)}s</span>
 </div>
+
+<canvas bind:this={canvas} />
+
+<div id="log-panel"></div>

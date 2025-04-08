@@ -1,5 +1,5 @@
 import { MeshStandardMaterial } from "three";
-import { MaterialAsset } from "../Material/Material";
+import { MaterialAsset } from "../Material/MaterialAsset";
 import { ColorParam } from "$lib/common/Param";
 
 export class MeshStandardMaterialAsset extends MaterialAsset {

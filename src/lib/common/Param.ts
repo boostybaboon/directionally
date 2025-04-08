@@ -44,7 +44,7 @@ export class FloatParam extends Param {
 }
 
 export class Vector3Param extends Param {
-    value: Vector3;
+    private _value: Vector3;
 
     constructor(
         title: string,
@@ -52,7 +52,21 @@ export class Vector3Param extends Param {
         public readonly defaultValue: Vector3
     ) {
         super(title, help);
-        this.value = defaultValue;
+        this._value = defaultValue.clone();
+        console.log('Vector3Param created with value:', this._value);
+    }
+
+    get value(): Vector3 {
+        return this._value;
+    }
+
+    set value(newValue: Vector3) {
+        console.log('Vector3Param value being set to:', newValue);
+        this._value.copy(newValue);
+        this.defaultValue.copy(newValue);
+        if (this.onChange) {
+            this.onChange(newValue);
+        }
     }
 }
 
@@ -121,5 +135,29 @@ export class IntParam extends FloatParam {
 
     get value(): number {
         return Math.round(super.value);
+    }
+}
+
+export class BooleanParam extends Param {
+    private _value: boolean;
+
+    constructor(
+        title: string,
+        help: string,
+        public readonly defaultValue: boolean
+    ) {
+        super(title, help);
+        this._value = defaultValue;
+    }
+
+    get value(): boolean {
+        return this._value;
+    }
+
+    set value(newValue: boolean) {
+        this._value = newValue;
+        if (this.onChange) {
+            this.onChange(newValue);
+        }
     }
 }

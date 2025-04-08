@@ -5,10 +5,10 @@ import { SphereGeometryAsset } from "$lib/scene/Geometry/SphereGeometry/SphereGe
 import { MeshStandardMaterialAsset } from "$lib/scene/Material/MeshStandardMaterial/MeshStandardMaterialAsset";
 import { MeshAsset } from "$lib/scene/Object3D/Mesh/MeshAsset";
 
-export function createBasicScene() {
+export function createColorfulSpheresScene() {
     // Create camera
     const camera = new PerspectiveCamera(75, 2, 0.1, 1000);
-    camera.position.set(5, 5, 5);
+    camera.position.set(10, 10, 10);
     camera.lookAt(new Vector3(0, 0, 0));
 
     // Create assets
@@ -19,22 +19,39 @@ export function createBasicScene() {
     light.position.value = new Vector3(0, 10, 0);
 
     // Create floor plane
-    const planeGeometry = new PlaneGeometryAsset(10, 10);
+    const planeGeometry = new PlaneGeometryAsset(20, 20);
     const planeMaterial = new MeshStandardMaterialAsset();
     planeMaterial.color.value = new Color("#808080");
     const plane = new MeshAsset(planeGeometry, planeMaterial);
     plane.setRotationFromEuler(-90, 0, 0);
 
-    // Create sphere
+    // Create spheres with different colors
     const sphereGeometry = new SphereGeometryAsset(1, 32, 32);
-    const sphereMaterial = new MeshStandardMaterialAsset();
-    sphereMaterial.color.value = new Color("#0000ff");
-    const sphere = new MeshAsset(sphereGeometry, sphereMaterial);
-    sphere.position.value = new Vector3(0, 2, 0);
+    const spheres: MeshAsset[] = [];
+
+    // Define colors and positions for the spheres
+    const sphereConfigs = [
+        { color: "#ff0000", position: [-5, 1, -5] }, // Red
+        { color: "#00ff00", position: [5, 1, -5] },  // Green
+        { color: "#0000ff", position: [0, 1, 0] },   // Blue
+        { color: "#ffff00", position: [-5, 1, 5] },  // Yellow
+        { color: "#ff00ff", position: [5, 1, 5] }    // Magenta
+    ];
+
+    // Create and position the spheres
+    sphereConfigs.forEach(config => {
+        const material = new MeshStandardMaterialAsset();
+        material.color.value = new Color(config.color);
+        const sphere = new MeshAsset(sphereGeometry, material);
+        console.log('Setting sphere position to:', config.position);
+        sphere.position.value = new Vector3(...config.position);
+        console.log('Sphere position after setting:', sphere.position.value);
+        spheres.push(sphere);
+    });
 
     return {
         camera,
-        assets: [light, plane, sphere],
+        assets: [light, plane, ...spheres],
         actions: [] // Empty array for now
     };
 } 

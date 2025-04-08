@@ -1,7 +1,7 @@
 import { Mesh } from "three";
 import { Object3DAsset } from "../Object3DAsset";
-import { BufferGeometryAsset } from "../../Geometry/BufferGeometry/BufferGeometry";
-import { MaterialAsset } from "../../Material/Material/Material";
+import { BufferGeometryAsset } from "../../Geometry/BufferGeometry/BufferGeometryAsset";
+import { MaterialAsset } from "../../Material/Material/MaterialAsset";
 
 export class MeshAsset extends Object3DAsset {
     private _mesh: Mesh;
@@ -14,6 +14,9 @@ export class MeshAsset extends Object3DAsset {
         this._mesh = mesh;
         this._geometry = geometry;
         this._material = material;
+        
+        // Debug: Log initial position
+        console.log('MeshAsset created with initial position:', this._mesh.position);
     }
 
     /**

@@ -19,6 +19,9 @@ export class Object3DAsset {
         // Initialize with default values
         this._up = new Vector3(0, 1, 0);
         this._lookAt = new Vector3(0, 0, -1);
+
+        // Debug: Log initial position
+        console.log('Object3DAsset created with initial position:', this._object3D.position);
     }
 
     /**

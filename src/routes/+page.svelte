@@ -1,34 +1,34 @@
 <script lang="ts">
   import Presenter from '$lib/Presenter.svelte';
-  import { exampleModel1 } from '$lib/exampleModel1';
-  import { exampleModel2 } from '$lib/exampleModel2';
-  import { exampleModel3 } from '$lib/exampleModel3';
-  import { exampleModel4 } from '$lib/exampleModel4';
+  import { createBasicScene } from '$lib/examples/BasicScene';
+  import { createColorfulSpheresScene } from '$lib/examples/ColorfulSpheresScene';
   
-  let presenter : Presenter;
+  let presenter: Presenter;
 
-  const loadExampleModel1 = () => {
-    presenter.loadModel(exampleModel1);
+  const loadBasicScene = () => {
+    const scene = createBasicScene();
+    presenter.loadModel(scene.camera, scene.assets, scene.actions);
   };
 
-  const loadExampleModel2 = () => {
-    presenter.loadModel(exampleModel2);
-  };
-
-  const loadExampleModel3 = () => {
-    presenter.loadModel(exampleModel3);
-  };
-
-  const loadExampleModel4 = () => {
-    presenter.loadModel(exampleModel4);
+  const loadColorfulScene = () => {
+    const scene = createColorfulSpheresScene();
+    presenter.loadModel(scene.camera, scene.assets, scene.actions);
   };
 </script>
 
-<h1>Load some example models into the scene</h1>
+<h1>Choose a scene to load</h1>
 
-<button on:click={loadExampleModel1}>Camera rot</button>
-<button on:click={loadExampleModel2}>Ball pos</button>
-<button on:click={loadExampleModel3}>Bobot rot</button>
-<button on:click={loadExampleModel4}>Bobot quat</button>
+<div class="scene-buttons">
+  <button on:click={loadBasicScene}>Load Basic Scene</button>
+  <button on:click={loadColorfulScene}>Load Colorful Spheres</button>
+</div>
 
 <Presenter bind:this={presenter} />
+
+<style>
+  .scene-buttons {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+</style>
