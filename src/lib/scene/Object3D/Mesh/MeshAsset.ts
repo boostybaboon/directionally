@@ -1,10 +1,10 @@
 import { Mesh, Vector3, Euler } from "three";
 import { Object3DAsset } from "../Object3DAsset";
-import { BufferGeometryAsset } from "../../Geometry/BufferGeometry/BufferGeometryAsset";
-import { MaterialAsset } from "../../Material/MaterialAsset";
+import type { BufferGeometryAsset } from "$lib/scene/Geometry/BufferGeometry/BufferGeometryAsset";
+import type { MaterialAsset } from "$lib/scene/Material/MaterialAsset";
 import { Vector3Param } from "$lib/common/Param";
 import { Asset } from "../../../common/Asset";
-import type { PropertyDescriptor } from "../../../common/Asset";
+import type { PropertyDescriptor } from "$lib/common/Asset";
 import type { HierarchicalProperties } from "../../../common/Asset";
 
 export class MeshAsset extends Object3DAsset {

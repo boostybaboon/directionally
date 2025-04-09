@@ -1,5 +1,6 @@
 import { BufferGeometry } from "three";
-import { Asset, PropertyDescriptor } from "$lib/common/Asset";
+import { Asset } from "$lib/common/Asset";
+import type { PropertyDescriptor } from "$lib/common/Asset";
 
 export class BufferGeometryAsset extends Asset {
     private _geometry: BufferGeometry;

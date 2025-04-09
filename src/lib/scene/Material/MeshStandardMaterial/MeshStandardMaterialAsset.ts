@@ -1,7 +1,7 @@
 import { MeshStandardMaterial, Color } from "three";
 import { MaterialAsset } from "../MaterialAsset";
 import { ColorParam, FloatParam, BooleanParam } from "$lib/common/Param";
-import type { PropertyDescriptor } from "../../../common/Asset";
+import type { PropertyDescriptor } from "$lib/common/Asset";
 
 export class MeshStandardMaterialAsset extends MaterialAsset {
     color: ColorParam;

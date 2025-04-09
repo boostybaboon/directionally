@@ -1,9 +1,10 @@
 //https://threejs.org/docs/#api/en/core/Object3D
 
-import { Vector3Param } from "../../common/Param";
-import { Vector3, Quaternion, MathUtils, Object3D, Euler, Matrix4 } from "three";
-import { Asset } from "../../common/Asset";
-import type { PropertyDescriptor } from "../../common/Asset";
+import { Object3D, Vector3 } from "three";
+import { Asset } from "$lib/common/Asset";
+import type { PropertyDescriptor } from "$lib/common/Asset";
+import { Vector3Param } from "$lib/common/Param";
+import { Quaternion, MathUtils, Euler, Matrix4 } from "three";
 
 export class Object3DAsset extends Asset {
     public readonly object3D: Object3D;

@@ -2,7 +2,7 @@ import { SphereGeometry } from "three";
 import { BufferGeometryAsset } from "../BufferGeometry/BufferGeometryAsset";
 import { FloatParam, IntParam } from "$lib/common/Param";
 import { Asset } from "../../../common/Asset";
-import type { PropertyDescriptor } from "../../../common/Asset";
+import type { PropertyDescriptor } from "$lib/common/Asset";
 
 export class SphereGeometryAsset extends BufferGeometryAsset {
     radius: FloatParam;

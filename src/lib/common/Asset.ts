@@ -23,6 +23,16 @@ export interface HierarchicalProperties {
 }
 
 export abstract class Asset implements ParamCollection {
+    protected _name: string;
+
+    constructor(name: string = 'Unnamed Asset') {
+        this._name = name;
+    }
+
+    getName(): string {
+        return this._name;
+    }
+
     abstract getProperties(): Map<string, PropertyDescriptor>;
 
     /**
@@ -50,21 +60,19 @@ export abstract class Asset implements ParamCollection {
             }
         }
 
-        // Add Geometry properties second
+        // Add geometry properties if this asset has geometry
         if ('getGeometry' in this) {
             const geometry = (this as any).getGeometry();
-            if (geometry instanceof Asset) {
-                const geometryProps = geometry.getHierarchicalProperties('Geometry');
-                result.children.push(geometryProps);
+            if (geometry && geometry instanceof Asset) {
+                result.children.push(geometry.getHierarchicalProperties('Geometry'));
             }
         }
 
-        // Add Material properties last
+        // Add material properties if this asset has material
         if ('getMaterial' in this) {
             const material = (this as any).getMaterial();
-            if (material instanceof Asset) {
-                const materialProps = material.getHierarchicalProperties('Material');
-                result.children.push(materialProps);
+            if (material && material instanceof Asset) {
+                result.children.push(material.getHierarchicalProperties('Material'));
             }
         }
 

@@ -1,6 +1,7 @@
 import { Material, FrontSide, BackSide, DoubleSide } from "three";
 import { FloatParam, BooleanParam, IntParam } from "$lib/common/Param";
-import { Asset, PropertyDescriptor } from "$lib/common/Asset";
+import { Asset } from "$lib/common/Asset";
+import type { PropertyDescriptor } from "$lib/common/Asset";
 
 export class MaterialAsset extends Asset {
     private _material: Material;
