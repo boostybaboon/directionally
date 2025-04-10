@@ -4,7 +4,7 @@
 import type { Asset } from "$lib/common/Asset";
 import { FloatParam } from "$lib/common/Param";
 import { CameraAsset } from "../CameraAsset";
-import { PerspectiveCamera } from "three";
+import { PerspectiveCamera, Vector3 } from "three";
 
 export class PerspectiveCameraAsset extends CameraAsset implements Asset {
     help: string = "https://threejs.org/docs/#api/en/cameras/PerspectiveCamera";
@@ -12,7 +12,6 @@ export class PerspectiveCameraAsset extends CameraAsset implements Asset {
     
     // Private parameters
     private readonly _fov: FloatParam;
-    private readonly _aspect: FloatParam;
     private readonly _near: FloatParam;
     private readonly _far: FloatParam;
 
@@ -32,7 +31,6 @@ export class PerspectiveCameraAsset extends CameraAsset implements Asset {
                 throw new Error(`Far plane (${value}) must be greater than near plane (${this._near.value}).`);
             }
         });
-        this._aspect = new FloatParam('Aspect Ratio', 'Camera frustum aspect ratio', perspectiveCamera.aspect, 0, undefined);
 
         this._fov.onChange = (value: number) => {
             this._perspectiveCamera.fov = value;
@@ -49,14 +47,8 @@ export class PerspectiveCameraAsset extends CameraAsset implements Asset {
             this._perspectiveCamera.updateProjectionMatrix();
         };
 
-        this._aspect.onChange = (value: number) => {
-            this._perspectiveCamera.aspect = value;
-            this._perspectiveCamera.updateProjectionMatrix();
-        };
-
         // Initialize the camera with the parameter values
         this._perspectiveCamera.fov = this._fov.value;
-        this._perspectiveCamera.aspect = this._aspect.value;
         this._perspectiveCamera.near = this._near.value;
         this._perspectiveCamera.far = this._far.value;
         this._perspectiveCamera.updateProjectionMatrix();
@@ -69,14 +61,6 @@ export class PerspectiveCameraAsset extends CameraAsset implements Asset {
 
     set fov(value: number) {
         this._fov.value = value;
-    }
-
-    get aspect(): number {
-        return this._aspect.value;
-    }
-
-    set aspect(value: number) {
-        this._aspect.value = value;
     }
 
     get near(): number {
@@ -93,6 +77,24 @@ export class PerspectiveCameraAsset extends CameraAsset implements Asset {
 
     set far(value: number) {
         this._far.value = value;
+    }
+
+    /**
+     * Update the camera's aspect ratio based on the viewport dimensions
+     * @param width The width of the viewport
+     * @param height The height of the viewport
+     */
+    updateAspectRatio(width: number, height: number): void {
+        this._perspectiveCamera.aspect = width / height;
+        this._perspectiveCamera.updateProjectionMatrix();
+    }
+
+    /**
+     * Point the camera at a specific position
+     * @param target The target position to look at
+     */
+    lookAt(target: Vector3): void {
+        this._perspectiveCamera.lookAt(target);
     }
 
     /**

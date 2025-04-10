@@ -1,13 +1,13 @@
 <script lang="ts">
     import * as THREE from 'three';
-    import { onMount, onDestroy } from 'svelte';
+    import { onMount } from 'svelte';
     import { sceneStore } from '$lib/stores/scene';
     import { Asset } from '../common/Asset';
     import { Object3DAsset } from '../scene/Object3D/Object3DAsset';
+    import { PerspectiveCameraAsset } from '../scene/Object3D/Camera/PerspectiveCamera/PerspectiveCameraAsset';
 
     let canvas: HTMLCanvasElement;
     let renderer: THREE.WebGLRenderer;
-    let scene: THREE.Scene;
     let animationFrameId: number;
     let raycaster: THREE.Raycaster;
     let mouse: THREE.Vector2;
@@ -20,70 +20,115 @@
     });
     let originalMaterials = new Map<THREE.Object3D, THREE.Material>();
 
-    // Initialize scene
-    scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf0f0f0);
+    // Debug overlay
+    let debugOverlay: HTMLDivElement | null = null;
+    let canvasSize = { width: 0, height: 0 };
+    let rendererSize = { width: 0, height: 0 };
+    let pixelRatio = 1;
+
+    function updateDebugInfo() {
+        if (!debugOverlay || !renderer) return;
+        
+        canvasSize = {
+            width: canvas.clientWidth,
+            height: canvas.clientHeight
+        };
+        
+        rendererSize = {
+            width: renderer.domElement.width,
+            height: renderer.domElement.height
+        };
+        
+        pixelRatio = renderer.getPixelRatio();
+        
+        const camera = $sceneStore.camera?.getObject3D() as THREE.PerspectiveCamera;
+        debugOverlay.innerHTML = `
+            <div>Canvas: ${canvasSize.width}x${canvasSize.height}</div>
+            <div>Renderer: ${rendererSize.width}x${rendererSize.height}</div>
+            <div>Pixel Ratio: ${pixelRatio}</div>
+            <div>Camera Aspect: ${camera?.aspect.toFixed(2) ?? 'N/A'}</div>
+        `;
+    }
 
     function animate() {
         animationFrameId = requestAnimationFrame(animate);
         
-        if ($sceneStore.camera) {
-            renderer.render(scene, $sceneStore.camera);
+        if ($sceneStore.camera && $sceneStore.scene) {
+            const camera = $sceneStore.camera.getObject3D() as THREE.PerspectiveCamera;
+            renderer.render($sceneStore.scene, camera);
+            updateDebugInfo();
         }
     }
 
-    // Update scene when store changes
-    $effect(() => {
-        // Clear existing scene
-        while(scene.children.length > 0) { 
-            scene.remove(scene.children[0]); 
-        }
+    function handleResize() {
+        if (!canvas || !$sceneStore.camera || !$sceneStore.scene) return;
 
-        // Add new assets
-        $sceneStore.assets.forEach(asset => {
-            const object = asset.getObject3D();
-            if (object) {
-                // Store reference to asset in userData for raycasting
-                object.userData.asset = asset;
-                scene.add(object);
-            }
-        });
-    });
+        // Get the container dimensions
+        const container = canvas.parentElement;
+        if (!container) return;
+
+        // Get the actual pixel dimensions of the container
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        
+        // Set the canvas size directly
+        canvas.width = width;
+        canvas.height = height;
+        
+        // Set the renderer to the exact pixel dimensions, updating the drawing buffer
+        renderer.setSize(width, height, false);
+        
+        // Update camera aspect ratio
+        if ($sceneStore.camera instanceof PerspectiveCameraAsset) {
+            $sceneStore.camera.updateAspectRatio(width, height);
+        }
+        
+        // Force a render after resize
+        const camera = $sceneStore.camera.getObject3D() as THREE.PerspectiveCamera;
+        renderer.render($sceneStore.scene, camera);
+        updateDebugInfo();
+    }
 
     onMount(() => {
-        renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-        renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+        // Create renderer with correct pixel ratio
+        renderer = new THREE.WebGLRenderer({ 
+            canvas, 
+            antialias: true,
+            powerPreference: 'high-performance'
+        });
+        renderer.setPixelRatio(window.devicePixelRatio);
 
+        // Initialize picking
         raycaster = new THREE.Raycaster();
         mouse = new THREE.Vector2();
+
+        // Use ResizeObserver to handle size changes
+        const resizeObserver = new ResizeObserver(() => {
+            handleResize();
+        });
+        resizeObserver.observe(canvas);
 
         // Start animation loop
         animate();
 
-        // Handle window resize
-        const handleResize = () => {
-            if ($sceneStore.camera) {
-                const width = canvas.clientWidth;
-                const height = canvas.clientHeight;
-                
-                renderer.setSize(width, height);
-                $sceneStore.camera.aspect = width / height;
-                $sceneStore.camera.updateProjectionMatrix();
+        return () => {
+            resizeObserver.disconnect();
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
             }
         };
-
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
     });
 
-    onDestroy(() => {
-        if (animationFrameId) {
-            cancelAnimationFrame(animationFrameId);
+    // Handle scene changes
+    $effect(() => {
+        if ($sceneStore.scene && $sceneStore.camera) {
+            // When a new scene is loaded, ensure the renderer size is correct
+            handleResize();
         }
     });
 
     function handleClick(event: MouseEvent) {
-        if (!scene || !$sceneStore.camera) return;
+        if (!$sceneStore.scene || !$sceneStore.camera) return;
 
         // Calculate mouse position in normalized device coordinates
         const rect = canvas.getBoundingClientRect();
@@ -91,10 +136,11 @@
         mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
         // Update the picking ray with the camera and mouse position
-        raycaster.setFromCamera(mouse, $sceneStore.camera);
+        const camera = $sceneStore.camera.getObject3D() as THREE.PerspectiveCamera;
+        raycaster.setFromCamera(mouse, camera);
 
         // Find intersections with objects in the scene
-        const intersects = raycaster.intersectObjects(scene.children, true);
+        const intersects = raycaster.intersectObjects($sceneStore.scene.children, true);
 
         if (intersects.length > 0) {
             // Find the first object that has an asset reference
@@ -166,15 +212,41 @@
     // ... rest of existing code ...
 </script>
 
-<canvas 
-    bind:this={canvas} 
-    on:click={handleClick}
-/>
+<div class="presenter">
+    <canvas 
+        bind:this={canvas} 
+        onclick={handleClick}
+    ></canvas>
+    <div class="debug-overlay" bind:this={debugOverlay}></div>
+</div>
 
 <style>
+    .presenter {
+        width: 100%;
+        height: 100%;
+        position: relative;
+        overflow: hidden;
+    }
+
     canvas {
         width: 100%;
         height: 100%;
-        background: #f0f0f0;
+        display: block;
+        position: absolute;
+        top: 0;
+        left: 0;
+    }
+
+    .debug-overlay {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 10px;
+        font-family: monospace;
+        font-size: 12px;
+        pointer-events: none;
+        z-index: 1;
     }
 </style> 

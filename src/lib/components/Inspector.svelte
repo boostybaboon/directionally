@@ -1,132 +1,166 @@
 <script lang="ts">
-    import type { PropertyDescriptor } from '$lib/common/Asset';
-    import * as THREE from 'three';
     import { sceneStore } from '$lib/stores/scene';
-
-    function handlePropertyChange(propertyName: string, value: any) {
-        if ($sceneStore.selectedAsset) {
-            const properties = $sceneStore.selectedAsset.getProperties();
-            const property = properties.get(propertyName);
-            if (property) {
-                property.value = value;
-                if (property.onChange) {
-                    property.onChange(value);
-                }
-            }
-        }
-    }
+    import * as THREE from 'three';
 </script>
 
 <div class="inspector">
     {#if $sceneStore.selectedAsset}
-        <h2>{$sceneStore.selectedAsset.constructor.name}</h2>
+        <h2>{$sceneStore.selectedAsset.getName()}</h2>
         <div class="properties">
-            {#each Array.from($sceneStore.selectedAsset.getProperties().entries()) as [name, property]}
+            {#each Array.from($sceneStore.selectedAsset.getHierarchicalProperties('Properties').properties.entries()) as [name, prop]}
                 <div class="property">
-                    <label title={property.help}>{property.title}</label>
-                    {#if property.type === 'float' || property.type === 'int'}
-                        <input
-                            type="number"
-                            value={property.value}
-                            min={property.min}
-                            max={property.max}
+                    <label>{prop.title}</label>
+                    {#if prop.type === 'float' || prop.type === 'int'}
+                        <input 
+                            type="number" 
+                            value={prop.value} 
                             on:change={(e: Event) => {
                                 const target = e.target as HTMLInputElement;
-                                handlePropertyChange(name, parseFloat(target.value));
+                                prop.onChange?.(Number(target.value));
                             }}
                         />
-                    {:else if property.type === 'boolean'}
-                        <input
-                            type="checkbox"
-                            checked={property.value}
+                    {:else if prop.type === 'boolean'}
+                        <input 
+                            type="checkbox" 
+                            checked={prop.value} 
                             on:change={(e: Event) => {
                                 const target = e.target as HTMLInputElement;
-                                handlePropertyChange(name, target.checked);
+                                prop.onChange?.(target.checked);
                             }}
                         />
-                    {:else if property.type === 'color'}
-                        <input
-                            type="color"
-                            value={property.value.getHexString()}
+                    {:else if prop.type === 'color'}
+                        <input 
+                            type="color" 
+                            value={prop.value.getHexString()} 
                             on:change={(e: Event) => {
                                 const target = e.target as HTMLInputElement;
-                                handlePropertyChange(name, new THREE.Color(target.value));
+                                const color = new THREE.Color(target.value);
+                                prop.onChange?.(color);
                             }}
                         />
-                    {:else if property.type === 'vector3'}
-                        <div class="vector3-input">
-                            <input
-                                type="number"
-                                value={property.value.x}
-                                on:change={(e: Event) => {
-                                    const target = e.target as HTMLInputElement;
-                                    const newValue = property.value.clone();
-                                    newValue.x = parseFloat(target.value);
-                                    handlePropertyChange(name, newValue);
-                                }}
-                            />
-                            <input
-                                type="number"
-                                value={property.value.y}
-                                on:change={(e: Event) => {
-                                    const target = e.target as HTMLInputElement;
-                                    const newValue = property.value.clone();
-                                    newValue.y = parseFloat(target.value);
-                                    handlePropertyChange(name, newValue);
-                                }}
-                            />
-                            <input
-                                type="number"
-                                value={property.value.z}
-                                on:change={(e: Event) => {
-                                    const target = e.target as HTMLInputElement;
-                                    const newValue = property.value.clone();
-                                    newValue.z = parseFloat(target.value);
-                                    handlePropertyChange(name, newValue);
-                                }}
-                            />
+                    {:else if prop.type === 'vector3'}
+                        <div class="vector-inputs">
+                            <div class="vector-component">
+                                <label>X</label>
+                                <input 
+                                    type="number" 
+                                    value={prop.value.x} 
+                                    on:change={(e: Event) => {
+                                        const target = e.target as HTMLInputElement;
+                                        const newValue = prop.value.clone();
+                                        newValue.x = Number(target.value);
+                                        prop.onChange?.(newValue);
+                                    }}
+                                />
+                            </div>
+                            <div class="vector-component">
+                                <label>Y</label>
+                                <input 
+                                    type="number" 
+                                    value={prop.value.y} 
+                                    on:change={(e: Event) => {
+                                        const target = e.target as HTMLInputElement;
+                                        const newValue = prop.value.clone();
+                                        newValue.y = Number(target.value);
+                                        prop.onChange?.(newValue);
+                                    }}
+                                />
+                            </div>
+                            <div class="vector-component">
+                                <label>Z</label>
+                                <input 
+                                    type="number" 
+                                    value={prop.value.z} 
+                                    on:change={(e: Event) => {
+                                        const target = e.target as HTMLInputElement;
+                                        const newValue = prop.value.clone();
+                                        newValue.z = Number(target.value);
+                                        prop.onChange?.(newValue);
+                                    }}
+                                />
+                            </div>
                         </div>
                     {/if}
                 </div>
             {/each}
         </div>
     {:else}
-        <div class="no-selection">Select an object to inspect</div>
+        <div class="no-selection">
+            <p>Select an object to inspect</p>
+        </div>
     {/if}
 </div>
 
 <style>
     .inspector {
-        width: 300px;
-        padding: 1rem;
-        border-left: 1px solid #ddd;
+        padding: 20px;
+        height: 100%;
+        width: 100%;
+        box-sizing: border-box;
         overflow-y: auto;
+        background-color: #f5f5f5;
+    }
+
+    h2 {
+        margin: 0 0 20px 0;
+        font-size: 1.2em;
+        color: #333;
     }
 
     .properties {
         display: flex;
         flex-direction: column;
-        gap: 1rem;
+        gap: 15px;
     }
 
     .property {
         display: flex;
         flex-direction: column;
-        gap: 0.5rem;
+        gap: 5px;
     }
 
-    .vector3-input {
+    .property label {
+        font-size: 0.9em;
+        color: #666;
+    }
+
+    .property input {
+        padding: 5px;
+        border: 1px solid #ddd;
+        border-radius: 3px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .vector-inputs {
         display: flex;
-        gap: 0.5rem;
+        gap: 10px;
+        width: 100%;
     }
 
-    .vector3-input input {
-        width: 60px;
+    .vector-component {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        flex: 1;
+    }
+
+    .vector-component label {
+        font-size: 0.8em;
+        color: #666;
+        text-align: center;
+    }
+
+    .vector-component input {
+        width: 100%;
+        text-align: center;
     }
 
     .no-selection {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
         color: #666;
-        text-align: center;
-        padding: 2rem;
     }
 </style> 

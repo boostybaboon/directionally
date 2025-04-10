@@ -1,16 +1,12 @@
-import { PerspectiveCamera, Vector3, Color } from "three";
+import { Vector3, Color } from "three";
 import { HemisphereLightAsset } from "$lib/scene/Object3D/Light/HemisphereLight/HemisphereLightAsset";
 import { PlaneGeometryAsset } from "$lib/scene/Geometry/PlaneGeometry/PlaneGeometryAsset";
 import { SphereGeometryAsset } from "$lib/scene/Geometry/SphereGeometry/SphereGeometryAsset";
 import { MeshStandardMaterialAsset } from "$lib/scene/Material/MeshStandardMaterial/MeshStandardMaterialAsset";
 import { MeshAsset } from "$lib/scene/Object3D/Mesh/MeshAsset";
+import { PerspectiveCameraAsset } from "$lib/scene/Object3D/Camera/PerspectiveCamera/PerspectiveCameraAsset";
 
 export function createColorfulSpheresScene() {
-    // Create camera
-    const camera = new PerspectiveCamera(75, 2, 0.1, 1000);
-    camera.position.set(10, 10, 10);
-    camera.lookAt(new Vector3(0, 0, 0));
-
     // Create assets
     const light = new HemisphereLightAsset();
     light.color.value = new Color(0xffffbb);
@@ -48,7 +44,15 @@ export function createColorfulSpheresScene() {
     });
 
     return {
-        camera,
+        createCamera: () => {
+            const camera = new PerspectiveCameraAsset();
+            camera.fov = 75;
+            camera.near = 0.1;
+            camera.far = 1000;
+            camera.position.value = new Vector3(10, 10, 10);
+            camera.lookAt(new Vector3(0, 0, 0));
+            return camera;
+        },
         assets: [light, plane, ...spheres],
         actions: [] // Empty array for now
     };
