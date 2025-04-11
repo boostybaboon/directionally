@@ -27,6 +27,7 @@ export function createBasicScene() {
     sphereMaterial.color.value = new Color("#0000ff");
     const sphere = new MeshAsset(sphereGeometry, sphereMaterial);
     sphere.position.value = new Vector3(0, 2, 0);
+    sphere.getMesh().name = "sphere"; // Add name for animation targeting
 
     return {
         createCamera: () => {
