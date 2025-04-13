@@ -176,6 +176,15 @@
         rewindSequence();
     };
 
+    const handleSliderInput = (event: Event) => {
+        const time = parseFloat((event.target as HTMLInputElement).value);
+        if (!isPlaying) {
+            if (animationController) {
+                animationController.setTime(time);
+            }
+        }
+    };
+
     onMount(() => {
         // Create renderer with correct pixel ratio
         renderer = new THREE.WebGLRenderer({ 
@@ -319,6 +328,7 @@
                 step="0.01" 
                 bind:value={currentPosition}
                 disabled={isPlaying}
+                oninput={handleSliderInput}
             >
         </div>
     </div>
