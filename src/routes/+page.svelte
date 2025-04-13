@@ -13,12 +13,12 @@
       <button on:click={() => {
         const scene = createBasicScene();
         const camera = scene.createCamera();
-        sceneStore.loadScene(camera, scene.assets);
+        sceneStore.loadScene(camera, scene.assets, scene.actions);
       }}>Load Basic Scene</button>
       <button on:click={() => {
         const scene = createColorfulSpheresScene();
         const camera = scene.createCamera();
-        sceneStore.loadScene(camera, scene.assets);
+        sceneStore.loadScene(camera, scene.assets, scene.actions);
       }}>Load Colorful Spheres</button>
     </div>
   </div>

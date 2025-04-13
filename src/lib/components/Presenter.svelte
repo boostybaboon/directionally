@@ -3,10 +3,12 @@
     import * as Tone from 'tone';
     import { onMount } from 'svelte';
     import { sceneStore } from '$lib/stores/scene';
+    import type { SceneStore } from '$lib/stores/scene';
     import { Asset } from '$lib/common/Asset';
     import { Object3DAsset } from '$lib/scene/Object3D/Object3DAsset';
     import { PerspectiveCameraAsset } from '$lib/scene/Object3D/Camera/PerspectiveCamera/PerspectiveCameraAsset';
     import { AnimationController } from '../animation/AnimationController';
+    import type { AnimationData } from '../animation/AnimationData';
 
     let canvas: HTMLCanvasElement;
     let renderer: THREE.WebGLRenderer;
@@ -117,10 +119,6 @@
     const setupAnimation = () => {
         if (!$sceneStore.scene) return;
 
-        // Find the sphere in the scene
-        const sphere = $sceneStore.scene.children.find(child => child.name === 'sphere');
-        if (!sphere) return;
-
         // Create animation controller with Tone.js sequencer
         animationController = new AnimationController({
             schedule: (callback, time) => Tone.getTransport().schedule(callback, time),
@@ -131,14 +129,21 @@
             set seconds(value) { Tone.getTransport().seconds = value; }
         });
 
-        // Setup bounce animation
-        animationController.setupAnimation(
-            sphere,
-            '.position[y]',
-            [0, 1, 2], // Keyframe times
-            [0, 2, 0], // Y position values
-            2 // Duration
-        );
+        // Setup animations from scene data
+        if ($sceneStore.actions && $sceneStore.actions.length > 0 && $sceneStore.scene) {
+            $sceneStore.actions.forEach((action: AnimationData) => {
+                const target = $sceneStore.scene?.children.find((child: THREE.Object3D) => child.name === action.target);
+                if (target && animationController) {
+                    animationController.setupAnimation(
+                        target,
+                        action.property,
+                        action.keyframes.map(kf => kf.time),
+                        action.keyframes.map(kf => kf.value),
+                        action.duration
+                    );
+                }
+            });
+        }
     };
 
     const playSequence = async () => {
@@ -306,8 +311,6 @@
             }
         };
     }
-
-    // ... rest of existing code ...
 </script>
 
 <div class="presenter">

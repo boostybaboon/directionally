@@ -2,17 +2,19 @@ import { writable, type Writable } from 'svelte/store';
 import type { Object3DAsset } from '../scene/Object3D/Object3DAsset';
 import { Scene, Color } from 'three';
 import type { PerspectiveCameraAsset } from '../scene/Object3D/Camera/PerspectiveCamera/PerspectiveCameraAsset';
+import type { AnimationData } from '../animation/AnimationData';
 
 export interface SceneState {
     camera: PerspectiveCameraAsset | null;
     scene: Scene | null;
     assets: Object3DAsset[];
     selectedAsset: Object3DAsset | null;
+    actions: AnimationData[];
 }
 
 export interface SceneStore extends Writable<SceneState> {
     selectAsset: (asset: Object3DAsset | null) => void;
-    loadScene: (camera: PerspectiveCameraAsset, assets: Object3DAsset[]) => void;
+    loadScene: (camera: PerspectiveCameraAsset, assets: Object3DAsset[], actions?: AnimationData[]) => void;
 }
 
 function createSceneStore(): SceneStore {
@@ -20,7 +22,8 @@ function createSceneStore(): SceneStore {
         camera: null,
         scene: null,
         assets: [],
-        selectedAsset: null
+        selectedAsset: null,
+        actions: []
     });
 
     return {
@@ -29,7 +32,7 @@ function createSceneStore(): SceneStore {
         update,
         selectAsset: (asset: Object3DAsset | null) => 
             update(state => ({ ...state, selectedAsset: asset })),
-        loadScene: (camera: PerspectiveCameraAsset, assets: Object3DAsset[]) => {
+        loadScene: (camera: PerspectiveCameraAsset, assets: Object3DAsset[], actions: AnimationData[] = []) => {
             // Create a new scene
             const scene = new Scene();
             scene.background = new Color(0xf0f0f0);
@@ -44,9 +47,9 @@ function createSceneStore(): SceneStore {
                 }
             });
 
-            set({ camera, scene, assets, selectedAsset: null });
+            set({ camera, scene, assets, selectedAsset: null, actions });
         }
     };
 }
 
-export const sceneStore = createSceneStore(); 
+export const sceneStore: SceneStore = createSceneStore(); 
