@@ -3,7 +3,6 @@
     import * as Tone from 'tone';
     import { onMount } from 'svelte';
     import { sceneStore } from '$lib/stores/scene';
-    import type { SceneStore } from '$lib/stores/scene';
     import { Asset } from '$lib/common/Asset';
     import { Object3DAsset } from '$lib/scene/Object3D/Object3DAsset';
     import { PerspectiveCameraAsset } from '$lib/scene/Object3D/Camera/PerspectiveCamera/PerspectiveCameraAsset';
@@ -139,7 +138,11 @@
                         action.property,
                         action.keyframes.map(kf => kf.time),
                         action.keyframes.map(kf => kf.value),
-                        action.duration
+                        action.duration,
+                        action.startTime,
+                        action.endTime,
+                        action.loopMode,
+                        action.repetitions
                     );
                 }
             });

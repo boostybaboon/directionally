@@ -4,6 +4,8 @@ export interface AnimationState {
     anim: THREE.AnimationAction;
     start: number;
     end: number;
+    loopMode: 'once' | 'repeat' | 'pingpong';
+    repetitions: number;
 }
 
 export interface Sequencer {
@@ -18,13 +20,22 @@ export class AnimationController {
     private mixer: THREE.AnimationMixer | null = null;
     private animationDict: { [key: string]: AnimationState[] } = {};
     private sequencer: Sequencer;
-    private isFirstPlay: boolean = true;
 
     constructor(sequencer: Sequencer) {
         this.sequencer = sequencer;
     }
 
-    public setupAnimation(object: THREE.Object3D, trackName: string, times: number[], values: number[], duration: number): void {
+    public setupAnimation(
+        object: THREE.Object3D, 
+        trackName: string, 
+        times: number[], 
+        values: number[], 
+        duration: number,
+        startTime: number = 0,
+        endTime: number = duration,
+        loopMode: 'once' | 'repeat' | 'pingpong' = 'repeat',
+        repetitions: number = Infinity
+    ): void {
         // Create animation clip
         const track = new THREE.KeyframeTrack(trackName, times, values);
         const clip = new THREE.AnimationClip('animation', duration, [track]);
@@ -32,20 +43,35 @@ export class AnimationController {
         // Create mixer and action
         this.mixer = new THREE.AnimationMixer(object);
         const action = this.mixer.clipAction(clip);
-        action.setLoop(THREE.LoopRepeat, Infinity);
+
+        // Set loop mode
+        switch (loopMode) {
+            case 'once':
+                action.setLoop(THREE.LoopOnce, 1);
+                break;
+            case 'repeat':
+                action.setLoop(THREE.LoopRepeat, repetitions);
+                break;
+            case 'pingpong':
+                action.setLoop(THREE.LoopPingPong, repetitions);
+                break;
+        }
+
         action.play();
 
         // Add to animation dictionary
         this.animationDict[trackName] = [{
             anim: action,
-            start: 0,
-            end: duration
+            start: startTime,
+            end: endTime,
+            loopMode,
+            repetitions
         }];
 
         // Schedule animation state changes
         this.sequencer.clear(0);
         this.animationDict[trackName].forEach((anim) => {
-            // Schedule start - just unpause the animation
+            // Schedule start
             this.sequencer.schedule((time) => {
                 if (this.mixer) {
                     anim.anim.enabled = true;
@@ -54,7 +80,7 @@ export class AnimationController {
             }, anim.start);
 
             // Schedule end for non-looping animations
-            if (anim.anim.loop !== THREE.LoopRepeat) {
+            if (anim.loopMode === 'once') {
                 this.sequencer.schedule((time) => {
                     anim.anim.paused = true;
                 }, anim.end);
@@ -73,7 +99,7 @@ export class AnimationController {
         const currentTime = this.sequencer.seconds;
         Object.values(this.animationDict).forEach((animationList) => {
             animationList.forEach((anim) => {
-                if (anim.start <= currentTime && (currentTime < anim.end || anim.anim.loop === THREE.LoopRepeat)) {
+                if (anim.start <= currentTime && (currentTime < anim.end || anim.loopMode !== 'once')) {
                     anim.anim.paused = false;
                 }
             });
@@ -106,10 +132,14 @@ export class AnimationController {
                 
                 if (time >= anim.end) {
                     anim.anim.enabled = true;
-                    if (anim.anim.loop === THREE.LoopOnce) {
+                    if (anim.loopMode === 'once') {
                         anim.anim.time = (anim.end - anim.start);
-                    } else if (anim.anim.loop === THREE.LoopRepeat) {
+                    } else if (anim.loopMode === 'repeat') {
                         anim.anim.time = (time - anim.start) % (anim.end - anim.start);
+                    } else if (anim.loopMode === 'pingpong') {
+                        const cycleTime = anim.end - anim.start;
+                        const cycleProgress = (time - anim.start) % (cycleTime * 2);
+                        anim.anim.time = cycleProgress < cycleTime ? cycleProgress : cycleTime * 2 - cycleProgress;
                     }
                     break;
                 }
