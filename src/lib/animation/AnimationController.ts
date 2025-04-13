@@ -1,7 +1,9 @@
 import * as THREE from 'three';
+import * as Tone from 'tone';
 
 export interface AnimationState {
     anim: THREE.AnimationAction;
+    mixer: THREE.AnimationMixer;
     start: number;
     end: number;
     loopMode: 'once' | 'repeat' | 'pingpong';
@@ -17,8 +19,7 @@ export interface Sequencer {
 }
 
 export class AnimationController {
-    private mixer: THREE.AnimationMixer | null = null;
-    private animationDict: { [key: string]: AnimationState[] } = {};
+    private animationDict: { [key: string]: AnimationState } = {};
     private sequencer: Sequencer;
 
     constructor(sequencer: Sequencer) {
@@ -40,9 +41,9 @@ export class AnimationController {
         const track = new THREE.KeyframeTrack(trackName, times, values);
         const clip = new THREE.AnimationClip('animation', duration, [track]);
 
-        // Create mixer and action
-        this.mixer = new THREE.AnimationMixer(object);
-        const action = this.mixer.clipAction(clip);
+        // Create mixer for this animation
+        const mixer = new THREE.AnimationMixer(object);
+        const action = mixer.clipAction(clip);
 
         // Set loop mode
         switch (loopMode) {
@@ -57,111 +58,100 @@ export class AnimationController {
                 break;
         }
 
-        action.play();
+        // Create unique key for this animation
+        const key = `${object.name}.${trackName}`;
 
-        // Add to animation dictionary
-        this.animationDict[trackName] = [{
+        // Store animation state
+        this.animationDict[key] = {
             anim: action,
+            mixer,
             start: startTime,
             end: endTime,
             loopMode,
             repetitions
-        }];
+        };
 
-        // Schedule animation state changes
-        this.sequencer.clear(0);
-        this.animationDict[trackName].forEach((anim) => {
-            // Schedule start
+        // Schedule animation start
+        this.sequencer.schedule((time) => {
+            console.log(`Animation starting for ${key} at global time ${time}s`);
+            Tone.getDraw().schedule(() => {
+                action.enabled = true;
+                action.time = 0;
+                action.paused = false;
+            }, time);
+        }, startTime);
+
+        // Schedule animation end for non-looping animations
+        if (loopMode === 'once') {
             this.sequencer.schedule((time) => {
-                if (this.mixer) {
-                    anim.anim.enabled = true;
-                    anim.anim.paused = false;
-                }
-            }, anim.start);
-
-            // Schedule end for non-looping animations
-            if (anim.loopMode === 'once') {
-                this.sequencer.schedule((time) => {
-                    anim.anim.paused = true;
-                }, anim.end);
-            }
-        });
+                console.log(`Animation ending for ${key} at global time ${time}s`);
+                Tone.getDraw().schedule(() => {
+                    action.paused = true;
+                }, time);
+            }, endTime);
+        }
 
         // Set initial state
+        action.enabled = false;
         action.paused = true;
-        this.setTime(0);
+        action.time = 0;
     }
 
     public play(): void {
         this.sequencer.start();
-        
-        // Unpause animations that should be playing at current time
-        const currentTime = this.sequencer.seconds;
-        Object.values(this.animationDict).forEach((animationList) => {
-            animationList.forEach((anim) => {
-                if (anim.start <= currentTime && (currentTime < anim.end || anim.loopMode !== 'once')) {
-                    anim.anim.paused = false;
-                }
-            });
-        });
     }
 
     public pause(): void {
         this.sequencer.pause();
-        
-        // Pause all animations without resetting their time
-        Object.values(this.animationDict).forEach((animationList) => {
-            animationList.forEach((anim) => {
-                anim.anim.paused = true;
-            });
+        Object.values(this.animationDict).forEach((state) => {
+            state.anim.paused = true;
         });
     }
 
     public setTime(time: number): void {
         this.sequencer.seconds = time;
         
-        // Update animation states based on time
-        Object.entries(this.animationDict).forEach(([_, animationList]) => {
-            for (let i = animationList.length - 1; i >= 0; i--) {
-                const anim = animationList[i];
+        // Disable all animations first
+        Object.values(this.animationDict).forEach((state) => {
+            state.anim.enabled = false;
+            state.anim.paused = true;
+        });
 
-                if (time < anim.start) {
-                    anim.anim.enabled = false;
-                    continue;
+        // Enable and set time for animations that should be active
+        Object.values(this.animationDict).forEach((state) => {
+            if (time < state.start) {
+                return;
+            }
+            
+            if (time >= state.end) {
+                state.anim.enabled = true;
+                if (state.loopMode === 'once') {
+                    state.anim.time = (state.end - state.start);
+                } else if (state.loopMode === 'repeat') {
+                    state.anim.time = (time - state.start) % (state.end - state.start);
+                } else if (state.loopMode === 'pingpong') {
+                    const cycleTime = state.end - state.start;
+                    const cycleProgress = (time - state.start) % (cycleTime * 2);
+                    state.anim.time = cycleProgress < cycleTime ? cycleProgress : cycleTime * 2 - cycleProgress;
                 }
-                
-                if (time >= anim.end) {
-                    anim.anim.enabled = true;
-                    if (anim.loopMode === 'once') {
-                        anim.anim.time = (anim.end - anim.start);
-                    } else if (anim.loopMode === 'repeat') {
-                        anim.anim.time = (time - anim.start) % (anim.end - anim.start);
-                    } else if (anim.loopMode === 'pingpong') {
-                        const cycleTime = anim.end - anim.start;
-                        const cycleProgress = (time - anim.start) % (cycleTime * 2);
-                        anim.anim.time = cycleProgress < cycleTime ? cycleProgress : cycleTime * 2 - cycleProgress;
-                    }
-                    break;
-                }
-                
-                if (time >= anim.start && time < anim.end) {
-                    anim.anim.enabled = true;
-                    anim.anim.time = (time - anim.start);
-                    break;
-                }
+                return;
+            }
+            
+            if (time >= state.start && time < state.end) {
+                state.anim.enabled = true;
+                state.anim.time = (time - state.start);
             }
         });
 
-        // Update mixer to apply changes
-        if (this.mixer) {
-            this.mixer.time = time;
-            this.mixer.update(0);
-        }
+        // Update all mixers to apply changes
+        Object.values(this.animationDict).forEach((state) => {
+            state.mixer.update(0);
+        });
     }
 
     public update(delta: number): void {
-        if (this.mixer) {
-            this.mixer.update(delta);
-        }
+        Object.values(this.animationDict).forEach((state) => {
+            state.mixer.update(delta);
+        });
     }
 } 

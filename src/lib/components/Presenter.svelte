@@ -35,6 +35,8 @@
     let rendererSize = { width: 0, height: 0 };
     let pixelRatio = 1;
 
+    let lastTime = 0;
+
     const setupTone = async () => {
         if (!isToneSetup) {
             await Tone.start();
@@ -68,15 +70,19 @@
         `;
     }
 
-    function animate() {
+    function animate(time: number) {
         animationFrameId = requestAnimationFrame(animate);
         
         if ($sceneStore.camera && $sceneStore.scene) {
             const camera = $sceneStore.camera.getObject3D() as THREE.PerspectiveCamera;
             
+            // Calculate delta time in seconds
+            const deltaTime = (time - lastTime) / 1000;
+            lastTime = time;
+            
             // Update animation controller if it exists
             if (animationController) {
-                animationController.update(1/60);
+                animationController.update(deltaTime);
                 // Update position from Tone's time
                 currentPosition = Tone.getTransport().seconds;
             }
@@ -115,24 +121,63 @@
         updateDebugInfo();
     }
 
-    const setupAnimation = () => {
+    const setupAnimation = async () => {
         if (!$sceneStore.scene) return;
+
+        console.log('Setting up animations...');
+
+        // Initialize Tone.js if needed
+        if (!isToneSetup) {
+            console.log('Initializing Tone.js...');
+            await Tone.start();
+            Tone.setContext(new Tone.Context({ lookAhead: 0 }));
+            Tone.getDraw().anticipation = 0.5;
+            isToneSetup = true;
+            console.log('Tone.js initialized');
+        }
+
+        // Clean up existing animation controller
+        if (animationController) {
+            console.log('Cleaning up existing animation controller');
+            animationController = null;
+        }
 
         // Create animation controller with Tone.js sequencer
         animationController = new AnimationController({
-            schedule: (callback, time) => Tone.getTransport().schedule(callback, time),
-            clear: (time) => Tone.getTransport().clear(time),
-            start: () => Tone.getTransport().start(),
-            pause: () => Tone.getTransport().pause(),
+            schedule: (callback, time) => {
+                console.log(`Scheduling callback for time ${time}s`);
+                Tone.getTransport().schedule(callback, time);
+            },
+            clear: (time) => {
+                console.log(`Clearing schedule at time ${time}s`);
+                Tone.getTransport().clear(time);
+            },
+            start: () => {
+                console.log('Starting Tone.js transport');
+                Tone.getTransport().start();
+            },
+            pause: () => {
+                console.log('Pausing Tone.js transport');
+                Tone.getTransport().pause();
+            },
             get seconds() { return Tone.getTransport().seconds; },
             set seconds(value) { Tone.getTransport().seconds = value; }
         });
 
         // Setup animations from scene data
         if ($sceneStore.actions && $sceneStore.actions.length > 0 && $sceneStore.scene) {
+            console.log(`Found ${$sceneStore.actions.length} animations to setup`);
             $sceneStore.actions.forEach((action: AnimationData) => {
                 const target = $sceneStore.scene?.children.find((child: THREE.Object3D) => child.name === action.target);
                 if (target && animationController) {
+                    console.log(`Setting up animation for ${action.target}:`);
+                    console.log(`- Property: ${action.property}`);
+                    console.log(`- Start time: ${action.startTime}s`);
+                    console.log(`- End time: ${action.endTime}s`);
+                    console.log(`- Duration: ${action.duration}s`);
+                    console.log(`- Loop mode: ${action.loopMode}`);
+                    console.log(`- Repetitions: ${action.repetitions}`);
+                    
                     animationController.setupAnimation(
                         target,
                         action.property,
@@ -144,6 +189,8 @@
                         action.loopMode,
                         action.repetitions
                     );
+                } else {
+                    console.warn(`Could not find target object for animation: ${action.target}`);
                 }
             });
         }
@@ -151,10 +198,18 @@
 
     const playSequence = async () => {
         if (!isToneSetup) {
-            await setupTone();
+            console.log('Initializing Tone.js...');
+            await Tone.start();
+            Tone.setContext(new Tone.Context({ lookAhead: 0 }));
+            Tone.getDraw().anticipation = 0.5;
+            isToneSetup = true;
+            console.log('Tone.js initialized');
         }
         if (animationController) {
+            console.log('Starting animation sequence');
             animationController.play();
+        } else {
+            console.warn('No animation controller available');
         }
     };
 
@@ -213,7 +268,7 @@
         resizeObserver.observe(canvas);
 
         // Start animation loop
-        animate();
+        animate(0);
 
         return () => {
             resizeObserver.disconnect();

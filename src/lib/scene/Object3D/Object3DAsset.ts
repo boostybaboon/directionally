@@ -14,9 +14,10 @@ export class Object3DAsset extends Asset {
     private _lastRotationMethod: 'euler' | 'axisAngle' | 'upLookAt' | null = null;
     private _lastUpLookAt: { up: Vector3, lookAt: Vector3 } | null = null;
 
-    constructor(object3D: Object3D = new Object3D()) {
-        super();
+    constructor(object3D: Object3D = new Object3D(), name: string = 'Unnamed Object3D') {
+        super(name);
         this.object3D = object3D;
+        this.object3D.name = name;
         
         // Initialize position parameter
         const initialPosition = new Vector3();

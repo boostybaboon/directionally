@@ -12,9 +12,9 @@ export class MeshAsset extends Object3DAsset {
     private _geometry: BufferGeometryAsset;
     private _material: MaterialAsset;
 
-    constructor(geometry: BufferGeometryAsset, material: MaterialAsset, mesh?: Mesh) {
+    constructor(geometry: BufferGeometryAsset, material: MaterialAsset, name: string = 'Unnamed Mesh', mesh?: Mesh) {
         const threeMesh = mesh || new Mesh(geometry.getGeometry(), material.getMaterial());
-        super(threeMesh);
+        super(threeMesh, name);
         this._mesh = threeMesh;
         this._geometry = geometry;
         this._material = material;

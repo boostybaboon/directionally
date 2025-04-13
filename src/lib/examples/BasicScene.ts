@@ -27,9 +27,8 @@ export function createBasicScene() {
     const sphereGeometry = new SphereGeometryAsset(1, 32, 32);
     const sphereMaterial = new MeshStandardMaterialAsset();
     sphereMaterial.color.value = new Color("#0000ff");
-    const sphere = new MeshAsset(sphereGeometry, sphereMaterial);
+    const sphere = new MeshAsset(sphereGeometry, sphereMaterial, "sphere");
     sphere.position.value = new Vector3(0, 2, 0);
-    sphere.getMesh().name = "sphere"; // Add name for animation targeting
 
     // Define animations
     const animations: AnimationData[] = [
