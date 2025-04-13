@@ -3,9 +3,10 @@
     import * as Tone from 'tone';
     import { onMount } from 'svelte';
     import { sceneStore } from '$lib/stores/scene';
-    import { Asset } from '../common/Asset';
-    import { Object3DAsset } from '../scene/Object3D/Object3DAsset';
-    import { PerspectiveCameraAsset } from '../scene/Object3D/Camera/PerspectiveCamera/PerspectiveCameraAsset';
+    import { Asset } from '$lib/common/Asset';
+    import { Object3DAsset } from '$lib/scene/Object3D/Object3DAsset';
+    import { PerspectiveCameraAsset } from '$lib/scene/Object3D/Camera/PerspectiveCamera/PerspectiveCameraAsset';
+    import { AnimationController } from '../animation/AnimationController';
 
     let canvas: HTMLCanvasElement;
     let renderer: THREE.WebGLRenderer;
@@ -25,10 +26,7 @@
     let isToneSetup = $state<boolean>(false);
     let isPlaying = $state<boolean>(false);
     let currentPosition = $state<number>(0);
-    let sliderValue = $state<number>(0);
-    let animationMixer: THREE.AnimationMixer | null = null;
-    let animationAction: THREE.AnimationAction | null = null;
-    let animationDict: { [key: string]: { anim: THREE.AnimationAction; start: number; end: number }[] } = {};
+    let animationController: AnimationController | null = null;
 
     // Debug overlay
     let debugOverlay: HTMLDivElement | null = null;
@@ -66,7 +64,6 @@
             <div>Renderer: ${rendererSize.width}x${rendererSize.height}</div>
             <div>Pixel Ratio: ${pixelRatio}</div>
             <div>Camera Aspect: ${camera?.aspect.toFixed(2) ?? 'N/A'}</div>
-            <div>Position: ${currentPosition.toFixed(2)}</div>
         `;
     }
 
@@ -76,10 +73,11 @@
         if ($sceneStore.camera && $sceneStore.scene) {
             const camera = $sceneStore.camera.getObject3D() as THREE.PerspectiveCamera;
             
-            // Update animation mixer if it exists
-            if (animationMixer) {
-                const delta = 1/60; // Fixed time step for consistent animation
-                animationMixer.update(delta);
+            // Update animation controller if it exists
+            if (animationController) {
+                animationController.update(1/60);
+                // Update position from Tone's time
+                currentPosition = Tone.getTransport().seconds;
             }
             
             renderer.render($sceneStore.scene, camera);
@@ -121,156 +119,61 @@
 
         // Find the sphere in the scene
         const sphere = $sceneStore.scene.children.find(child => child.name === 'sphere');
-        if (!sphere) {
-            console.log('No sphere found in scene');
-            return;
-        }
+        if (!sphere) return;
 
-        // Create animation clip for up and down movement
-        const times = [0, 1, 2]; // Keyframe times
-        const values = [0, 2, 0]; // Y position values
-        const track = new THREE.KeyframeTrack('.position[y]', times, values);
-        const clip = new THREE.AnimationClip('bounce', 2, [track]);
-
-        // Create mixer and action
-        animationMixer = new THREE.AnimationMixer(sphere);
-        animationAction = animationMixer.clipAction(clip);
-        animationAction.setLoop(THREE.LoopRepeat, Infinity);
-        animationAction.play();
-        animationAction.paused = true;
-
-        console.log('Animation setup:', {
-            mixer: animationMixer,
-            action: animationAction,
-            sphere: sphere
+        // Create animation controller with Tone.js sequencer
+        animationController = new AnimationController({
+            schedule: (callback, time) => Tone.getTransport().schedule(callback, time),
+            clear: (time) => Tone.getTransport().clear(time),
+            start: () => Tone.getTransport().start(),
+            pause: () => Tone.getTransport().pause(),
+            get seconds() { return Tone.getTransport().seconds; },
+            set seconds(value) { Tone.getTransport().seconds = value; }
         });
 
-        // Add to animation dictionary
-        animationDict['sphere_bounce'] = [{
-            anim: animationAction,
-            start: 0,
-            end: 2
-        }];
-
-        // Schedule animation state changes with Tone.js
-        Tone.getTransport().clear(0);
-        Object.entries(animationDict).forEach(([_, animationList]) => {
-            animationList.forEach((anim) => {
-                // Schedule start
-                Tone.getTransport().schedule((time) => {
-                    console.log('Animation start scheduled at:', time);
-                    if (animationMixer) {
-                        animationMixer.time = 0;
-                        anim.anim.time = 0;
-                        anim.anim.paused = false;
-                    }
-                }, anim.start);
-
-                // Schedule end for non-looping animations
-                if (anim.anim.loop !== THREE.LoopRepeat) {
-                    Tone.getTransport().schedule((time) => {
-                        console.log('Animation end scheduled at:', time);
-                        anim.anim.paused = true;
-                    }, anim.end);
-                }
-            });
-        });
+        // Setup bounce animation
+        animationController.setupAnimation(
+            sphere,
+            '.position[y]',
+            [0, 1, 2], // Keyframe times
+            [0, 2, 0], // Y position values
+            2 // Duration
+        );
     };
 
     const playSequence = async () => {
         if (!isToneSetup) {
             await setupTone();
         }
-        console.log('Starting transport, current time:', Tone.getTransport().seconds);
-        Tone.getTransport().start();
-        
-        // Ensure animations are unpaused
-        Object.values(animationDict).forEach((animationList) => {
-            animationList.forEach((anim) => {
-                anim.anim.paused = false;
-            });
-        });
+        if (animationController) {
+            animationController.play();
+        }
     };
 
     const pauseSequence = () => {
-        Tone.getTransport().pause();
-        updatePosition();
-
-        // Pause all animations
-        Object.values(animationDict).forEach((animationList) => {
-            animationList.forEach((anim) => {
-                anim.anim.paused = true;
-            });
-        });
-    };
-
-    const updatePosition = () => {
-        const currentTime = Tone.getTransport().seconds;
-        currentPosition = currentTime;
-        sliderValue = currentTime;
-    };
-
-    const setSequenceTo = (time: number) => {
-        Tone.getTransport().seconds = time;
-        updatePosition();
-
-        if (animationMixer) {
-            animationMixer.time = 0;
+        if (animationController) {
+            animationController.pause();
         }
-
-        Object.entries(animationDict).forEach(([_, animationList]) => {
-            for (let i = animationList.length - 1; i >= 0; i--) {
-                const anim = animationList[i];
-
-                if (time < anim.start) {
-                    anim.anim.enabled = false;
-                    continue;
-                }
-                
-                if (time >= anim.end && anim.anim.loop !== THREE.LoopRepeat) {
-                    anim.anim.enabled = false;
-                    continue;
-                }
-                
-                anim.anim.enabled = true;
-                if (anim.anim.loop === THREE.LoopRepeat) {
-                    anim.anim.time = (time - anim.start) % (anim.end - anim.start);
-                } else {
-                    anim.anim.time = Math.min(time - anim.start, anim.end - anim.start);
-                }
-            }
-        });
     };
 
     const rewindSequence = () => {
-        Tone.getTransport().seconds = 0;
-        updatePosition();
-        setSequenceTo(0);
+        if (animationController) {
+            animationController.setTime(0);
+        }
     };
 
     const handlePlayPauseClick = async () => {
         if (!isPlaying) {
             await playSequence();
+            isPlaying = true;
         } else {
             pauseSequence();
+            isPlaying = false;
         }
-        isPlaying = !isPlaying;
     };
 
     const handleRewindClick = () => {
         rewindSequence();
-    };
-
-    const handleSliderInput = (event: Event) => {
-        const time = parseFloat((event.target as HTMLInputElement).value);
-        const wasPlaying = isPlaying;
-        if (wasPlaying) {
-            pauseSequence();
-        }
-        setSequenceTo(time);
-        if (wasPlaying) {
-            playSequence();
-        }
     };
 
     onMount(() => {
@@ -409,7 +312,14 @@
         <button onclick={handleRewindClick}>Rewind</button>
         <div>Position: {currentPosition.toFixed(2)}</div>
         <div class="slider-container">
-            <input type="range" min="0" max="16" step="0.01" bind:value={sliderValue} oninput={handleSliderInput}>
+            <input 
+                type="range" 
+                min="0" 
+                max="16" 
+                step="0.01" 
+                bind:value={currentPosition}
+                disabled={isPlaying}
+            >
         </div>
     </div>
 </div>
@@ -456,11 +366,6 @@
         z-index: 1;
     }
 
-    .slider-container {
-        width: 200px;
-        margin-top: 10px;
-    }
-
     button {
         margin-right: 10px;
         padding: 5px 10px;
@@ -473,5 +378,10 @@
 
     button:hover {
         background: #666;
+    }
+
+    .slider-container {
+        width: 200px;
+        margin-top: 10px;
     }
 </style> 

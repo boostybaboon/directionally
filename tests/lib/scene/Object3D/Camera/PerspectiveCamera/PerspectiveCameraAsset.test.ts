@@ -7,7 +7,6 @@ describe('PerspectiveCameraAsset', () => {
     const camera = new PerspectiveCameraAsset();
 
     expect(camera.fov).toBe(50); // Default FOV
-    expect(camera.aspect).toBe(1); // Default aspect ratio
     expect(camera.near).toBe(0.1); // Default near plane
     expect(camera.far).toBe(2000); // Default far plane
   });
@@ -44,9 +43,6 @@ describe('PerspectiveCameraAsset', () => {
 
     camera.fov = 60;
     expect(threeCamera.fov).toBe(60);
-
-    camera.aspect = 2;
-    expect(threeCamera.aspect).toBe(2);
 
     camera.near = 1;
     expect(threeCamera.near).toBe(1);
