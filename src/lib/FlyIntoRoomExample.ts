@@ -62,25 +62,6 @@ const assets = [
             position: [0, 20, -20]
         } as HemisphereLightData
     },
-    // Door
-    {
-        type: AssetType.Mesh,
-        name: 'door',
-        config: {
-            geometryType: GeometryType.BoxGeometry,
-            geometry: {
-                width: 2,
-                height: 4,
-                depth: 0.1
-            } as BoxGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080
-            } as MeshStandardMaterialData,
-            position: [-1, 0, 0],
-            rotation: [0, 0, 0]
-        } as MeshData
-    },
     // Door hinge
     {
         type: AssetType.Mesh,
@@ -98,7 +79,27 @@ const assets = [
             } as MeshStandardMaterialData,
             position: [0, 2, 0],
             rotation: [0, 0, 0]
-        }
+        } as MeshData
+    },
+    // Door
+    {
+        type: AssetType.Mesh,
+        name: 'door',
+        parent: 'hinge',
+        config: {
+            geometryType: GeometryType.BoxGeometry,
+            geometry: {
+                width: 2,
+                height: 4,
+                depth: 0.1
+            } as BoxGeometryData,
+            materialType: MaterialType.MeshStandardMaterial,
+            material: {
+                color: 0x808080
+            } as MeshStandardMaterialData,
+            position: [-1, 0, 0],
+            rotation: [0, 0, 0]
+        } as MeshData
     },
     // Sphere lights
     {

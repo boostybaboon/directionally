@@ -20,9 +20,9 @@ export class SceneUtils {
     return presentableCamera;
   }
 
-  static sceneObjectForAsset(asset: Asset): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
+  static async sceneObjectForAsset(asset: Asset): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
     const presenterClass = assetPresenters[asset.type];
-    const presenter = new presenterClass(asset.name, asset.config);
+    const presenter = new presenterClass(asset.name, asset.config, asset.parent);
     let presentableAsset = presenter.getPresentableAsset();
 
     return presentableAsset;

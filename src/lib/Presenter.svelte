@@ -84,6 +84,17 @@
       const sceneObject = await SceneUtils.sceneObjectForAsset(asset);
       scene.add(sceneObject[0]);
       modelAnimationClips[asset.name] = sceneObject[1];
+
+      // Handle parent-child relationships
+      if (asset.parent) {
+        const parentObject = scene.getObjectByName(asset.parent);
+        if (parentObject) {
+          scene.remove(sceneObject[0]); // Remove from scene
+          parentObject.add(sceneObject[0]); // Add to parent
+        } else {
+          console.warn(`Parent object ${asset.parent} not found for ${asset.name}`);
+        }
+      }
     });
 
     await Promise.all(assetPromises);

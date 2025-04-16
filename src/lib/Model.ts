@@ -72,10 +72,12 @@ export type Asset = {
   type: AssetType;
   name: string;
   config: JSONObject;
+  parent?: string;  // Optional name of parent asset
 };
 
 export type IPresentableAsset = {
   getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]>;
+  getParentName?(): string | undefined;  // Optional method to get parent name
 }
 
 export type DirectionalLightData = {
@@ -101,6 +103,10 @@ export class DirectionalLightPresenter implements IPresentableAsset {
       light.name = this.name;
       resolve([light, []]);
     });
+  }
+
+  getParentName(): string | undefined {
+    return undefined;
   }
 }
 
@@ -138,6 +144,10 @@ export class HemisphereLightPresenter implements IPresentableAsset {
       resolve([light, []]);
     });
   }  
+
+  getParentName(): string | undefined {
+    return undefined;
+  }
 }
 
 export class SpotLightPresenter implements IPresentableAsset {
@@ -164,6 +174,10 @@ export class SpotLightPresenter implements IPresentableAsset {
       light.name = this.name;
       resolve([light, []]);
     });
+  }
+
+  getParentName(): string | undefined {
+    return undefined;
   }
 }
 
@@ -289,10 +303,16 @@ export const materialPresenters: { [key: string]: new (data: any) => IPresentabl
 export class MeshPresenter implements IPresentableAsset {
   name: string;
   config: MeshData;
+  parent?: string;
 
-  constructor(name: string, config: MeshData) {
+  constructor(name: string, config: MeshData, parent?: string) {
     this.name = name;
     this.config = config;
+    this.parent = parent;
+  }
+
+  getParentName(): string | undefined {
+    return this.parent;
   }
 
   getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
@@ -340,6 +360,10 @@ export class GTLFPresenter implements IPresentableAsset {
       console.error('Failed to load model:', error);
       return [new THREE.Object3D(), []]; // Fallback to an empty Object3D if the model fails to load
     }
+  }
+
+  getParentName(): string | undefined {
+    return undefined;
   }
 }
 
