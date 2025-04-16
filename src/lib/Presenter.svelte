@@ -2,7 +2,9 @@
   import * as Tone from 'tone';
   import * as THREE from 'three';
   import { onMount } from 'svelte';
-  import type { AnimationDict, Model } from './Model';
+  import { Model } from './model/index';
+  import type { Asset } from './model/types';
+  import type { Action, AnimationDict } from './model/animation/types';
   import { SceneUtils } from './SceneUtils';
 
   let canvas: HTMLCanvasElement;
@@ -22,6 +24,14 @@
   let isPlaying = $state<boolean>(false);
   let currentPosition = $state<number>(0);
   let sliderValue = $state<number>(0);
+
+  type AnimationEntry = {
+    anim: THREE.AnimationAction;
+    start: number;
+    end: number;
+    loop: THREE.AnimationActionLoopStyles;
+    repetitions: number;
+  };
 
   // Function to initialize the custom console.log
   function initializeCustomConsoleLog() {
@@ -73,11 +83,9 @@
 
     scene = new THREE.Scene();
 
-    // for each camera in the model (at present only one) add to our cameras
-    camera = SceneUtils.createCamera(model.camera);
+    camera = SceneUtils.createCamera(model.camera, window.innerWidth / window.innerHeight);
 
-    // Load all assets and wait for them to be added to the scene
-    const assetPromises = model.assets.map(async (asset) => {
+    const assetPromises = model.assets.map(async (asset: Asset) => {
       const sceneObject = await SceneUtils.sceneObjectForAsset(asset);
       scene.add(sceneObject[0]);
       modelAnimationClips[asset.name] = sceneObject[1];
@@ -85,23 +93,20 @@
 
     await Promise.all(assetPromises);
 
-    //for each animation in model, add the animation to the animationDict
-    //and add its mixer to the mixers array
-    model.actions.forEach((action) => {
+    model.actions.forEach((action: Action) => {
       var sceneObject = scene.getObjectByName(action.target);
       if (!sceneObject) {
-        //is action.target the name of the camera?
         if (action.target === camera.name) {
           sceneObject = camera;
         } else {
           console.error(`Could not find object with name ${action.target}`);
-          return; // from this iteration of the loop
+          return;
         }
       }
       SceneUtils.addAction(animationDict, mixers, sceneObject, action, modelAnimationClips[action.target]);
     });
 
-    Object.values(animationDict).forEach((animGroup) => {
+    Object.values(animationDict).forEach((animGroup: AnimationDict[string]) => {
       animGroup.forEach((anim) => {
         Tone.getTransport().schedule((time) => {
           Tone.getDraw().schedule(() => {
@@ -137,9 +142,26 @@
 
   const playSequence = () => {
     let currentTime = Tone.getTransport().seconds;
-    Object.values(animationDict).forEach((animationList) => {
-      animationList.forEach((anim) => {
-      if (anim.start < currentTime && (currentTime < anim.end || anim.loop === THREE.LoopRepeat)) {
+    console.log('Animation state:', {
+      currentTime,
+      animationCount: Object.keys(animationDict).length,
+      mixers: mixers.length,
+      isPlaying: isPlaying
+    });
+    Object.entries(animationDict).forEach(([target, animationList]: [string, AnimationEntry[]]) => {
+      console.log(`Animations for ${target}:`, animationList.map(anim => ({
+        name: anim.anim.getClip().name,
+        start: anim.start,
+        end: anim.end,
+        loop: anim.loop,
+        paused: anim.anim.paused,
+        enabled: anim.anim.enabled,
+        time: anim.anim.time
+      })));
+    });
+    Object.values(animationDict).forEach((animationList: AnimationEntry[]) => {
+      animationList.forEach((anim: AnimationEntry) => {
+        if (anim.start < currentTime && (currentTime < anim.end || anim.loop === THREE.LoopRepeat)) {
           anim.anim.paused = false;
         }
       });

@@ -1,39 +1,23 @@
-import { 
-  Model, 
-  CameraType, 
-  AssetType, 
-  GeometryType, 
-  MaterialType,
-  KeyframeTrackType,
-  type GLTFData,
-  type MeshData,
-  ActionType,
-  type KeyframeActionData,
-  type GLTFActionData,
-  type VectorKeyframeTrackData,
-} from './Model';
-
-import { 
-  type PerspectiveCameraData, 
-  type HemisphereLightData, 
-  type MeshStandardMaterialData,
-  type NumberKeyframeTrackData,
-  type Camera,
-  LoopStyle
-} from './Model';
+import { Model } from './model/index';
+import { CameraType } from './model/camera/types';
+import { GeometryType } from './model/geometry/types';
+import { MaterialType } from './model/material/types';
+import { AssetType } from './model/types';
+import type { HemisphereLightData } from './model/light/types';
+import type { GLTFData } from './model/gltf/types';
+import { ActionType } from './model/animation/types';
 
 const camera = {
   type: CameraType.PerspectiveCamera,
   name: 'camera1',
   config: {
     fov: 45,
-    aspect: 2,
     near: 0.1,
     far: 1000,
     position: [3, 10, 20],
     lookAt: [0, 0, 0]
-  } as PerspectiveCameraData
-} as Camera;
+  }
+};
 
 const assets = [
   {
@@ -50,26 +34,26 @@ const assets = [
     type: AssetType.Mesh,
     name: 'plane1',
     config: {
-        geometryType: GeometryType.PlaneGeometry,
-        geometry: {
-            width: 20,
-            height: 20
-        },
-        materialType: MaterialType.MeshStandardMaterial,
-        material: {
-            color: 0x808080,
-        } as MeshStandardMaterialData,
-        position: [0, 0, 0],
-        rotation: [-Math.PI / 2, 0, 0]
-    } as MeshData
+      geometryType: GeometryType.PlaneGeometry,
+      geometry: {
+        width: 20,
+        height: 20
+      },
+      materialType: MaterialType.MeshStandardMaterial,
+      material: {
+        color: 0x808080
+      },
+      position: [0, 0, 0],
+      rotation: [-Math.PI / 2, 0, 0]
+    } as Record<string, any>
   },
   {
     type: AssetType.GLTF,
     name: 'robot1',
     config: {
-      url: '/models/gltf/RobotExpressive.glb',      
+      url: '/models/gltf/RobotExpressive.glb',
       position: [0, 0, 0],
-      rotation: [0, 0, 0],
+      rotation: [0, 0, 0]
     } as GLTFData
   }
 ];
@@ -80,45 +64,40 @@ const actions = [
     name: 'walkPosition',
     target: 'robot1',
     config: {
-      keyframeTrackType: KeyframeTrackType.VectorKeyframeTrack,
-      keyframeTrackData: {
-        property: '.position',
-        times: [0, 2, 4, 6, 8],
-        values: [  0,   0,   0, 
-                   0,   0, 7.5,
-                 7.5,   0, 7.5,
-                 7.5,   0,   0,
-                   0,   0,   0,],
-} as VectorKeyframeTrackData,
-      loop: LoopStyle.LoopRepeat,
-      repetitions: Infinity,
-      clampWhenFinished: false,
-    } as KeyframeActionData,
+      property: '.position',
+      times: [0, 2, 4, 6, 8],
+      values: [
+        0, 0, 0,
+        0, 0, 7.5,
+        7.5, 0, 7.5,
+        7.5, 0, 0,
+        0, 0, 0
+      ],
+      loop: true,
+      repetitions: Infinity
+    } as Record<string, any>
   },
   {
     type: ActionType.Keyframe,
     name: 'walkRotation1',
     target: 'robot1',
     config: {
-      keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
-      keyframeTrackData: {
-        property: '.rotation[y]',
-        times: [0.0, 1.6, 2.0, 3.6, 4.0, 5.6, 6.0, 7.6, 8.0],
-        values: [
-          0,
-          0,
-          Math.PI/2, 
-          Math.PI/2, 
-          Math.PI, 
-          Math.PI, 
-          3*Math.PI/2, 
-          3*Math.PI/2, 
-          0,],
-      } as NumberKeyframeTrackData,
-      loop: LoopStyle.LoopRepeat,
-      repetitions: Infinity,
-      clampWhenFinished: false,
-    } as KeyframeActionData,
+      property: '.rotation[y]',
+      times: [0.0, 1.6, 2.0, 3.6, 4.0, 5.6, 6.0, 7.6, 8.0],
+      values: [
+        0,
+        0,
+        Math.PI/2,
+        Math.PI/2,
+        Math.PI,
+        Math.PI,
+        3*Math.PI/2,
+        3*Math.PI/2,
+        0
+      ],
+      loop: true,
+      repetitions: Infinity
+    } as Record<string, any>
   },
   {
     type: ActionType.GLTF,
@@ -127,9 +106,9 @@ const actions = [
     config: {
       animationName: 'Walking',
       startTime: 0,
-      endTime: 10,
-    } as GLTFActionData,
-  },
+      endTime: 10
+    } as Record<string, any>
+  }
 ];
 
 export const exampleModel3 = new Model(camera, assets, actions);
