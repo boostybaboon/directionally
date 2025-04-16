@@ -90,10 +90,12 @@ export type DirectionalLightData = {
 export class DirectionalLightPresenter implements IPresentableAsset {
   name: string;
   config: DirectionalLightData;
+  parent?: string;
 
-  constructor(name: string, config: DirectionalLightData) {
+  constructor(name: string, config: DirectionalLightData, parent?: string) {
     this.name = name;
     this.config = config;
+    this.parent = parent;
   }
 
   getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
@@ -106,7 +108,7 @@ export class DirectionalLightPresenter implements IPresentableAsset {
   }
 
   getParentName(): string | undefined {
-    return undefined;
+    return this.parent;
   }
 }
 
@@ -130,10 +132,12 @@ export type SpotLightData = {
 export class HemisphereLightPresenter implements IPresentableAsset {
   name: string;
   config: HemisphereLightData;
+  parent?: string;
 
-  constructor(name: string, config: HemisphereLightData) {
+  constructor(name: string, config: HemisphereLightData, parent?: string) {
     this.name = name;
     this.config = config;
+    this.parent = parent;
   }
 
   getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
@@ -146,17 +150,19 @@ export class HemisphereLightPresenter implements IPresentableAsset {
   }  
 
   getParentName(): string | undefined {
-    return undefined;
+    return this.parent;
   }
 }
 
 export class SpotLightPresenter implements IPresentableAsset {
   name: string;
   config: SpotLightData;
+  parent?: string;
 
-  constructor(name: string, config: SpotLightData) {
+  constructor(name: string, config: SpotLightData, parent?: string) {
     this.name = name;
     this.config = config;
+    this.parent = parent;
   }
 
   getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
@@ -177,7 +183,7 @@ export class SpotLightPresenter implements IPresentableAsset {
   }
 
   getParentName(): string | undefined {
-    return undefined;
+    return this.parent;
   }
 }
 
@@ -338,10 +344,12 @@ export class MeshPresenter implements IPresentableAsset {
 export class GTLFPresenter implements IPresentableAsset {
   name: string;
   config: GLTFData;
+  parent?: string;
 
-  constructor(name: string, config: GLTFData) {
+  constructor(name: string, config: GLTFData, parent?: string) {
     this.name = name;
     this.config = config;
+    this.parent = parent;
   }
 
   async getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
@@ -363,11 +371,11 @@ export class GTLFPresenter implements IPresentableAsset {
   }
 
   getParentName(): string | undefined {
-    return undefined;
+    return this.parent;
   }
 }
 
-export const assetPresenters: { [key: string]: new (name: string, data: any) => IPresentableAsset } = {
+export const assetPresenters: { [key: string]: new (name: string, data: any, parent?: string) => IPresentableAsset } = {
   [AssetType.DirectionalLight]: DirectionalLightPresenter,
   [AssetType.HemisphereLight]: HemisphereLightPresenter,
   [AssetType.SpotLight]: SpotLightPresenter,
