@@ -4,6 +4,7 @@
   import { exampleModel2 } from '$lib/exampleModel2';
   import { exampleModel3 } from '$lib/exampleModel3';
   import { exampleModel4 } from '$lib/exampleModel4';
+  import { flyIntoRoomExample } from '$lib/FlyIntoRoomExample';
   
   let presenter : Presenter;
 
@@ -22,6 +23,10 @@
   const loadExampleModel4 = () => {
     presenter.loadModel(exampleModel4);
   };
+
+  const loadFlyIntoRoomExample = () => {
+    presenter.loadModel(flyIntoRoomExample);
+  };
 </script>
 
 <h1>Load some example models into the scene</h1>
@@ -30,5 +35,6 @@
 <button on:click={loadExampleModel2}>Ball pos</button>
 <button on:click={loadExampleModel3}>Bobot rot</button>
 <button on:click={loadExampleModel4}>Bobot quat</button>
+<button on:click={loadFlyIntoRoomExample}>Fly Into Room</button>
 
 <Presenter bind:this={presenter} />

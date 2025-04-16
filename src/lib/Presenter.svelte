@@ -72,6 +72,9 @@
     Tone.getTransport().cancel();
 
     scene = new THREE.Scene();
+    if (model.backgroundColor !== undefined) {
+      scene.background = new THREE.Color(model.backgroundColor);
+    }
 
     // for each camera in the model (at present only one) add to our cameras
     camera = SceneUtils.createCamera(model.camera);

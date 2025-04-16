@@ -111,6 +111,16 @@ export type HemisphereLightData = {
   position: [number, number, number];
 }
 
+export type SpotLightData = {
+  color: number;
+  intensity: number;
+  position: [number, number, number];
+  target: [number, number, number];
+  angle: number;
+  penumbra: number;
+  decay: number;
+}
+
 export class HemisphereLightPresenter implements IPresentableAsset {
   name: string;
   config: HemisphereLightData;
@@ -128,6 +138,33 @@ export class HemisphereLightPresenter implements IPresentableAsset {
       resolve([light, []]);
     });
   }  
+}
+
+export class SpotLightPresenter implements IPresentableAsset {
+  name: string;
+  config: SpotLightData;
+
+  constructor(name: string, config: SpotLightData) {
+    this.name = name;
+    this.config = config;
+  }
+
+  getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
+    return new Promise((resolve) => {
+      const light = new THREE.SpotLight(
+        this.config.color,
+        this.config.intensity,
+        0, // distance (0 for infinite)
+        this.config.angle,
+        this.config.penumbra,
+        this.config.decay
+      );
+      light.position.set(...this.config.position);
+      light.target.position.set(...this.config.target);
+      light.name = this.name;
+      resolve([light, []]);
+    });
+  }
 }
 
 export enum GeometryType {
@@ -309,6 +346,7 @@ export class GTLFPresenter implements IPresentableAsset {
 export const assetPresenters: { [key: string]: new (name: string, data: any) => IPresentableAsset } = {
   [AssetType.DirectionalLight]: DirectionalLightPresenter,
   [AssetType.HemisphereLight]: HemisphereLightPresenter,
+  [AssetType.SpotLight]: SpotLightPresenter,
   [AssetType.Mesh]: MeshPresenter,
   [AssetType.GLTF]: GTLFPresenter,
   // Add other asset types and their presenters here
@@ -383,7 +421,7 @@ export class QuaternionKeyframeTrackPresenter implements IPresentableKeyframeTra
   }
 
   getKeyframeTrack(): THREE.KeyframeTrack {
-    return new THREE.QuaternionKeyframeTrack(this.config.property, this.config.times, this.config.values, THREE.InterpolateSmooth);
+    return new THREE.QuaternionKeyframeTrack(this.config.property, this.config.times, this.config.values, THREE.InterpolateLinear);
   }
 }
 
@@ -417,6 +455,8 @@ export type KeyframeActionData = {
   loop: LoopStyle;
   repetitions: number;
   clampWhenFinished: boolean;
+  globalStartTime: number;
+  globalEndTime: number;
 }
 
 export type GLTFActionData = {
@@ -489,8 +529,8 @@ export class KeyframeActionPresenter implements IPresentableAction {
 
     animationDict[animationDictKey].push({
       anim: animAction,
-      start: keyframeTrack.times[0],// action.config.keyframeTrackData.times[0],
-      end: keyframeTrack.times[keyframeTrack.times.length - 1],// action.config.keyframeTrackData.times[action.config.keyframeTrackData.times.length - 1],
+      start: this.config.globalStartTime,
+      end: this.config.globalEndTime,
       loop: loopStyles[this.config.loop],
       repetitions: this.config.repetitions,
     });
@@ -555,10 +595,12 @@ export class Model {
   camera: Camera;
   assets: Asset[];
   actions: Action[];
+  backgroundColor?: number;
 
-  constructor(camera: Camera, sceneElements: Asset[], animations: Action[]) {
+  constructor(camera: Camera, sceneElements: Asset[], animations: Action[], backgroundColor?: number) {
     this.camera = camera;
     this.assets = sceneElements;
     this.actions = animations;
+    this.backgroundColor = backgroundColor;
   }
 }
