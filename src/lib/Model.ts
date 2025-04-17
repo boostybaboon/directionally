@@ -493,7 +493,6 @@ export type KeyframeActionData = {
 export type GLTFActionData = {
   animationName: string;
   startTime: number;
-  endTime: number;
 }
 
 export type AnimationDict = {

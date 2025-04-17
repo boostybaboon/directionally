@@ -129,7 +129,6 @@ const actions = [
     config: {
       animationName: 'Walking',
       startTime: 0,
-      endTime: 10,
     } as GLTFActionData,
   },
 ];
