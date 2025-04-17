@@ -171,7 +171,7 @@
     // Start updating position every 100ms during playback
     positionUpdateInterval = window.setInterval(() => {
       updatePosition();
-    }, 10);
+    }, 100);
   };
 
   const updatePosition = () => {
