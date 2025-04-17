@@ -22,6 +22,7 @@
   let isPlaying = $state<boolean>(false);
   let currentPosition = $state<number>(0);
   let sliderValue = $state<number>(0);
+  let positionUpdateInterval: number | null = null;
 
   // Function to initialize the custom console.log
   function initializeCustomConsoleLog() {
@@ -149,6 +150,13 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
   }
 
+  const clearPositionUpdateInterval = () => {
+    if (positionUpdateInterval !== null) {
+      window.clearInterval(positionUpdateInterval);
+      positionUpdateInterval = null;
+    }
+  };
+
   const playSequence = () => {
     let currentTime = Tone.getTransport().seconds;
     Object.values(animationDict).forEach((animationList) => {
@@ -159,6 +167,11 @@
       });
     });
     Tone.getTransport().start();
+    
+    // Start updating position every 100ms during playback
+    positionUpdateInterval = window.setInterval(() => {
+      updatePosition();
+    }, 10);
   };
 
   const updatePosition = () => {
@@ -171,6 +184,9 @@
     Tone.getTransport().pause();
     updatePosition();
 
+    // Clear the position update interval
+    clearPositionUpdateInterval();
+
     let currentTime = Tone.getTransport().seconds;
     Object.values(animationDict).forEach((animationList) => {
       animationList.forEach((anim) => {
@@ -180,6 +196,9 @@
   };
 
   const pauseAndDisableAll = () => {
+    // Clear the position update interval if it exists
+    clearPositionUpdateInterval();
+
     Object.values(animationDict).forEach((animationList) => {
       animationList.forEach((anim) => {
         anim.anim.enabled = false;
