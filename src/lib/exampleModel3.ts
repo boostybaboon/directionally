@@ -89,10 +89,11 @@ const actions = [
                  7.5,   0, 7.5,
                  7.5,   0,   0,
                    0,   0,   0,],
-} as VectorKeyframeTrackData,
+      } as VectorKeyframeTrackData,
       loop: LoopStyle.LoopRepeat,
       repetitions: Infinity,
       clampWhenFinished: false,
+      startTime: 0,
     } as KeyframeActionData,
   },
   {
@@ -118,6 +119,7 @@ const actions = [
       loop: LoopStyle.LoopRepeat,
       repetitions: Infinity,
       clampWhenFinished: false,
+      startTime: 0,
     } as KeyframeActionData,
   },
   {

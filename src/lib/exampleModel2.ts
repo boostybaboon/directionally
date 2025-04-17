@@ -96,7 +96,8 @@ const actions = [
       } as NumberKeyframeTrackData,
       loop: LoopStyle.LoopRepeat,
       repetitions: Infinity,
-      clampWhenFinished: false
+      clampWhenFinished: false,
+      startTime: 0,
     } as KeyframeActionData,
   }
 ];

@@ -336,8 +336,7 @@ const actions = [
             loop: LoopStyle.LoopOnce,
             repetitions: 1,
             clampWhenFinished: true,
-            globalStartTime: 9,
-            globalEndTime: 14
+            startTime: 9,
         } as KeyframeActionData
     },
     // Camera move forward animation (first part)
@@ -355,8 +354,7 @@ const actions = [
             loop: LoopStyle.LoopOnce,
             repetitions: 1,
             clampWhenFinished: true,
-            globalStartTime: 0,
-            globalEndTime: 3
+            startTime: 0,
         } as KeyframeActionData
     },
     // Camera move forward animation (second part)
@@ -374,8 +372,7 @@ const actions = [
             loop: LoopStyle.LoopOnce,
             repetitions: 1,
             clampWhenFinished: true,
-            globalStartTime: 5,
-            globalEndTime: 8
+            startTime: 5,
         } as KeyframeActionData
     },
     // Door opening animation
@@ -393,8 +390,7 @@ const actions = [
             loop: LoopStyle.LoopOnce,
             repetitions: 1,
             clampWhenFinished: true,
-            globalStartTime: 3,
-            globalEndTime: 5
+            startTime: 3,
         } as KeyframeActionData
     },
     // Door closing animation
@@ -412,8 +408,7 @@ const actions = [
             loop: LoopStyle.LoopOnce,
             repetitions: 1,
             clampWhenFinished: true,
-            globalStartTime: 13,
-            globalEndTime: 15
+            startTime: 13,
         } as KeyframeActionData
     },
     // Spotlight 1 brighten
@@ -431,8 +426,7 @@ const actions = [
             loop: LoopStyle.LoopOnce,
             repetitions: 1,
             clampWhenFinished: true,
-            globalStartTime: 7,
-            globalEndTime: 10
+            startTime: 7,
         } as KeyframeActionData
     },
     // Spotlight 1 dim
@@ -450,8 +444,7 @@ const actions = [
             loop: LoopStyle.LoopOnce,
             repetitions: 1,
             clampWhenFinished: true,
-            globalStartTime: 14,
-            globalEndTime: 15
+            startTime: 14,
         } as KeyframeActionData
     },
     // Spotlight 2 brighten
@@ -469,8 +462,7 @@ const actions = [
             loop: LoopStyle.LoopOnce,
             repetitions: 1,
             clampWhenFinished: true,
-            globalStartTime: 7,
-            globalEndTime: 10
+            startTime: 7,
         } as KeyframeActionData
     },
     // Spotlight 2 dim
@@ -488,8 +480,7 @@ const actions = [
             loop: LoopStyle.LoopOnce,
             repetitions: 1,
             clampWhenFinished: true,
-            globalStartTime: 14,
-            globalEndTime: 15
+            startTime: 14,
         } as KeyframeActionData
     }
 ];

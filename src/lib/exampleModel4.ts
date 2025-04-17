@@ -93,6 +93,7 @@ const actions = [
       loop: LoopStyle.LoopRepeat,
       repetitions: Infinity,
       clampWhenFinished: false,
+      startTime: 0,
     } as KeyframeActionData,
   },
   {
@@ -118,11 +119,12 @@ const actions = [
           0, 0.7071068, 0, -0.7071068,
           0, 0.7071068, 0, -0.7071068,
           0, 0.3826834, 0, -0.9238795,
-          ],
-        } as QuaternionKeyframeTrackData,
+        ],
+      } as QuaternionKeyframeTrackData,
       loop: LoopStyle.LoopRepeat,
       repetitions: Infinity,
       clampWhenFinished: false,
+      startTime: 0,
     } as KeyframeActionData,
   },
   {

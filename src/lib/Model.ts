@@ -487,8 +487,7 @@ export type KeyframeActionData = {
   loop: LoopStyle;
   repetitions: number;
   clampWhenFinished: boolean;
-  globalStartTime: number;
-  globalEndTime: number;
+  startTime: number;
 }
 
 export type GLTFActionData = {
@@ -561,8 +560,8 @@ export class KeyframeActionPresenter implements IPresentableAction {
 
     animationDict[animationDictKey].push({
       anim: animAction,
-      start: this.config.globalStartTime,
-      end: this.config.globalEndTime,
+      start: this.config.startTime,
+      end: this.config.startTime + clip.duration,
       loop: loopStyles[this.config.loop],
       repetitions: this.config.repetitions,
     });
