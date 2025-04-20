@@ -47,10 +47,10 @@ const lights = [
     // Hemisphere light
     new HemisphereLightAsset(
         'light2',
-        0xffffff,
-        0x444444,
-        2.5,
-        new THREE.Vector3(0, 20, -20)
+        0xffffff,  // Sky color
+        0x444444,  // Ground color
+        2.5,       // Intensity
+        new THREE.Vector3(0, 20, -20)  // Position
     ),
     // Spotlights
     new SpotLightAsset(
@@ -241,7 +241,7 @@ const assets = [
             material: {
                 color: 0x808080
             } as MeshStandardMaterialData,
-            position: [0, 3, 7],
+            position: [-3, 3, 7],
             rotation: [0, 0, 0]
         } as MeshData
     },
@@ -470,4 +470,4 @@ const actions = [
     }
 ];
 
-export const flyIntoRoomExample = new Model(camera, assets, actions, lights);
+export const flyIntoRoomExample = new Model(camera, assets, actions, lights, 0x33334c);
