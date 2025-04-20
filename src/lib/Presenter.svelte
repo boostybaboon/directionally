@@ -7,6 +7,7 @@
 
   let canvas: HTMLCanvasElement;
   let renderer: THREE.WebGLRenderer;
+  let renderContainer: HTMLDivElement;
 
   let animationDict: AnimationDict = {};
 
@@ -49,7 +50,7 @@
   
   onMount(() => {
     renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
-    renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+    updateRendererSize();
     initializeCustomConsoleLog();
   });
 
@@ -61,6 +62,23 @@
       isToneSetup = true;
     }
   };
+
+  function updateRendererSize() {
+    const container = canvas.parentElement;
+    if (container) {
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      renderer.setSize(width, height);
+      if (camera instanceof THREE.PerspectiveCamera) {
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+      }
+    }
+  }
+
+  function onWindowResize() {
+    updateRendererSize();
+  }
 
   //need a method to load a model into the scene, and set up the animations
   export async function loadModel(model: Model) {
@@ -80,11 +98,8 @@
     // Use the camera directly from the model
     camera = model.camera.threeCamera;
     
-    // Set initial aspect ratio based on canvas dimensions
-    if (camera instanceof THREE.PerspectiveCamera) {
-      camera.aspect = canvas.clientWidth / canvas.clientHeight;
-      camera.updateProjectionMatrix();
-    }
+    // Set initial aspect ratio based on container dimensions
+    updateRendererSize();
 
     // Load all assets and wait for them to be added to the scene
     const assetPromises = model.assets.map(async (asset) => {
@@ -147,14 +162,6 @@
     mixers.forEach(mixer => mixer.update(delta));
     renderer.render(scene, camera);
   };
-
-  function onWindowResize() {
-    if (camera instanceof THREE.PerspectiveCamera) {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-    }
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  }
 
   const clearPositionUpdateInterval = () => {
     if (positionUpdateInterval !== null) {
@@ -370,26 +377,45 @@
 <style>
   #c {
     width: 100%;
-    height: 600px;
+    height: 100%;
   }
 
   #content {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    height: 100vh;
+    width: 100%;
+  }
+
+  #render-container {
+    flex: 1;
+    min-height: 0; /* This is important for flex child to respect parent's height */
+    position: relative;
+  }
+
+  #controls-top {
+    padding: 10px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  #controls-bottom {
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
 
   button {
-    margin: 10px;
+    padding: 5px 10px;
   }
 
   #slider-container {
-    margin: 20px;
-    width: 80%;
+    width: 100%;
   }
 
   #log-panel {
-    width: 100%;
     height: 200px;
     overflow-y: scroll;
     border: 1px solid #ccc;
@@ -399,13 +425,19 @@
 </style>
   
 <div id="content">
-  <div><canvas bind:this={canvas} id="c"></canvas></div>
-  <div>Play/Pause: <button onclick={handlePlayPauseClick} disabled={!isToneSetup}>{isPlaying ? 'Pause' : 'Play'}</button></div>
-  <div><button onclick={handleRewindClick} disabled={!isToneSetup}>Rewind</button></div>
-  <div>Position: {currentPosition.toFixed(2)}</div>
-  <div id="slider-container">
-    <input type="range" min="0" max="16" step="0.01" bind:value={sliderValue} oninput={handleSliderInput} disabled={!isToneSetup}>
+  <div id="controls-top">
+    <button onclick={handlePlayPauseClick} disabled={!isToneSetup}>{isPlaying ? 'Pause' : 'Play'}</button>
+    <button onclick={handleRewindClick} disabled={!isToneSetup}>Rewind</button>
+    <button onclick={speak}>Speak</button>
   </div>
-  <div><button onclick={speak}>Speak</button></div>
-  <div id="log-panel"></div>
+  <div id="render-container">
+    <canvas bind:this={canvas} id="c"></canvas>
+  </div>
+  <div id="controls-bottom">
+    <div>Position: {currentPosition.toFixed(2)}</div>
+    <div id="slider-container">
+      <input type="range" min="0" max="16" step="0.01" bind:value={sliderValue} oninput={handleSliderInput} disabled={!isToneSetup}>
+    </div>
+    <div id="log-panel"></div>
+  </div>
 </div>
