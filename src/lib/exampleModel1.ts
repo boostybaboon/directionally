@@ -1,21 +1,21 @@
 import { 
     Model, 
-    AssetType, 
-    GeometryType, 
-    MaterialType,
-    KeyframeTrackType,
     ActionType,
     type KeyframeActionData,
-    DirectionalLightAsset
+    DirectionalLightAsset,
+    PerspectiveCameraAsset,
+    PlaneGeometryAsset,
+    BoxGeometryAsset,
+    MeshStandardMaterialAsset,
+    MeshAsset,
+    KeyframeTrackType,
+    AssetType,
+    type Asset
 } from './Model';
 
 import { 
-    type MeshData, 
-    type BoxGeometryData, 
-    type MeshStandardMaterialData,
     type NumberKeyframeTrackData,
-    LoopStyle,
-    PerspectiveCameraAsset
+    LoopStyle
 } from './Model';
 
 import * as THREE from 'three';
@@ -38,42 +38,25 @@ const lights = [
     )
 ];
 
-const assets = [
-    {
-        type: AssetType.Mesh,
-        name: 'plane1',
-        config: {
-            geometryType: GeometryType.PlaneGeometry,
-            geometry: {
-                width: 100,
-                height: 100
-            },
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080,
-            } as MeshStandardMaterialData,
-            position: [0, 0, 0],
-            rotation: [-Math.PI / 2, 0, 0]
-        }
-    },
-    {
-        type: AssetType.Mesh,
-        name: 'box1',
-        config: {
-            geometryType: GeometryType.BoxGeometry,
-            geometry: {
-                width: 1,
-                height: 1,
-                depth: 1
-            } as BoxGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x00ff00
-            } as MeshStandardMaterialData,
-            position: [0, 2, 0],
-            rotation: [0, 0, 0]
-        } as MeshData
-    }
+const assets: Asset[] = [];
+
+const meshes = [
+    // Ground plane
+    new MeshAsset(
+        'plane1',
+        new PlaneGeometryAsset(100, 100),
+        new MeshStandardMaterialAsset(0x808080),
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Euler(-Math.PI / 2, 0, 0)
+    ),
+    // Box
+    new MeshAsset(
+        'box1',
+        new BoxGeometryAsset(1, 1, 1),
+        new MeshStandardMaterialAsset(0x00ff00),
+        new THREE.Vector3(0, 2, 0),
+        new THREE.Euler(0, 0, 0)
+    )
 ];
 
 const actions = [
@@ -96,4 +79,4 @@ const actions = [
     }
 ];
 
-export const exampleModel1 = new Model(camera, assets, actions, lights);
+export const exampleModel1 = new Model(camera, assets, meshes, actions, lights);

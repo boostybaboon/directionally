@@ -18,18 +18,8 @@ import * as THREE from 'three';
 
 export class SceneUtils {
   static async sceneObjectForAsset(asset: Asset): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
-    switch (asset.type) {
-      case AssetType.Mesh:
-        const meshPresenter = new MeshPresenter(asset.name, asset.config as MeshData, asset.parent);
-        return await meshPresenter.getPresentableAsset();
-      
-      case AssetType.GLTF:
-        const gltfPresenter = new GTLFPresenter(asset.name, asset.config as GLTFData, asset.parent);
-        return await gltfPresenter.getPresentableAsset();
-      
-      default:
-        throw new Error(`Unsupported asset type: ${asset.type}`);
-    }
+    const gltfPresenter = new GTLFPresenter(asset.name, asset.config as GLTFData, asset.parent);
+    return await gltfPresenter.getPresentableAsset();
   }
 
   static addAction(

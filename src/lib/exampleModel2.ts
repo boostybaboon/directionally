@@ -1,19 +1,19 @@
 import { 
   Model, 
-  AssetType, 
-  GeometryType, 
-  MaterialType,
-  KeyframeTrackType,
-  type KeyframeActionData,
   ActionType,
+  type KeyframeActionData,
   PerspectiveCameraAsset,
-  HemisphereLightAsset
+  HemisphereLightAsset,
+  PlaneGeometryAsset,
+  SphereGeometryAsset,
+  MeshStandardMaterialAsset,
+  MeshAsset,
+  KeyframeTrackType,
+  AssetType,
+  type Asset
 } from './Model';
 
 import { 
-  type MeshData, 
-  type SphereGeometryData, 
-  type MeshStandardMaterialData,
   type NumberKeyframeTrackData,
   LoopStyle
 } from './Model';
@@ -39,42 +39,25 @@ const lights = [
   )
 ];
 
-const assets = [
-  {
-    type: AssetType.Mesh,
-    name: 'plane1',
-    config: {
-        geometryType: GeometryType.PlaneGeometry,
-        geometry: {
-            width: 10,
-            height: 10
-        },
-        materialType: MaterialType.MeshStandardMaterial,
-        material: {
-            color: 0x808080,
-        } as MeshStandardMaterialData,
-        position: [0, 0, 0],
-        rotation: [-Math.PI / 2, 0, 0]
-    }
-  },
-  {
-    type: AssetType.Mesh,
-    name: 'sphere1',
-    config: {
-      geometryType: GeometryType.SphereGeometry,
-      geometry: {
-        radius: 1,
-        widthSegments: 32,
-        heightSegments: 32
-      } as SphereGeometryData,
-      materialType: MaterialType.MeshStandardMaterial,
-      material: {
-        color: 0x0000ff
-      } as MeshStandardMaterialData,
-      position: [0, 2, 0],
-      rotation: [0, 0, 0],
-    } as MeshData
-  }
+const assets: Asset[] = [];
+
+const meshes = [
+  // Ground plane
+  new MeshAsset(
+    'plane1',
+    new PlaneGeometryAsset(10, 10),
+    new MeshStandardMaterialAsset(0x808080),
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Euler(-Math.PI / 2, 0, 0)
+  ),
+  // Sphere
+  new MeshAsset(
+    'sphere1',
+    new SphereGeometryAsset(1, 32, 32),
+    new MeshStandardMaterialAsset(0x0000ff),
+    new THREE.Vector3(0, 2, 0),
+    new THREE.Euler(0, 0, 0)
+  )
 ];
 
 const actions = [
@@ -97,4 +80,4 @@ const actions = [
   }
 ];
 
-export const exampleModel2 = new Model(camera, assets, actions, lights);
+export const exampleModel2 = new Model(camera, assets, meshes, actions, lights);

@@ -1,23 +1,22 @@
 import { 
     Model, 
-    AssetType, 
-    GeometryType, 
-    MaterialType,
-    KeyframeTrackType,
     ActionType,
     type KeyframeActionData,
     PerspectiveCameraAsset,
     DirectionalLightAsset,
     HemisphereLightAsset,
-    SpotLightAsset
+    SpotLightAsset,
+    BoxGeometryAsset,
+    SphereGeometryAsset,
+    PlaneGeometryAsset,
+    MeshStandardMaterialAsset,
+    MeshAsset,
+    KeyframeTrackType,
+    AssetType,
+    type Asset
 } from './Model';
 
 import { 
-    type MeshData, 
-    type BoxGeometryData, 
-    type SphereGeometryData,
-    type PlaneGeometryData,
-    type MeshStandardMaterialData,
     type NumberKeyframeTrackData,
     type VectorKeyframeTrackData,
     type QuaternionKeyframeTrackData,
@@ -47,10 +46,10 @@ const lights = [
     // Hemisphere light
     new HemisphereLightAsset(
         'light2',
-        0xffffff,  // Sky color
-        0x444444,  // Ground color
-        2.5,       // Intensity
-        new THREE.Vector3(0, 20, -20)  // Position
+        0xffffff,
+        0x444444,
+        2.5,
+        new THREE.Vector3(0, 20, -20)
     ),
     // Spotlights
     new SpotLightAsset(
@@ -75,231 +74,102 @@ const lights = [
     )
 ];
 
-const assets = [
+const assets: Asset[] = [];
+
+const meshes = [
     // Door hinge
-    {
-        type: AssetType.Mesh,
-        name: 'hinge',
-        config: {
-            geometryType: GeometryType.BoxGeometry,
-            geometry: {
-                width: 0.1,
-                height: 0.1,
-                depth: 0.1
-            } as BoxGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080
-            } as MeshStandardMaterialData,
-            position: [0, 2, 0],
-            rotation: [0, 0, 0]
-        } as MeshData
-    },
+    new MeshAsset(
+        'hinge',
+        new BoxGeometryAsset(0.1, 0.1, 0.1),
+        new MeshStandardMaterialAsset(0x808080),
+        new THREE.Vector3(0, 2, 0),
+        new THREE.Euler(0, 0, 0)
+    ),
     // Door
-    {
-        type: AssetType.Mesh,
-        name: 'door',
-        parent: 'hinge',
-        config: {
-            geometryType: GeometryType.BoxGeometry,
-            geometry: {
-                width: 2,
-                height: 4,
-                depth: 0.1
-            } as BoxGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080
-            } as MeshStandardMaterialData,
-            position: [-1, 0, 0],
-            rotation: [0, 0, 0]
-        } as MeshData
-    },
+    new MeshAsset(
+        'door',
+        new BoxGeometryAsset(2, 4, 0.1),
+        new MeshStandardMaterialAsset(0x808080),
+        new THREE.Vector3(-1, 0, 0),
+        new THREE.Euler(0, 0, 0),
+        'hinge'
+    ),
     // Sphere lights
-    {
-        type: AssetType.Mesh,
-        name: 'sphereLight1',
-        config: {
-            geometryType: GeometryType.SphereGeometry,
-            geometry: {
-                radius: 0.2,
-                widthSegments: 32,
-                heightSegments: 32
-            } as SphereGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080,
-                emissive: 0xffffff
-            } as MeshStandardMaterialData,
-            position: [2, 3, 0.1],
-            rotation: [0, 0, 0]
-        } as MeshData
-    },
-    {
-        type: AssetType.Mesh,
-        name: 'sphereLight2',
-        config: {
-            geometryType: GeometryType.SphereGeometry,
-            geometry: {
-                radius: 0.2,
-                widthSegments: 32,
-                heightSegments: 32
-            } as SphereGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080,
-                emissive: 0xffffff
-            } as MeshStandardMaterialData,
-            position: [-2, 3, 6.9],
-            rotation: [0, 0, 0]
-        } as MeshData
-    },
+    new MeshAsset(
+        'sphereLight1',
+        new SphereGeometryAsset(0.2),
+        new MeshStandardMaterialAsset(0x808080, 0xffffff),
+        new THREE.Vector3(2, 3, 0.1),
+        new THREE.Euler(0, 0, 0)
+    ),
+    new MeshAsset(
+        'sphereLight2',
+        new SphereGeometryAsset(0.2),
+        new MeshStandardMaterialAsset(0x808080, 0xffffff),
+        new THREE.Vector3(-2, 3, 6.9),
+        new THREE.Euler(0, 0, 0)
+    ),
     // Ground
-    {
-        type: AssetType.Mesh,
-        name: 'ground',
-        config: {
-            geometryType: GeometryType.PlaneGeometry,
-            geometry: {
-                width: 50,
-                height: 50
-            } as PlaneGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080
-            } as MeshStandardMaterialData,
-            position: [0, 0, 0],
-            rotation: [-Math.PI / 2, 0, 0]
-        } as MeshData
-    },
+    new MeshAsset(
+        'ground',
+        new PlaneGeometryAsset(50, 50),
+        new MeshStandardMaterialAsset(0x808080),
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Euler(-Math.PI / 2, 0, 0)
+    ),
     // Walls
-    {
-        type: AssetType.Mesh,
-        name: 'wall1',
-        config: {
-            geometryType: GeometryType.BoxGeometry,
-            geometry: {
-                width: 8,
-                height: 6,
-                depth: 0.1
-            } as BoxGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080
-            } as MeshStandardMaterialData,
-            position: [-6, 3, 0],
-            rotation: [0, 0, 0]
-        } as MeshData
-    },
-    {
-        type: AssetType.Mesh,
-        name: 'wall2',
-        config: {
-            geometryType: GeometryType.BoxGeometry,
-            geometry: {
-                width: 4,
-                height: 6,
-                depth: 0.1
-            } as BoxGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080
-            } as MeshStandardMaterialData,
-            position: [2, 3, 0],
-            rotation: [0, 0, 0]
-        } as MeshData
-    },
-    {
-        type: AssetType.Mesh,
-        name: 'wall3',
-        config: {
-            geometryType: GeometryType.BoxGeometry,
-            geometry: {
-                width: 2,
-                height: 2,
-                depth: 0.1
-            } as BoxGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080
-            } as MeshStandardMaterialData,
-            position: [-1, 5, 0],
-            rotation: [0, 0, 0]
-        } as MeshData
-    },
-    {
-        type: AssetType.Mesh,
-        name: 'wall4',
-        config: {
-            geometryType: GeometryType.BoxGeometry,
-            geometry: {
-                width: 14,
-                height: 6,
-                depth: 0.1
-            } as BoxGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080
-            } as MeshStandardMaterialData,
-            position: [-3, 3, 7],
-            rotation: [0, 0, 0]
-        } as MeshData
-    },
-    {
-        type: AssetType.Mesh,
-        name: 'wall5',
-        config: {
-            geometryType: GeometryType.BoxGeometry,
-            geometry: {
-                width: 7,
-                height: 6,
-                depth: 0.1
-            } as BoxGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080
-            } as MeshStandardMaterialData,
-            position: [-10, 3, 3.5],
-            rotation: [0, Math.PI / 2, 0]
-        } as MeshData
-    },
-    {
-        type: AssetType.Mesh,
-        name: 'wall6',
-        config: {
-            geometryType: GeometryType.BoxGeometry,
-            geometry: {
-                width: 7,
-                height: 6,
-                depth: 0.1
-            } as BoxGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080
-            } as MeshStandardMaterialData,
-            position: [4, 3, 3.5],
-            rotation: [0, Math.PI / 2, 0]
-        } as MeshData
-    },
+    new MeshAsset(
+        'wall1',
+        new BoxGeometryAsset(8, 6, 0.1),
+        new MeshStandardMaterialAsset(0x808080),
+        new THREE.Vector3(-6, 3, 0),
+        new THREE.Euler(0, 0, 0)
+    ),
+    new MeshAsset(
+        'wall2',
+        new BoxGeometryAsset(4, 6, 0.1),
+        new MeshStandardMaterialAsset(0x808080),
+        new THREE.Vector3(2, 3, 0),
+        new THREE.Euler(0, 0, 0)
+    ),
+    new MeshAsset(
+        'wall3',
+        new BoxGeometryAsset(2, 2, 0.1),
+        new MeshStandardMaterialAsset(0x808080),
+        new THREE.Vector3(-1, 5, 0),
+        new THREE.Euler(0, 0, 0)
+    ),
+    new MeshAsset(
+        'wall4',
+        new BoxGeometryAsset(14, 6, 0.1),
+        new MeshStandardMaterialAsset(0x808080),
+        new THREE.Vector3(-3, 3, 7),
+        new THREE.Euler(0, 0, 0)
+    ),
+    // Wall 5 (back wall)
+    new MeshAsset(
+        'wall5',
+        new BoxGeometryAsset(7, 6, 0.1),
+        new MeshStandardMaterialAsset(0x808080),
+        new THREE.Vector3(-10, 3, 3.5),
+        new THREE.Euler(0, Math.PI / 2, 0)
+    ),
+    // Wall 6 (right wall)
+    new MeshAsset(
+        'wall6',
+        new BoxGeometryAsset(7, 6, 0.1),
+        new MeshStandardMaterialAsset(0x808080),
+        new THREE.Vector3(4, 3, 3.5),
+        new THREE.Euler(0, Math.PI / 2, 0)
+    ),
     // Roof
-    {
-        type: AssetType.Mesh,
-        name: 'roof',
-        config: {
-            geometryType: GeometryType.BoxGeometry,
-            geometry: {
-                width: 14,
-                height: 7,
-                depth: 0.1
-            } as BoxGeometryData,
-            materialType: MaterialType.MeshStandardMaterial,
-            material: {
-                color: 0x808080
-            } as MeshStandardMaterialData,
-            position: [-3, 6, 3.5],
-            rotation: [Math.PI / 2, 0, 0]
-        } as MeshData
-    }
+    new MeshAsset(
+        'roof',
+        new BoxGeometryAsset(14, 7, 0.1),
+        new MeshStandardMaterialAsset(0x808080),
+        new THREE.Vector3(-3, 6, 3.5),
+        new THREE.Euler(Math.PI / 2, 0, 0)
+    )
 ];
 
 const actions = [
@@ -470,4 +340,4 @@ const actions = [
     }
 ];
 
-export const flyIntoRoomExample = new Model(camera, assets, actions, lights, 0x33334c);
+export const flyIntoRoomExample = new Model(camera, assets, meshes, actions, lights, 0x33334c);

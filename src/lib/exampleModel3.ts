@@ -11,7 +11,10 @@ import {
   type GLTFActionData,
   type VectorKeyframeTrackData,
   PerspectiveCameraAsset,
-  HemisphereLightAsset
+  HemisphereLightAsset,
+  PlaneGeometryAsset,
+  MeshStandardMaterialAsset,
+  MeshAsset
 } from './Model';
 
 import { 
@@ -43,23 +46,6 @@ const lights = [
 
 const assets = [
   {
-    type: AssetType.Mesh,
-    name: 'plane1',
-    config: {
-        geometryType: GeometryType.PlaneGeometry,
-        geometry: {
-            width: 20,
-            height: 20
-        },
-        materialType: MaterialType.MeshStandardMaterial,
-        material: {
-            color: 0x808080,
-        } as MeshStandardMaterialData,
-        position: [0, 0, 0],
-        rotation: [-Math.PI / 2, 0, 0]
-    } as MeshData
-  },
-  {
     type: AssetType.GLTF,
     name: 'robot1',
     config: {
@@ -68,6 +54,16 @@ const assets = [
       rotation: [0, 0, 0],
     } as GLTFData
   }
+];
+
+const meshes = [
+  new MeshAsset(
+    'plane1',
+    new PlaneGeometryAsset(20, 20),
+    new MeshStandardMaterialAsset(0x808080),
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Euler(-Math.PI / 2, 0, 0)
+  )
 ];
 
 const actions = [
@@ -126,7 +122,7 @@ const actions = [
       animationName: 'Walking',
       startTime: 0,
     } as GLTFActionData,
-  },
+  }
 ];
 
-export const exampleModel3 = new Model(camera, assets, actions, lights);
+export const exampleModel3 = new Model(camera, assets, meshes, actions, lights);

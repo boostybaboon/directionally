@@ -11,11 +11,14 @@ import {
   type GLTFActionData,
   type VectorKeyframeTrackData,
   type QuaternionKeyframeTrackData,
-  PerspectiveCameraAsset
+  PerspectiveCameraAsset,
+  HemisphereLightAsset,
+  PlaneGeometryAsset,
+  MeshStandardMaterialAsset,
+  MeshAsset
 } from './Model';
 
 import { 
-  type HemisphereLightData, 
   type MeshStandardMaterialData,
   LoopStyle
 } from './Model';
@@ -31,34 +34,17 @@ const camera = new PerspectiveCameraAsset(
   new THREE.Vector3(0, 0, 0)
 );
 
+const lights = [
+  new HemisphereLightAsset(
+    'light1',
+    0xffffbb,
+    0x080820,
+    1,
+    new THREE.Vector3(0, 20, 0)
+  )
+];
+
 const assets = [
-  {
-    type: AssetType.HemisphereLight,
-    name: 'light1',
-    config: {
-      skyColor: 0xffffbb,
-      groundColor: 0x080820,
-      intensity: 1,
-      position: [0, 20, 0]
-    } as HemisphereLightData
-  },
-  {
-    type: AssetType.Mesh,
-    name: 'plane1',
-    config: {
-        geometryType: GeometryType.PlaneGeometry,
-        geometry: {
-            width: 20,
-            height: 20
-        },
-        materialType: MaterialType.MeshStandardMaterial,
-        material: {
-            color: 0x808080,
-        } as MeshStandardMaterialData,
-        position: [0, 0, 0],
-        rotation: [-Math.PI / 2, 0, 0]
-    } as MeshData
-  },
   {
     type: AssetType.GLTF,
     name: 'robot1',
@@ -68,6 +54,16 @@ const assets = [
       rotation: [0, 0, 0],
     } as GLTFData
   }
+];
+
+const meshes = [
+  new MeshAsset(
+    'plane1',
+    new PlaneGeometryAsset(20, 20),
+    new MeshStandardMaterialAsset(0x808080),
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Euler(-Math.PI / 2, 0, 0)
+  )
 ];
 
 const actions = [
@@ -131,7 +127,7 @@ const actions = [
       animationName: 'Walking',
       startTime: 0,
     } as GLTFActionData,
-  },
+  }
 ];
 
-export const exampleModel4 = new Model(camera, assets, actions);
+export const exampleModel4 = new Model(camera, assets, meshes, actions, lights);

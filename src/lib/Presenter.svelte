@@ -106,6 +106,22 @@
       scene.add(light.threeLight);
     });
 
+    // Load all meshes and add them to the scene
+    model.meshes.forEach(mesh => {
+      scene.add(mesh.threeMesh);
+      
+      // Handle parent-child relationships for meshes
+      if (mesh.parent) {
+        const parentObject = scene.getObjectByName(mesh.parent);
+        if (parentObject) {
+          scene.remove(mesh.threeMesh); // Remove from scene
+          parentObject.add(mesh.threeMesh); // Add to parent
+        } else {
+          console.warn(`Parent object ${mesh.parent} not found for ${mesh.name}`);
+        }
+      }
+    });
+
     // Load all assets and wait for them to be added to the scene
     const assetPromises = model.assets.map(async (asset) => {
       const sceneObject = await SceneUtils.sceneObjectForAsset(asset);

@@ -695,21 +695,164 @@ export class SpotLightAsset extends LightAsset {
 export class Model {
   camera: CameraAsset;
   assets: Asset[];
+  meshes: MeshAsset[];
   actions: Action[];
   lights: LightAsset[];
   backgroundColor?: number;
 
   constructor(
     camera: CameraAsset, 
-    sceneElements: Asset[], 
-    animations: Action[], 
+    assets: Asset[] = [],
+    meshes: MeshAsset[] = [],
+    actions: Action[] = [], 
     lights: LightAsset[] = [],
     backgroundColor?: number
   ) {
     this.camera = camera;
-    this.assets = sceneElements;
-    this.actions = animations;
+    this.assets = assets;
+    this.meshes = meshes;
+    this.actions = actions;
     this.lights = lights;
     this.backgroundColor = backgroundColor;
   }
+}
+
+export abstract class GeometryAsset {
+    abstract get threeGeometry(): THREE.BufferGeometry;
+}
+
+export class BoxGeometryAsset extends GeometryAsset {
+    private _threeGeometry: THREE.BoxGeometry;
+    
+    constructor(
+        public readonly width: number,
+        public readonly height: number,
+        public readonly depth: number
+    ) {
+        super();
+        this._threeGeometry = new THREE.BoxGeometry(width, height, depth);
+    }
+
+    get threeGeometry(): THREE.BoxGeometry {
+        return this._threeGeometry;
+    }
+}
+
+export class SphereGeometryAsset extends GeometryAsset {
+    private _threeGeometry: THREE.SphereGeometry;
+    
+    constructor(
+        public readonly radius: number,
+        public readonly widthSegments: number = 32,
+        public readonly heightSegments: number = 32
+    ) {
+        super();
+        this._threeGeometry = new THREE.SphereGeometry(radius, widthSegments, heightSegments);
+    }
+
+    get threeGeometry(): THREE.SphereGeometry {
+        return this._threeGeometry;
+    }
+}
+
+export class PlaneGeometryAsset extends GeometryAsset {
+    private _threeGeometry: THREE.PlaneGeometry;
+    
+    constructor(
+        public readonly width: number,
+        public readonly height: number
+    ) {
+        super();
+        this._threeGeometry = new THREE.PlaneGeometry(width, height);
+    }
+
+    get threeGeometry(): THREE.PlaneGeometry {
+        return this._threeGeometry;
+    }
+}
+
+export abstract class MaterialAsset {
+    abstract get threeMaterial(): THREE.Material;
+}
+
+export class MeshStandardMaterialAsset extends MaterialAsset {
+    private _threeMaterial: THREE.MeshStandardMaterial;
+    
+    constructor(
+        public readonly color: number,
+        public readonly emissive?: number,
+        public readonly metalness?: number,
+        public readonly roughness?: number
+    ) {
+        super();
+        this._threeMaterial = new THREE.MeshStandardMaterial();
+        this._threeMaterial.color.setHex(color);
+        
+        if (emissive !== undefined) {
+            this._threeMaterial.emissive.setHex(emissive);
+        }
+        if (metalness !== undefined) {
+            this._threeMaterial.metalness = metalness;
+        }
+        if (roughness !== undefined) {
+            this._threeMaterial.roughness = roughness;
+        }
+    }
+
+    get threeMaterial(): THREE.MeshStandardMaterial {
+        return this._threeMaterial;
+    }
+}
+
+export class MeshAsset {
+    private _threeMesh: THREE.Mesh;
+    private _position: THREE.Vector3;
+    private _rotation: THREE.Euler;
+    private _parent?: string;
+    
+    constructor(
+        public readonly name: string,
+        geometry: GeometryAsset,
+        material: MaterialAsset,
+        position: THREE.Vector3,
+        rotation: THREE.Euler,
+        parent?: string
+    ) {
+        this._threeMesh = new THREE.Mesh(geometry.threeGeometry, material.threeMaterial);
+        this._threeMesh.name = name;
+        
+        this._position = position.clone();
+        this._rotation = rotation.clone();
+        
+        this._threeMesh.position.copy(this._position);
+        this._threeMesh.rotation.copy(this._rotation);
+        
+        this._parent = parent;
+    }
+
+    get threeMesh(): THREE.Mesh {
+        return this._threeMesh;
+    }
+
+    get position(): THREE.Vector3 {
+        return this._position;
+    }
+
+    get rotation(): THREE.Euler {
+        return this._rotation;
+    }
+
+    get parent(): string | undefined {
+        return this._parent;
+    }
+
+    updatePosition(position: THREE.Vector3): void {
+        this._position.copy(position);
+        this._threeMesh.position.copy(position);
+    }
+
+    updateRotation(rotation: THREE.Euler): void {
+        this._rotation.copy(rotation);
+        this._threeMesh.rotation.copy(rotation);
+    }
 }
