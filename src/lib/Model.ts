@@ -11,53 +11,69 @@ export enum CameraType {
   // other camera types...
 }
 
-export type Camera = {
-  type: CameraType;
-  name: string;
-  config: JSONObject;
+export abstract class CameraAsset {
+  abstract get threeCamera(): THREE.Camera;
 }
 
-export type PerspectiveCameraData = {
-  fov: number;
-  aspect: number; 
-  near: number;
-  far: number;
-  position: [number, number, number];
-  lookAt: [number, number, number];
-}
-
-interface IPresentableCamera {
-  getPresentableCamera(): THREE.Camera;
-}
-
-export class PerspectiveCameraPresenter implements IPresentableCamera {
-  name: string;
-  config: PerspectiveCameraData;
-
-  constructor(name: string, config: PerspectiveCameraData) {
-    this.name = name;
-    this.config = config;
+export class PerspectiveCameraAsset extends CameraAsset {
+  private _threeCamera: THREE.PerspectiveCamera;
+  private _position: THREE.Vector3;
+  private _lookAt: THREE.Vector3;
+  
+  constructor(
+    public readonly name: string,
+    public fov: number,
+    public aspect: number,
+    public readonly near: number,
+    public readonly far: number,
+    position: THREE.Vector3,
+    lookAt: THREE.Vector3
+  ) {
+    super();
+    this._threeCamera = new THREE.PerspectiveCamera(fov, aspect, near, far);
+    this._threeCamera.name = name;
+    
+    this._position = position.clone();
+    this._lookAt = lookAt.clone();
+    
+    this._threeCamera.position.copy(this._position);
+    this._threeCamera.lookAt(this._lookAt);
   }
 
-  getPresentableCamera(): THREE.Camera {
-    const camera = new THREE.PerspectiveCamera(
-      this.config.fov,
-      this.config.aspect,
-      this.config.near,
-      this.config.far
-    );
-    camera.name = this.name;
-    camera.position.set(...this.config.position);
-    camera.lookAt(...this.config.lookAt);
+  get threeCamera(): THREE.PerspectiveCamera {
+    return this._threeCamera;
+  }
 
-    return camera;
+  get position(): THREE.Vector3 {
+    return this._position;
+  }
+
+  get lookAt(): THREE.Vector3 {
+    return this._lookAt;
+  }
+
+  updatePosition(position: THREE.Vector3): void {
+    this._position.copy(position);
+    this._threeCamera.position.copy(position);
+  }
+
+  updateLookAt(lookAt: THREE.Vector3): void {
+    this._lookAt.copy(lookAt);
+    this._threeCamera.lookAt(lookAt);
+  }
+
+  updateFov(fov: number): void {
+    this.fov = fov;
+    this._threeCamera.fov = fov;
+    this._threeCamera.updateProjectionMatrix();
+  }
+
+  updateAspect(aspect: number): void {
+    this.aspect = aspect;
+    this._threeCamera.aspect = aspect;
+    this._threeCamera.updateProjectionMatrix();
   }
 }
-
-export const cameraPresenters: { [key: string]: new (name: string, data: any) => IPresentableCamera } = {
-  [CameraType.PerspectiveCamera]: PerspectiveCameraPresenter,
-  // Add other camera types and their presenters here
-};
 
 export enum AssetType {
   DirectionalLight,
@@ -622,12 +638,12 @@ export const actionPresenters: { [key: string]: new (name: string, data: any) =>
 };
 
 export class Model {
-  camera: Camera;
+  camera: CameraAsset;
   assets: Asset[];
   actions: Action[];
   backgroundColor?: number;
 
-  constructor(camera: Camera, sceneElements: Asset[], animations: Action[], backgroundColor?: number) {
+  constructor(camera: CameraAsset, sceneElements: Asset[], animations: Action[], backgroundColor?: number) {
     this.camera = camera;
     this.assets = sceneElements;
     this.actions = animations;

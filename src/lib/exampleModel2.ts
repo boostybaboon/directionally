@@ -1,38 +1,34 @@
 import { 
   Model, 
-  CameraType, 
   AssetType, 
   GeometryType, 
   MaterialType,
   KeyframeTrackType,
   type KeyframeActionData,
   ActionType,
+  PerspectiveCameraAsset
 } from './Model';
 
 import { 
-  type PerspectiveCameraData, 
   type HemisphereLightData, 
   type MeshData, 
   type SphereGeometryData, 
   type MeshStandardMaterialData,
   type NumberKeyframeTrackData,
-  type Action,
-  type Camera,
   LoopStyle
 } from './Model';
 
-const camera = {
-  type: CameraType.PerspectiveCamera,
-  name: 'camera1',
-  config: {
-    fov: 75,
-    aspect: 2,
-    near: 0.1,
-    far: 1000,
-    position: [2, 5, 5],
-    lookAt: [0, 0, 0]
-  } as PerspectiveCameraData
-} as Camera;
+import * as THREE from 'three';
+
+const camera = new PerspectiveCameraAsset(
+  'camera1',
+  75,
+  2,
+  0.1,
+  1000,
+  new THREE.Vector3(2, 5, 5),
+  new THREE.Vector3(0, 0, 0)
+);
 
 const assets = [
   {

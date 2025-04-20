@@ -77,8 +77,8 @@
       scene.background = new THREE.Color(model.backgroundColor);
     }
 
-    // for each camera in the model (at present only one) add to our cameras
-    camera = SceneUtils.createCamera(model.camera);
+    // Use the camera directly from the model
+    camera = model.camera.threeCamera;
 
     // Load all assets and wait for them to be added to the scene
     const assetPromises = model.assets.map(async (asset) => {

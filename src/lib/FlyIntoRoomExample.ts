@@ -1,16 +1,15 @@
 import { 
     Model, 
-    CameraType, 
     AssetType, 
     GeometryType, 
     MaterialType,
     KeyframeTrackType,
     ActionType,
     type KeyframeActionData,
+    PerspectiveCameraAsset
 } from './Model';
 
 import { 
-    type PerspectiveCameraData, 
     type DirectionalLightData, 
     type HemisphereLightData,
     type SpotLightData,
@@ -22,23 +21,21 @@ import {
     type NumberKeyframeTrackData,
     type VectorKeyframeTrackData,
     type QuaternionKeyframeTrackData,
-    type Camera,
     type Action,
     LoopStyle
 } from './Model';
 
-const camera = {
-    type: CameraType.PerspectiveCamera,
-    name: 'camera1',
-    config: {
-        fov: 45.8366,
-        aspect: 2,
-        near: 0.1,
-        far: 1000,
-        position: [0, 5, -30],
-        lookAt: [0, 3, 0]
-    } as PerspectiveCameraData
-} as Camera;
+import * as THREE from 'three';
+
+const camera = new PerspectiveCameraAsset(
+    'camera1',
+    45.8366,
+    2,
+    0.1,
+    1000,
+    new THREE.Vector3(0, 5, -30),
+    new THREE.Vector3(0, 3, 0)
+);
 
 const assets = [
     // Main directional light
