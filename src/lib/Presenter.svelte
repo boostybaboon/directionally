@@ -79,6 +79,12 @@
 
     // Use the camera directly from the model
     camera = model.camera.threeCamera;
+    
+    // Set initial aspect ratio based on canvas dimensions
+    if (camera instanceof THREE.PerspectiveCamera) {
+      camera.aspect = canvas.clientWidth / canvas.clientHeight;
+      camera.updateProjectionMatrix();
+    }
 
     // Load all assets and wait for them to be added to the scene
     const assetPromises = model.assets.map(async (asset) => {

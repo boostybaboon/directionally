@@ -23,14 +23,13 @@ export class PerspectiveCameraAsset extends CameraAsset {
   constructor(
     public readonly name: string,
     public fov: number,
-    public aspect: number,
     public readonly near: number,
     public readonly far: number,
     position: THREE.Vector3,
     lookAt: THREE.Vector3
   ) {
     super();
-    this._threeCamera = new THREE.PerspectiveCamera(fov, aspect, near, far);
+    this._threeCamera = new THREE.PerspectiveCamera(fov, 1, near, far); // Default aspect of 1
     this._threeCamera.name = name;
     
     this._position = position.clone();
@@ -65,12 +64,6 @@ export class PerspectiveCameraAsset extends CameraAsset {
   updateFov(fov: number): void {
     this.fov = fov;
     this._threeCamera.fov = fov;
-    this._threeCamera.updateProjectionMatrix();
-  }
-
-  updateAspect(aspect: number): void {
-    this.aspect = aspect;
-    this._threeCamera.aspect = aspect;
     this._threeCamera.updateProjectionMatrix();
   }
 }

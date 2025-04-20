@@ -30,7 +30,6 @@ import * as THREE from 'three';
 const camera = new PerspectiveCameraAsset(
     'camera1',
     45.8366,
-    2,
     0.1,
     1000,
     new THREE.Vector3(0, 5, -30),
