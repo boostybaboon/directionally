@@ -6,13 +6,13 @@ import {
     KeyframeTrackType,
     ActionType,
     type KeyframeActionData,
-    PerspectiveCameraAsset
+    PerspectiveCameraAsset,
+    DirectionalLightAsset,
+    HemisphereLightAsset,
+    SpotLightAsset
 } from './Model';
 
 import { 
-    type DirectionalLightData, 
-    type HemisphereLightData,
-    type SpotLightData,
     type MeshData, 
     type BoxGeometryData, 
     type SphereGeometryData,
@@ -36,28 +36,46 @@ const camera = new PerspectiveCameraAsset(
     new THREE.Vector3(0, 3, 0)
 );
 
-const assets = [
+const lights = [
     // Main directional light
-    {
-        type: AssetType.DirectionalLight,
-        name: 'light1',
-        config: {
-            color: 0xffffff,
-            intensity: 1.5,
-            position: [0, 20, 0]
-        } as DirectionalLightData
-    },
+    new DirectionalLightAsset(
+        'light1',
+        0xffffff,
+        1.5,
+        new THREE.Vector3(0, 20, 0)
+    ),
     // Hemisphere light
-    {
-        type: AssetType.HemisphereLight,
-        name: 'light2',
-        config: {
-            skyColor: 0xffffff,
-            groundColor: 0x444444,
-            intensity: 2.5,
-            position: [0, 20, -20]
-        } as HemisphereLightData
-    },
+    new HemisphereLightAsset(
+        'light2',
+        0xffffff,
+        0x444444,
+        2.5,
+        new THREE.Vector3(0, 20, -20)
+    ),
+    // Spotlights
+    new SpotLightAsset(
+        'spotLight1',
+        0xffffff,
+        0,
+        Math.PI / 8,
+        0,
+        2,
+        new THREE.Vector3(2, 3, 0.1),
+        new THREE.Vector3(-0.5, -0.25, 1)
+    ),
+    new SpotLightAsset(
+        'spotLight2',
+        0xffffff,
+        0,
+        Math.PI / 8,
+        0,
+        2,
+        new THREE.Vector3(-2, 3, 6.9),
+        new THREE.Vector3(0, 0, -1)
+    )
+];
+
+const assets = [
     // Door hinge
     {
         type: AssetType.Mesh,
@@ -135,35 +153,6 @@ const assets = [
             position: [-2, 3, 6.9],
             rotation: [0, 0, 0]
         } as MeshData
-    },
-    // Spotlights
-    {
-        type: AssetType.SpotLight,
-        name: 'spotLight1',
-        config: {
-            color: 0xffffff,
-            intensity: 0,
-            distance: 0,
-            angle: Math.PI / 8,
-            penumbra: 0,
-            decay: 2,
-            position: [2, 3, 0.1],
-            target: [-0.5, -0.25, 1]
-        } as SpotLightData
-    },
-    {
-        type: AssetType.SpotLight,
-        name: 'spotLight2',
-        config: {
-            color: 0xffffff,
-            intensity: 0,
-            distance: 0,
-            angle: Math.PI / 8,
-            penumbra: 0,
-            decay: 2,
-            position: [-2, 3, 6.9],
-            target: [0, 0, -1]
-        } as SpotLightData
     },
     // Ground
     {
@@ -252,7 +241,7 @@ const assets = [
             material: {
                 color: 0x808080
             } as MeshStandardMaterialData,
-            position: [-3, 3, 7],
+            position: [0, 3, 7],
             rotation: [0, 0, 0]
         } as MeshData
     },
@@ -481,4 +470,4 @@ const actions = [
     }
 ];
 
-export const flyIntoRoomExample = new Model(camera, assets, actions, 0x33334c);
+export const flyIntoRoomExample = new Model(camera, assets, actions, lights);

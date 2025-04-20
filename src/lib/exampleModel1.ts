@@ -6,10 +6,10 @@ import {
     KeyframeTrackType,
     ActionType,
     type KeyframeActionData,
+    DirectionalLightAsset
 } from './Model';
 
 import { 
-    type DirectionalLightData, 
     type MeshData, 
     type BoxGeometryData, 
     type MeshStandardMaterialData,
@@ -29,16 +29,16 @@ const camera = new PerspectiveCameraAsset(
     new THREE.Vector3(0, 0, 0)
 );
 
+const lights = [
+    new DirectionalLightAsset(
+        'light1',
+        0xffffff,
+        1,
+        new THREE.Vector3(5, 10, 7)
+    )
+];
+
 const assets = [
-    {
-        type: AssetType.DirectionalLight,
-        name: 'light1',
-        config: {
-            color: 0xffffff,
-            intensity: 1,
-            position: [5, 10, 7]
-        } as DirectionalLightData
-    },
     {
         type: AssetType.Mesh,
         name: 'plane1',
@@ -96,4 +96,4 @@ const actions = [
     }
 ];
 
-export const exampleModel1 = new Model(camera, assets, actions);
+export const exampleModel1 = new Model(camera, assets, actions, lights);

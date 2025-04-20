@@ -101,6 +101,11 @@
     // Set initial aspect ratio based on container dimensions
     updateRendererSize();
 
+    // Add lights to the scene
+    model.lights.forEach(light => {
+      scene.add(light.threeLight);
+    });
+
     // Load all assets and wait for them to be added to the scene
     const assetPromises = model.assets.map(async (asset) => {
       const sceneObject = await SceneUtils.sceneObjectForAsset(asset);

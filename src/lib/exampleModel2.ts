@@ -6,11 +6,11 @@ import {
   KeyframeTrackType,
   type KeyframeActionData,
   ActionType,
-  PerspectiveCameraAsset
+  PerspectiveCameraAsset,
+  HemisphereLightAsset
 } from './Model';
 
 import { 
-  type HemisphereLightData, 
   type MeshData, 
   type SphereGeometryData, 
   type MeshStandardMaterialData,
@@ -29,17 +29,17 @@ const camera = new PerspectiveCameraAsset(
   new THREE.Vector3(0, 0, 0)
 );
 
+const lights = [
+  new HemisphereLightAsset(
+    'light1',
+    0xffffbb,
+    0x080820,
+    1,
+    new THREE.Vector3(0, 10, 0)
+  )
+];
+
 const assets = [
-  {
-    type: AssetType.HemisphereLight,
-    name: 'light1',
-    config: {
-      skyColor: 0xffffbb,
-      groundColor: 0x080820,
-      intensity: 1,
-      position: [0, 10, 0]
-    } as HemisphereLightData
-  },
   {
     type: AssetType.Mesh,
     name: 'plane1',
@@ -97,4 +97,4 @@ const actions = [
   }
 ];
 
-export const exampleModel2 = new Model(camera, assets, actions);
+export const exampleModel2 = new Model(camera, assets, actions, lights);

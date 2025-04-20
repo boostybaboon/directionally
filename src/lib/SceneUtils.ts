@@ -1,21 +1,35 @@
-import * as THREE from 'three';
 import type { 
-  Asset, 
+  Asset,
+  IPresentableAsset,
+  MeshData,
+  GLTFData,
   Action,
-  AnimationDict,
+  AnimationDict
 } from './Model';
+
 import { 
-  assetPresenters, 
+  AssetType,
+  MeshPresenter,
+  GTLFPresenter,
   actionPresenters
 } from './Model';
 
+import * as THREE from 'three';
+
 export class SceneUtils {
   static async sceneObjectForAsset(asset: Asset): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
-    const presenterClass = assetPresenters[asset.type];
-    const presenter = new presenterClass(asset.name, asset.config, asset.parent);
-    let presentableAsset = presenter.getPresentableAsset();
-
-    return presentableAsset;
+    switch (asset.type) {
+      case AssetType.Mesh:
+        const meshPresenter = new MeshPresenter(asset.name, asset.config as MeshData, asset.parent);
+        return await meshPresenter.getPresentableAsset();
+      
+      case AssetType.GLTF:
+        const gltfPresenter = new GTLFPresenter(asset.name, asset.config as GLTFData, asset.parent);
+        return await gltfPresenter.getPresentableAsset();
+      
+      default:
+        throw new Error(`Unsupported asset type: ${asset.type}`);
+    }
   }
 
   static addAction(
