@@ -1,11 +1,11 @@
 import type { 
   Action,
   AnimationDict
-} from './Model';
+} from './model/Action';
 
 import { 
   actionPresenters
-} from './Model';
+} from './model/Action';
 
 import * as THREE from 'three';
 

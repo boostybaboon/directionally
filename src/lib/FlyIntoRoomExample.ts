@@ -1,5 +1,5 @@
+import { Model } from './Model';
 import { 
-    Model, 
     ActionType,
     type KeyframeActionData,
     KeyframeTrackType,
@@ -8,7 +8,7 @@ import {
     type QuaternionKeyframeTrackData,
     type Action,
     LoopStyle
-} from './Model';
+} from './model/Action';
 import { PerspectiveCameraAsset } from './model/Camera';
 import { DirectionalLightAsset, HemisphereLightAsset, SpotLightAsset } from './model/Light';
 import { BoxGeometryAsset, PlaneGeometryAsset, SphereGeometryAsset } from './model/Geometry';

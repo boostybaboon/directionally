@@ -2,12 +2,12 @@
   import * as Tone from 'tone';
   import * as THREE from 'three';
   import { onMount } from 'svelte';
-  import type { AnimationDict, Model } from './Model';
+  import type { Model } from './Model';
+  import type { AnimationDict } from './model/Action';
   import { SceneUtils } from './SceneUtils';
 
   let canvas: HTMLCanvasElement;
   let renderer: THREE.WebGLRenderer;
-  let renderContainer: HTMLDivElement;
 
   let animationDict: AnimationDict = {};
 

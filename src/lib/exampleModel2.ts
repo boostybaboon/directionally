@@ -1,12 +1,12 @@
+import { Model } from './Model';
 import { 
-  Model, 
   ActionType,
   type KeyframeActionData,
   KeyframeTrackType,
   type NumberKeyframeTrackData,
   LoopStyle,
   type Action
-} from './Model';
+} from './model/Action';
 import { PerspectiveCameraAsset } from './model/Camera';
 import { HemisphereLightAsset } from './model/Light';
 import { PlaneGeometryAsset, SphereGeometryAsset } from './model/Geometry';
