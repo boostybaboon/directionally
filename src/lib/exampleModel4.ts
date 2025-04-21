@@ -1,11 +1,6 @@
 import { 
   Model, 
-  AssetType, 
-  GeometryType, 
-  MaterialType,
   KeyframeTrackType,
-  type GLTFData,
-  type MeshData,
   ActionType,
   type KeyframeActionData,
   type GLTFActionData,
@@ -16,11 +11,7 @@ import {
   PlaneGeometryAsset,
   MeshStandardMaterialAsset,
   MeshAsset,
-  GLTFAsset
-} from './Model';
-
-import { 
-  type MeshStandardMaterialData,
+  GLTFAsset,
   LoopStyle
 } from './Model';
 
@@ -128,4 +119,4 @@ const actions = [
   }
 ];
 
-export const exampleModel4 = new Model(camera, [], meshes, gltfs, actions, lights);
+export const exampleModel4 = new Model(camera, meshes, gltfs, actions, lights);

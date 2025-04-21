@@ -9,11 +9,6 @@ import {
     MeshStandardMaterialAsset,
     MeshAsset,
     KeyframeTrackType,
-    AssetType,
-    type Asset
-} from './Model';
-
-import { 
     type NumberKeyframeTrackData,
     LoopStyle
 } from './Model';
@@ -37,8 +32,6 @@ const lights = [
         new THREE.Vector3(5, 10, 7)
     )
 ];
-
-const assets: Asset[] = [];
 
 const meshes = [
     // Ground plane
@@ -79,4 +72,4 @@ const actions = [
     }
 ];
 
-export const exampleModel1 = new Model(camera, [], meshes, [], actions, lights);
+export const exampleModel1 = new Model(camera, meshes, [], actions, lights);

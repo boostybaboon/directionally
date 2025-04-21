@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-
 type JSONValue = string | number | boolean | { [key: string]: JSONValue } | JSONValue[];
 
 type JSONObject = { [key: string]: JSONValue };
@@ -67,182 +66,6 @@ export class PerspectiveCameraAsset extends CameraAsset {
     this._threeCamera.updateProjectionMatrix();
   }
 }
-
-export enum AssetType {
-  Mesh,
-  Group,
-  GLTF,
-}
-
-export type Asset = {
-  type: AssetType;
-  name: string;
-  config: JSONObject;
-  parent?: string;  // Optional name of parent asset
-};
-
-export type IPresentableAsset = {
-  getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]>;
-  getParentName?(): string | undefined;  // Optional method to get parent name
-}
-
-export enum GeometryType {
-  BoxGeometry,
-  SphereGeometry,
-  PlaneGeometry,
-}
-
-export enum MaterialType {
-  MeshStandardMaterial,
-}
-
-export type BoxGeometryData = {
-  width: number;
-  height: number;
-  depth: number;
-}
-
-export type SphereGeometryData = {
-  radius: number;
-  widthSegments: number;
-  heightSegments: number;
-}
-
-export type PlaneGeometryData = {
-  width: number;
-  height: number;   
-}
-
-export type MeshStandardMaterialData = {
-  color: number;
-}
-
-export type MeshData = {
-  geometryType: GeometryType;
-  geometry: JSONObject;
-  materialType: MaterialType;
-  material: JSONObject;
-  position: [number, number, number];
-  //TODO - don't use euler angles
-  rotation: [number, number, number];
-}
-
-export type GLTFData = {
-  url: string;
-  position: [number, number, number];
-  rotation: [number, number, number];
-}
-
-export interface IPresentableGeometry {
-  getGeometry(): THREE.BufferGeometry;
-}
-
-export class BoxGeometryPresenter implements IPresentableGeometry {
-  config: BoxGeometryData;
-
-  constructor(config: BoxGeometryData) {
-    this.config = config;
-  }
-
-  getGeometry(): THREE.BufferGeometry {
-    return new THREE.BoxGeometry(this.config.width, this.config.height, this.config.depth);
-  }
-}
-
-export class SphereGeometryPresenter implements IPresentableGeometry {
-  config: SphereGeometryData;
-
-  constructor(config: SphereGeometryData) {
-    this.config = config;
-  }
-
-  getGeometry(): THREE.BufferGeometry {
-    return new THREE.SphereGeometry(
-      this.config.radius,
-      this.config.widthSegments,
-      this.config.heightSegments
-    );
-  }
-}
-
-export class PlaneGeometryPresenter implements IPresentableGeometry {
-  config: PlaneGeometryData;
-
-  constructor(config: PlaneGeometryData) {
-    this.config = config;
-  }
-
-  getGeometry(): THREE.BufferGeometry {
-    return new THREE.PlaneGeometry(this.config.width, this.config.height);
-  }
-}
-
-export interface IPresentableMaterial {
-  getMaterial(): THREE.Material;
-}
-
-export class MeshStandardMaterialPresenter implements IPresentableMaterial {
-  config: MeshStandardMaterialData;
-
-  constructor(config: MeshStandardMaterialData) {
-    this.config = config;
-  }
-
-  getMaterial(): THREE.Material {
-    return new THREE.MeshStandardMaterial({ color: this.config.color });
-  }
-}
-
-export const geometryPresenters: { [key: string]: new (data: any) => IPresentableGeometry } = {
-  [GeometryType.BoxGeometry]: BoxGeometryPresenter,
-  [GeometryType.SphereGeometry]: SphereGeometryPresenter,
-  [GeometryType.PlaneGeometry]: PlaneGeometryPresenter,
-  // Add other geometry types and their presenters here
-};
-
-export const materialPresenters: { [key: string]: new (data: any) => IPresentableMaterial } = {
-  [MaterialType.MeshStandardMaterial]: MeshStandardMaterialPresenter,
-  // Add other material types and their presenters here
-};
-
-export class MeshPresenter implements IPresentableAsset {
-  name: string;
-  config: MeshData;
-  parent?: string;
-
-  constructor(name: string, config: MeshData, parent?: string) {
-    this.name = name;
-    this.config = config;
-    this.parent = parent;
-  }
-
-  getParentName(): string | undefined {
-    return this.parent;
-  }
-
-  getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
-    return new Promise((resolve) => {
-      const geometryPresenterClass = geometryPresenters[this.config.geometryType];
-      const geometryPresenter = new geometryPresenterClass(this.config.geometry);
-      const geometry = geometryPresenter.getGeometry();
-
-      const materialPresenterClass = materialPresenters[this.config.materialType];
-      const materialPresenter = new materialPresenterClass(this.config.material);
-      const material = materialPresenter.getMaterial();
-
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.position.set(...this.config.position);
-      mesh.rotation.set(...this.config.rotation);
-      mesh.name = this.name;
-
-      resolve([mesh, []]);
-    });
-  }
-}
-
-export const assetPresenters: { [key: string]: new (name: string, data: any, parent?: string) => IPresentableAsset } = {
-  [AssetType.Mesh]: MeshPresenter,
-};
 
 export enum LoopStyle {
   LoopRepeat,
@@ -321,7 +144,6 @@ export const keyframeTrackPresenters: { [key: string]: new (data: any) => IPrese
   [KeyframeTrackType.NumberKeyframeTrack]: NumberKeyframeTrackPresenter,
   [KeyframeTrackType.VectorKeyframeTrack]: VectorKeyframeTrackPresenter,
   [KeyframeTrackType.QuaternionKeyframeTrack]: QuaternionKeyframeTrackPresenter,
-  // Add other keyframe track types and their presenters here
 };
 
 export const loopStyles: { [key: string]: THREE.AnimationActionLoopStyles } = {
@@ -375,10 +197,6 @@ export type IPresentableAction = {
   ): void;
 }
 
-//this is all a bit confused - config is within the action later passed to addAction
-//TODO sort out this confusion
-//TODO in fact to handle the different key frame track types (number, vector, quaternion) 
-//we further need to get the right presenter for the keyframe track type
 export class KeyframeActionPresenter implements IPresentableAction {
   name: string;
   config: KeyframeActionData;
@@ -478,7 +296,6 @@ export class GLTFActionPresenter implements IPresentableAction {
 export const actionPresenters: { [key: string]: new (name: string, data: any) => IPresentableAction } = {
   [ActionType.Keyframe]: KeyframeActionPresenter,
   [ActionType.GLTF]: GLTFActionPresenter,
-  // Add other action types and their presenters here
 };
 
 export abstract class LightAsset {
@@ -658,7 +475,6 @@ export class SpotLightAsset extends LightAsset {
 
 export class Model {
   camera: CameraAsset;
-  assets: Asset[];
   meshes: MeshAsset[];
   gltfs: GLTFAsset[];
   actions: Action[];
@@ -667,7 +483,6 @@ export class Model {
 
   constructor(
     camera: CameraAsset, 
-    assets: Asset[] = [],
     meshes: MeshAsset[] = [],
     gltfs: GLTFAsset[] = [],
     actions: Action[] = [], 
@@ -675,7 +490,6 @@ export class Model {
     backgroundColor?: number
   ) {
     this.camera = camera;
-    this.assets = assets;
     this.meshes = meshes;
     this.gltfs = gltfs;
     this.actions = actions;

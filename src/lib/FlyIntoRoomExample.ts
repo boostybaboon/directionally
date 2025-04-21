@@ -12,11 +12,6 @@ import {
     MeshStandardMaterialAsset,
     MeshAsset,
     KeyframeTrackType,
-    AssetType,
-    type Asset
-} from './Model';
-
-import { 
     type NumberKeyframeTrackData,
     type VectorKeyframeTrackData,
     type QuaternionKeyframeTrackData,
@@ -73,8 +68,6 @@ const lights = [
         new THREE.Vector3(0, 0, -1)
     )
 ];
-
-const assets: Asset[] = [];
 
 const meshes = [
     // Door hinge
@@ -340,4 +333,4 @@ const actions = [
     }
 ];
 
-export const flyIntoRoomExample = new Model(camera, [], meshes, [], actions, lights, 0x33334c);
+export const flyIntoRoomExample = new Model(camera, meshes, [], actions, lights, 0x33334c);
