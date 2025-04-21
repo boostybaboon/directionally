@@ -30,24 +30,27 @@ const lights = [
     )
 ];
 
-const meshes = [
-    // Ground plane
-    new MeshAsset(
-        'plane1',
-        new PlaneGeometryAsset(100, 100),
-        new MeshStandardMaterialAsset(0x808080),
-        new THREE.Vector3(0, 0, 0),
-        new THREE.Euler(-Math.PI / 2, 0, 0)
-    ),
-    // Box
-    new MeshAsset(
-        'box1',
-        new BoxGeometryAsset(1, 1, 1),
-        new MeshStandardMaterialAsset(0x00ff00),
-        new THREE.Vector3(0, 2, 0),
-        new THREE.Euler(0, 0, 0)
-    )
-];
+const meshes: MeshAsset[] = [];
+
+// Ground plane
+const ground = new MeshAsset(
+    'plane1',
+    new PlaneGeometryAsset(100, 100),
+    new MeshStandardMaterialAsset(0x808080)
+);
+ground.position = new THREE.Vector3(0, 0, 0);
+ground.rotation = new THREE.Euler(-Math.PI / 2, 0, 0);
+meshes.push(ground);
+
+// Box
+const box = new MeshAsset(
+    'box1',
+    new BoxGeometryAsset(1, 1, 1),
+    new MeshStandardMaterialAsset(0x00ff00)
+);
+box.position = new THREE.Vector3(0, 2, 0);
+box.rotation = new THREE.Euler(0, 0, 0);
+meshes.push(box);
 
 const actions = [
     new KeyframeAction(

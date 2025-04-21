@@ -41,15 +41,17 @@ const gltfs = [
   )
 ];
 
-const meshes = [
-  new MeshAsset(
+const meshes: MeshAsset[] = [];
+
+// Ground plane
+const ground = new MeshAsset(
     'plane1',
     new PlaneGeometryAsset(20, 20),
-    new MeshStandardMaterialAsset(0x808080),
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Euler(-Math.PI / 2, 0, 0)
-  )
-];
+    new MeshStandardMaterialAsset(0x808080)
+);
+ground.position = new THREE.Vector3(0, 0, 0);
+ground.rotation = new THREE.Euler(-Math.PI / 2, 0, 0);
+meshes.push(ground);
 
 const actions = [
   new KeyframeAction(

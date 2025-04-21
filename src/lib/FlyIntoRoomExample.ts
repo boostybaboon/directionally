@@ -62,101 +62,128 @@ const lights = [
     )
 ];
 
-const meshes = [
-    // Door hinge
-    new MeshAsset(
-        'hinge',
-        new BoxGeometryAsset(0.1, 0.1, 0.1),
-        new MeshStandardMaterialAsset(0x808080),
-        new THREE.Vector3(0, 2, 0),
-        new THREE.Euler(0, 0, 0)
-    ),
-    // Door
-    new MeshAsset(
-        'door',
-        new BoxGeometryAsset(2, 4, 0.1),
-        new MeshStandardMaterialAsset(0x808080),
-        new THREE.Vector3(-1, 0, 0),
-        new THREE.Euler(0, 0, 0),
-        'hinge'
-    ),
-    // Sphere lights
-    new MeshAsset(
-        'sphereLight1',
-        new SphereGeometryAsset(0.2),
-        new MeshStandardMaterialAsset(0x808080, 0xffffff),
-        new THREE.Vector3(2, 3, 0.1),
-        new THREE.Euler(0, 0, 0)
-    ),
-    new MeshAsset(
-        'sphereLight2',
-        new SphereGeometryAsset(0.2),
-        new MeshStandardMaterialAsset(0x808080, 0xffffff),
-        new THREE.Vector3(-2, 3, 6.9),
-        new THREE.Euler(0, 0, 0)
-    ),
-    // Ground
-    new MeshAsset(
-        'ground',
-        new PlaneGeometryAsset(50, 50),
-        new MeshStandardMaterialAsset(0x808080),
-        new THREE.Vector3(0, 0, 0),
-        new THREE.Euler(-Math.PI / 2, 0, 0)
-    ),
-    // Walls
-    new MeshAsset(
-        'wall1',
-        new BoxGeometryAsset(8, 6, 0.1),
-        new MeshStandardMaterialAsset(0x808080),
-        new THREE.Vector3(-6, 3, 0),
-        new THREE.Euler(0, 0, 0)
-    ),
-    new MeshAsset(
-        'wall2',
-        new BoxGeometryAsset(4, 6, 0.1),
-        new MeshStandardMaterialAsset(0x808080),
-        new THREE.Vector3(2, 3, 0),
-        new THREE.Euler(0, 0, 0)
-    ),
-    new MeshAsset(
-        'wall3',
-        new BoxGeometryAsset(2, 2, 0.1),
-        new MeshStandardMaterialAsset(0x808080),
-        new THREE.Vector3(-1, 5, 0),
-        new THREE.Euler(0, 0, 0)
-    ),
-    new MeshAsset(
-        'wall4',
-        new BoxGeometryAsset(14, 6, 0.1),
-        new MeshStandardMaterialAsset(0x808080),
-        new THREE.Vector3(-3, 3, 7),
-        new THREE.Euler(0, 0, 0)
-    ),
-    // Wall 5 (back wall)
-    new MeshAsset(
-        'wall5',
-        new BoxGeometryAsset(7, 6, 0.1),
-        new MeshStandardMaterialAsset(0x808080),
-        new THREE.Vector3(-10, 3, 3.5),
-        new THREE.Euler(0, Math.PI / 2, 0)
-    ),
-    // Wall 6 (right wall)
-    new MeshAsset(
-        'wall6',
-        new BoxGeometryAsset(7, 6, 0.1),
-        new MeshStandardMaterialAsset(0x808080),
-        new THREE.Vector3(4, 3, 3.5),
-        new THREE.Euler(0, Math.PI / 2, 0)
-    ),
-    // Roof
-    new MeshAsset(
-        'roof',
-        new BoxGeometryAsset(14, 7, 0.1),
-        new MeshStandardMaterialAsset(0x808080),
-        new THREE.Vector3(-3, 6, 3.5),
-        new THREE.Euler(Math.PI / 2, 0, 0)
-    )
-];
+const meshes: MeshAsset[] = [];
+
+// Door hinge
+const hinge = new MeshAsset(
+    'hinge',
+    new BoxGeometryAsset(0.1, 0.1, 0.1),
+    new MeshStandardMaterialAsset(0x808080)
+);
+hinge.position = new THREE.Vector3(0, 2, 0);
+hinge.rotation = new THREE.Euler(0, 0, 0);
+meshes.push(hinge);
+
+// Door
+const door = new MeshAsset(
+    'door',
+    new BoxGeometryAsset(2, 4, 0.1),
+    new MeshStandardMaterialAsset(0x808080)
+);
+door.position = new THREE.Vector3(-1, 0, 0);
+door.rotation = new THREE.Euler(0, 0, 0);
+door.parent = 'hinge';
+meshes.push(door);
+
+// Sphere light 1
+const sphereLight1 = new MeshAsset(
+    'sphereLight1',
+    new SphereGeometryAsset(0.2),
+    new MeshStandardMaterialAsset(0x808080, 0xffffff)
+);
+sphereLight1.position = new THREE.Vector3(2, 3, 0.1);
+sphereLight1.rotation = new THREE.Euler(0, 0, 0);
+meshes.push(sphereLight1);
+
+// Sphere light 2
+const sphereLight2 = new MeshAsset(
+    'sphereLight2',
+    new SphereGeometryAsset(0.2),
+    new MeshStandardMaterialAsset(0x808080, 0xffffff)
+);
+sphereLight2.position = new THREE.Vector3(-2, 3, 6.9);
+sphereLight2.rotation = new THREE.Euler(0, 0, 0);
+meshes.push(sphereLight2);
+
+// Ground
+const ground = new MeshAsset(
+    'ground',
+    new PlaneGeometryAsset(50, 50),
+    new MeshStandardMaterialAsset(0x808080)
+);
+ground.position = new THREE.Vector3(0, 0, 0);
+ground.rotation = new THREE.Euler(-Math.PI / 2, 0, 0);
+meshes.push(ground);
+
+// Wall 1
+const wall1 = new MeshAsset(
+    'wall1',
+    new BoxGeometryAsset(8, 6, 0.1),
+    new MeshStandardMaterialAsset(0x808080)
+);
+wall1.position = new THREE.Vector3(-6, 3, 0);
+wall1.rotation = new THREE.Euler(0, 0, 0);
+meshes.push(wall1);
+
+// Wall 2
+const wall2 = new MeshAsset(
+    'wall2',
+    new BoxGeometryAsset(4, 6, 0.1),
+    new MeshStandardMaterialAsset(0x808080)
+);
+wall2.position = new THREE.Vector3(2, 3, 0);
+wall2.rotation = new THREE.Euler(0, 0, 0);
+meshes.push(wall2);
+
+// Wall 3
+const wall3 = new MeshAsset(
+    'wall3',
+    new BoxGeometryAsset(2, 2, 0.1),
+    new MeshStandardMaterialAsset(0x808080)
+);
+wall3.position = new THREE.Vector3(-1, 5, 0);
+wall3.rotation = new THREE.Euler(0, 0, 0);
+meshes.push(wall3);
+
+// Wall 4
+const wall4 = new MeshAsset(
+    'wall4',
+    new BoxGeometryAsset(14, 6, 0.1),
+    new MeshStandardMaterialAsset(0x808080)
+);
+wall4.position = new THREE.Vector3(-3, 3, 7);
+wall4.rotation = new THREE.Euler(0, 0, 0);
+meshes.push(wall4);
+
+// Wall 5 (back wall)
+const wall5 = new MeshAsset(
+    'wall5',
+    new BoxGeometryAsset(7, 6, 0.1),
+    new MeshStandardMaterialAsset(0x808080)
+);
+wall5.position = new THREE.Vector3(-10, 3, 3.5);
+wall5.rotation = new THREE.Euler(0, Math.PI / 2, 0);
+meshes.push(wall5);
+
+// Wall 6 (right wall)
+const wall6 = new MeshAsset(
+    'wall6',
+    new BoxGeometryAsset(7, 6, 0.1),
+    new MeshStandardMaterialAsset(0x808080)
+);
+wall6.position = new THREE.Vector3(4, 3, 3.5);
+wall6.rotation = new THREE.Euler(0, Math.PI / 2, 0);
+meshes.push(wall6);
+
+// Roof
+const roof = new MeshAsset(
+    'roof',
+    new BoxGeometryAsset(14, 7, 0.1),
+    new MeshStandardMaterialAsset(0x808080)
+);
+roof.position = new THREE.Vector3(-3, 6, 3.5);
+roof.rotation = new THREE.Euler(Math.PI / 2, 0, 0);
+meshes.push(roof);
 
 const actions = [
     // Camera rotation animation

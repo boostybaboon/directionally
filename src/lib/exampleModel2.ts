@@ -30,24 +30,27 @@ const lights = [
   )
 ];
 
-const meshes = [
-  // Ground plane
-  new MeshAsset(
+const meshes: MeshAsset[] = [];
+
+// Ground plane
+const ground = new MeshAsset(
     'plane1',
     new PlaneGeometryAsset(10, 10),
-    new MeshStandardMaterialAsset(0x808080),
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Euler(-Math.PI / 2, 0, 0)
-  ),
-  // Sphere
-  new MeshAsset(
+    new MeshStandardMaterialAsset(0x808080)
+);
+ground.position = new THREE.Vector3(0, 0, 0);
+ground.rotation = new THREE.Euler(-Math.PI / 2, 0, 0);
+meshes.push(ground);
+
+// Sphere
+const sphere = new MeshAsset(
     'sphere1',
     new SphereGeometryAsset(1, 32, 32),
-    new MeshStandardMaterialAsset(0x0000ff),
-    new THREE.Vector3(0, 2, 0),
-    new THREE.Euler(0, 0, 0)
-  )
-];
+    new MeshStandardMaterialAsset(0x0000ff)
+);
+sphere.position = new THREE.Vector3(0, 2, 0);
+sphere.rotation = new THREE.Euler(0, 0, 0);
+meshes.push(sphere);
 
 const actions = [
   new KeyframeAction(
