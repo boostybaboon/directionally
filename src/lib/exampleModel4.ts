@@ -1,13 +1,11 @@
 import { Model } from './Model';
 import { 
   KeyframeTrackType,
-  ActionType,
-  type KeyframeActionData,
-  type GLTFActionData,
   type VectorKeyframeTrackData,
   type QuaternionKeyframeTrackData,
   LoopStyle,
-  type Action
+  KeyframeAction,
+  GLTFAction
 } from './model/Action';
 import { PerspectiveCameraAsset } from './model/Camera';
 import { HemisphereLightAsset } from './model/Light';
@@ -56,67 +54,58 @@ const meshes = [
 ];
 
 const actions = [
-  {
-    type: ActionType.Keyframe,
-    name: 'walkPosition',
-    target: 'robot1',
-    config: {
-      keyframeTrackType: KeyframeTrackType.VectorKeyframeTrack,
-      keyframeTrackData: {
-        property: '.position',
-        times: [0, 2, 4, 6, 8],
-        values: [  0,   0,   0, 
-                   0,   0, 7.5,
-                 7.5,   0, 7.5,
-                 7.5,   0,   0,
-                   0,   0,   0,],
-      } as VectorKeyframeTrackData,
-      loop: LoopStyle.LoopRepeat,
-      repetitions: Infinity,
-      clampWhenFinished: false,
-      startTime: 0,
-    } as KeyframeActionData,
-  } as Action,
-  {
-    type: ActionType.Keyframe,
-    name: 'walkRotation1',
-    target: 'robot1',
-    config: {
-      keyframeTrackType: KeyframeTrackType.QuaternionKeyframeTrack,
-      keyframeTrackData: {
-        property: '.quaternion',
-        times: [0.0, 0.2, 1.8, 2.0, 2.2, 3.8, 4.0, 4.2, 5.8, 6.0, 6.2, 7.8, 8.0],
-        values: [
-          0, 0.3826834, 0, -0.9238795, 
-          0, 0, 0, 0,
-          0, 0, 0, 0,
-          0, 0.3826834, 0, 0.9238795, 
-          0, 0.7071068, 0, 0.7071068,
-          0, 0.7071068, 0, 0.7071068, 
-          0, 0.9238795, 0, 0.3826834, 
-          0, 1, 0, 0,
-          0, 1, 0, 0,
-          0, 0.9238795, 0, -0.3826834, 
-          0, 0.7071068, 0, -0.7071068,
-          0, 0.7071068, 0, -0.7071068,
-          0, 0.3826834, 0, -0.9238795,
-        ],
-      } as QuaternionKeyframeTrackData,
-      loop: LoopStyle.LoopRepeat,
-      repetitions: Infinity,
-      clampWhenFinished: false,
-      startTime: 0,
-    } as KeyframeActionData,
-  } as Action,
-  {
-    type: ActionType.GLTF,
-    name: 'walk',
-    target: 'robot1',
-    config: {
-      animationName: 'Walking',
-      startTime: 0,
-    } as GLTFActionData,
-  } as Action,
+  new KeyframeAction(
+    'walkPosition',
+    'robot1',
+    0,
+    KeyframeTrackType.VectorKeyframeTrack,
+    {
+      property: '.position',
+      times: [0, 2, 4, 6, 8],
+      values: [  0,   0,   0, 
+                 0,   0, 7.5,
+               7.5,   0, 7.5,
+               7.5,   0,   0,
+                 0,   0,   0,],
+    },
+    LoopStyle.LoopRepeat,
+    Infinity,
+    false
+  ),
+  new KeyframeAction(
+    'walkRotation1',
+    'robot1',
+    0,
+    KeyframeTrackType.QuaternionKeyframeTrack,
+    {
+      property: '.quaternion',
+      times: [0.0, 0.2, 1.8, 2.0, 2.2, 3.8, 4.0, 4.2, 5.8, 6.0, 6.2, 7.8, 8.0],
+      values: [
+        0, 0.3826834, 0, -0.9238795, 
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0.3826834, 0, 0.9238795, 
+        0, 0.7071068, 0, 0.7071068,
+        0, 0.7071068, 0, 0.7071068, 
+        0, 0.9238795, 0, 0.3826834, 
+        0, 1, 0, 0,
+        0, 1, 0, 0,
+        0, 0.9238795, 0, -0.3826834, 
+        0, 0.7071068, 0, -0.7071068,
+        0, 0.7071068, 0, -0.7071068,
+        0, 0.3826834, 0, -0.9238795,
+      ],
+    },
+    LoopStyle.LoopRepeat,
+    Infinity,
+    false
+  ),
+  new GLTFAction(
+    'walk',
+    'robot1',
+    0,
+    'Walking'
+  )
 ];
 
 export const exampleModel4 = new Model(camera, meshes, gltfs, actions, lights);

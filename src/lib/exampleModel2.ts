@@ -1,11 +1,8 @@
 import { Model } from './Model';
 import { 
-  ActionType,
-  type KeyframeActionData,
   KeyframeTrackType,
-  type NumberKeyframeTrackData,
   LoopStyle,
-  type Action
+  KeyframeAction
 } from './model/Action';
 import { PerspectiveCameraAsset } from './model/Camera';
 import { HemisphereLightAsset } from './model/Light';
@@ -53,23 +50,20 @@ const meshes = [
 ];
 
 const actions = [
-  {
-    type: ActionType.Keyframe,
-    name: 'bounce',
-    target: 'sphere1',
-    config: {
-      keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
-      keyframeTrackData: {
-        property: '.position[y]',
-        times: [0, 1, 2],
-        values: [0, 2, 0],
-      } as NumberKeyframeTrackData,
-      loop: LoopStyle.LoopRepeat,
-      repetitions: Infinity,
-      clampWhenFinished: false,
-      startTime: 0,
-    } as KeyframeActionData,
-  } as Action,
+  new KeyframeAction(
+    'bounce',
+    'sphere1',
+    0,
+    KeyframeTrackType.NumberKeyframeTrack,
+    {
+      property: '.position[y]',
+      times: [0, 1, 2],
+      values: [0, 2, 0],
+    },
+    LoopStyle.LoopRepeat,
+    Infinity,
+    false
+  )
 ];
 
 export const exampleModel2 = new Model(camera, meshes, [], actions, lights);

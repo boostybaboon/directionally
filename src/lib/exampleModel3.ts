@@ -1,13 +1,9 @@
 import { Model } from './Model';
 import { 
   KeyframeTrackType,
-  ActionType,
-  type KeyframeActionData,
-  type GLTFActionData,
-  type VectorKeyframeTrackData,
-  type NumberKeyframeTrackData,
   LoopStyle,
-  type Action
+  KeyframeAction,
+  GLTFAction
 } from './model/Action';
 import { PerspectiveCameraAsset } from './model/Camera';
 import { HemisphereLightAsset } from './model/Light';
@@ -56,62 +52,53 @@ const meshes = [
 ];
 
 const actions = [
-  {
-    type: ActionType.Keyframe,
-    name: 'walkPosition',
-    target: 'robot1',
-    config: {
-      keyframeTrackType: KeyframeTrackType.VectorKeyframeTrack,
-      keyframeTrackData: {
-        property: '.position',
-        times: [0, 2, 4, 6, 8],
-        values: [  0,   0,   0, 
-                   0,   0, 7.5,
-                 7.5,   0, 7.5,
-                 7.5,   0,   0,
-                   0,   0,   0,],
-      } as VectorKeyframeTrackData,
-      loop: LoopStyle.LoopRepeat,
-      repetitions: Infinity,
-      clampWhenFinished: false,
-      startTime: 0,
-    } as KeyframeActionData,
-  } as Action,
-  {
-    type: ActionType.Keyframe,
-    name: 'walkRotation1',
-    target: 'robot1',
-    config: {
-      keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
-      keyframeTrackData: {
-        property: '.rotation[y]',
-        times: [0.0, 1.6, 2.0, 3.6, 4.0, 5.6, 6.0, 7.6, 8.0],
-        values: [
-          0,
-          0,
-          Math.PI/2, 
-          Math.PI/2, 
-          Math.PI, 
-          Math.PI, 
-          3*Math.PI/2, 
-          3*Math.PI/2, 
-          0,],
-      } as NumberKeyframeTrackData,
-      loop: LoopStyle.LoopRepeat,
-      repetitions: Infinity,
-      clampWhenFinished: false,
-      startTime: 0,
-    } as KeyframeActionData,
-  } as Action,
-  {
-    type: ActionType.GLTF,
-    name: 'walk',
-    target: 'robot1',
-    config: {
-      animationName: 'Walking',
-      startTime: 0,
-    } as GLTFActionData,
-  } as Action,
+  new KeyframeAction(
+    'walkPosition',
+    'robot1',
+    0,
+    KeyframeTrackType.VectorKeyframeTrack,
+    {
+      property: '.position',
+      times: [0, 2, 4, 6, 8],
+      values: [  0,   0,   0, 
+                 0,   0, 7.5,
+               7.5,   0, 7.5,
+               7.5,   0,   0,
+                 0,   0,   0,],
+    },
+    LoopStyle.LoopRepeat,
+    Infinity,
+    false
+  ),
+  new KeyframeAction(
+    'walkRotation1',
+    'robot1',
+    0,
+    KeyframeTrackType.NumberKeyframeTrack,
+    {
+      property: '.rotation[y]',
+      times: [0.0, 1.6, 2.0, 3.6, 4.0, 5.6, 6.0, 7.6, 8.0],
+      values: [
+        0,
+        0,
+        Math.PI/2, 
+        Math.PI/2, 
+        Math.PI, 
+        Math.PI, 
+        3*Math.PI/2, 
+        3*Math.PI/2, 
+        0,],
+    },
+    LoopStyle.LoopRepeat,
+    Infinity,
+    false
+  ),
+  new GLTFAction(
+    'walk',
+    'robot1',
+    0,
+    'Walking'
+  )
 ];
 
 export const exampleModel3 = new Model(camera, meshes, gltfs, actions, lights);

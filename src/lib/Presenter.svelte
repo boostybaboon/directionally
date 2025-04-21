@@ -4,7 +4,6 @@
   import { onMount } from 'svelte';
   import type { Model } from './Model';
   import type { AnimationDict } from './model/Action';
-  import { SceneUtils } from './SceneUtils';
 
   let canvas: HTMLCanvasElement;
   let renderer: THREE.WebGLRenderer;
@@ -155,7 +154,7 @@
           return; // from this iteration of the loop
         }
       }
-      SceneUtils.addAction(animationDict, mixers, sceneObject, action, modelAnimationClips[action.target]);
+      action.addAction(animationDict, mixers, sceneObject, modelAnimationClips[action.target]);
     });
 
     Object.values(animationDict).forEach((animGroup) => {

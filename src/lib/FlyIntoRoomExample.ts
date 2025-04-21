@@ -1,13 +1,11 @@
 import { Model } from './Model';
 import { 
-    ActionType,
-    type KeyframeActionData,
     KeyframeTrackType,
     type NumberKeyframeTrackData,
     type VectorKeyframeTrackData,
     type QuaternionKeyframeTrackData,
-    type Action,
-    LoopStyle
+    LoopStyle,
+    KeyframeAction
 } from './model/Action';
 import { PerspectiveCameraAsset } from './model/Camera';
 import { DirectionalLightAsset, HemisphereLightAsset, SpotLightAsset } from './model/Light';
@@ -162,170 +160,143 @@ const meshes = [
 
 const actions = [
     // Camera rotation animation
-    {
-        type: ActionType.Keyframe,
-        name: 'cameraRotate',
-        target: 'camera1',
-        config: {
-            keyframeTrackType: KeyframeTrackType.QuaternionKeyframeTrack,
-            keyframeTrackData: {
-                property: '.quaternion',
-                times: [0, 5],
-                values: [
-                    0, 1, 0, 0,   // Quaternion for 180 degrees around Y-axis
-                    0, 0, 0, 1   // Quaternion for 0 degrees (identity quaternion)
-                ]
-            } as QuaternionKeyframeTrackData,
-            loop: LoopStyle.LoopOnce,
-            repetitions: 1,
-            clampWhenFinished: true,
-            startTime: 9,
-        } as KeyframeActionData
-    } as Action,
+    new KeyframeAction(
+        'cameraRotate',
+        'camera1',
+        9,
+        KeyframeTrackType.QuaternionKeyframeTrack,
+        {
+            property: '.quaternion',
+            times: [0, 5],
+            values: [
+                0, 1, 0, 0,   // Quaternion for 180 degrees around Y-axis
+                0, 0, 0, 1   // Quaternion for 0 degrees (identity quaternion)
+            ]
+        },
+        LoopStyle.LoopOnce,
+        1,
+        true
+    ),
     // Camera move forward animation (first part)
-    {
-        type: ActionType.Keyframe,
-        name: 'cameraMove1',
-        target: 'camera1',
-        config: {
-            keyframeTrackType: KeyframeTrackType.VectorKeyframeTrack,
-            keyframeTrackData: {
-                property: '.position',
-                times: [0, 3],
-                values: [0, 5, -30, 0, 2, -10]
-            } as VectorKeyframeTrackData,
-            loop: LoopStyle.LoopOnce,
-            repetitions: 1,
-            clampWhenFinished: true,
-            startTime: 0,
-        } as KeyframeActionData
-    } as Action,
+    new KeyframeAction(
+        'cameraMove1',
+        'camera1',
+        0,
+        KeyframeTrackType.VectorKeyframeTrack,
+        {
+            property: '.position',
+            times: [0, 3],
+            values: [0, 5, -30, 0, 2, -10]
+        },
+        LoopStyle.LoopOnce,
+        1,
+        true
+    ),
     // Camera move forward animation (second part)
-    {
-        type: ActionType.Keyframe,
-        name: 'cameraMove2',
-        target: 'camera1',
-        config: {
-            keyframeTrackType: KeyframeTrackType.VectorKeyframeTrack,
-            keyframeTrackData: {
-                property: '.position',
-                times: [0, 3],
-                values: [0, 2, -10, -2, 2, 3]
-            } as VectorKeyframeTrackData,
-            loop: LoopStyle.LoopOnce,
-            repetitions: 1,
-            clampWhenFinished: true,
-            startTime: 5,
-        } as KeyframeActionData
-    } as Action,
+    new KeyframeAction(
+        'cameraMove2',
+        'camera1',
+        5,
+        KeyframeTrackType.VectorKeyframeTrack,
+        {
+            property: '.position',
+            times: [0, 3],
+            values: [0, 2, -10, -2, 2, 3]
+        },
+        LoopStyle.LoopOnce,
+        1,
+        true
+    ),
     // Door opening animation
-    {
-        type: ActionType.Keyframe,
-        name: 'doorOpen',
-        target: 'hinge',
-        config: {
-            keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
-            keyframeTrackData: {
-                property: '.rotation[y]',
-                times: [0, 2],
-                values: [0, Math.PI / 3]
-            } as NumberKeyframeTrackData,
-            loop: LoopStyle.LoopOnce,
-            repetitions: 1,
-            clampWhenFinished: true,
-            startTime: 3,
-        } as KeyframeActionData
-    } as Action,
+    new KeyframeAction(
+        'doorOpen',
+        'hinge',
+        3,
+        KeyframeTrackType.NumberKeyframeTrack,
+        {
+            property: '.rotation[y]',
+            times: [0, 2],
+            values: [0, Math.PI / 3]
+        },
+        LoopStyle.LoopOnce,
+        1,
+        true
+    ),
     // Door closing animation
-    {
-        type: ActionType.Keyframe,
-        name: 'doorClose',
-        target: 'hinge',
-        config: {
-            keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
-            keyframeTrackData: {
-                property: '.rotation[y]',
-                times: [0, 2],
-                values: [Math.PI / 3, 0]
-            } as NumberKeyframeTrackData,
-            loop: LoopStyle.LoopOnce,
-            repetitions: 1,
-            clampWhenFinished: true,
-            startTime: 13,
-        } as KeyframeActionData
-    } as Action,
+    new KeyframeAction(
+        'doorClose',
+        'hinge',
+        13,
+        KeyframeTrackType.NumberKeyframeTrack,
+        {
+            property: '.rotation[y]',
+            times: [0, 2],
+            values: [Math.PI / 3, 0]
+        },
+        LoopStyle.LoopOnce,
+        1,
+        true
+    ),
     // Spotlight 1 brighten
-    {
-        type: ActionType.Keyframe,
-        name: 'spotLight1Brighten',
-        target: 'spotLight1',
-        config: {
-            keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
-            keyframeTrackData: {
-                property: '.intensity',
-                times: [0, 3],
-                values: [0, 1]
-            } as NumberKeyframeTrackData,
-            loop: LoopStyle.LoopOnce,
-            repetitions: 1,
-            clampWhenFinished: true,
-            startTime: 7,
-        } as KeyframeActionData
-    } as Action,
-    // Spotlight 1 dim
-    {
-        type: ActionType.Keyframe,
-        name: 'spotLight1Dim',
-        target: 'spotLight1',
-        config: {
-            keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
-            keyframeTrackData: {
-                property: '.intensity',
-                times: [0, 1],
-                values: [1, 0]
-            } as NumberKeyframeTrackData,
-            loop: LoopStyle.LoopOnce,
-            repetitions: 1,
-            clampWhenFinished: true,
-            startTime: 14,
-        } as KeyframeActionData
-    } as Action,
+    new KeyframeAction(
+        'spotLight1Brighten',
+        'spotLight1',
+        3,
+        KeyframeTrackType.NumberKeyframeTrack,
+        {
+            property: '.intensity',
+            times: [0, 2],
+            values: [0, 2]
+        },
+        LoopStyle.LoopOnce,
+        1,
+        true
+    ),
     // Spotlight 2 brighten
-    {
-        type: ActionType.Keyframe,
-        name: 'spotLight2Brighten',
-        target: 'spotLight2',
-        config: {
-            keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
-            keyframeTrackData: {
-                property: '.intensity',
-                times: [0, 3],
-                values: [0, 1]
-            } as NumberKeyframeTrackData,
-            loop: LoopStyle.LoopOnce,
-            repetitions: 1,
-            clampWhenFinished: true,
-            startTime: 7,
-        } as KeyframeActionData
-    } as Action,
+    new KeyframeAction(
+        'spotLight2Brighten',
+        'spotLight2',
+        3,
+        KeyframeTrackType.NumberKeyframeTrack,
+        {
+            property: '.intensity',
+            times: [0, 2],
+            values: [0, 2]
+        },
+        LoopStyle.LoopOnce,
+        1,
+        true
+    ),
+    // Spotlight 1 dim
+    new KeyframeAction(
+        'spotLight1Dim',
+        'spotLight1',
+        13,
+        KeyframeTrackType.NumberKeyframeTrack,
+        {
+            property: '.intensity',
+            times: [0, 2],
+            values: [2, 0]
+        },
+        LoopStyle.LoopOnce,
+        1,
+        true
+    ),
     // Spotlight 2 dim
-    {
-        type: ActionType.Keyframe,
-        name: 'spotLight2Dim',
-        target: 'spotLight2',
-        config: {
-            keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
-            keyframeTrackData: {
-                property: '.intensity',
-                times: [0, 1],
-                values: [1, 0]
-            } as NumberKeyframeTrackData,
-            loop: LoopStyle.LoopOnce,
-            repetitions: 1,
-            clampWhenFinished: true,
-            startTime: 14,
-        } as KeyframeActionData
-    } as Action,
+    new KeyframeAction(
+        'spotLight2Dim',
+        'spotLight2',
+        13,
+        KeyframeTrackType.NumberKeyframeTrack,
+        {
+            property: '.intensity',
+            times: [0, 2],
+            values: [2, 0]
+        },
+        LoopStyle.LoopOnce,
+        1,
+        true
+    )
 ];
 
 export const flyIntoRoomExample = new Model(camera, meshes, [], actions, lights, 0x33334c);

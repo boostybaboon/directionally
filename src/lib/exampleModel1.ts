@@ -1,11 +1,9 @@
 import { Model } from './Model';
 import { 
-    ActionType,
-    type KeyframeActionData,
     KeyframeTrackType,
     type NumberKeyframeTrackData,
     LoopStyle,
-    type Action
+    KeyframeAction
 } from './model/Action';
 import { PerspectiveCameraAsset } from './model/Camera';
 import { DirectionalLightAsset } from './model/Light';
@@ -52,23 +50,20 @@ const meshes = [
 ];
 
 const actions = [
-    {
-        type: ActionType.Keyframe,
-        name: 'rotate',
-        target: 'camera1',
-        config: {
-            keyframeTrackType: KeyframeTrackType.NumberKeyframeTrack,
-            keyframeTrackData: {
-                property: '.rotation[y]',
-                times: [0, 5],
-                values: [0, Math.PI * 2],
-            } as NumberKeyframeTrackData,
-            loop: LoopStyle.LoopRepeat,
-            repetitions: Infinity,
-            clampWhenFinished: false,
-            startTime: 0
-        } as KeyframeActionData
-    } as Action,
+    new KeyframeAction(
+        'rotate',
+        'camera1',
+        0,
+        KeyframeTrackType.NumberKeyframeTrack,
+        {
+            property: '.rotation[y]',
+            times: [0, 5],
+            values: [0, Math.PI * 2],
+        },
+        LoopStyle.LoopRepeat,
+        Infinity,
+        false
+    )
 ];
 
 export const exampleModel1 = new Model(camera, meshes, [], actions, lights);
