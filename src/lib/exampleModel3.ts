@@ -5,7 +5,6 @@ import {
   type KeyframeActionData,
   type GLTFActionData,
   type VectorKeyframeTrackData,
-  PerspectiveCameraAsset,
   HemisphereLightAsset,
   PlaneGeometryAsset,
   MeshStandardMaterialAsset,
@@ -14,7 +13,7 @@ import {
   type NumberKeyframeTrackData,
   LoopStyle
 } from './Model';
-
+import { PerspectiveCameraAsset } from './model/Camera';
 import * as THREE from 'three';
 
 const camera = new PerspectiveCameraAsset(

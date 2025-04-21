@@ -2,7 +2,6 @@ import {
     Model, 
     ActionType,
     type KeyframeActionData,
-    PerspectiveCameraAsset,
     DirectionalLightAsset,
     HemisphereLightAsset,
     SpotLightAsset,
@@ -18,7 +17,7 @@ import {
     type Action,
     LoopStyle
 } from './Model';
-
+import { PerspectiveCameraAsset } from './model/Camera';
 import * as THREE from 'three';
 
 const camera = new PerspectiveCameraAsset(
