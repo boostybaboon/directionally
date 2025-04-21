@@ -15,10 +15,10 @@ const camera = new PerspectiveCameraAsset(
   'camera1',
   75,
   0.1,
-  1000,
-  new THREE.Vector3(2, 5, 5),
-  new THREE.Vector3(0, 0, 0)
+  1000
 );
+camera.position = new THREE.Vector3(2, 5, 5);
+camera.lookAt = new THREE.Vector3(0, 0, 0);
 
 const lights = [
   new HemisphereLightAsset(

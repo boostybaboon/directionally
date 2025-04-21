@@ -6,6 +6,7 @@ export class Object3DAsset {
     protected _rotation: THREE.Euler;
     protected _scale: THREE.Vector3;
     protected _parent?: string;
+    protected _lookAt?: THREE.Vector3;
     
     constructor(
         public readonly name: string,
@@ -52,5 +53,16 @@ export class Object3DAsset {
 
     set parent(value: string | undefined) {
         this._parent = value;
+    }
+
+    get lookAt(): THREE.Vector3 | undefined {
+        return this._lookAt;
+    }
+
+    set lookAt(value: THREE.Vector3 | undefined) {
+        this._lookAt = value;
+        if (value) {
+            this._threeObject.lookAt(value);
+        }
     }
 } 

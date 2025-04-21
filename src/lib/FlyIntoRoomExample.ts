@@ -18,10 +18,10 @@ const camera = new PerspectiveCameraAsset(
     'camera1',
     45.8366,
     0.1,
-    1000,
-    new THREE.Vector3(0, 5, -30),
-    new THREE.Vector3(0, 3, 0)
+    1000
 );
+camera.position = new THREE.Vector3(0, 5, -30);
+camera.lookAt = new THREE.Vector3(0, 3, 0);
 
 const lights = [
     // Main directional light
