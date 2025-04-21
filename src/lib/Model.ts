@@ -5,11 +5,6 @@ type JSONValue = string | number | boolean | { [key: string]: JSONValue } | JSON
 
 type JSONObject = { [key: string]: JSONValue };
 
-export enum CameraType {
-  PerspectiveCamera,
-  // other camera types...
-}
-
 export abstract class CameraAsset {
   abstract get threeCamera(): THREE.Camera;
 }
