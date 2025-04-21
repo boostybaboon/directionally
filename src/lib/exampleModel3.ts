@@ -14,7 +14,7 @@ import { HemisphereLightAsset } from './model/Light';
 import { PlaneGeometryAsset } from './model/Geometry';
 import { MeshStandardMaterialAsset } from './model/Material';
 import { MeshAsset } from './model/Mesh';
-import { GLTFAsset } from './Model';
+import { GLTFAsset } from './model/GLTF';
 import * as THREE from 'three';
 
 const camera = new PerspectiveCameraAsset(
