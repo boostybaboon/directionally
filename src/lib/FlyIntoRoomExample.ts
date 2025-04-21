@@ -2,11 +2,6 @@ import {
     Model, 
     ActionType,
     type KeyframeActionData,
-    PlaneGeometryAsset,
-    BoxGeometryAsset,
-    SphereGeometryAsset,
-    MeshStandardMaterialAsset,
-    MeshAsset,
     KeyframeTrackType,
     type NumberKeyframeTrackData,
     type VectorKeyframeTrackData,
@@ -16,6 +11,9 @@ import {
 } from './Model';
 import { PerspectiveCameraAsset } from './model/Camera';
 import { DirectionalLightAsset, HemisphereLightAsset, SpotLightAsset } from './model/Light';
+import { BoxGeometryAsset, PlaneGeometryAsset, SphereGeometryAsset } from './model/Geometry';
+import { MeshStandardMaterialAsset } from './model/Material';
+import { MeshAsset } from './model/Mesh';
 import * as THREE from 'three';
 
 const camera = new PerspectiveCameraAsset(
@@ -183,7 +181,7 @@ const actions = [
             clampWhenFinished: true,
             startTime: 9,
         } as KeyframeActionData
-    },
+    } as Action,
     // Camera move forward animation (first part)
     {
         type: ActionType.Keyframe,
@@ -201,7 +199,7 @@ const actions = [
             clampWhenFinished: true,
             startTime: 0,
         } as KeyframeActionData
-    },
+    } as Action,
     // Camera move forward animation (second part)
     {
         type: ActionType.Keyframe,
@@ -219,7 +217,7 @@ const actions = [
             clampWhenFinished: true,
             startTime: 5,
         } as KeyframeActionData
-    },
+    } as Action,
     // Door opening animation
     {
         type: ActionType.Keyframe,
@@ -237,7 +235,7 @@ const actions = [
             clampWhenFinished: true,
             startTime: 3,
         } as KeyframeActionData
-    },
+    } as Action,
     // Door closing animation
     {
         type: ActionType.Keyframe,
@@ -255,7 +253,7 @@ const actions = [
             clampWhenFinished: true,
             startTime: 13,
         } as KeyframeActionData
-    },
+    } as Action,
     // Spotlight 1 brighten
     {
         type: ActionType.Keyframe,
@@ -273,7 +271,7 @@ const actions = [
             clampWhenFinished: true,
             startTime: 7,
         } as KeyframeActionData
-    },
+    } as Action,
     // Spotlight 1 dim
     {
         type: ActionType.Keyframe,
@@ -291,7 +289,7 @@ const actions = [
             clampWhenFinished: true,
             startTime: 14,
         } as KeyframeActionData
-    },
+    } as Action,
     // Spotlight 2 brighten
     {
         type: ActionType.Keyframe,
@@ -309,7 +307,7 @@ const actions = [
             clampWhenFinished: true,
             startTime: 7,
         } as KeyframeActionData
-    },
+    } as Action,
     // Spotlight 2 dim
     {
         type: ActionType.Keyframe,
@@ -327,7 +325,7 @@ const actions = [
             clampWhenFinished: true,
             startTime: 14,
         } as KeyframeActionData
-    }
+    } as Action,
 ];
 
 export const flyIntoRoomExample = new Model(camera, meshes, [], actions, lights, 0x33334c);

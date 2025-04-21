@@ -5,17 +5,16 @@ import {
   type KeyframeActionData,
   type GLTFActionData,
   type VectorKeyframeTrackData,
-  PlaneGeometryAsset,
-  BoxGeometryAsset,
-  SphereGeometryAsset,
-  MeshStandardMaterialAsset,
-  MeshAsset,
-  GLTFAsset,
   type NumberKeyframeTrackData,
-  LoopStyle
+  LoopStyle,
+  type Action
 } from './Model';
 import { PerspectiveCameraAsset } from './model/Camera';
 import { HemisphereLightAsset } from './model/Light';
+import { PlaneGeometryAsset } from './model/Geometry';
+import { MeshStandardMaterialAsset } from './model/Material';
+import { MeshAsset } from './model/Mesh';
+import { GLTFAsset } from './Model';
 import * as THREE from 'three';
 
 const camera = new PerspectiveCameraAsset(
@@ -77,7 +76,7 @@ const actions = [
       clampWhenFinished: false,
       startTime: 0,
     } as KeyframeActionData,
-  },
+  } as Action,
   {
     type: ActionType.Keyframe,
     name: 'walkRotation1',
@@ -103,7 +102,7 @@ const actions = [
       clampWhenFinished: false,
       startTime: 0,
     } as KeyframeActionData,
-  },
+  } as Action,
   {
     type: ActionType.GLTF,
     name: 'walk',
@@ -112,7 +111,7 @@ const actions = [
       animationName: 'Walking',
       startTime: 0,
     } as GLTFActionData,
-  }
+  } as Action,
 ];
 
 export const exampleModel3 = new Model(camera, meshes, gltfs, actions, lights);

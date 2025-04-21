@@ -2,16 +2,16 @@ import {
     Model, 
     ActionType,
     type KeyframeActionData,
-    PlaneGeometryAsset,
-    BoxGeometryAsset,
-    MeshStandardMaterialAsset,
-    MeshAsset,
     KeyframeTrackType,
     type NumberKeyframeTrackData,
-    LoopStyle
+    LoopStyle,
+    type Action
 } from './Model';
 import { PerspectiveCameraAsset } from './model/Camera';
 import { DirectionalLightAsset } from './model/Light';
+import { BoxGeometryAsset, PlaneGeometryAsset } from './model/Geometry';
+import { MeshStandardMaterialAsset } from './model/Material';
+import { MeshAsset } from './model/Mesh';
 import * as THREE from 'three';
 
 const camera = new PerspectiveCameraAsset(
@@ -68,7 +68,7 @@ const actions = [
             clampWhenFinished: false,
             startTime: 0
         } as KeyframeActionData
-    }
+    } as Action,
 ];
 
 export const exampleModel1 = new Model(camera, meshes, [], actions, lights);
