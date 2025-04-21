@@ -340,4 +340,4 @@ const actions = [
     }
 ];
 
-export const flyIntoRoomExample = new Model(camera, assets, meshes, actions, lights, 0x33334c);
+export const flyIntoRoomExample = new Model(camera, [], meshes, [], actions, lights, 0x33334c);

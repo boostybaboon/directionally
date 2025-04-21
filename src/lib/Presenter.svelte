@@ -122,25 +122,25 @@
       }
     });
 
-    // Load all assets and wait for them to be added to the scene
-    const assetPromises = model.assets.map(async (asset) => {
-      const sceneObject = await SceneUtils.sceneObjectForAsset(asset);
-      scene.add(sceneObject[0]);
-      modelAnimationClips[asset.name] = sceneObject[1];
+    // Load all GLTF assets and wait for them to be added to the scene
+    const gltfPromises = model.gltfs.map(async (gltf) => {
+      await gltf.load();
+      scene.add(gltf.threeObject);
+      modelAnimationClips[gltf.name] = gltf.animations;
 
       // Handle parent-child relationships
-      if (asset.parent) {
-        const parentObject = scene.getObjectByName(asset.parent);
+      if (gltf.parent) {
+        const parentObject = scene.getObjectByName(gltf.parent);
         if (parentObject) {
-          scene.remove(sceneObject[0]); // Remove from scene
-          parentObject.add(sceneObject[0]); // Add to parent
+          scene.remove(gltf.threeObject); // Remove from scene
+          parentObject.add(gltf.threeObject); // Add to parent
         } else {
-          console.warn(`Parent object ${asset.parent} not found for ${asset.name}`);
+          console.warn(`Parent object ${gltf.parent} not found for ${gltf.name}`);
         }
       }
     });
 
-    await Promise.all(assetPromises);
+    await Promise.all(gltfPromises);
 
     //for each animation in model, add the animation to the animationDict
     //and add its mixer to the mixers array

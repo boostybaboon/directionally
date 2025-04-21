@@ -80,4 +80,4 @@ const actions = [
   }
 ];
 
-export const exampleModel2 = new Model(camera, assets, meshes, actions, lights);
+export const exampleModel2 = new Model(camera, [], meshes, [], actions, lights);

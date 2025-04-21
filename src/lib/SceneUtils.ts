@@ -1,27 +1,15 @@
 import type { 
-  Asset,
-  IPresentableAsset,
-  MeshData,
-  GLTFData,
   Action,
   AnimationDict
 } from './Model';
 
 import { 
-  AssetType,
-  MeshPresenter,
-  GTLFPresenter,
   actionPresenters
 } from './Model';
 
 import * as THREE from 'three';
 
 export class SceneUtils {
-  static async sceneObjectForAsset(asset: Asset): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
-    const gltfPresenter = new GTLFPresenter(asset.name, asset.config as GLTFData, asset.parent);
-    return await gltfPresenter.getPresentableAsset();
-  }
-
   static addAction(
     animationDict: AnimationDict,
     mixers: THREE.AnimationMixer[],

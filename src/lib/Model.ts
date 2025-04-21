@@ -240,44 +240,8 @@ export class MeshPresenter implements IPresentableAsset {
   }
 }
 
-export class GTLFPresenter implements IPresentableAsset {
-  name: string;
-  config: GLTFData;
-  parent?: string;
-
-  constructor(name: string, config: GLTFData, parent?: string) {
-    this.name = name;
-    this.config = config;
-    this.parent = parent;
-  }
-
-  async getPresentableAsset(): Promise<[THREE.Object3D, THREE.AnimationClip[]]> {
-    const loader = new GLTFLoader();
-    const model = new THREE.Object3D(); // Fallback to an empty Object3D
-    
-    try {
-      const gltf = await loader.loadAsync(this.config.url);
-      const model = gltf.scene;
-      const animations = gltf.animations;
-      model.name = this.name;
-      model.position.set(...this.config.position);
-      model.rotation.set(...this.config.rotation);
-      return [model, animations];
-    } catch (error) {
-      console.error('Failed to load model:', error);
-      return [new THREE.Object3D(), []]; // Fallback to an empty Object3D if the model fails to load
-    }
-  }
-
-  getParentName(): string | undefined {
-    return this.parent;
-  }
-}
-
 export const assetPresenters: { [key: string]: new (name: string, data: any, parent?: string) => IPresentableAsset } = {
   [AssetType.Mesh]: MeshPresenter,
-  [AssetType.GLTF]: GTLFPresenter,
-  // Add other asset types and their presenters here
 };
 
 export enum LoopStyle {
@@ -696,6 +660,7 @@ export class Model {
   camera: CameraAsset;
   assets: Asset[];
   meshes: MeshAsset[];
+  gltfs: GLTFAsset[];
   actions: Action[];
   lights: LightAsset[];
   backgroundColor?: number;
@@ -704,6 +669,7 @@ export class Model {
     camera: CameraAsset, 
     assets: Asset[] = [],
     meshes: MeshAsset[] = [],
+    gltfs: GLTFAsset[] = [],
     actions: Action[] = [], 
     lights: LightAsset[] = [],
     backgroundColor?: number
@@ -711,6 +677,7 @@ export class Model {
     this.camera = camera;
     this.assets = assets;
     this.meshes = meshes;
+    this.gltfs = gltfs;
     this.actions = actions;
     this.lights = lights;
     this.backgroundColor = backgroundColor;
@@ -855,4 +822,75 @@ export class MeshAsset {
         this._rotation.copy(rotation);
         this._threeMesh.rotation.copy(rotation);
     }
+}
+
+export class GLTFAsset {
+  private _threeObject: THREE.Object3D;
+  private _animations: THREE.AnimationClip[];
+  private _position: THREE.Vector3;
+  private _rotation: THREE.Euler;
+  private _parent?: string;
+  
+  constructor(
+    public readonly name: string,
+    public readonly url: string,
+    position: THREE.Vector3,
+    rotation: THREE.Euler,
+    parent?: string
+  ) {
+    this._threeObject = new THREE.Object3D();
+    this._threeObject.name = name;
+    this._animations = [];
+    this._position = position.clone();
+    this._rotation = rotation.clone();
+    this._parent = parent;
+    
+    this._threeObject.position.copy(this._position);
+    this._threeObject.rotation.copy(this._rotation);
+  }
+
+  get threeObject(): THREE.Object3D {
+    return this._threeObject;
+  }
+
+  get animations(): THREE.AnimationClip[] {
+    return this._animations;
+  }
+
+  get position(): THREE.Vector3 {
+    return this._position;
+  }
+
+  get rotation(): THREE.Euler {
+    return this._rotation;
+  }
+
+  get parent(): string | undefined {
+    return this._parent;
+  }
+
+  async load(): Promise<void> {
+    const loader = new GLTFLoader();
+    try {
+      const gltf = await loader.loadAsync(this.url);
+      this._threeObject = gltf.scene;
+      this._animations = gltf.animations;
+      this._threeObject.name = this.name;
+      this._threeObject.position.copy(this._position);
+      this._threeObject.rotation.copy(this._rotation);
+    } catch (error) {
+      console.error('Failed to load GLTF model:', error);
+      // Keep the fallback empty Object3D
+    }
+  }
+
+  updatePosition(position: THREE.Vector3): void {
+    this._position.copy(position);
+    this._threeObject.position.copy(position);
+  }
+
+  updateRotation(rotation: THREE.Euler): void {
+    this._rotation.copy(rotation);
+    this._threeObject.rotation.copy(rotation);
+  }
 }

@@ -14,7 +14,8 @@ import {
   HemisphereLightAsset,
   PlaneGeometryAsset,
   MeshStandardMaterialAsset,
-  MeshAsset
+  MeshAsset,
+  GLTFAsset
 } from './Model';
 
 import { 
@@ -44,16 +45,13 @@ const lights = [
   )
 ];
 
-const assets = [
-  {
-    type: AssetType.GLTF,
-    name: 'robot1',
-    config: {
-      url: '/models/gltf/RobotExpressive.glb',      
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-    } as GLTFData
-  }
+const gltfs = [
+  new GLTFAsset(
+    'robot1',
+    '/models/gltf/RobotExpressive.glb',
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Euler(0, 0, 0)
+  )
 ];
 
 const meshes = [
@@ -125,4 +123,4 @@ const actions = [
   }
 ];
 
-export const exampleModel3 = new Model(camera, assets, meshes, actions, lights);
+export const exampleModel3 = new Model(camera, [], meshes, gltfs, actions, lights);
