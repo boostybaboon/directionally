@@ -4,9 +4,9 @@ import { Object3DAsset } from './Object3DAsset';
 export class LightAsset extends Object3DAsset {
     protected _threeLight: THREE.Light;
 
-    constructor(name: string, color: number, intensity: number) {
-        super(name, new THREE.PointLight(color, intensity));
-        this._threeLight = this._threeObject as THREE.Light;
+    constructor(name: string, threeLight: THREE.Light) {
+        super(name, threeLight);
+        this._threeLight = threeLight;
     }
 
     get color(): number {
@@ -30,8 +30,9 @@ export class DirectionalLightAsset extends LightAsset {
     private _directionalLight: THREE.DirectionalLight;
 
     constructor(name: string, color: number, intensity: number) {
-        super(name, color, intensity);
-        this._directionalLight = this._threeLight as THREE.DirectionalLight;
+        const light = new THREE.DirectionalLight(color, intensity);
+        super(name, light);
+        this._directionalLight = light;
     }
 
     get target(): THREE.Vector3 {
@@ -47,9 +48,9 @@ export class HemisphereLightAsset extends LightAsset {
     private _hemisphereLight: THREE.HemisphereLight;
 
     constructor(name: string, skyColor: number, groundColor: number, intensity: number) {
-        super(name, skyColor, intensity);
-        this._hemisphereLight = this._threeLight as THREE.HemisphereLight;
-        this._hemisphereLight.groundColor.setHex(groundColor);
+        const light = new THREE.HemisphereLight(skyColor, groundColor, intensity);
+        super(name, light);
+        this._hemisphereLight = light;
     }
 
     get groundColor(): number {
@@ -64,12 +65,10 @@ export class HemisphereLightAsset extends LightAsset {
 export class SpotLightAsset extends LightAsset {
     private _spotLight: THREE.SpotLight;
 
-    constructor(name: string, color: number, angle: number, penumbra: number, decay: number, intensity: number) {
-        super(name, color, intensity);
-        this._spotLight = this._threeLight as THREE.SpotLight;
-        this._spotLight.angle = angle;
-        this._spotLight.penumbra = penumbra;
-        this._spotLight.decay = decay;
+    constructor(name: string, color: number, intensity: number, angle: number, penumbra: number, decay: number) {
+        const light = new THREE.SpotLight(color, intensity, 0, angle, penumbra, decay);
+        super(name, light);
+        this._spotLight = light;
     }
 
     get target(): THREE.Vector3 {

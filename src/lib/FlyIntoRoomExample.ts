@@ -57,14 +57,14 @@ const lights = [
 ];
 
 // Set positions and targets
-lights[0].position = new THREE.Vector3(0, 20, 0);
+lights[0].position.copy(new THREE.Vector3(0, 20, 0));
 lights[1].position = new THREE.Vector3(0, 20, -20);
 lights[2].position = new THREE.Vector3(2, 3, 0.1);
 lights[3].position = new THREE.Vector3(-2, 3, 6.9);
 
 // Set spotlight targets
-(lights[2] as SpotLightAsset).target = new THREE.Vector3(-0.5, -0.25, 1);
-(lights[3] as SpotLightAsset).target = new THREE.Vector3(0, 0, -1);
+(lights[2] as SpotLightAsset).target.copy(new THREE.Vector3(-0.5, -0.25, 1));
+(lights[3] as SpotLightAsset).target.copy(new THREE.Vector3(0, 0, -1));
 
 const meshes: MeshAsset[] = [];
 

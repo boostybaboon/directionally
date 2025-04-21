@@ -37,11 +37,11 @@ lights[0].position = new THREE.Vector3(0, 20, 0);
 const gltfs = [
   new GLTFAsset(
     'robot1',
-    '/models/gltf/RobotExpressive.glb',
-    new THREE.Vector3(0, 0, 0),
-    new THREE.Euler(0, 0, 0)
+    '/models/gltf/RobotExpressive.glb'
   )
 ];
+gltfs[0].position = new THREE.Vector3(0, 0, 0);
+gltfs[0].rotation = new THREE.Euler(0, 0, 0);
 
 const meshes: MeshAsset[] = [];
 
