@@ -2,8 +2,8 @@ import {
   Model, 
   ActionType,
   type KeyframeActionData,
-  HemisphereLightAsset,
   PlaneGeometryAsset,
+  BoxGeometryAsset,
   SphereGeometryAsset,
   MeshStandardMaterialAsset,
   MeshAsset,
@@ -12,6 +12,7 @@ import {
   LoopStyle
 } from './Model';
 import { PerspectiveCameraAsset } from './model/Camera';
+import { HemisphereLightAsset } from './model/Light';
 import * as THREE from 'three';
 
 const camera = new PerspectiveCameraAsset(
