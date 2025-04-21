@@ -25,10 +25,10 @@ const lights = [
     new DirectionalLightAsset(
         'light1',
         0xffffff,
-        1,
-        new THREE.Vector3(5, 10, 7)
+        1
     )
 ];
+lights[0].position = new THREE.Vector3(5, 10, 7);
 
 const meshes: MeshAsset[] = [];
 

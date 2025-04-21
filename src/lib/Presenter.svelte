@@ -102,7 +102,7 @@
 
     // Add lights to the scene
     model.lights.forEach(light => {
-      scene.add(light.threeLight);
+      scene.add(light.threeObject);
     });
 
     // Load all meshes and add them to the scene

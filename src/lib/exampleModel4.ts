@@ -29,10 +29,10 @@ const lights = [
     'light1',
     0xffffbb,
     0x080820,
-    1,
-    new THREE.Vector3(0, 20, 0)
+    1
   )
 ];
+lights[0].position = new THREE.Vector3(0, 20, 0);
 
 const gltfs = [
   new GLTFAsset(

@@ -1,176 +1,106 @@
 import * as THREE from 'three';
+import { Object3DAsset } from './Object3DAsset';
 
-export abstract class LightAsset {
-  abstract get threeLight(): THREE.Light;
+export class LightAsset extends Object3DAsset {
+    protected _threeLight: THREE.Light;
+
+    constructor(name: string, color: number, intensity: number) {
+        super(name, new THREE.PointLight(color, intensity));
+        this._threeLight = this._threeObject as THREE.Light;
+    }
+
+    get color(): number {
+        return this._threeLight.color.getHex();
+    }
+
+    set color(value: number) {
+        this._threeLight.color.setHex(value);
+    }
+
+    get intensity(): number {
+        return this._threeLight.intensity;
+    }
+
+    set intensity(value: number) {
+        this._threeLight.intensity = value;
+    }
 }
 
 export class DirectionalLightAsset extends LightAsset {
-  private _threeLight: THREE.DirectionalLight;
-  private _position: THREE.Vector3;
-  
-  constructor(
-    public readonly name: string,
-    public color: number,
-    public intensity: number,
-    position: THREE.Vector3
-  ) {
-    super();
-    this._threeLight = new THREE.DirectionalLight(color, intensity);
-    this._threeLight.name = name;
-    
-    this._position = position.clone();
-    this._threeLight.position.copy(this._position);
-  }
+    private _directionalLight: THREE.DirectionalLight;
 
-  get threeLight(): THREE.DirectionalLight {
-    return this._threeLight;
-  }
+    constructor(name: string, color: number, intensity: number) {
+        super(name, color, intensity);
+        this._directionalLight = this._threeLight as THREE.DirectionalLight;
+    }
 
-  get position(): THREE.Vector3 {
-    return this._position;
-  }
+    get target(): THREE.Vector3 {
+        return this._directionalLight.target.position;
+    }
 
-  updatePosition(position: THREE.Vector3): void {
-    this._position.copy(position);
-    this._threeLight.position.copy(position);
-  }
-
-  updateColor(color: number): void {
-    this.color = color;
-    this._threeLight.color.setHex(color);
-  }
-
-  updateIntensity(intensity: number): void {
-    this.intensity = intensity;
-    this._threeLight.intensity = intensity;
-  }
+    set target(value: THREE.Vector3) {
+        this._directionalLight.target.position.copy(value);
+    }
 }
 
 export class HemisphereLightAsset extends LightAsset {
-  private _threeLight: THREE.HemisphereLight;
-  private _position: THREE.Vector3;
-  
-  constructor(
-    public readonly name: string,
-    public skyColor: number,
-    public groundColor: number,
-    public intensity: number,
-    position: THREE.Vector3
-  ) {
-    super();
-    this._threeLight = new THREE.HemisphereLight(skyColor, groundColor, intensity);
-    this._threeLight.name = name;
-    
-    this._position = position.clone();
-    this._threeLight.position.copy(this._position);
-  }
+    private _hemisphereLight: THREE.HemisphereLight;
 
-  get threeLight(): THREE.HemisphereLight {
-    return this._threeLight;
-  }
+    constructor(name: string, skyColor: number, groundColor: number, intensity: number) {
+        super(name, skyColor, intensity);
+        this._hemisphereLight = this._threeLight as THREE.HemisphereLight;
+        this._hemisphereLight.groundColor.setHex(groundColor);
+    }
 
-  get position(): THREE.Vector3 {
-    return this._position;
-  }
+    get groundColor(): number {
+        return this._hemisphereLight.groundColor.getHex();
+    }
 
-  updatePosition(position: THREE.Vector3): void {
-    this._position.copy(position);
-    this._threeLight.position.copy(position);
-  }
-
-  updateSkyColor(color: number): void {
-    this.skyColor = color;
-    this._threeLight.color.setHex(color);
-  }
-
-  updateGroundColor(color: number): void {
-    this.groundColor = color;
-    this._threeLight.groundColor.setHex(color);
-  }
-
-  updateIntensity(intensity: number): void {
-    this.intensity = intensity;
-    this._threeLight.intensity = intensity;
-  }
+    set groundColor(value: number) {
+        this._hemisphereLight.groundColor.setHex(value);
+    }
 }
 
 export class SpotLightAsset extends LightAsset {
-  private _threeLight: THREE.SpotLight;
-  private _position: THREE.Vector3;
-  private _target: THREE.Vector3;
-  
-  constructor(
-    public readonly name: string,
-    public color: number,
-    public intensity: number,
-    public angle: number,
-    public penumbra: number,
-    public decay: number,
-    position: THREE.Vector3,
-    target: THREE.Vector3
-  ) {
-    super();
-    this._threeLight = new THREE.SpotLight(
-      color,
-      intensity,
-      0, // distance (0 for infinite)
-      angle,
-      penumbra,
-      decay
-    );
-    this._threeLight.name = name;
-    
-    this._position = position.clone();
-    this._target = target.clone();
-    
-    this._threeLight.position.copy(this._position);
-    this._threeLight.target.position.copy(this._target);
-  }
+    private _spotLight: THREE.SpotLight;
 
-  get threeLight(): THREE.SpotLight {
-    return this._threeLight;
-  }
+    constructor(name: string, color: number, angle: number, penumbra: number, decay: number, intensity: number) {
+        super(name, color, intensity);
+        this._spotLight = this._threeLight as THREE.SpotLight;
+        this._spotLight.angle = angle;
+        this._spotLight.penumbra = penumbra;
+        this._spotLight.decay = decay;
+    }
 
-  get position(): THREE.Vector3 {
-    return this._position;
-  }
+    get target(): THREE.Vector3 {
+        return this._spotLight.target.position;
+    }
 
-  get target(): THREE.Vector3 {
-    return this._target;
-  }
+    set target(value: THREE.Vector3) {
+        this._spotLight.target.position.copy(value);
+    }
 
-  updatePosition(position: THREE.Vector3): void {
-    this._position.copy(position);
-    this._threeLight.position.copy(position);
-  }
+    get angle(): number {
+        return this._spotLight.angle;
+    }
 
-  updateTarget(target: THREE.Vector3): void {
-    this._target.copy(target);
-    this._threeLight.target.position.copy(target);
-  }
+    set angle(value: number) {
+        this._spotLight.angle = value;
+    }
 
-  updateColor(color: number): void {
-    this.color = color;
-    this._threeLight.color.setHex(color);
-  }
+    get penumbra(): number {
+        return this._spotLight.penumbra;
+    }
 
-  updateIntensity(intensity: number): void {
-    this.intensity = intensity;
-    this._threeLight.intensity = intensity;
-  }
+    set penumbra(value: number) {
+        this._spotLight.penumbra = value;
+    }
 
-  updateAngle(angle: number): void {
-    this.angle = angle;
-    this._threeLight.angle = angle;
-  }
+    get decay(): number {
+        return this._spotLight.decay;
+    }
 
-  updatePenumbra(penumbra: number): void {
-    this.penumbra = penumbra;
-    this._threeLight.penumbra = penumbra;
-  }
-
-  updateDecay(decay: number): void {
-    this.decay = decay;
-    this._threeLight.decay = decay;
-  }
+    set decay(value: number) {
+        this._spotLight.decay = value;
+    }
 } 

@@ -28,16 +28,14 @@ const lights = [
     new DirectionalLightAsset(
         'light1',
         0xffffff,
-        1.5,
-        new THREE.Vector3(0, 20, 0)
+        1.5
     ),
     // Hemisphere light
     new HemisphereLightAsset(
         'light2',
         0xffffff,
         0x444444,
-        2.5,
-        new THREE.Vector3(0, 20, -20)
+        2.5
     ),
     // Spotlights
     new SpotLightAsset(
@@ -46,9 +44,7 @@ const lights = [
         0,
         Math.PI / 8,
         0,
-        2,
-        new THREE.Vector3(2, 3, 0.1),
-        new THREE.Vector3(-0.5, -0.25, 1)
+        2
     ),
     new SpotLightAsset(
         'spotLight2',
@@ -56,11 +52,19 @@ const lights = [
         0,
         Math.PI / 8,
         0,
-        2,
-        new THREE.Vector3(-2, 3, 6.9),
-        new THREE.Vector3(0, 0, -1)
+        2
     )
 ];
+
+// Set positions and targets
+lights[0].position = new THREE.Vector3(0, 20, 0);
+lights[1].position = new THREE.Vector3(0, 20, -20);
+lights[2].position = new THREE.Vector3(2, 3, 0.1);
+lights[3].position = new THREE.Vector3(-2, 3, 6.9);
+
+// Set spotlight targets
+(lights[2] as SpotLightAsset).target = new THREE.Vector3(-0.5, -0.25, 1);
+(lights[3] as SpotLightAsset).target = new THREE.Vector3(0, 0, -1);
 
 const meshes: MeshAsset[] = [];
 
