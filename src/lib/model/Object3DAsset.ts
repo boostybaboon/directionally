@@ -1,16 +1,17 @@
 import * as THREE from 'three';
 
 export abstract class Object3DAsset {
-    protected _threeObject: THREE.Object3D;
+    private _threeObject: THREE.Object3D;
     protected _position: THREE.Vector3;
     protected _rotation: THREE.Euler;
     protected _scale: THREE.Vector3;
     protected _parent?: string;
     
-    constructor(public readonly name: string) {
+    constructor(public readonly name: string, threeObject?: THREE.Object3D) {
         this._position = new THREE.Vector3(0, 0, 0);
         this._rotation = new THREE.Euler(0, 0, 0);
         this._scale = new THREE.Vector3(1, 1, 1);
+        this._threeObject = threeObject || new THREE.Object3D();
     }
 
     get threeObject(): THREE.Object3D {
@@ -50,12 +51,5 @@ export abstract class Object3DAsset {
 
     set parent(value: string | undefined) {
         this._parent = value;
-    }
-
-    protected initializeThreeObject(): void {
-        this._threeObject.name = this.name;
-        this._threeObject.position.copy(this._position);
-        this._threeObject.rotation.copy(this._rotation);
-        this._threeObject.scale.copy(this._scale);
     }
 } 

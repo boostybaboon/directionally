@@ -46,7 +46,7 @@ export class GLTFAsset {
     return this._parent;
   }
 
-  async load(): Promise<void> {
+  public async load(): Promise<void> {
     const loader = new GLTFLoader();
     try {
       const gltf = await loader.loadAsync(this.url);
