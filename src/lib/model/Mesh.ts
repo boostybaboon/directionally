@@ -12,7 +12,6 @@ export class MeshAsset extends Object3DAsset {
         material: MaterialAsset
     ) {
         const threeMesh = new THREE.Mesh(geometry.threeGeometry, material.threeMaterial);
-        threeMesh.name = name;
         super(name, threeMesh);
         this._threeMesh = threeMesh;
     }
