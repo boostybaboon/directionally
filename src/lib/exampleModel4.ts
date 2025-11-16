@@ -1,8 +1,6 @@
 import { Model } from './Model';
 import { 
   KeyframeTrackType,
-  type VectorKeyframeTrackData,
-  type QuaternionKeyframeTrackData,
   LoopStyle,
   KeyframeAction,
   GLTFAction

@@ -1,7 +1,6 @@
 import { Model } from './Model';
 import { 
     KeyframeTrackType,
-    type NumberKeyframeTrackData,
     LoopStyle,
     KeyframeAction
 } from './model/Action';
