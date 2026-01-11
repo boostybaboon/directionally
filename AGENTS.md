@@ -1,225 +1,108 @@
 # Directionally - Development Commands & Philosophy
 
-## Project Overview
-
-**Directionally** is an animated scene authoring and playback engine built with Three.js, Tone.js, and Svelte.
-
-**Current State:** POC with monolithic `Presenter.svelte` → **Target:** Modular TypeScript library + Svelte UI layer.
-
----
-
-## Development Principles
-
-1. **Only production code** - No files that merely document agent changes. No comments like "//NEW: added xyz". Documentation exists in code intent, not in meta-narrative.
-2. **No file bloat** - Essential files only. No multiple documentation files explaining the same thing.
-3. **Test-driven for fragile systems** - The shuttle control (play/pause/rewind/seek) coordinates Three.js and Tone.js in complex ways. Tests lock down behavior before changes.
-4. **Small incremental changes** - Each git commit should do ONE thing clearly.
-
----
-
-## Essential Commands
-
-```bash
-# Setup
-yarn install
-
-# Development
-yarn dev              # Start dev server (http://localhost:5173)
+yarn dev --open       # Start dev server (http://localhost:5173)
 yarn check            # TypeScript type checking
 yarn check:watch      # Watch mode
-
-# Testing
 yarn test             # Run tests once
 yarn test:watch       # Watch mode
 yarn test:ui          # Interactive UI dashboard
 yarn test:coverage    # Coverage report
-
-# Build
 yarn build
 yarn preview
-```
+## Overview & Scope
 
----
+This file defines **stylistic and process conventions** for the Directionally codebase. Technical architecture, commands, and fragile runtime invariants live in `.github/copilot-instructions.md` for repository-scoped Copilot context.
 
-## Architecture
+### Copilot Agent Instruction Placement (per GitHub Docs)
+- `AGENTS.md` files can exist anywhere in the repo; the nearest `AGENTS.md` in the directory tree takes precedence for agent behavior.
+- Use `AGENTS.md` for agent instructions used by AI agents and contributor process guidance; keep repository-wide architecture and build/test commands in `.github/copilot-instructions.md`.
+- Path-specific instruction files (optional) live under `.github/instructions/*.instructions.md` with `applyTo` frontmatter; repository-wide instructions live in `.github/copilot-instructions.md`.
+- Prompt files (optional) live under `.github/prompts/*.prompt.md` for reusable chat prompts.
 
-### Current Structure (v0)
-```
-src/lib/Presenter.svelte    # Monolithic: play/pause, rendering, animations
-src/lib/Model.ts            # Scene definition
-src/lib/model/              # Asset types
-```
+Notes:
+- In VS Code, support for `AGENTS.md` outside the workspace root is off by default and may require enabling per VS Code docs.
+- Repo-wide and path-specific instructions can both apply; avoid contradictory guidance because Copilot’s resolution between conflicts is non-deterministic.
 
-### Target Structure (v1)
-```
-src/core/
-├── timeline/
-│   └── Timeline.ts          # Shuttle control (testable, reusable)
-├── scene/                   # Coming: scene building API
-├── speech/                  # Coming: speech system
-└── index.ts
+Reference: https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions
 
-src/lib/
-├── Presenter.svelte         # UI layer (uses core Timeline API)
-├── Model.ts                 # Scene definition
-└── model/                   # Asset types
+## Development Principles
 
-tests/
-├── core/
-│   └── timeline.test.ts     # Core library tests
-└── integration/             # Integration tests
-```
+1. **Only production code** – No comments or files whose sole purpose is narrating refactors or AI changes.
+2. **No file bloat** – Keep a single source of truth for a topic; remove duplicates.
+3. **Protect fragile systems with tests** – Before altering shuttle/seek logic, ensure tests cover current behavior.
+4. **Single-purpose commits** – One clear change per commit; avoid mixing style and behavior.
 
----
-
-## Current Work: Phase 1 - Stabilize Shuttle Control
-
-**Goal:** Extract play/pause/rewind/seek logic into tested `Timeline` class.
-
-**Why:** The shuttle control is the fragile centerpiece. It coordinates:
-- Tone.js transport (audio timing)
-- Three.js AnimationMixer (animation frame updates)
-- Animation state (enabled/disabled, playback position)
-
-Changes to any of these break shuttle control. Tests protect against this.
-
-**Status:** Timeline skeleton exists. 25+ tests define expected behavior. Implementation task: make tests pass.
-
-**Next Step:** Implement `src/core/timeline/Timeline.ts` to pass `tests/core/timeline.test.ts`
-
----
-
-## Testing Philosophy
-
-Tests are **specifications**, not afterthoughts:
-
-1. Write tests that describe expected behavior
-2. Tests fail (they define the contract)
-3. Implement code to pass tests
-4. Future changes: if tests still pass, behavior is unchanged
-
-For the shuttle control, this means:
-- Play/pause transitions work correctly
-- Seek repositions animations to the correct frame
-- Rewind works (seek to 0)
-- All work together without breaking
-
----
-
-## Debugging: Three.js / Tone.js Fragility
-
-### The Problem
-When you call `seek(time)` while paused:
-- Tone.js transport.seconds must be updated
-- Tone.js timeScale is 0 (paused)
-- Three.js AnimationMixer must update animation to frame at that time
-- AnimationMixer respects timeScale, which is 0
-
-Result: Animation doesn't update correctly because timeScale=0 blocks interpolation.
-
-### Current Workarounds
-- Use `AnimationAction.time` directly instead of `mixer.setTime()`
-- Disable animations before seeking, re-enable after
-- Document the exact pattern that works
-
-### When Adding Features
-- Always verify seek behavior works with new features
-- Add test cases before implementing
-- Document any pattern changes in code comments
-
----
-
-## Making Changes
-
-### For Timeline Changes
-1. Write a test case for the behavior you want
-2. Run tests - watch it fail
-3. Implement code to pass test
-4. Run all tests - ensure no regressions
-5. Commit with clear message: `fix: correct animation seek with paused transport`
-
-### For Model/Scene Changes
-1. Update Model.ts if schema changes
-2. Update example models if needed
-3. No test requirements (not core library)
-4. Test manually with `yarn dev`
-
-### For UI Changes
-1. Update Presenter.svelte
-2. Verify shuttle controls work
-3. No tests required (UI layer)
-4. Test manually with example models
-
----
-
+## Code Style & Comment Policy
 ## Code Style
 
 **Files should speak for themselves:**
 - Method names describe what they do: `play()`, `pause()`, `seek()`
-- JSDoc comments on public methods
+- JSDoc comments on public methods only
 - No comment redundancy ("// increment i" on `i++`)
 - Meaningful variable names
 - Implementation details clear from code structure
 
-**Do not:**
-- Add comments about what version/date this was added
-- Explain agent changes in code
-- Over-document obvious behavior
-- Add temporary debugging statements
+**Comments: Preserve Domain Knowledge, Discard Meta-Narrative**
+
+Preserve:
+- Unexplained complexity or gotchas (e.g., "Uses anim.anim.time directly, not getMixer().setTime(), because timeScale=0 when paused breaks mixer scaling")
+- Non-obvious constraints that will break if changed (e.g., "Disable animations before seeking, re-enable after - order matters")
+- Links to external issues or specifications
+- TODOs that represent actual debt needing investigation
+
+**Do not add:**
+- "Extracted from X" or "Moved to Y" (refactoring history is in git)
+- "Agent-added" or version/date markers
+- Meta-comments about code organization decisions
+- Redundant restatements of what the code already says
+- Comments that duplicate the method name or obvious behavior
+
+**Rule: Refactors must preserve all non-meta comments.** When moving code between files, migrate existing domain-knowledge comments with the code. If you lose them, you've lost institutional knowledge.
 
 ---
 
-## Git Workflow
-
-```bash
-# Create feature branch
 git checkout -b feat/timeline-seek-fix
-
-# Make changes, run tests
 yarn test
-
-# Commit with conventional commits
 git commit -m "fix: seek repositions animations correctly when paused"
 git commit -m "test: add seek edge cases for looping animations"
-
-# Push and create PR
 git push origin feat/timeline-seek-fix
-```
+## Git Workflow (Style Aspect)
 
----
+Follow conventional commits for clarity:
+`feat:`, `fix:`, `refactor:`, `test:`, `chore:`, `docs:`.
+Behavioral change and test addition may be separate commits; prefer clarity over compression.
 
-## Known Issues & Decisions
+## Refactor Rules
 
-**Issue: Animation seek with timeScale=0**
-- Status: Workaround documented, needs implementation testing
-- Decision: Use AnimationAction.time directly, not mixer.setTime()
-- Tests will verify this works
+1. **Preserve domain comments** – If moving code, carry over non-meta comments explaining fragile logic or rationale.
+2. **Do not annotate history** – Remove / reject comments like "extracted from X" or timestamps; Git already tracks lineage.
+3. **Stage then simplify** – For risky moves, first do a mechanical move keeping structure, then a second pass to clean naming/shape with tests in place.
+4. **No speculative rewrites** – If intent is unclear, add a TODO with a narrow question instead of rewriting.
 
-**Decision: Why Vitest over Jest**
-- ESM-native (better with Svelte Kit)
-- Faster execution
-- Better DX with UI dashboard
-- Can be changed later if needed
+## Test Discipline (Process Focus)
 
-**Decision: Why test Timeline before Presenter**
-- Shuttle control is fragile, needs protection first
-- Can build Presenter refactor with confidence
-- Tests are fast, low-cost way to verify behavior
+Tests encode behavior contracts. When editing code that interacts with:
+- Tone.js transport time
+- Three.js AnimationMixer seeking
+- Animation enable/disable ordering
 
----
+Ensure existing tests stay green; if missing, add them before deep refactors.
 
-## Next Immediate Steps
+## When Uncertain
 
-1. Study `tests/core/timeline.test.ts` - understand what behavior is expected
-2. Implement `src/core/timeline/Timeline.ts` - make tests pass
-3. When done: `yarn test` should show all passing
-4. Then: Integrate into Presenter, verify no regressions
+Add a TODO with a concrete investigative action (e.g., `TODO: isolate mixer.setTime vs anim.time scaling while paused`). Avoid generic TODOs.
 
----
+## Anti-Patterns to Reject
 
-## Resources
+- Comment blocks describing prior file locations.
+- AI/meta commentary ("agent moved this").
+- Duplicate configuration examples.
+- Large speculative refactors without test safety net.
 
-- **Three.js Animation System**: https://threejs.org/docs/#manual/en/introduction/Animation-system
-- **Tone.js API**: https://tonejs.org/docs/
-- **Vitest**: https://vitest.dev/
-- **Svelte Kit**: https://kit.svelte.dev/
+## Performance Considerations (Stylistic)
+
+Prefer clear intent over premature micro-optimizations. Profile before optimizing render loop or mixer update cadence.
+
+## Ownership
+
+Any contributor may enforce these rules during review; style consistency > personal preference.

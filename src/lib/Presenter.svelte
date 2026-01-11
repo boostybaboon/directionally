@@ -4,6 +4,7 @@
   import { onMount } from 'svelte';
   import type { Model } from './Model';
   import type { AnimationDict } from './model/Action';
+  import { PlaybackEngine } from '../core/scene/PlaybackEngine';
 
   let canvas: HTMLCanvasElement;
   let renderer: THREE.WebGLRenderer;
@@ -17,6 +18,9 @@
   let clock: THREE.Clock;
   // TODO multiple cameras
   let camera: THREE.Camera;
+
+  // Headless playback core (delegates shuttle/transport control)
+  const engine = new PlaybackEngine();
 
   let isToneSetup = $state<boolean>(false);
   let isPlaying = $state<boolean>(false);
@@ -169,6 +173,9 @@
       });
     });
 
+    // Delegate playback to engine with freshly built animations/mixers
+    engine.load({ animations: animationDict, mixers });
+
     setSequenceTo(0);
 
     clock = new THREE.Clock();
@@ -179,7 +186,8 @@
 
   const animate = () => {
     const delta = clock.getDelta();
-    mixers.forEach(mixer => mixer.update(delta));
+    // Drive mixers via the playback engine
+    engine.update(delta);
     renderer.render(scene, camera);
   };
 
@@ -191,15 +199,8 @@
   };
 
   const playSequence = () => {
-    let currentTime = Tone.getTransport().seconds;
-    Object.values(animationDict).forEach((animationList) => {
-      animationList.forEach((anim) => {
-      if (anim.start < currentTime && (currentTime < anim.end || anim.loop === THREE.LoopRepeat)) {
-          anim.anim.paused = false;
-        }
-      });
-    });
-    Tone.getTransport().start();
+    // Delegate enabling and transport start to engine
+    engine.play();
     
     // Start updating position every 100ms during playback
     positionUpdateInterval = window.setInterval(() => {
@@ -214,18 +215,13 @@
   };
 
   const pauseSequence = () => {
-    Tone.getTransport().pause();
+    engine.pause();
     updatePosition();
 
     // Clear the position update interval
     clearPositionUpdateInterval();
 
-    let currentTime = Tone.getTransport().seconds;
-    Object.values(animationDict).forEach((animationList) => {
-      animationList.forEach((anim) => {
-        anim.anim.paused = true;
-      });
-    });
+    // Engine maintains enabled/paused states; Presenter just reflects position
   };
 
   const pauseAndDisableAll = () => {
@@ -250,47 +246,14 @@
   // but anim.time setting the local time without any scaling applied
   // Need to set up an isolated test to understand this fully
   const setSequenceTo = (time: number) => {
-    Tone.getTransport().seconds = time;
+    // Delegate fragile seek to engine to ensure identical shuttle behavior
+    engine.seek(time);
     updatePosition();
-
-    pauseAndDisableAll();
-
-    Object.entries(animationDict).forEach(([_, animationList]) => {
-        for (let i = animationList.length - 1; i >= 0; i--) {
-        const anim = animationList[i];
-
-        if (i === 0) {
-          anim.anim.enabled = true;
-          anim.anim.time = 0;
-        }
-
-        if (time < anim.start) {
-          continue;
-        }
-        
-        if (time >= anim.end) {
-          anim.anim.enabled = true;
-          if (anim.loop === THREE.LoopOnce) {
-            anim.anim.time = (anim.end - anim.start);
-          } else if (anim.loop === THREE.LoopRepeat) {
-            anim.anim.time = (time - anim.start) % (anim.end - anim.start);
-          }
-          break;
-        }
-        
-        if (time >= anim.start && time < anim.end) {
-          anim.anim.enabled = true;
-          anim.anim.time = (time - anim.start);
-          break;
-        }
-      }
-    });
   };
 
   const rewindSequence = () => {
-    Tone.getTransport().seconds = 0.0;
+    engine.rewind();
     updatePosition();
-    setSequenceTo(0);
   };
 
   const handlePlayPauseClick = () => {
