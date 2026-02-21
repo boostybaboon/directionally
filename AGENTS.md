@@ -10,22 +10,6 @@ yarn test:coverage    # Coverage report
 yarn build
 yarn preview
 ```
-## Overview & Scope
-
-This file defines **stylistic and process conventions** for the Directionally codebase. Technical architecture, commands, and fragile runtime invariants live in `.github/copilot-instructions.md` for repository-scoped Copilot context.
-
-### Copilot Agent Instruction Placement (per GitHub Docs)
-- `AGENTS.md` files can exist anywhere in the repo; the nearest `AGENTS.md` in the directory tree takes precedence for agent behavior.
-- Use `AGENTS.md` for agent instructions used by AI agents and contributor process guidance; keep repository-wide architecture and build/test commands in `.github/copilot-instructions.md`.
-- Path-specific instruction files (optional) live under `.github/instructions/*.instructions.md` with `applyTo` frontmatter; repository-wide instructions live in `.github/copilot-instructions.md`.
-- Prompt files (optional) live under `.github/prompts/*.prompt.md` for reusable chat prompts.
-
-Notes:
-- In VS Code, support for `AGENTS.md` outside the workspace root is off by default and may require enabling per VS Code docs.
-- Repo-wide and path-specific instructions can both apply; avoid contradictory guidance because Copilot’s resolution between conflicts is non-deterministic.
-
-Reference: https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions
-
 ## Development Principles
 
 1. **Only production code** – No comments or files whose sole purpose is narrating refactors or AI changes.
@@ -33,7 +17,6 @@ Reference: https://docs.github.com/en/copilot/how-tos/configure-custom-instructi
 3. **Protect fragile systems with tests** – Before altering shuttle/seek logic, ensure tests cover current behavior.
 4. **Single-purpose commits** – One clear change per commit; avoid mixing style and behavior.
 
-## Code Style & Comment Policy
 ## Code Style
 
 **Files should speak for themselves:**
@@ -60,13 +43,6 @@ Preserve:
 
 **Rule: Refactors must preserve all non-meta comments.** When moving code between files, migrate existing domain-knowledge comments with the code. If you lose them, you've lost institutional knowledge.
 
----
-
-git checkout -b feat/timeline-seek-fix
-yarn test
-git commit -m "fix: seek repositions animations correctly when paused"
-git commit -m "test: add seek edge cases for looping animations"
-git push origin feat/timeline-seek-fix
 ## Git Workflow (Style Aspect)
 
 Follow conventional commits for clarity:
@@ -107,3 +83,8 @@ Prefer clear intent over premature micro-optimizations. Profile before optimizin
 ## Ownership
 
 Any contributor may enforce these rules during review; style consistency > personal preference.
+
+## Tooling Roadmap Note
+
+Agent skills (`.github/skills/`) are an open standard for task-triggered context injection — Copilot selectively loads a skill based on whether the current task matches its `description`, regardless of which file is open.
+When VS Code stable gains support (currently VS Code Insiders only), migrate `.github/instructions/` files to skills with `description` triggers; they'll load on relevant tasks without requiring the user to be in a specific file path.
