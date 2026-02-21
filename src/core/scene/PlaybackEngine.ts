@@ -8,6 +8,9 @@ class ToneTransportAdapter implements Transport {
   get seconds() {
     return Tone.getTransport().seconds;
   }
+  set seconds(value: number) {
+    Tone.getTransport().seconds = value;
+  }
   start() {
     Tone.getTransport().start();
   }
@@ -50,8 +53,7 @@ export class PlaybackEngine {
 
   setPosition(time: number) {
     // Sets the transport seconds; Presenter should also update UI slider.
-    // Note: Tone.js transport exposes `seconds` as setter.
-    (Tone.getTransport() as any).seconds = time;
+    this.transport.seconds = time;
     this.state.position = time;
   }
 

@@ -61,9 +61,9 @@ yarn dev --open
 yarn check
 
 # Tests (Vitest)
-yarn test
-yarn test:watch
-yarn test:coverage
+yarn test            # Run once and exit
+yarn test:watch      # Watch mode for development
+yarn test:coverage   # Run once with coverage report
 
 # Build & preview
 yarn build

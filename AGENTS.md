@@ -1,14 +1,15 @@
 # Directionally - Development Commands & Philosophy
 
+```bash
 yarn dev --open       # Start dev server (http://localhost:5173)
 yarn check            # TypeScript type checking
 yarn check:watch      # Watch mode
-yarn test             # Run tests once
-yarn test:watch       # Watch mode
-yarn test:ui          # Interactive UI dashboard
+yarn test             # Run tests once and exit (use this in CI or scripts)
+yarn test:watch       # Watch mode for interactive development
 yarn test:coverage    # Coverage report
 yarn build
 yarn preview
+```
 ## Overview & Scope
 
 This file defines **stylistic and process conventions** for the Directionally codebase. Technical architecture, commands, and fragile runtime invariants live in `.github/copilot-instructions.md` for repository-scoped Copilot context.

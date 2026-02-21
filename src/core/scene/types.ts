@@ -1,5 +1,5 @@
 import type * as THREE from 'three';
-import type { AnimationDict } from '../../../lib/model/Action';
+import type { AnimationDict } from '../../lib/model/Action';
 
 export interface Transport {
   seconds: number;
