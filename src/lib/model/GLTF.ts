@@ -4,7 +4,7 @@ import { Object3DAsset } from './Object3DAsset';
 
 export class GLTFAsset extends Object3DAsset {
   private _animations: THREE.AnimationClip[];
-  
+
   constructor(
     public readonly name: string,
     public readonly url: string

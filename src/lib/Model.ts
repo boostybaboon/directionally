@@ -4,6 +4,7 @@ import type { LightAsset } from './model/Light';
 import type { MeshAsset } from './model/Mesh';
 import type { GLTFAsset } from './model/GLTF';
 import type { Action } from './model/Action';
+import type { SpeechEntry } from '../core/scene/types';
 
 export class Model {
   camera: CameraAsset;
@@ -12,6 +13,7 @@ export class Model {
   actions: Action[];
   lights: LightAsset[];
   backgroundColor?: number;
+  speechEntries: SpeechEntry[];
 
   constructor(
     camera: CameraAsset, 
@@ -19,7 +21,8 @@ export class Model {
     gltfs: GLTFAsset[] = [],
     actions: Action[] = [], 
     lights: LightAsset[] = [],
-    backgroundColor?: number
+    backgroundColor?: number,
+    speechEntries: SpeechEntry[] = []
   ) {
     this.camera = camera;
     this.meshes = meshes;
@@ -27,5 +30,6 @@ export class Model {
     this.actions = actions;
     this.lights = lights;
     this.backgroundColor = backgroundColor;
+    this.speechEntries = speechEntries;
   }
 }

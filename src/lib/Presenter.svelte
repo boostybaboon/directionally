@@ -128,6 +128,7 @@
     // Load all GLTF assets and wait for them to be added to the scene
     const gltfPromises = model.gltfs.map(async (gltf) => {
       await gltf.load();
+
       scene.add(gltf.threeObject);
       modelAnimationClips[gltf.name] = gltf.animations;
 
@@ -171,6 +172,19 @@
           }, time);
         }, anim.start);
       });
+    });
+
+    model.speechEntries.forEach((entry) => {
+      Tone.getTransport().schedule((time) => {
+        Tone.getDraw().schedule(() => {
+          const utterance = new SpeechSynthesisUtterance(entry.text);
+          const voice = findVoice(entry.voice);
+          if (voice) utterance.voice = voice;
+          utterance.onend = () => removeSpeechBubble(entry.actorId);
+          createSpeechBubble(entry.actorId, entry.text);
+          speechSynthesis.speak(utterance);
+        }, time);
+      }, entry.startTime);
     });
 
     // Delegate playback to engine with freshly built animations/mixers
@@ -281,19 +295,28 @@
     }
   };
 
-  // Function to create a speech bubble using SpriteMaterial
-  function createSpeechBubble(text: string) {
+  // Returns the first voice whose name contains the given substring (case-insensitive).
+  // Returns undefined if no match — the browser will use its default voice.
+  function findVoice(name?: string): SpeechSynthesisVoice | undefined {
+    if (!name) return undefined;
+    const lower = name.toLowerCase();
+    return speechSynthesis.getVoices().find((v) => v.name.toLowerCase().includes(lower));
+  }
+
+  // Creates a speech bubble sprite above the named actor and stores it for later removal.
+  const activeSpeechBubbles = new Map<string, THREE.Sprite>();
+
+  function createSpeechBubble(actorId: string, text: string) {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     if (!context) return;
 
-    const fontSize = 48; // Increase the font size
+    const fontSize = 48;
     const borderSize = 2;
-    const baseWidth = 300; // Base width for the text
+    const baseWidth = 300;
     const font = `${fontSize}px Arial`;
     context.font = font;
 
-    // Measure the text width
     const textWidth = context.measureText(text).width;
     const doubleBorderSize = borderSize * 2;
     const width = baseWidth + doubleBorderSize;
@@ -301,23 +324,19 @@
     canvas.width = width;
     canvas.height = height;
 
-    // Set font again after resizing canvas
     context.font = font;
     context.textBaseline = 'middle';
     context.textAlign = 'center';
 
-    // Draw background
     context.fillStyle = 'white';
     context.fillRect(0, 0, width, height);
 
-    // Draw text
     const scaleFactor = Math.min(1, baseWidth / textWidth);
     context.translate(width / 2, height / 2);
     context.scale(scaleFactor, 1);
     context.fillStyle = 'black';
     context.fillText(text, 0, 0);
 
-    // Create texture and sprite material
     const texture = new THREE.CanvasTexture(canvas);
     texture.minFilter = THREE.LinearFilter;
     texture.wrapS = THREE.ClampToEdgeWrapping;
@@ -326,33 +345,23 @@
     const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
     const sprite = new THREE.Sprite(spriteMaterial);
 
-    // Scale the sprite
     const labelBaseScale = 0.01;
     sprite.scale.set(canvas.width * labelBaseScale, canvas.height * labelBaseScale, 1);
 
-    // Attach the sprite to the robot
-    const robot = scene.getObjectByName('robot1');
-    if (robot) {
-      sprite.position.set(0, 5, 0); // Adjust the position as needed
-      robot.add(sprite);
+    const actor = scene.getObjectByName(actorId);
+    if (actor) {
+      sprite.position.set(0, 5, 0);
+      actor.add(sprite);
+      activeSpeechBubbles.set(actorId, sprite);
     }
-
-    // Remove the speech bubble after 3 seconds
-    setTimeout(() => {
-      if (robot) {
-        robot.remove(sprite);
-      }
-    }, 3000);
   }
 
-  // Example of speech synthesis api
-  function speak() {
-    const voices = speechSynthesis.getVoices();
-    console.log(voices);
-    const utterance = new SpeechSynthesisUtterance('Hello, I am a robot!');
-    speechSynthesis.speak(utterance);
-
-    createSpeechBubble('Hello, I am a robot!');
+  function removeSpeechBubble(actorId: string) {
+    const sprite = activeSpeechBubbles.get(actorId);
+    if (!sprite) return;
+    const actor = scene.getObjectByName(actorId);
+    if (actor) actor.remove(sprite);
+    activeSpeechBubbles.delete(actorId);
   }
 
 </script>
@@ -411,7 +420,6 @@
   <div id="controls-top">
     <button onclick={handlePlayPauseClick} disabled={!isToneSetup}>{isPlaying ? 'Pause' : 'Play'}</button>
     <button onclick={handleRewindClick} disabled={!isToneSetup}>Rewind</button>
-    <button onclick={speak}>Speak</button>
   </div>
   <div id="render-container">
     <canvas bind:this={canvas} id="c"></canvas>

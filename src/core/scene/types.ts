@@ -27,3 +27,10 @@ export type EngineLoadPayload = {
   animations: AnimationDict;
   mixers: THREE.AnimationMixer[];
 };
+
+export type SpeechEntry = {
+  actorId: string;
+  startTime: number;
+  text: string;
+  voice?: string;
+};

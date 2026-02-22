@@ -26,6 +26,7 @@ import {
 import type { Scene } from './Scene.js';
 import type { Actor } from './Production.js';
 import type { GeometryConfig, MaterialConfig, LightConfig, TrackType } from './types.js';
+import type { SpeechEntry } from '../scene/types.js';
 
 // --- helpers ---
 
@@ -163,6 +164,7 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
 
   // Actions
   const actions: Action[] = [];
+  const speechEntries: SpeechEntry[] = [];
   for (const action of scene.actions) {
     switch (action.type) {
       case 'move': {
@@ -225,6 +227,13 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
         break;
       }
       case 'speak':
+        speechEntries.push({
+          actorId: action.actorId,
+          startTime: action.startTime,
+          text: action.text,
+          voice: action.voice,
+        });
+        break;
       case 'enter':
       case 'exit':
         console.warn(`SceneBridge: action type "${action.type}" has no renderer support yet — skipped`);
@@ -232,5 +241,5 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
     }
   }
 
-  return new Model(camera, meshes, gltfs, actions, lights, scene.backgroundColor);
+  return new Model(camera, meshes, gltfs, actions, lights, scene.backgroundColor, speechEntries);
 }
