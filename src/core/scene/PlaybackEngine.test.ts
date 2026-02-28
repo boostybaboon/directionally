@@ -44,12 +44,21 @@ class FakeAnimationAction {
   enabled: boolean = false;
   paused: boolean = true;
   time: number = 0;
+  weight: number = 1;
   loop: THREE.AnimationActionLoopStyles = THREE.LoopOnce;
   clampWhenFinished: boolean = false;
 
   play() {
     this.paused = false;
   }
+
+  setEffectiveWeight(w: number) {
+    this.weight = w;
+    return this;
+  }
+
+  fadeIn(_d: number) { return this; }
+  fadeOut(_d: number) { return this; }
 
   getMixer() {
     return {
@@ -68,7 +77,9 @@ function createAnimationEntry(
   start: number,
   end: number,
   loop: THREE.AnimationActionLoopStyles = THREE.LoopOnce,
-  clipDuration?: number
+  clipDuration?: number,
+  fadeIn: number = 0,
+  fadeOut: number = 0
 ) {
   return {
     anim: new FakeAnimationAction() as unknown as THREE.AnimationAction,
@@ -77,6 +88,8 @@ function createAnimationEntry(
     clipDuration: clipDuration ?? (end - start),
     loop,
     repetitions: loop === THREE.LoopRepeat ? Infinity : 1,
+    fadeIn,
+    fadeOut,
   };
 }
 
@@ -92,6 +105,39 @@ function setupEngine(animations: AnimationDict) {
 }
 
 describe('PlaybackEngine - Shuttle Invariants', () => {
+  it('play() at exactly startTime unpauses the clip (boundary: start === currentTime)', () => {
+    // Regression: strict `<` in play() meant t=0 clips were never unpaused by play(),
+    // only by the Tone schedule ~30ms later. `<=` fixes this.
+    const anim = createAnimationEntry(0, Infinity, THREE.LoopRepeat, 1.5);
+    const animations: AnimationDict = { 'alpha_Idle_0': [anim] };
+    const { engine } = setupEngine(animations);
+
+    engine.seek(0);  // pauses everything
+    expect(anim.anim.paused).toBe(true);
+
+    engine.play();   // should unpause the t=0 clip via the `<=` boundary
+    expect(anim.anim.paused).toBe(false);
+  });
+
+  it('play() does not unpause a clip whose start is in the future', () => {
+    const idle    = createAnimationEntry(0, 4,        THREE.LoopRepeat, 1.5);
+    const walking = createAnimationEntry(4, Infinity, THREE.LoopRepeat, 1.2);
+    const animations: AnimationDict = {
+      'alpha_Idle_0':    [idle],
+      'alpha_Walking_4': [walking],
+    };
+    const { engine, transport } = setupEngine(animations);
+
+    engine.seek(0);
+    transport.seconds = 0;  // play from t=0
+    engine.play();
+
+    // Idle starts at 0 — should be unpaused
+    expect(idle.anim.paused).toBe(false);
+    // Walking starts at 4 — should stay paused at t=0
+    expect(walking.anim.paused).toBe(true);
+  });
+
   it('play → pause → play preserves position', () => {
     const animations: AnimationDict = {
       'obj_prop': [createAnimationEntry(0, 2, THREE.LoopOnce)],
@@ -358,5 +404,68 @@ describe('PlaybackEngine - Shuttle Invariants', () => {
 
     // Second animation should not be enabled yet
     expect(anim2.anim.enabled).toBe(false);
+  });
+
+  // --- Regression: KeyframeAction LoopRepeat clips must use end=Infinity ---
+
+  it('LoopRepeat clip with end=Infinity stays active and wraps past one cycle (KeyframeAction regression)', () => {
+    // Mirrors a LoopRepeat KeyframeAction after the fix: end=Infinity, clipDuration=5
+    const anim = createAnimationEntry(0, Infinity, THREE.LoopRepeat, 5);
+    const animations: AnimationDict = { 'camera1_.rotation': [anim] };
+    const { engine } = setupEngine(animations);
+
+    engine.pause();
+
+    // Seek to t=7: one full cycle (5s) + 2s → wraps to 2
+    engine.seek(7);
+    expect(anim.anim.enabled).toBe(true);
+    expect(anim.anim.time).toBeCloseTo(2, 5);
+
+    // Seek to t=10: two full cycles → wraps to 0
+    engine.seek(10);
+    expect(anim.anim.enabled).toBe(true);
+    expect(anim.anim.time).toBeCloseTo(0, 5);
+
+    // Would have been disabled at t=5 under the old `end = startTime + clip.duration` bug
+    engine.seek(5.5);
+    expect(anim.anim.enabled).toBe(true);
+    expect(anim.anim.time).toBeCloseTo(0.5, 5);
+  });
+
+  // --- Regression: LoopOnce clips must hold final frame (FlyIntoRoom regression) ---
+
+  it('LoopOnce clip holds final frame when seek lands in a gap before next clip starts', () => {
+    // Mirrors cameraMove1 [0,3) and cameraMove2 [5,8) in FlyIntoRoomExample.
+    // In the gap t=3..5 the first clip must stay at its final frame.
+    const move1 = createAnimationEntry(0, 3, THREE.LoopOnce);  // clipDuration=3
+    const move2 = createAnimationEntry(5, 8, THREE.LoopOnce);  // clipDuration=3
+    const animations: AnimationDict = { 'camera1_.position': [move1, move2] };
+    const { engine } = setupEngine(animations);
+
+    engine.pause();
+
+    // Within move1
+    engine.seek(1.5);
+    expect(move1.anim.enabled).toBe(true);
+    expect(move1.anim.time).toBeCloseTo(1.5, 5);
+    expect(move2.anim.enabled).toBe(false);
+
+    // In the gap: move1 should hold final frame, move2 not yet active
+    engine.seek(4);
+    expect(move1.anim.enabled).toBe(true);
+    expect(move1.anim.time).toBeCloseTo(3, 5);  // final frame
+    expect(move2.anim.enabled).toBe(false);
+
+    // Within move2
+    engine.seek(6);
+    expect(move2.anim.enabled).toBe(true);
+    expect(move2.anim.time).toBeCloseTo(1, 5);  // 6 - 5
+    // move1 is superseded by move2 (break stops at move2)
+    expect(move1.anim.enabled).toBe(false);
+
+    // Past move2: move2 holds its final frame
+    engine.seek(9);
+    expect(move2.anim.enabled).toBe(true);
+    expect(move2.anim.time).toBeCloseTo(3, 5);  // final frame
   });
 });

@@ -191,6 +191,8 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
             action.startTime,
             action.animationName,
             action.endTime,
+            action.fadeIn ?? 0,
+            action.fadeOut ?? 0,
           ),
         );
         break;

@@ -22,6 +22,8 @@ export type AnimationEntry = {
   clipDuration: number;  // raw clip duration for LoopRepeat modulo
   loop: THREE.AnimationActionLoopStyles;
   repetitions: number;
+  fadeIn: number;        // seconds; 0 = hard cut
+  fadeOut: number;       // seconds; 0 = hard cut
 };
 
 export type EngineLoadPayload = {

@@ -77,6 +77,8 @@ export type AnimateAction = {
   actorId: string;
   startTime: number;
   endTime?: number;    // when omitted the clip plays until the end of the scene
+  fadeIn?: number;     // seconds to blend from 0→1 weight on entry (0 = hard cut)
+  fadeOut?: number;    // seconds to blend from 1→0 weight before endTime (0 = hard cut)
   animationName: string;
   loop?: LoopStyle;
 };

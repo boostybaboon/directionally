@@ -41,6 +41,8 @@ export type AnimationDict = {
     clipDuration: number;  // raw clip duration for LoopRepeat modulo
     loop: THREE.AnimationActionLoopStyles;
     repetitions: number;
+    fadeIn: number;        // seconds; 0 = hard cut
+    fadeOut: number;       // seconds; 0 = hard cut
   }[];
 };
 
@@ -60,7 +62,8 @@ export abstract class Action {
     animationDict: AnimationDict,
     mixers: THREE.AnimationMixer[],
     target: THREE.Object3D,
-    meshAnimationClips: THREE.AnimationClip[]
+    meshAnimationClips: THREE.AnimationClip[],
+    mixerMap?: Map<string, THREE.AnimationMixer>
   ): void;
 }
 
@@ -82,7 +85,8 @@ export class KeyframeAction extends Action {
     animationDict: AnimationDict,
     mixers: THREE.AnimationMixer[],
     target: THREE.Object3D,
-    meshAnimationClips: THREE.AnimationClip[]
+    meshAnimationClips: THREE.AnimationClip[],
+    _mixerMap?: Map<string, THREE.AnimationMixer>
   ): void {
     let keyframeTrack: THREE.KeyframeTrack;
     
@@ -132,10 +136,14 @@ export class KeyframeAction extends Action {
     animationDict[animationDictKey].push({
       anim: animAction,
       start: this.startTime,
-      end: this.startTime + clip.duration,
+      // LoopRepeat runs indefinitely — Infinity prevents seek() from hard-disabling after one cycle.
+      // LoopOnce has a natural endpoint at startTime + clip.duration.
+      end: this.loop === LoopStyle.LoopRepeat ? Infinity : this.startTime + clip.duration,
       clipDuration: clip.duration,
       loop: loopStyles[this.loop],
       repetitions: this.repetitions,
+      fadeIn: 0,
+      fadeOut: 0,
     });
   }
 }
@@ -146,7 +154,9 @@ export class GLTFAction extends Action {
     target: string,
     startTime: number,
     private readonly animationName: string,
-    private readonly endTime?: number
+    private readonly endTime?: number,
+    private readonly fadeIn: number = 0,
+    private readonly fadeOut: number = 0
   ) {
     super(name, target, startTime);
   }
@@ -155,32 +165,46 @@ export class GLTFAction extends Action {
     animationDict: AnimationDict,
     mixers: THREE.AnimationMixer[],
     target: THREE.Object3D,
-    meshAnimationClips: THREE.AnimationClip[]
+    meshAnimationClips: THREE.AnimationClip[],
+    mixerMap?: Map<string, THREE.AnimationMixer>
   ): void {
-    const mixer = new THREE.AnimationMixer(target);
-    mixers.push(mixer);
+    // Use a shared mixer per actor so multiple clips can be crossfaded.
+    // Falls back to a new mixer when no mixerMap is provided (e.g. tests).
+    let mixer = mixerMap?.get(target.name);
+    if (!mixer) {
+      mixer = new THREE.AnimationMixer(target);
+      mixerMap?.set(target.name, mixer);
+      mixers.push(mixer);
+    }
 
     const clip = meshAnimationClips.find((meshClip) => meshClip.name === this.animationName);
 
     if (clip) {
-      const action = mixer.clipAction(clip);
+      // Create a uniquely-named copy so multiple segments of the same base clip
+      // can coexist as independent actions on the shared mixer (mixer caches by clip UUID).
+      const segmentClip = new THREE.AnimationClip(this.name, clip.duration, clip.tracks);
+      const action = mixer.clipAction(segmentClip);
       action.loop = THREE.LoopRepeat;
       action.clampWhenFinished = false;
+      // Start at weight 0; the Tone schedule at startTime will set the correct weight.
+      // Do NOT set paused=true — the clip must remain active in the mixer for per-frame
+      // weight updates (crossfades) and seek() time positioning to work correctly.
+      action.setEffectiveWeight(0);
       action.play();
 
-      const animationDictKey = target.name + '_' + this.animationName;
-
-      if (!animationDict[animationDictKey]) {
-        animationDict[animationDictKey] = [];
+      if (!animationDict[this.name]) {
+        animationDict[this.name] = [];
       }
 
-      animationDict[animationDictKey].push({
+      animationDict[this.name].push({
         anim: action,
         start: this.startTime,
         end: this.endTime ?? Infinity,
         clipDuration: clip.duration,
         loop: THREE.LoopRepeat,
-        repetitions: Infinity
+        repetitions: Infinity,
+        fadeIn: this.fadeIn,
+        fadeOut: this.fadeOut,
       });
     } else {
       console.error('Animation not found:', this.animationName);

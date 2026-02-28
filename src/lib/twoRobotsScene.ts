@@ -61,17 +61,19 @@ scene
   .stage(alpha.id, { startPosition: [-8, 0, 0], startRotation: [0, Math.PI / 2, 0] })
   // Beta enters from the right — rotation.y = -PI/2 faces -X
   .stage(beta.id, { startPosition: [8, 0, 0], startRotation: [0, -Math.PI / 2, 0] })
-  // Animate clips segmented to match movement windows
-  // Alpha: idle at edge → walk to centre → idle during dialogue → walk stroll
-  .addAction({ type: 'animate', actorId: alpha.id, startTime: 0,   endTime: 2,  animationName: 'Idle' })
-  .addAction({ type: 'animate', actorId: alpha.id, startTime: 2,   endTime: 4,  animationName: 'Walking' })
-  .addAction({ type: 'animate', actorId: alpha.id, startTime: 4,   endTime: 18, animationName: 'Idle' })
-  .addAction({ type: 'animate', actorId: alpha.id, startTime: 18,               animationName: 'Walking' })
-  // Beta: idle at edge → walk to centre → idle during dialogue → walk stroll
-  .addAction({ type: 'animate', actorId: beta.id, startTime: 0,   endTime: 7,  animationName: 'Idle' })
-  .addAction({ type: 'animate', actorId: beta.id, startTime: 7,   endTime: 9,  animationName: 'Walking' })
-  .addAction({ type: 'animate', actorId: beta.id, startTime: 9,   endTime: 18, animationName: 'Idle' })
-  .addAction({ type: 'animate', actorId: beta.id, startTime: 18,               animationName: 'Walking' })
+  // Animate clips segmented to match movement windows, with 0.4s crossfades.
+  // Overlapping start/endTimes create the blend window: e.g. Idle ends at 2.4,
+  // Walking starts at 2.0 — both run at partial weight between t=2 and t=2.4.
+  // Alpha: idle → walk in → idle (dialogue) → walk stroll
+  .addAction({ type: 'animate', actorId: alpha.id, startTime: 0,   endTime: 2.4,  animationName: 'Idle',    fadeOut: 0.4 })
+  .addAction({ type: 'animate', actorId: alpha.id, startTime: 2,   endTime: 4.4,  animationName: 'Walking', fadeIn: 0.4, fadeOut: 0.4 })
+  .addAction({ type: 'animate', actorId: alpha.id, startTime: 4,   endTime: 18.4, animationName: 'Idle',    fadeIn: 0.4, fadeOut: 0.4 })
+  .addAction({ type: 'animate', actorId: alpha.id, startTime: 18,                 animationName: 'Walking', fadeIn: 0.4 })
+  // Beta: idle → walk in → idle (dialogue) → walk stroll
+  .addAction({ type: 'animate', actorId: beta.id, startTime: 0,   endTime: 7.4,  animationName: 'Idle',    fadeOut: 0.4 })
+  .addAction({ type: 'animate', actorId: beta.id, startTime: 7,   endTime: 9.4,  animationName: 'Walking', fadeIn: 0.4, fadeOut: 0.4 })
+  .addAction({ type: 'animate', actorId: beta.id, startTime: 9,   endTime: 18.4, animationName: 'Idle',    fadeIn: 0.4, fadeOut: 0.4 })
+  .addAction({ type: 'animate', actorId: beta.id, startTime: 18,                 animationName: 'Walking', fadeIn: 0.4 })
   // Alpha: walks in at t=2, holds for dialogue, converges and strolls at t=18
   .addAction({
     type: 'move',

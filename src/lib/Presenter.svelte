@@ -19,6 +19,10 @@
   // TODO multiple cameras
   let camera: THREE.Camera;
 
+  // Entries with fadeIn/fadeOut: weights are updated per-frame in animate() using
+  // Tone transport time instead of Three.js mixer._time (which gets reset by seek()).
+  let fadedAnimEntries: Array<{ anim: THREE.AnimationAction; start: number; end: number; fadeIn: number; fadeOut: number }> = [];
+
   // Headless playback core (delegates shuttle/transport control)
   const engine = new PlaybackEngine();
 
@@ -148,6 +152,8 @@
 
     //for each animation in model, add the animation to the animationDict
     //and add its mixer to the mixers array
+    // Shared mixer map: all GLTF clips for the same actor use one mixer so they can be crossfaded
+    const actorMixerMap = new Map<string, THREE.AnimationMixer>();
     model.actions.forEach((action) => {
       var sceneObject = scene.getObjectByName(action.target);
       if (!sceneObject) {
@@ -159,20 +165,27 @@
           return; // from this iteration of the loop
         }
       }
-      action.addAction(animationDict, mixers, sceneObject, modelAnimationClips[action.target]);
+      action.addAction(animationDict, mixers, sceneObject, modelAnimationClips[action.target], actorMixerMap);
     });
 
     Object.values(animationDict).forEach((animGroup) => {
       animGroup.forEach((anim) => {
+        // Start: enable, reset time to beginning of clip, set initial weight
         Tone.getTransport().schedule((time) => {
           Tone.getDraw().schedule(() => {
             anim.anim.enabled = true;
             anim.anim.time = 0;
+            // Clips with fadeIn start at weight 0; per-frame logic in animate() ramps the weight.
+            // Clips without fadeIn start at full weight immediately.
+            anim.anim.setEffectiveWeight(anim.fadeIn > 0 ? 0 : 1);
             anim.anim.paused = false;
           }, time);
         }, anim.start);
 
-        if (isFinite(anim.end)) {
+        // Hard stop at explicit endTime for LoopRepeat segments only.
+        // LoopOnce clips self-terminate via clampWhenFinished; disabling them early
+        // reverts the object to its base state, causing visible snaps.
+        if (isFinite(anim.end) && anim.loop !== THREE.LoopOnce) {
           Tone.getTransport().schedule((time) => {
             Tone.getDraw().schedule(() => {
               anim.anim.paused = true;
@@ -182,6 +195,11 @@
         }
       });
     });
+
+    // Collect entries that need per-frame weight management (crossfades)
+    fadedAnimEntries = Object.values(animationDict)
+      .flat()
+      .filter((e) => e.fadeIn > 0 || e.fadeOut > 0);
 
     model.speechEntries.forEach((entry) => {
       Tone.getTransport().schedule((time) => {
@@ -209,6 +227,24 @@
 
   const animate = () => {
     const delta = clock.getDelta();
+
+    // Per-frame crossfade weight — driven by Tone transport time rather than mixer._time,
+    // because mixer._time is reset by seek() and would corrupt Three.js fade interpolants.
+    if (Tone.getTransport().state === 'started') {
+      const t = Tone.getTransport().seconds;
+      fadedAnimEntries.forEach((entry) => {
+        if (!entry.anim.enabled) return;
+        const elapsed = t - entry.start;
+        let weight = 1;
+        if (entry.fadeIn > 0 && elapsed < entry.fadeIn) {
+          weight = Math.max(0, elapsed / entry.fadeIn);
+        } else if (entry.fadeOut > 0 && isFinite(entry.end) && t > entry.end - entry.fadeOut) {
+          weight = Math.max(0, (entry.end - t) / entry.fadeOut);
+        }
+        entry.anim.setEffectiveWeight(weight);
+      });
+    }
+
     // Drive mixers via the playback engine
     engine.update(delta);
     renderer.render(scene, camera);

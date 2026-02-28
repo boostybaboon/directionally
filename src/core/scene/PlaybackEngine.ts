@@ -59,10 +59,18 @@ export class PlaybackEngine {
 
   play() {
     const currentTime = this.transport.seconds;
-    // Match Presenter: unpause animations that started and are not ended, or loop repeat
+    // Unpause animations whose window has started (including clips starting exactly at currentTime)
     (Object.values(this.animations) as unknown as EngineLoadPayload['animations'][string][]).forEach((animationList) => {
       (animationList as unknown as EngineLoadPayload['animations'][string]).forEach((anim: any) => {
-        if (anim.start < currentTime && currentTime < anim.end) {
+        if (anim.start <= currentTime && currentTime < anim.end) {
+          const elapsed = currentTime - anim.start;
+          let weight = 1;
+          if (anim.fadeIn > 0 && elapsed < anim.fadeIn) {
+            weight = elapsed / anim.fadeIn;
+          } else if (anim.fadeOut > 0 && anim.end !== Infinity && currentTime > anim.end - anim.fadeOut) {
+            weight = (anim.end - currentTime) / anim.fadeOut;
+          }
+          anim.anim.setEffectiveWeight(weight);
           anim.anim.paused = false;
         }
       });
@@ -123,6 +131,7 @@ export class PlaybackEngine {
         if (i === 0 && time >= anim.start) {
           anim.anim.enabled = true;
           anim.anim.time = 0;
+          anim.anim.setEffectiveWeight(1);
         }
 
         if (time < anim.start) {
@@ -143,10 +152,19 @@ export class PlaybackEngine {
 
         if (time >= anim.start && (anim.end === Infinity || time < anim.end)) {
           anim.anim.enabled = true;
+          const elapsed = time - anim.start;
+          // Compute fractional weight for crossfade windows to support seek during blends
+          let weight = 1;
+          if (anim.fadeIn > 0 && elapsed < anim.fadeIn) {
+            weight = elapsed / anim.fadeIn;
+          } else if (anim.fadeOut > 0 && anim.end !== Infinity && time > anim.end - anim.fadeOut) {
+            weight = (anim.end - time) / anim.fadeOut;
+          }
+          anim.anim.setEffectiveWeight(weight);
           if (anim.loop === THREE.LoopRepeat) {
-            anim.anim.time = (time - anim.start) % anim.clipDuration;
+            anim.anim.time = elapsed % anim.clipDuration;
           } else {
-            anim.anim.time = (time - anim.start);
+            anim.anim.time = elapsed;
           }
           break;
         }
