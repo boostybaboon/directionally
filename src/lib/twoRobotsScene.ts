@@ -61,9 +61,17 @@ scene
   .stage(alpha.id, { startPosition: [-8, 0, 0], startRotation: [0, Math.PI / 2, 0] })
   // Beta enters from the right — rotation.y = -PI/2 faces -X
   .stage(beta.id, { startPosition: [8, 0, 0], startRotation: [0, -Math.PI / 2, 0] })
-  // Walking animations play throughout; position keyframes drive actual movement
-  .addAction({ type: 'animate', actorId: alpha.id, startTime: 0, animationName: 'Walking' })
-  .addAction({ type: 'animate', actorId: beta.id, startTime: 0, animationName: 'Walking' })
+  // Animate clips segmented to match movement windows
+  // Alpha: idle at edge → walk to centre → idle during dialogue → walk stroll
+  .addAction({ type: 'animate', actorId: alpha.id, startTime: 0,   endTime: 2,  animationName: 'Idle' })
+  .addAction({ type: 'animate', actorId: alpha.id, startTime: 2,   endTime: 4,  animationName: 'Walking' })
+  .addAction({ type: 'animate', actorId: alpha.id, startTime: 4,   endTime: 18, animationName: 'Idle' })
+  .addAction({ type: 'animate', actorId: alpha.id, startTime: 18,               animationName: 'Walking' })
+  // Beta: idle at edge → walk to centre → idle during dialogue → walk stroll
+  .addAction({ type: 'animate', actorId: beta.id, startTime: 0,   endTime: 7,  animationName: 'Idle' })
+  .addAction({ type: 'animate', actorId: beta.id, startTime: 7,   endTime: 9,  animationName: 'Walking' })
+  .addAction({ type: 'animate', actorId: beta.id, startTime: 9,   endTime: 18, animationName: 'Idle' })
+  .addAction({ type: 'animate', actorId: beta.id, startTime: 18,               animationName: 'Walking' })
   // Alpha: walks in at t=2, holds for dialogue, converges and strolls at t=18
   .addAction({
     type: 'move',
@@ -87,10 +95,11 @@ scene
     },
   })
   // Alpha rotation: faces +X on entry, turns to face away from camera (-Z) then toward (+Z)
-  // Quaternion values are [x, y, z, w]; for rotation around Y:
-  //   +X (y=PI/2):  [0,  0.707, 0, 0.707]
-  //   -Z (y=0):     [0,  0,     0, 1]
-  //   +Z (y=PI):    [0,  1,     0, 0]
+  // RobotExpressive visual front is +Z (GLTF convention), opposite Three.js default.
+  // Facing direction for model-front=+Z: Ry(theta) applied to [0,0,1] = [sin(θ), 0, cos(θ)]
+  //   +X (θ=π/2):   [0,  0.707, 0, 0.707]
+  //   -Z (θ=π):     [0,  1,     0, 0]     ← faces away from camera (stroll out)
+  //   +Z (θ=0):     [0,  0,     0, 1]     ← faces toward camera (stroll back)
   .addAction({
     type: 'move',
     targetId: alpha.id,
@@ -102,10 +111,10 @@ scene
       values: [
         0,  0.707, 0, 0.707,
         0,  0.707, 0, 0.707,
-        0,  0,     0, 1,
-        0,  0,     0, 1,
         0,  1,     0, 0,
         0,  1,     0, 0,
+        0,  0,     0, 1,
+        0,  0,     0, 1,
       ],
       loop: 'once',
     },
@@ -133,7 +142,7 @@ scene
     },
   })
   // Beta rotation: faces -X on entry, turns to face away from camera (-Z) then toward (+Z)
-  //   -X (y=-PI/2): [0, -0.707, 0, 0.707]
+  //   -X (θ=-π/2): [0, -0.707, 0, 0.707]
   .addAction({
     type: 'move',
     targetId: beta.id,
@@ -145,10 +154,10 @@ scene
       values: [
         0, -0.707, 0, 0.707,
         0, -0.707, 0, 0.707,
-        0,  0,     0, 1,
-        0,  0,     0, 1,
         0,  1,     0, 0,
         0,  1,     0, 0,
+        0,  0,     0, 1,
+        0,  0,     0, 1,
       ],
       loop: 'once',
     },

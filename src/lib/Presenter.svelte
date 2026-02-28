@@ -171,6 +171,15 @@
             anim.anim.paused = false;
           }, time);
         }, anim.start);
+
+        if (isFinite(anim.end)) {
+          Tone.getTransport().schedule((time) => {
+            Tone.getDraw().schedule(() => {
+              anim.anim.paused = true;
+              anim.anim.enabled = false;
+            }, time);
+          }, anim.end);
+        }
       });
     });
 

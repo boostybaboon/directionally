@@ -76,6 +76,7 @@ export type AnimateAction = {
   type: 'animate';
   actorId: string;
   startTime: number;
+  endTime?: number;    // when omitted the clip plays until the end of the scene
   animationName: string;
   loop?: LoopStyle;
 };

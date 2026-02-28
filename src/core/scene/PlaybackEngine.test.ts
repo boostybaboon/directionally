@@ -62,16 +62,19 @@ class FakeAnimationAction {
 
 /**
  * Helper to create a minimal AnimationDict entry for testing.
+ * clipDuration defaults to `end - start`; pass explicitly when end is Infinity.
  */
 function createAnimationEntry(
   start: number,
   end: number,
-  loop: THREE.AnimationActionLoopStyles = THREE.LoopOnce
+  loop: THREE.AnimationActionLoopStyles = THREE.LoopOnce,
+  clipDuration?: number
 ) {
   return {
     anim: new FakeAnimationAction() as unknown as THREE.AnimationAction,
     start,
     end,
+    clipDuration: clipDuration ?? (end - start),
     loop,
     repetitions: loop === THREE.LoopRepeat ? Infinity : 1,
   };
@@ -115,21 +118,56 @@ describe('PlaybackEngine - Shuttle Invariants', () => {
     expect(engine.getPosition()).toBe(0.5);
   });
 
-  it('paused seek into looping animation sets modulo time', () => {
+  it('paused seek into open-ended looping animation wraps modulo clip duration', () => {
+    // end=Infinity represents a GLTF clip with no explicit scene endTime
     const animations: AnimationDict = {
-      'obj_prop': [createAnimationEntry(0, 2, THREE.LoopRepeat)],
+      'obj_prop': [createAnimationEntry(0, Infinity, THREE.LoopRepeat, 2)],
     };
-    const { engine, transport } = setupEngine(animations);
+    const { engine } = setupEngine(animations);
 
-    // Pause and seek to t=3 (past one cycle of 2-second loop)
+    // Pause and seek to t=3 (past one cycle of the 2-second clip)
     engine.pause();
     engine.seek(3);
 
     const entry = animations['obj_prop'][0];
-    // Should wrap: (3 - 0) % (2 - 0) = 1
+    // Should wrap: (3 - 0) % 2 = 1
     expect(entry.anim.time).toBe(1);
     expect(entry.anim.enabled).toBe(true);
     expect(entry.anim.paused).toBe(true);
+  });
+
+  it('GLTF clip with explicit endTime disables on seek past endTime', () => {
+    // Represents: Idle [0, 4), Walking [4, 20), Idle [20, Infinity)
+    const idleBefore  = createAnimationEntry(0,  4,        THREE.LoopRepeat, 1.5);
+    const walking     = createAnimationEntry(4,  20,       THREE.LoopRepeat, 1.2);
+    const idleAfter   = createAnimationEntry(20, Infinity, THREE.LoopRepeat, 1.5);
+    const animations: AnimationDict = {
+      'alpha_Idle_0':     [idleBefore],
+      'alpha_Walking_4':  [walking],
+      'alpha_Idle_20':    [idleAfter],
+    };
+    const { engine } = setupEngine(animations);
+    engine.pause();
+
+    // During Idle window
+    engine.seek(2);
+    expect(idleBefore.anim.enabled).toBe(true);
+    expect(walking.anim.enabled).toBe(false);
+    expect(idleAfter.anim.enabled).toBe(false);
+
+    // During Walking window
+    engine.seek(10);
+    expect(idleBefore.anim.enabled).toBe(false);  // past endTime=4, LoopRepeat → disabled
+    expect(walking.anim.enabled).toBe(true);
+    expect(walking.anim.time).toBeCloseTo((10 - 4) % 1.2, 5);
+    expect(idleAfter.anim.enabled).toBe(false);
+
+    // During second Idle window (open-ended)
+    engine.seek(25);
+    expect(idleBefore.anim.enabled).toBe(false);
+    expect(walking.anim.enabled).toBe(false);     // past endTime=20, LoopRepeat → disabled
+    expect(idleAfter.anim.enabled).toBe(true);
+    expect(idleAfter.anim.time).toBeCloseTo((25 - 20) % 1.5, 5);
   });
 
   it('seek backwards into completed one-shot keeps final frame', () => {

@@ -37,7 +37,8 @@ export type AnimationDict = {
   [key: string]: {
     anim: THREE.AnimationAction;
     start: number;
-    end: number;
+    end: number;           // scene timeline stop time; Infinity = runs until end of scene
+    clipDuration: number;  // raw clip duration for LoopRepeat modulo
     loop: THREE.AnimationActionLoopStyles;
     repetitions: number;
   }[];
@@ -132,6 +133,7 @@ export class KeyframeAction extends Action {
       anim: animAction,
       start: this.startTime,
       end: this.startTime + clip.duration,
+      clipDuration: clip.duration,
       loop: loopStyles[this.loop],
       repetitions: this.repetitions,
     });
@@ -143,7 +145,8 @@ export class GLTFAction extends Action {
     name: string,
     target: string,
     startTime: number,
-    private readonly animationName: string
+    private readonly animationName: string,
+    private readonly endTime?: number
   ) {
     super(name, target, startTime);
   }
@@ -174,7 +177,8 @@ export class GLTFAction extends Action {
       animationDict[animationDictKey].push({
         anim: action,
         start: this.startTime,
-        end: clip.duration,
+        end: this.endTime ?? Infinity,
+        clipDuration: clip.duration,
         loop: THREE.LoopRepeat,
         repetitions: Infinity
       });

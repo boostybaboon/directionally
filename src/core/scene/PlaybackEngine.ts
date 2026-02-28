@@ -62,7 +62,7 @@ export class PlaybackEngine {
     // Match Presenter: unpause animations that started and are not ended, or loop repeat
     (Object.values(this.animations) as unknown as EngineLoadPayload['animations'][string][]).forEach((animationList) => {
       (animationList as unknown as EngineLoadPayload['animations'][string]).forEach((anim: any) => {
-        if (anim.start < currentTime && (currentTime < anim.end || anim.loop === THREE.LoopRepeat)) {
+        if (anim.start < currentTime && currentTime < anim.end) {
           anim.anim.paused = false;
         }
       });
@@ -117,7 +117,10 @@ export class PlaybackEngine {
       for (let i = (animationList as any).length - 1; i >= 0; i--) {
         const anim = (animationList as any)[i];
 
-        if (i === 0) {
+        // Fallback for the first entry: show initial pose only if its start time
+        // has been reached. Without this guard a future clip would enable itself
+        // before it starts when every earlier entry has been skipped.
+        if (i === 0 && time >= anim.start) {
           anim.anim.enabled = true;
           anim.anim.time = 0;
         }
@@ -126,19 +129,25 @@ export class PlaybackEngine {
           continue;
         }
 
-        if (time >= anim.end) {
-          anim.anim.enabled = true;
+        // Past explicit scene endTime: LoopOnce holds final frame; LoopRepeat stops
+        if (anim.end !== Infinity && time >= anim.end) {
           if (anim.loop === THREE.LoopOnce) {
-            anim.anim.time = (anim.end - anim.start);
-          } else if (anim.loop === THREE.LoopRepeat) {
-            anim.anim.time = (time - anim.start) % (anim.end - anim.start);
+            anim.anim.enabled = true;
+            anim.anim.time = anim.clipDuration;
+          } else {
+            // LoopRepeat with explicit endTime: clip window has closed
+            anim.anim.enabled = false;
           }
           break;
         }
 
-        if (time >= anim.start && time < anim.end) {
+        if (time >= anim.start && (anim.end === Infinity || time < anim.end)) {
           anim.anim.enabled = true;
-          anim.anim.time = (time - anim.start);
+          if (anim.loop === THREE.LoopRepeat) {
+            anim.anim.time = (time - anim.start) % anim.clipDuration;
+          } else {
+            anim.anim.time = (time - anim.start);
+          }
           break;
         }
       }

@@ -18,7 +18,8 @@ export type PlaybackState = {
 export type AnimationEntry = {
   anim: THREE.AnimationAction;
   start: number;
-  end: number;
+  end: number;           // scene timeline stop time; Infinity = runs until end of scene
+  clipDuration: number;  // raw clip duration for LoopRepeat modulo
   loop: THREE.AnimationActionLoopStyles;
   repetitions: number;
 };

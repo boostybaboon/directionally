@@ -186,10 +186,11 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
       case 'animate': {
         actions.push(
           new GLTFAction(
-            `${action.actorId}_${action.animationName}`,
+            `${action.actorId}_${action.animationName}_${action.startTime}`,
             action.actorId,
             action.startTime,
             action.animationName,
+            action.endTime,
           ),
         );
         break;
