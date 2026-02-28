@@ -30,7 +30,9 @@
   let isPlaying = $state<boolean>(false);
   let currentPosition = $state<number>(0);
   let sliderValue = $state<number>(0);
-  let positionUpdateInterval: number | null = null;
+  let sceneDuration = $state<number>(0);
+  let isSliderDragging = false;
+  let wasPlayingBeforeDrag = false;
 
   // Function to initialize the custom console.log
   function initializeCustomConsoleLog() {
@@ -59,7 +61,21 @@
     renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
     updateRendererSize();
     initializeCustomConsoleLog();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && isToneSetup) {
+        e.preventDefault();
+        handlePlayPauseClick();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   });
+
+  function formatTime(s: number): string {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m}:${sec.toFixed(1).padStart(4, '0')}`;
+  }
 
   const setupTone = async () => {
     if (!isToneSetup) {
@@ -214,8 +230,22 @@
       }, entry.startTime);
     });
 
+    // Halt at the authored end of the scene so Play is available to resume
+    const endTime = model.duration;
+    if (endTime !== undefined) {
+      Tone.getTransport().schedule((time) => {
+        Tone.getDraw().schedule(() => {
+          engine.pause();
+          isPlaying = false;
+          currentPosition = endTime;
+          sliderValue = endTime;
+        }, time);
+      }, endTime);
+    }
+
     // Delegate playback to engine with freshly built animations/mixers
-    engine.load({ animations: animationDict, mixers });
+    engine.load({ animations: animationDict, mixers, duration: model.duration });
+    sceneDuration = model.duration ?? 0;
 
     setSequenceTo(0);
 
@@ -227,6 +257,12 @@
 
   const animate = () => {
     const delta = clock.getDelta();
+
+    // Update position display at render-loop frequency (replaces 100 ms setInterval poll)
+    currentPosition = engine.getPosition();
+    if (!isSliderDragging) {
+      sliderValue = currentPosition;
+    }
 
     // Per-frame crossfade weight — driven by Tone transport time rather than mixer._time,
     // because mixer._time is reset by seek() and would corrupt Three.js fade interpolants.
@@ -250,69 +286,31 @@
     renderer.render(scene, camera);
   };
 
-  const clearPositionUpdateInterval = () => {
-    if (positionUpdateInterval !== null) {
-      window.clearInterval(positionUpdateInterval);
-      positionUpdateInterval = null;
-    }
-  };
-
   const playSequence = () => {
-    // Delegate enabling and transport start to engine
     engine.play();
-    
-    // Start updating position every 100ms during playback
-    positionUpdateInterval = window.setInterval(() => {
-      updatePosition();
-    }, 100);
-  };
-
-  const updatePosition = () => {
-    const currentTime = Tone.getTransport().seconds;
-    currentPosition = currentTime;
-    sliderValue = currentTime;
   };
 
   const pauseSequence = () => {
     engine.pause();
-    updatePosition();
-
-    // Clear the position update interval
-    clearPositionUpdateInterval();
-
-    // Engine maintains enabled/paused states; Presenter just reflects position
+    currentPosition = engine.getPosition();
+    sliderValue = currentPosition;
   };
 
-  const pauseAndDisableAll = () => {
-    // Clear the position update interval if it exists
-    clearPositionUpdateInterval();
-
-    Object.values(animationDict).forEach((animationList) => {
-      animationList.forEach((anim) => {
-        anim.anim.enabled = false;
-        anim.anim.getMixer().setTime(0);
-        anim.anim.paused = true;
-      });
-    });
-  };
-
-  // TODO - need to think this method through, this is the crucial method in the presenter
-  // I do not currently understand why getMixer().setTime(0) works above but not here
-  // but with this arrangement, I do not get the bug when stepping back into an already 
-  // completed animation (door suddenly closing in the babylon example when rewinding back to 5s)
-  // It's something to do with getMixer().setTime being designed to reset the animation to a time whilst
-  // scaling by the timeScale (which gets set to 0 when paused, so scaling gets screwed up if paused)
-  // but anim.time setting the local time without any scaling applied
-  // Need to set up an isolated test to understand this fully
+  // Seek uses anim.time directly rather than mixer.setTime() — see PlaybackEngine seek comments.
   const setSequenceTo = (time: number) => {
-    // Delegate fragile seek to engine to ensure identical shuttle behavior
     engine.seek(time);
-    updatePosition();
+    currentPosition = engine.getPosition();
+    sliderValue = currentPosition;
   };
 
   const rewindSequence = () => {
+    if (isPlaying) {
+      engine.pause();
+    }
     engine.rewind();
-    updatePosition();
+    isPlaying = false;
+    currentPosition = 0;
+    sliderValue = 0;
   };
 
   const handlePlayPauseClick = () => {
@@ -330,13 +328,23 @@
 
   const handleSliderInput = (event: Event) => {
     const time = parseFloat((event.target as HTMLInputElement).value);
-    const wasPlaying = isPlaying;
-    if (wasPlaying) {
-      pauseSequence();
-    }
     setSequenceTo(time);
-    if (wasPlaying) {
+  };
+
+  const handleSliderPointerDown = () => {
+    wasPlayingBeforeDrag = isPlaying;
+    isSliderDragging = true;
+    if (isPlaying) {
+      engine.pause();
+      isPlaying = false;
+    }
+  };
+
+  const handleSliderPointerUp = () => {
+    isSliderDragging = false;
+    if (wasPlayingBeforeDrag) {
       playSequence();
+      isPlaying = true;
     }
   };
 
@@ -430,50 +438,77 @@
     position: relative;
   }
 
-  #controls-top {
-    padding: 10px;
+  #transport {
     display: flex;
+    align-items: center;
     gap: 10px;
-    flex-wrap: wrap;
+    padding: 8px 12px;
+    background: #1a1a1a;
+    border-top: 1px solid #333;
+    user-select: none;
   }
 
-  #controls-bottom {
-    padding: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+  .transport-btn {
+    font-size: 16px;
+    padding: 4px 10px;
+    background: #2a2a2a;
+    color: #e0e0e0;
+    border: 1px solid #444;
+    border-radius: 4px;
+    cursor: pointer;
+    line-height: 1;
   }
 
-  button {
-    padding: 5px 10px;
+  .transport-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
   }
 
-  #slider-container {
-    width: 100%;
+  .transport-btn:not(:disabled):hover {
+    background: #3a3a3a;
+  }
+
+  #timecode {
+    font-family: monospace;
+    font-size: 13px;
+    color: #aaa;
+    white-space: nowrap;
+    min-width: 12ch;
+  }
+
+  #transport-slider {
+    flex: 1;
+    min-width: 0;
+    accent-color: #4a9eff;
   }
 
   #log-panel {
-    height: 200px;
-    overflow-y: scroll;
-    border: 1px solid #ccc;
-    background-color: #f9f9f9;
-    padding: 10px;
+    display: none;
   }
 </style>
   
 <div id="content">
-  <div id="controls-top">
-    <button onclick={handlePlayPauseClick} disabled={!isToneSetup}>{isPlaying ? 'Pause' : 'Play'}</button>
-    <button onclick={handleRewindClick} disabled={!isToneSetup}>Rewind</button>
-  </div>
   <div id="render-container">
     <canvas bind:this={canvas} id="c"></canvas>
   </div>
-  <div id="controls-bottom">
-    <div>Position: {currentPosition.toFixed(2)}</div>
-    <div id="slider-container">
-      <input type="range" min="0" max="16" step="0.01" bind:value={sliderValue} oninput={handleSliderInput} disabled={!isToneSetup}>
-    </div>
-    <div id="log-panel"></div>
+  <div id="transport">
+    <button class="transport-btn" onclick={handleRewindClick} disabled={!isToneSetup} title="Rewind to start">⏮</button>
+    <button class="transport-btn" onclick={handlePlayPauseClick} disabled={!isToneSetup} title={isPlaying ? 'Pause' : 'Play'}>
+      {isPlaying ? '⏸' : '▶'}
+    </button>
+    <span id="timecode">{formatTime(currentPosition)} / {formatTime(sceneDuration || 16)}</span>
+    <input
+      id="transport-slider"
+      type="range"
+      min="0"
+      max={sceneDuration || 16}
+      step="0.01"
+      bind:value={sliderValue}
+      oninput={handleSliderInput}
+      onpointerdown={handleSliderPointerDown}
+      onpointerup={handleSliderPointerUp}
+      disabled={!isToneSetup}
+    />
   </div>
+  <div id="log-panel"></div>
 </div>

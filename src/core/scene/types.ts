@@ -29,6 +29,7 @@ export type AnimationEntry = {
 export type EngineLoadPayload = {
   animations: AnimationDict;
   mixers: THREE.AnimationMixer[];
+  duration?: number;
 };
 
 export type SpeechEntry = {

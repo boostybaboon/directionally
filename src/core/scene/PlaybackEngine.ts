@@ -32,7 +32,7 @@ export class PlaybackEngine {
   private transport: Transport;
   private animations: AnimationDict = {};
   private mixers: THREE.AnimationMixer[] = [];
-  private positionUpdateInterval: number | null = null;
+  private duration: number = 0;
   private state: PlaybackState = { isPlaying: false, position: 0 };
 
   constructor(transport?: Transport) {
@@ -43,12 +43,17 @@ export class PlaybackEngine {
     // Preserve existing Tone schedules created by Presenter; only reset local state
     this.animations = payload.animations;
     this.mixers = payload.mixers;
+    this.duration = payload.duration ?? 0;
     this.state.position = 0;
     this.state.isPlaying = false;
   }
 
   getPosition(): number {
     return this.transport.seconds;
+  }
+
+  getDuration(): number {
+    return this.duration;
   }
 
   setPosition(time: number) {
@@ -84,9 +89,8 @@ export class PlaybackEngine {
     this.transport.pause();
     this.state.position = this.transport.seconds;
     this.state.isPlaying = false;
-    this.clearPositionUpdateInterval();
 
-    // Match Presenter: mark all animations paused
+    // Mark all animations paused
     (Object.values(this.animations) as unknown as EngineLoadPayload['animations'][string][]).forEach((animationList) => {
       (animationList as unknown as EngineLoadPayload['animations'][string]).forEach((anim: any) => {
         anim.anim.paused = true;
@@ -103,7 +107,6 @@ export class PlaybackEngine {
   stop() {
     this.transport.stop();
     this.state.isPlaying = false;
-    this.clearPositionUpdateInterval();
   }
 
   // CRITICAL: mirror Presenter.setSequenceTo for correctness
@@ -177,10 +180,4 @@ export class PlaybackEngine {
     this.mixers.forEach((m) => m.update(delta));
   }
 
-  private clearPositionUpdateInterval() {
-    if (this.positionUpdateInterval !== null) {
-      window.clearInterval(this.positionUpdateInterval);
-      this.positionUpdateInterval = null;
-    }
-  }
 }

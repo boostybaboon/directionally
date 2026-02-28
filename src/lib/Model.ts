@@ -13,16 +13,18 @@ export class Model {
   actions: Action[];
   lights: LightAsset[];
   backgroundColor?: number;
+  duration?: number;
   speechEntries: SpeechEntry[];
 
   constructor(
-    camera: CameraAsset, 
+    camera: CameraAsset,
     meshes: MeshAsset[] = [],
     gltfs: GLTFAsset[] = [],
-    actions: Action[] = [], 
+    actions: Action[] = [],
     lights: LightAsset[] = [],
     backgroundColor?: number,
-    speechEntries: SpeechEntry[] = []
+    speechEntries: SpeechEntry[] = [],
+    duration?: number
   ) {
     this.camera = camera;
     this.meshes = meshes;
@@ -31,5 +33,6 @@ export class Model {
     this.lights = lights;
     this.backgroundColor = backgroundColor;
     this.speechEntries = speechEntries;
+    this.duration = duration;
   }
 }
