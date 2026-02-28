@@ -485,6 +485,29 @@
   #log-panel {
     display: none;
   }
+
+  @media (max-width: 640px) {
+    #transport {
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .transport-btn {
+      min-width: 44px;
+      min-height: 44px;
+      padding: 8px 14px;
+      font-size: 18px;
+    }
+
+    #timecode {
+      order: 2;
+    }
+
+    #transport-slider {
+      flex-basis: 100%;
+      order: 3;
+    }
+  }
 </style>
   
 <div id="content">

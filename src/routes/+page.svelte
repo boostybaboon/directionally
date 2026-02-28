@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import Presenter from '$lib/Presenter.svelte';
   import { Splitpanes, Pane } from 'svelte-splitpanes';
   import { exampleModel1 } from '$lib/exampleModel1';
@@ -9,8 +10,18 @@
   import { exampleProduction1Scene } from '$lib/exampleProduction1';
   import { twoRobotsScene } from '$lib/twoRobotsScene';
 
-  let presenter: Presenter;
+  let presenter: Presenter | undefined = $state();
   let activeModel = $state('');
+  let isMobile = $state(false);
+  let sidebarOpen = $state(false);
+
+  onMount(() => {
+    const mq = window.matchMedia('(max-width: 640px)');
+    isMobile = mq.matches;
+    const onChange = (e: MediaQueryListEvent) => { isMobile = e.matches; };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  });
 
   const scenes = [
     { id: 'model1', label: 'Camera rot',    model: exampleModel1 },
@@ -23,48 +34,78 @@
   ];
 
   function loadScene(id: string, model: typeof exampleModel1) {
-    presenter.loadModel(model);
+    presenter?.loadModel(model);
     activeModel = id;
+    sidebarOpen = false;
   }
 </script>
 
-<div class="app">
-  <Splitpanes theme="directionally">
-    <Pane size={18} minSize={10} maxSize={40}>
+{#snippet sidebarContent()}
+  <section class="sidebar-section">
+    <h2 class="section-heading">Scenes</h2>
+    <ul class="scene-list">
+      {#each scenes as scene}
+        <li>
+          <button
+            class="scene-btn"
+            class:active={activeModel === scene.id}
+            onclick={() => loadScene(scene.id, scene.model)}
+          >
+            {scene.label}
+          </button>
+        </li>
+      {/each}
+    </ul>
+  </section>
+
+  <section class="sidebar-section inspector-section">
+    <details>
+      <summary class="section-heading">Inspector</summary>
+      <p class="inspector-placeholder">No scene loaded.</p>
+    </details>
+  </section>
+{/snippet}
+
+{#if isMobile}
+  <div class="mobile-app">
+    <button
+      class="hamburger"
+      onclick={() => (sidebarOpen = !sidebarOpen)}
+      aria-label="Toggle scenes panel"
+      aria-expanded={sidebarOpen}
+    >☰</button>
+
+    {#if sidebarOpen}
+      <button class="drawer-backdrop" onclick={() => (sidebarOpen = false)} aria-label="Close scenes panel" tabindex="-1"></button>
+    {/if}
+
+    <div class="drawer" class:open={sidebarOpen} aria-hidden={!sidebarOpen}>
       <aside class="sidebar">
-        <section class="sidebar-section">
-          <h2 class="section-heading">Scenes</h2>
-          <ul class="scene-list">
-            {#each scenes as scene}
-              <li>
-                <button
-                  class="scene-btn"
-                  class:active={activeModel === scene.id}
-                  onclick={() => loadScene(scene.id, scene.model)}
-                >
-                  {scene.label}
-                </button>
-              </li>
-            {/each}
-          </ul>
-        </section>
-
-        <section class="sidebar-section inspector-section">
-          <details>
-            <summary class="section-heading">Inspector</summary>
-            <p class="inspector-placeholder">No scene loaded.</p>
-          </details>
-        </section>
+        {@render sidebarContent()}
       </aside>
-    </Pane>
+    </div>
 
-    <Pane minSize={30}>
-      <div class="main-pane">
-        <Presenter bind:this={presenter} />
-      </div>
-    </Pane>
-  </Splitpanes>
-</div>
+    <div class="mobile-main">
+      <Presenter bind:this={presenter} />
+    </div>
+  </div>
+{:else}
+  <div class="app">
+    <Splitpanes theme="directionally">
+      <Pane size={18} minSize={10} maxSize={40}>
+        <aside class="sidebar">
+          {@render sidebarContent()}
+        </aside>
+      </Pane>
+
+      <Pane minSize={30}>
+        <div class="main-pane">
+          <Presenter bind:this={presenter} />
+        </div>
+      </Pane>
+    </Splitpanes>
+  </div>
+{/if}
 
 <style>
   .app {
@@ -72,6 +113,64 @@
     display: flex;
     flex-direction: column;
   }
+
+  /* ── Mobile layout ───────────────────────────── */
+
+  .mobile-app {
+    height: 100%;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hamburger {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 100;
+    background: rgba(26, 26, 26, 0.85);
+    color: #e0e0e0;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 18px;
+    cursor: pointer;
+    line-height: 1;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .drawer-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 90;
+    background: rgba(0, 0, 0, 0.5);
+    border: none;
+    padding: 0;
+    cursor: default;
+  }
+
+  .drawer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 75%;
+    max-width: 280px;
+    z-index: 95;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .drawer.open {
+    transform: translateX(0);
+  }
+
+  .mobile-main {
+    height: 100%;
+    width: 100%;
+  }
+
+  /* ── Desktop splitpanes ──────────────────────── */
 
   :global(.splitpanes.directionally) {
     flex: 1;
@@ -92,6 +191,8 @@
   :global(.splitpanes.directionally .splitpanes__splitter:active) {
     background: #4a9eff;
   }
+
+  /* ── Shared sidebar ──────────────────────────── */
 
   .sidebar {
     height: 100%;
