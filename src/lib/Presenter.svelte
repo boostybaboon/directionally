@@ -4,6 +4,7 @@
   import { onMount } from 'svelte';
   import type { Model } from './Model';
   import type { AnimationDict } from './model/Action';
+  import { PerspectiveCameraAsset } from './model/Camera';
   import { PlaybackEngine } from '../core/scene/PlaybackEngine';
 
   let canvas: HTMLCanvasElement;
@@ -34,6 +35,11 @@
   let isSliderDragging = false;
   let wasPlayingBeforeDrag = false;
 
+  // H+ FOV adaptation: preserves horizontal coverage on viewports narrower than 16:9.
+  // authoredFov is the camera's authored vFOV, always interpreted relative to the 16:9 reference.
+  const DESIGN_ASPECT = 16 / 9;
+  let authoredFov = 50;
+
   // Function to initialize the custom console.log
   function initializeCustomConsoleLog() {
     const logPanel = document.getElementById('log-panel');
@@ -59,6 +65,13 @@
   
   onMount(() => {
     renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+
+    // ResizeObserver fires on any container size change: window resize, Splitpanes
+    // divider drag, pane collapse — window 'resize' misses all but the first.
+    const container = canvas.parentElement!;
+    const resizeObserver = new ResizeObserver(() => updateRendererSize());
+    resizeObserver.observe(container);
+
     updateRendererSize();
     initializeCustomConsoleLog();
     const onKeyDown = (e: KeyboardEvent) => {
@@ -68,7 +81,10 @@
       }
     };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      resizeObserver.disconnect();
+    };
   });
 
   function formatTime(s: number): string {
@@ -87,20 +103,23 @@
   };
 
   function updateRendererSize() {
+    if (!canvas || !renderer) return;
     const container = canvas.parentElement;
     if (container) {
       const width = container.clientWidth;
       const height = container.clientHeight;
+      if (width < 1 || height < 1) return;
       renderer.setSize(width, height);
       if (camera instanceof THREE.PerspectiveCamera) {
-        camera.aspect = width / height;
+        const aspect = width / height;
+        camera.aspect = aspect;
+        // Derive vFOV from a fixed hFOV (the horizontal angle visible at 16:9 with authoredFov).
+        // This keeps horizontal content identical at every aspect ratio — narrower viewports
+        // show more sky/ground; wider viewports show less. No conditional branch needed.
+        camera.fov = 2 * Math.atan(Math.tan((authoredFov * Math.PI) / 360) * DESIGN_ASPECT / aspect) * (180 / Math.PI);
         camera.updateProjectionMatrix();
       }
     }
-  }
-
-  function onWindowResize() {
-    updateRendererSize();
   }
 
   //need a method to load a model into the scene, and set up the animations
@@ -120,8 +139,14 @@
 
     // Use the camera directly from the model
     camera = model.camera.threeCamera;
-    
-    // Set initial aspect ratio based on container dimensions
+
+    // Read authoredFov from the asset's stored property, not from the Three.js camera object.
+    // The Three.js camera.fov is mutated by updateRendererSize() on every resize, so reading
+    // it back on a subsequent load would capture an already-adapted value, not the authored one.
+    if (model.camera instanceof PerspectiveCameraAsset) {
+      authoredFov = model.camera.fov;
+    }
+
     updateRendererSize();
 
     // Add lights to the scene
@@ -251,8 +276,6 @@
 
     clock = new THREE.Clock();
     renderer.setAnimationLoop(animate);
-
-    window.addEventListener('resize', onWindowResize);
   };
 
   const animate = () => {

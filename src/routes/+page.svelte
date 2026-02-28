@@ -40,34 +40,10 @@
   }
 </script>
 
-{#snippet sidebarContent()}
-  <section class="sidebar-section">
-    <h2 class="section-heading">Scenes</h2>
-    <ul class="scene-list">
-      {#each scenes as scene}
-        <li>
-          <button
-            class="scene-btn"
-            class:active={activeModel === scene.id}
-            onclick={() => loadScene(scene.id, scene.model)}
-          >
-            {scene.label}
-          </button>
-        </li>
-      {/each}
-    </ul>
-  </section>
-
-  <section class="sidebar-section inspector-section">
-    <details>
-      <summary class="section-heading">Inspector</summary>
-      <p class="inspector-placeholder">No scene loaded.</p>
-    </details>
-  </section>
-{/snippet}
-
-{#if isMobile}
-  <div class="mobile-app">
+<!-- Single layout: Splitpanes always present; left pane collapses to 0 on mobile.
+     Presenter lives only in the right pane so it is never destroyed at the breakpoint. -->
+<div class="app">
+  {#if isMobile}
     <button
       class="hamburger"
       onclick={() => (sidebarOpen = !sidebarOpen)}
@@ -81,45 +57,66 @@
 
     <div class="drawer" class:open={sidebarOpen} aria-hidden={!sidebarOpen}>
       <aside class="sidebar">
-        {@render sidebarContent()}
+        {#each scenes as scene}
+          <button
+            class="scene-btn"
+            class:active={activeModel === scene.id}
+            onclick={() => loadScene(scene.id, scene.model)}
+          >{scene.label}</button>
+        {/each}
       </aside>
     </div>
+  {/if}
 
-    <div class="mobile-main">
-      <Presenter bind:this={presenter} />
-    </div>
-  </div>
-{:else}
-  <div class="app">
-    <Splitpanes theme="directionally">
-      <Pane size={18} minSize={10} maxSize={40}>
+  <Splitpanes theme="directionally">
+    <!-- Left pane: collapsed to 0 on mobile, normal sidebar on desktop -->
+    <Pane
+      size={isMobile ? 0 : 18}
+      minSize={isMobile ? 0 : 10}
+      maxSize={isMobile ? 0 : 40}
+    >
+      {#if !isMobile}
         <aside class="sidebar">
-          {@render sidebarContent()}
-        </aside>
-      </Pane>
+          <section class="sidebar-section">
+            <h2 class="section-heading">Scenes</h2>
+            <ul class="scene-list">
+              {#each scenes as scene}
+                <li>
+                  <button
+                    class="scene-btn"
+                    class:active={activeModel === scene.id}
+                    onclick={() => loadScene(scene.id, scene.model)}
+                  >{scene.label}</button>
+                </li>
+              {/each}
+            </ul>
+          </section>
 
-      <Pane minSize={30}>
-        <div class="main-pane">
-          <Presenter bind:this={presenter} />
-        </div>
-      </Pane>
-    </Splitpanes>
-  </div>
-{/if}
+          <section class="sidebar-section inspector-section">
+            <details>
+              <summary class="section-heading">Inspector</summary>
+              <p class="inspector-placeholder">No scene loaded.</p>
+            </details>
+          </section>
+        </aside>
+      {/if}
+    </Pane>
+
+    <!-- Right pane: Presenter is always mounted here, never destroyed -->
+    <Pane minSize={30}>
+      <div class="main-pane">
+        <Presenter bind:this={presenter} />
+      </div>
+    </Pane>
+  </Splitpanes>
+</div>
 
 <style>
   .app {
     height: 100%;
     display: flex;
     flex-direction: column;
-  }
-
-  /* ── Mobile layout ───────────────────────────── */
-
-  .mobile-app {
-    height: 100%;
-    position: relative;
-    overflow: hidden;
+    position: relative; /* anchor for mobile overlay: hamburger, drawer, backdrop */
   }
 
   .hamburger {
@@ -165,12 +162,7 @@
     transform: translateX(0);
   }
 
-  .mobile-main {
-    height: 100%;
-    width: 100%;
-  }
-
-  /* ── Desktop splitpanes ──────────────────────── */
+  /* ── Splitpanes ────────────────────────────────── */
 
   :global(.splitpanes.directionally) {
     flex: 1;
