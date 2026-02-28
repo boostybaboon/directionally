@@ -3547,6 +3547,11 @@ svelte-check@^4.0.0:
     picocolors "^1.0.0"
     sade "^1.7.4"
 
+svelte-splitpanes@^8.0.12:
+  version "8.0.12"
+  resolved "https://registry.yarnpkg.com/svelte-splitpanes/-/svelte-splitpanes-8.0.12.tgz#1176b997712937c93a1ca12a5a4ed15c96b0a243"
+  integrity sha512-HJ07HgbtY0Q/35TEuJquGy47dtgCVavV7ay9r1FhWRx3boyUs3RpeiHlwMKliznCKy2ZotNeT+8GG+mIoNjgRA==
+
 svelte@^5.0.0:
   version "5.20.5"
   resolved "https://registry.npmjs.org/svelte/-/svelte-5.20.5.tgz"

@@ -28,6 +28,7 @@
 		"vitest": "^1.0.0"
 	},
 	"dependencies": {
+		"svelte-splitpanes": "^8.0.12",
 		"three": "^0.174.0",
 		"tone": "^15.0.4"
 	}
