@@ -64,7 +64,7 @@ export async function synthesise(
 
   const { audio, sampling_rate } = rawAudio;
   const buffer = audioCtx.createBuffer(1, audio.length, sampling_rate);
-  buffer.copyToChannel(audio, 0);
+  buffer.copyToChannel(new Float32Array(audio), 0);
   return buffer;
 }
 
