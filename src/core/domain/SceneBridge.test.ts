@@ -2,6 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { Production } from './Production';
 import { Scene } from './Scene';
 import { sceneToModel } from './SceneBridge';
+import type { ActorVoice } from './types';
+
+const afHeart: ActorVoice = { persona: { gender: 'female', accent: 'american', pitch: 0.3, rate: 0 }, kokoro: 'af_heart' };
+const amEcho: ActorVoice  = { persona: { gender: 'male',   accent: 'american', pitch: -0.5, rate: -0.27 }, kokoro: 'am_echo' };
+const afSky: ActorVoice   = { persona: { gender: 'female', accent: 'american', pitch: 0.2, rate: 0 }, kokoro: 'af_sky' };
+const bmGeorge: ActorVoice = { persona: { gender: 'male', accent: 'british', pitch: 0, rate: 0 }, kokoro: 'bm_george' };
 
 describe('SceneBridge - SpeakAction', () => {
   it('converts a SpeakAction into a speechEntry on the Model', () => {
@@ -35,12 +41,12 @@ describe('SceneBridge - SpeakAction', () => {
       actorId: actor.id,
       startTime: 5,
       text: 'My name is Robot B.',
-      voice: 'bm_george',
+      voice: bmGeorge,
     });
 
     const model = sceneToModel(scene, production.actors);
 
-    expect(model.speechEntries[0].voice).toBe('bm_george');
+    expect(model.speechEntries[0].voice).toEqual(bmGeorge);
   });
 
   it('does not add SpeakActions to Model.actions (speech is not in the animation pipeline)', () => {
@@ -77,21 +83,21 @@ describe('SceneBridge - SpeakAction', () => {
 
   it('actor-level voice propagates to speech entries; per-line voice overrides it', () => {
     const production = new Production('Test');
-    const actorA = production.addActor('Alpha', { type: 'gltf', url: '/robot.glb' }, { voice: 'af_heart' });
-    const actorB = production.addActor('Beta',  { type: 'gltf', url: '/robot.glb' }, { voice: 'am_echo' });
+    const actorA = production.addActor('Alpha', { type: 'gltf', url: '/robot.glb' }, { voice: afHeart });
+    const actorB = production.addActor('Beta',  { type: 'gltf', url: '/robot.glb' }, { voice: amEcho });
 
     const scene = new Scene('Test Scene', { duration: 20 });
     scene.addAction({ type: 'speak', actorId: actorA.id, startTime: 1, text: 'Hello.' });
     scene.addAction({ type: 'speak', actorId: actorB.id, startTime: 4, text: 'Hi.' });
-    // Per-line override with a different Kokoro voice
-    scene.addAction({ type: 'speak', actorId: actorA.id, startTime: 8, text: 'Ahem.', voice: 'af_sky' });
+    // Per-line override with a different voice
+    scene.addAction({ type: 'speak', actorId: actorA.id, startTime: 8, text: 'Ahem.', voice: afSky });
 
     const model = sceneToModel(scene, production.actors);
 
-    expect(model.speechEntries[0].voice).toBe('af_heart');
-    expect(model.speechEntries[1].voice).toBe('am_echo');
+    expect(model.speechEntries[0].voice).toEqual(afHeart);
+    expect(model.speechEntries[1].voice).toEqual(amEcho);
     // Per-line override takes precedence over actor default
-    expect(model.speechEntries[2].voice).toBe('af_sky');
+    expect(model.speechEntries[2].voice).toEqual(afSky);
   });
 
   it('scenes with no SpeakActions produce an empty speechEntries array', () => {

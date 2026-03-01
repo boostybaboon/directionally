@@ -1,6 +1,6 @@
 import type * as THREE from 'three';
 import type { AnimationDict } from '../../lib/model/Action';
-import type { KokoroVoice } from '../domain/types.js';
+import type { ActorVoice } from '../domain/types.js';
 
 export interface Transport {
   seconds: number;
@@ -37,5 +37,5 @@ export type SpeechEntry = {
   actorId: string;
   startTime: number;
   text: string;
-  voice?: KokoroVoice;
+  voice?: ActorVoice;
 };

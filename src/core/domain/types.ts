@@ -74,6 +74,38 @@ export function deduceFallback(kokoro: KokoroVoice): VoiceFallback {
   return 'neutral';
 }
 
+// Renderer-agnostic voice persona. Pitch and rate are normalised -1.0 to +1.0
+// (0 = neutral/default for the gender). Renderers map these to their own units.
+export type VoicePersona = {
+  gender: 'female' | 'male' | 'neutral';
+  accent: 'american' | 'british';
+  /** Relative pitch adjustment: -1.0 = lowest, 0 = neutral, +1.0 = highest. */
+  pitch: number;
+  /** Relative speaking-rate adjustment: -1.0 = slowest, 0 = neutral, +1.0 = fastest. */
+  rate: number;
+};
+
+// Optional eSpeak-ng synthesiser overrides. All fields map directly to espeak flags.
+export type ESpeakConfig = {
+  /** Voice variant, e.g. 'en+m3', 'en+f4'. */
+  variant?: string;
+  /** Raw espeak pitch (0–99, default 50). */
+  pitch?: number;
+  /** Raw espeak speed in words-per-minute (default ~175). */
+  speed?: number;
+};
+
+// Full voice specification for an actor or per-line override.
+// `persona` drives all renderers by default; renderer-specific fields win when present.
+export type ActorVoice = {
+  /** Renderer-agnostic description used by Web Speech and eSpeak fallbacks. */
+  persona: VoicePersona;
+  /** Overrides persona for the Kokoro renderer. */
+  kokoro?: KokoroVoice;
+  /** Overrides persona for the eSpeak-ng renderer. */
+  espeak?: ESpeakConfig;
+};
+
 // --- Timeline action types (discriminated union) ---
 
 export type TrackType = 'number' | 'vector' | 'quaternion';
@@ -114,7 +146,7 @@ export type SpeakAction = {
   startTime: number;
   text: string;
   /** Per-line voice override. When absent, the actor's default voice is used. */
-  voice?: KokoroVoice;
+  voice?: ActorVoice;
 };
 
 // Bring an offstage actor into the scene at a position

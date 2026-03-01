@@ -3,19 +3,23 @@
  */
 import { Production } from '../core/domain/Production.js';
 import { sceneToModel } from '../core/domain/SceneBridge.js';
+import type { ActorVoice } from '../core/domain/types.js';
 import type { Model } from './Model.js';
+
+const alphaVoice: ActorVoice = { persona: { gender: 'female', accent: 'american', pitch: 0.3, rate: 0 }, kokoro: 'af_heart' };
+const betaVoice: ActorVoice  = { persona: { gender: 'male',   accent: 'american', pitch: -0.5, rate: -0.27 }, kokoro: 'am_echo' };
 
 const production = new Production('Brief Encounter');
 
 const alpha = production.addActor('Alpha', {
   type: 'gltf',
   url: '/models/gltf/RobotExpressive.glb',
-}, { voice: 'af_heart' });
+}, { voice: alphaVoice });
 
 const beta = production.addActor('Beta', {
   type: 'gltf',
   url: '/models/gltf/RobotExpressive.glb',
-}, { voice: 'am_echo' });
+}, { voice: betaVoice });
 
 const act = production.addAct('Act 1');
 
