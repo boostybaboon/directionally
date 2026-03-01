@@ -10,12 +10,12 @@ const production = new Production('Brief Encounter');
 const alpha = production.addActor('Alpha', {
   type: 'gltf',
   url: '/models/gltf/RobotExpressive.glb',
-});
+}, { voice: 'af_heart' });
 
 const beta = production.addActor('Beta', {
   type: 'gltf',
   url: '/models/gltf/RobotExpressive.glb',
-});
+}, { voice: 'am_echo' });
 
 const act = production.addAct('Act 1');
 
@@ -165,9 +165,9 @@ scene
     },
   })
   // Dialogue
-  .addAction({ type: 'speak', actorId: alpha.id, startTime: 5,  text: 'Hello. My name is Alpha.', voice: 'female' })
+  .addAction({ type: 'speak', actorId: alpha.id, startTime: 5,  text: 'Hello. My name is Alpha.' })
   .addAction({ type: 'speak', actorId: beta.id,  startTime: 10, text: 'And I am Beta. Nice to meet you.' })
-  .addAction({ type: 'speak', actorId: alpha.id, startTime: 14, text: 'Shall we walk?', voice: 'female' })
+  .addAction({ type: 'speak', actorId: alpha.id, startTime: 14, text: 'Shall we walk?' })
   .addAction({ type: 'speak', actorId: beta.id,  startTime: 17, text: 'Let us walk.' });
 
 export const twoRobotsScene: Model = sceneToModel(scene, production.actors);

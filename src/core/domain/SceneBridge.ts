@@ -234,7 +234,8 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
           actorId: action.actorId,
           startTime: action.startTime,
           text: action.text,
-          voice: action.voice,
+          // Per-line voice overrides the actor's default voice.
+          voice: action.voice ?? actorMap.get(action.actorId)?.voice,
         });
         break;
       case 'enter':

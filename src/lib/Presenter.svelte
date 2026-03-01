@@ -6,6 +6,9 @@
   import type { AnimationDict } from './model/Action';
   import { PerspectiveCameraAsset } from './model/Camera';
   import { PlaybackEngine } from '../core/scene/PlaybackEngine';
+  import { synthesise, isAvailable } from './tts/KokoroSynthesiser';
+  import { deduceFallback } from '../core/domain/types';
+  import type { KokoroVoice, VoiceFallback } from '../core/domain/types';
 
   let canvas: HTMLCanvasElement;
   let renderer: THREE.WebGLRenderer;
@@ -27,8 +30,22 @@
   // Headless playback core (delegates shuttle/transport control)
   const engine = new PlaybackEngine();
 
+  // Pre-synthesised Tone.Players, one per SpeechEntry in the current scene.
+  // null slots mean synthesis is still in progress for that line.
+  let speechPlayers: (Tone.Player | null)[] = [];
+  // Tracks which slots permanently failed synthesis — triggers Web Speech fallback.
+  let speechFailed: boolean[] = [];
+  // Incremented on every loadModel call; async synthesis callbacks compare against
+  // this to bail out if the scene changed while they were running.
+  let sceneVersion = 0;
+
   let isToneSetup = $state<boolean>(false);
   let isPlaying = $state<boolean>(false);
+  // 'idle'    — no speech entries in the current scene
+  // 'loading' — Kokoro synthesis in progress
+  // 'kokoro'  — Kokoro synthesis succeeded for all lines
+  // 'browser' — using Web Speech API (Kokoro unavailable on this CPU/browser)
+  let voiceBackend = $state<'idle' | 'loading' | 'kokoro' | 'browser'>('idle');
   let currentPosition = $state<number>(0);
   let sliderValue = $state<number>(0);
   let sceneDuration = $state<number>(0);
@@ -242,18 +259,95 @@
       .flat()
       .filter((e) => e.fadeIn > 0 || e.fadeOut > 0);
 
-    model.speechEntries.forEach((entry) => {
-      Tone.getTransport().schedule((time) => {
-        Tone.getDraw().schedule(() => {
-          const utterance = new SpeechSynthesisUtterance(entry.text);
-          const voice = findVoice(entry.voice);
-          if (voice) utterance.voice = voice;
-          utterance.onend = () => removeSpeechBubble(entry.actorId);
-          createSpeechBubble(entry.actorId, entry.text);
-          speechSynthesis.speak(utterance);
-        }, time);
-      }, entry.startTime);
-    });
+    // Stop and dispose speech players from any previous scene load.
+    speechPlayers.forEach(p => { p?.stop(); p?.dispose(); });
+    speechPlayers = [];
+    speechFailed = [];
+    sceneVersion++;
+    const currentVersion = sceneVersion;
+
+    voiceBackend = 'idle';
+
+    if (model.speechEntries.length > 0) {
+      speechPlayers = new Array(model.speechEntries.length).fill(null);
+      speechFailed = new Array(model.speechEntries.length).fill(false);
+
+      const audioCtx = Tone.getContext().rawContext as AudioContext;
+
+      // Probe Kokoro availability once. Uses an actual synthesis attempt rather than
+      // WebAssembly.validate() because onnxruntime-web has its own runtime SIMD check
+      // that is independent of the browser's WASM parser. The probe rejects immediately
+      // (no model download) on unsupported CPUs, and the result is cached for all
+      // subsequent loadModel calls in the same session.
+      const kokoroAvailable = await isAvailable(audioCtx);
+      // Guard: another loadModel call may have arrived while the probe was running.
+      if (sceneVersion !== currentVersion) return;
+
+      if (kokoroAvailable) {
+        // Kokoro path: synthesise all lines concurrently in the background.
+        // Tone.Players are filled in per-line as synthesis completes; if a line
+        // isn't ready by play time it falls through to Web Speech.
+        voiceBackend = 'loading';
+
+        model.speechEntries.forEach((entry, i) => {
+          Tone.getTransport().schedule((time) => {
+            if (speechPlayers[i]) {
+              speechPlayers[i]!.start(time);
+            } else {
+              // Synthesis still in progress or failed — Web Speech so line is never silent.
+              Tone.getDraw().schedule(() => {
+                const utterance = new SpeechSynthesisUtterance(entry.text);
+                configureUtterance(utterance, entry.voice);
+                utterance.onend = () => removeSpeechBubble(entry.actorId);
+                speechSynthesis.speak(utterance);
+              }, time);
+            }
+            Tone.getDraw().schedule(() => createSpeechBubble(entry.actorId, entry.text), time);
+          }, entry.startTime);
+        });
+
+        (async () => {
+          let anyFailed = false;
+          try {
+            await Promise.all(
+              model.speechEntries.map(async (entry, i) => {
+                try {
+                  const audioBuffer = await synthesise(entry.text, entry.voice, audioCtx);
+                  if (sceneVersion !== currentVersion) return;
+                  const toneBuffer = new Tone.ToneAudioBuffer(audioBuffer);
+                  speechPlayers[i] = new Tone.Player(toneBuffer).toDestination();
+                  const endTime = entry.startTime + audioBuffer.duration;
+                  Tone.getTransport().schedule((time) => {
+                    Tone.getDraw().schedule(() => removeSpeechBubble(entry.actorId), time);
+                  }, endTime);
+                } catch {
+                  anyFailed = true;
+                  if (sceneVersion === currentVersion) speechFailed[i] = true;
+                }
+              })
+            );
+          } finally {
+            if (sceneVersion === currentVersion) {
+              voiceBackend = anyFailed ? 'browser' : 'kokoro';
+            }
+          }
+        })();
+      } else {
+        // Kokoro unavailable on this CPU/browser — go directly to Web Speech.
+        voiceBackend = 'browser';
+        model.speechEntries.forEach((entry) => {
+          Tone.getTransport().schedule((time) => {
+            Tone.getDraw().schedule(() => {
+              const utterance = new SpeechSynthesisUtterance(entry.text);
+              configureUtterance(utterance, entry.voice);
+              utterance.onend = () => removeSpeechBubble(entry.actorId);
+              speechSynthesis.speak(utterance);
+              createSpeechBubble(entry.actorId, entry.text);
+            }, time);
+          }, entry.startTime);
+        });
+      }
+    }
 
     // Halt at the authored end of the scene so Play is available to resume
     const endTime = model.duration;
@@ -321,6 +415,9 @@
 
   // Seek uses anim.time directly rather than mixer.setTime() — see PlaybackEngine seek comments.
   const setSequenceTo = (time: number) => {
+    // Stop any currently-playing speech audio so it doesn't bleed across the seek boundary.
+    speechPlayers.forEach(p => { if (p?.state === 'started') p.stop(); });
+    speechSynthesis.cancel();
     engine.seek(time);
     currentPosition = engine.getPosition();
     sliderValue = currentPosition;
@@ -330,6 +427,9 @@
     if (isPlaying) {
       engine.pause();
     }
+    // Stop any in-flight speech audio before rewinding.
+    speechPlayers.forEach(p => { if (p?.state === 'started') p.stop(); });
+    speechSynthesis.cancel();
     engine.rewind();
     isPlaying = false;
     currentPosition = 0;
@@ -371,12 +471,38 @@
     }
   };
 
-  // Returns the first voice whose name contains the given substring (case-insensitive).
-  // Returns undefined if no match — the browser will use its default voice.
-  function findVoice(name?: string): SpeechSynthesisVoice | undefined {
-    if (!name) return undefined;
-    const lower = name.toLowerCase();
-    return speechSynthesis.getVoices().find((v) => v.name.toLowerCase().includes(lower));
+
+  // Pitch and rate per fallback gender — audibly distinguishes characters even
+  // when the browser only has one installed voice.
+  const FALLBACK_PROFILES: Record<VoiceFallback, { pitch: number; rate: number }> = {
+    female:  { pitch: 1.15, rate: 1.0  },
+    male:    { pitch: 0.75, rate: 0.92 },
+    neutral: { pitch: 1.0,  rate: 0.85 },
+  };
+
+  // Resolves a fallback gender to a browser SpeechSynthesisVoice if possible.
+  // Tries name/URI substring match first; falls back to list position when
+  // voice labels don't indicate gender.
+  function findWebSpeechVoice(gender: VoiceFallback): SpeechSynthesisVoice | undefined {
+    if (gender === 'neutral') return undefined;
+    const voices = speechSynthesis.getVoices();
+    if (voices.length === 0) return undefined;
+    const enVoices = voices.filter(v => v.lang.startsWith('en'));
+    const pool = enVoices.length > 0 ? enVoices : voices;
+    if (gender === 'female') return pool[0];
+    if (gender === 'male')   return pool[1] ?? pool[0];
+    return undefined;
+  }
+
+  // Applies voice, pitch, and rate from a Kokoro voice ID to a SpeechSynthesisUtterance.
+  // pitch/rate differentiate characters audibly even when only one voice is installed.
+  function configureUtterance(utterance: SpeechSynthesisUtterance, voice?: KokoroVoice): void {
+    const gender: VoiceFallback = voice ? deduceFallback(voice) : 'neutral';
+    const matched = findWebSpeechVoice(gender);
+    if (matched) utterance.voice = matched;
+    const profile = FALLBACK_PROFILES[gender];
+    utterance.pitch = profile.pitch;
+    utterance.rate  = profile.rate;
   }
 
   // Creates a speech bubble sprite above the named actor and stores it for later removal.
@@ -509,6 +635,17 @@
     display: none;
   }
 
+  #voices-status {
+    font-size: 12px;
+    white-space: nowrap;
+    border-radius: 3px;
+    padding: 2px 6px;
+  }
+
+  .voices-loading { color: #888; font-style: italic; }
+  .voices-kokoro  { color: #4caf7d; background: #1a2e22; }
+  .voices-browser { color: #c8a84b; background: #2a2318; cursor: help; }
+
   @media (max-width: 640px) {
     #transport {
       flex-wrap: wrap;
@@ -543,6 +680,13 @@
       {isPlaying ? '⏸' : '▶'}
     </button>
     <span id="timecode">{formatTime(currentPosition)} / {formatTime(sceneDuration || 16)}</span>
+    {#if voiceBackend !== 'idle'}
+      <span
+        id="voices-status"
+        class="voices-{voiceBackend}"
+        title={voiceBackend === 'browser' ? 'Kokoro WASM unavailable on this CPU/browser. Using browser voices.' : undefined}
+      >{voiceBackend === 'loading' ? 'Synthesising…' : voiceBackend === 'kokoro' ? '🔊 Kokoro' : '🔊 Browser voices'}</span>
+    {/if}
     <input
       id="transport-slider"
       type="range"
