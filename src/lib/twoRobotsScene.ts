@@ -6,8 +6,16 @@ import { sceneToModel } from '../core/domain/SceneBridge.js';
 import type { ActorVoice } from '../core/domain/types.js';
 import type { Model } from './Model.js';
 
-const alphaVoice: ActorVoice = { persona: { gender: 'female', accent: 'american', pitch: 0.3, rate: 0 }, kokoro: 'af_heart' };
-const betaVoice: ActorVoice  = { persona: { gender: 'male',   accent: 'american', pitch: -0.5, rate: -0.27 }, kokoro: 'am_echo' };
+const alphaVoice: ActorVoice = {
+  persona: { gender: 'female', accent: 'british', pitch: 0.3, rate: 0 },
+  espeak:  { voice: 'en-gb-x-rp+f1', pitch: 64, pitchRange: 65, rate: 160 },
+  kokoro:  'af_heart',
+};
+const betaVoice: ActorVoice = {
+  persona: { gender: 'male', accent: 'british', pitch: -0.5, rate: -0.27 },
+  espeak:  { voice: 'en-gb-x-rp+m3', pitch: 40, pitchRange: 58, rate: 150 },
+  kokoro:  'am_echo',
+};
 
 const production = new Production('Brief Encounter');
 

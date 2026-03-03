@@ -7,6 +7,7 @@
   import { PerspectiveCameraAsset } from './model/Camera';
   import { PlaybackEngine } from '../core/scene/PlaybackEngine';
   import { synthesise, isAvailable } from './tts/KokoroSynthesiser';
+  import { synthesise as espeakSynthesise } from './tts/EspeakSynthesiser';
   import type { ActorVoice, VoiceFallback } from '../core/domain/types';
 
   let canvas: HTMLCanvasElement;
@@ -41,16 +42,18 @@
   let isToneSetup = $state<boolean>(false);
   let isPlaying = $state<boolean>(false);
   // 'idle'    — no speech entries in the current scene
-  // 'loading' — Kokoro synthesis in progress
+  // 'loading' — synthesis in progress (any engine)
+  // 'espeak'  — eSpeak-NG synthesis succeeded for all lines
   // 'kokoro'  — Kokoro synthesis succeeded for all lines
-  // 'browser' — using Web Speech API (Kokoro unavailable or not selected)
-  let voiceBackend = $state<'idle' | 'loading' | 'kokoro' | 'browser'>('idle');
-  // 'web-speech' — use browser Web Speech API (default, no download)
-  // 'kokoro'     — opt-in Kokoro WASM synthesis (~92 MB model download)
-  type VoiceMode = 'web-speech' | 'kokoro';
+  // 'browser' — using Web Speech API (selected mode, or fallback)
+  let voiceBackend = $state<'idle' | 'loading' | 'espeak' | 'kokoro' | 'browser'>('idle');
+  // 'espeak'     — eSpeak-NG WASM formant synthesis (~20 MB first load, then HTTP-cached)
+  // 'web-speech' — browser Web Speech API (OS voice, no download)
+  // 'kokoro'     — opt-in Kokoro neural synthesis (~92 MB model download)
+  type VoiceMode = 'espeak' | 'web-speech' | 'kokoro';
   const VOICE_MODE_KEY = 'directionally_voice_mode';
   let voiceMode = $state<VoiceMode>(
-    (localStorage.getItem(VOICE_MODE_KEY) as VoiceMode | null) ?? 'web-speech'
+    (localStorage.getItem(VOICE_MODE_KEY) as VoiceMode | null) ?? 'espeak'
   );
   // Tracks the most recently loaded model to support re-synthesis when voiceMode changes.
   let currentLoadedModel: Model | null = null;
@@ -290,81 +293,70 @@
 
       const audioCtx = Tone.getContext().rawContext as AudioContext;
 
-      if (voiceMode === 'kokoro') {
-        // User opted in to Kokoro — probe availability (triggers model download if supported).
-        // Uses an actual synthesis attempt rather than WebAssembly.validate() because
-        // onnxruntime-web has its own runtime SIMD check independent of the WASM parser.
-        // The probe rejects immediately on unsupported CPUs; result is cached for the session.
-        const kokoroAvailable = await isAvailable(audioCtx);
-        // Guard: another loadModel call may have arrived while the probe was running.
-        if (sceneVersion !== currentVersion) return;
+      if (voiceMode === 'espeak' || voiceMode === 'kokoro') {
+        // Pre-synthesis path: synthesise all lines via WASM, fill Tone.Players as each
+        // completes. If a line isn't ready by play time, Web Speech fires as fallback.
+        voiceBackend = 'loading';
 
-        if (kokoroAvailable) {
-          // Kokoro path: synthesise all lines concurrently in the background.
-          // Tone.Players are filled in per-line as synthesis completes; if a line
-          // isn't ready by play time it falls through to Web Speech.
-          voiceBackend = 'loading';
-
-          model.speechEntries.forEach((entry, i) => {
-            Tone.getTransport().schedule((time) => {
-              if (speechPlayers[i]) {
-                speechPlayers[i]!.start(time);
-              } else {
-                // Synthesis still in progress or failed — Web Speech so line is never silent.
-                Tone.getDraw().schedule(() => {
-                  const utterance = new SpeechSynthesisUtterance(entry.text);
-                  configureUtterance(utterance, entry.voice);
-                  utterance.onend = () => removeSpeechBubble(entry.actorId);
-                  speechSynthesis.speak(utterance);
-                }, time);
-              }
-              Tone.getDraw().schedule(() => createSpeechBubble(entry.actorId, entry.text), time);
-            }, entry.startTime);
-          });
-
-          (async () => {
-            let anyFailed = false;
-            try {
-              await Promise.all(
-                model.speechEntries.map(async (entry, i) => {
-                  try {
-                    const audioBuffer = await synthesise(entry.text, entry.voice?.kokoro, audioCtx);
-                    if (sceneVersion !== currentVersion) return;
-                    const toneBuffer = new Tone.ToneAudioBuffer(audioBuffer);
-                    speechPlayers[i] = new Tone.Player(toneBuffer).toDestination();
-                    const endTime = entry.startTime + audioBuffer.duration;
-                    Tone.getTransport().schedule((time) => {
-                      Tone.getDraw().schedule(() => removeSpeechBubble(entry.actorId), time);
-                    }, endTime);
-                  } catch {
-                    anyFailed = true;
-                    if (sceneVersion === currentVersion) speechFailed[i] = true;
-                  }
-                })
-              );
-            } finally {
-              if (sceneVersion === currentVersion) {
-                voiceBackend = anyFailed ? 'browser' : 'kokoro';
-              }
-            }
-          })();
-        } else {
-          // Kokoro selected but unavailable on this CPU/browser — fall back to Web Speech.
-          voiceBackend = 'browser';
-          model.speechEntries.forEach((entry) => {
-            Tone.getTransport().schedule((time) => {
+        model.speechEntries.forEach((entry, i) => {
+          Tone.getTransport().schedule((time) => {
+            if (speechPlayers[i]) {
+              speechPlayers[i]!.start(time);
+            } else {
+              // Synthesis still in progress or failed — Web Speech keeps the line audible.
               Tone.getDraw().schedule(() => {
                 const utterance = new SpeechSynthesisUtterance(entry.text);
                 configureUtterance(utterance, entry.voice);
                 utterance.onend = () => removeSpeechBubble(entry.actorId);
                 speechSynthesis.speak(utterance);
-                createSpeechBubble(entry.actorId, entry.text);
               }, time);
-            }, entry.startTime);
-          });
-        }
+            }
+            Tone.getDraw().schedule(() => createSpeechBubble(entry.actorId, entry.text), time);
+          }, entry.startTime);
+        });
+
+        (async () => {
+          let anyFailed = false;
+          // For Kokoro: probe availability first (may reject on unsupported CPUs).
+          // Uses an actual synthesis attempt because onnxruntime-web has its own
+          // runtime SIMD check independent of WebAssembly.validate().
+          if (voiceMode === 'kokoro') {
+            const kokoroAvailable = await isAvailable(audioCtx);
+            if (sceneVersion !== currentVersion) return;
+            if (!kokoroAvailable) {
+              voiceBackend = 'browser';
+              return;
+            }
+          }
+
+          try {
+            await Promise.all(
+              model.speechEntries.map(async (entry, i) => {
+                try {
+                  const audioBuffer = voiceMode === 'espeak'
+                    ? await espeakSynthesise(entry.text, entry.voice?.espeak, audioCtx)
+                    : await synthesise(entry.text, entry.voice?.kokoro, audioCtx);
+                  if (sceneVersion !== currentVersion) return;
+                  const toneBuffer = new Tone.ToneAudioBuffer(audioBuffer);
+                  speechPlayers[i] = new Tone.Player(toneBuffer).toDestination();
+                  const endTime = entry.startTime + audioBuffer.duration;
+                  Tone.getTransport().schedule((time) => {
+                    Tone.getDraw().schedule(() => removeSpeechBubble(entry.actorId), time);
+                  }, endTime);
+                } catch {
+                  anyFailed = true;
+                  if (sceneVersion === currentVersion) speechFailed[i] = true;
+                }
+              })
+            );
+          } finally {
+            if (sceneVersion === currentVersion) {
+              voiceBackend = anyFailed ? 'browser' : voiceMode;
+            }
+          }
+        })();
       } else {
-        // Web Speech mode — schedule utterances directly, no Kokoro download.
+        // Web Speech mode — schedule utterances directly, no download.
         voiceBackend = 'browser';
         model.speechEntries.forEach((entry) => {
           Tone.getTransport().schedule((time) => {
@@ -716,7 +708,13 @@
         id="voices-status"
         class="voices-{voiceBackend}"
         title={voiceBackend === 'browser' && voiceMode === 'kokoro' ? 'Kokoro unavailable on this CPU/browser. Using browser voices.' : undefined}
-      >{voiceBackend === 'loading' ? 'Synthesising…' : voiceBackend === 'kokoro' ? '🔊 Kokoro' : '🔊 Browser voices'}</span>
+      >{voiceBackend === 'loading'
+          ? 'Synthesising…'
+          : voiceBackend === 'espeak'
+          ? '🔊 eSpeak'
+          : voiceBackend === 'kokoro'
+          ? '🔊 Kokoro'
+          : '🔊 Browser voices'}</span>
     {/if}
     <select
       id="voice-mode"
@@ -724,6 +722,7 @@
       title="Voice synthesis mode"
       disabled={!isToneSetup}
     >
+      <option value="espeak">eSpeak (fast)</option>
       <option value="web-speech">Browser voices</option>
       <option value="kokoro">Kokoro (~92 MB)</option>
     </select>

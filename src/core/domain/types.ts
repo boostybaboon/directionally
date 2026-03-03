@@ -85,14 +85,16 @@ export type VoicePersona = {
   rate: number;
 };
 
-// Optional eSpeak-ng synthesiser overrides. All fields map directly to espeak flags.
+// Optional eSpeak-ng synthesiser overrides. Parameter units match the raw eSpeak-NG C API.
 export type ESpeakConfig = {
-  /** Voice variant, e.g. 'en+m3', 'en+f4'. */
-  variant?: string;
-  /** Raw espeak pitch (0–99, default 50). */
+  /** eSpeak-NG voice ID, e.g. 'en-us' (American) or 'en-gb-x-rp' (British RP). Default: 'en-us'. */
+  voice?: string;
+  /** Pitch: 0–99 integer, default 50. Higher = higher pitch. */
   pitch?: number;
-  /** Raw espeak speed in words-per-minute (default ~175). */
-  speed?: number;
+  /** Pitch range / expressiveness: 0–99 integer, default 50. Higher = more animated intonation. */
+  pitchRange?: number;
+  /** Speaking rate in words-per-minute, default 175. */
+  rate?: number;
 };
 
 // Full voice specification for an actor or per-line override.

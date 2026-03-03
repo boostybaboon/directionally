@@ -1,9 +1,22 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import wasm from 'vite-plugin-wasm';
+import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 export default defineConfig({
 	plugins: [
 		sveltekit(),
+		// Enables top-level await and proper WASM loading for the eSpeak-NG module.
+		wasm(),
+		// Copies espeak-ng.data (eSpeak voice/phoneme data) from node_modules to the
+		// static root of the build output. Emscripten's locateFile callback fetches
+		// it from /espeak-ng.data at runtime — it cannot be bundled as a JS chunk.
+		viteStaticCopy({
+			targets: [{
+				src: 'node_modules/@echogarden/espeak-ng-emscripten/espeak-ng.data',
+				dest: '',
+			}],
+		}),
 		// onnxruntime-node is a native Node.js addon bundled with kokoro-js.
 		// It must never be included in a browser or SSR build:
 		//  - browser: no native addons, and onnxruntime-web is the correct backend
@@ -23,16 +36,24 @@ export default defineConfig({
 	],
 	optimizeDeps: {
 		// Prevent Vite's dev-server pre-bundler from loading these packages in Node.js.
-		// In the browser the stub plugin above handles onnxruntime-node; kokoro-js and
-		// @huggingface/transformers are excluded to avoid pulling in the native addon
-		// during the pre-bundling step (which runs in Node.js and would SIGILL on CPUs
-		// without AVX).
-		exclude: ['@huggingface/transformers', 'kokoro-js', 'onnxruntime-node'],
+		// kokoro-js / onnxruntime-node are excluded to avoid the native .node addon SIGILL.
+		// espeak-ng-emscripten is excluded because its WASM + .data file must be loaded
+		// at runtime via Emscripten's locateFile, not pre-bundled.
+		exclude: [
+			'@huggingface/transformers',
+			'kokoro-js',
+			'onnxruntime-node',
+			'@echogarden/espeak-ng-emscripten',
+		],
 	},
 	ssr: {
-		// Keep onnxruntime-node external in the SSR bundle so it is never emitted as
-		// a bundled chunk. Since ssr=false on all pages, this code never executes
-		// server-side; the external reference is harmless.
-		external: ['onnxruntime-node', 'kokoro-js', '@huggingface/transformers'],
+		// Keep these external in the SSR bundle — ssr=false on all pages so none
+		// of this code ever executes server-side; the external references are harmless.
+		external: [
+			'onnxruntime-node',
+			'kokoro-js',
+			'@huggingface/transformers',
+			'@echogarden/espeak-ng-emscripten',
+		],
 	},
 });
