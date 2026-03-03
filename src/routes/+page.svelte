@@ -9,11 +9,28 @@
   import { flyIntoRoomExample } from '$lib/FlyIntoRoomExample';
   import { exampleProduction1Scene } from '$lib/exampleProduction1';
   import { twoRobotsScene } from '$lib/twoRobotsScene';
+  import type { Model } from '$lib/Model';
+  import ScriptEditor from '$lib/sandbox/ScriptEditor.svelte';
+  import { scriptToModel } from '$lib/sandbox/scriptToModel';
+  import type { ScriptLine } from '$lib/sandbox/types';
 
   let presenter: Presenter | undefined = $state();
   let activeModel = $state('');
   let isMobile = $state(false);
   let sidebarOpen = $state(false);
+
+  const SANDBOX_KEY = 'directionally_sandbox_script';
+  let script = $state<ScriptLine[]>(
+    JSON.parse(localStorage.getItem(SANDBOX_KEY) ?? '[]')
+  );
+  $effect(() => {
+    localStorage.setItem(SANDBOX_KEY, JSON.stringify(script));
+  });
+  function loadSandbox() {
+    presenter?.loadModel(scriptToModel(script));
+    activeModel = 'sandbox';
+    sidebarOpen = false;
+  }
 
   onMount(() => {
     const mq = window.matchMedia('(max-width: 640px)');
@@ -23,17 +40,19 @@
     return () => mq.removeEventListener('change', onChange);
   });
 
-  const scenes = [
-    { id: 'model1', label: 'Camera rot',    model: exampleModel1 },
-    { id: 'model2', label: 'Ball pos',      model: exampleModel2 },
-    { id: 'model3', label: 'Robot rot',     model: exampleModel3 },
-    { id: 'model4', label: 'Robot quat',    model: exampleModel4 },
-    { id: 'fly',    label: 'Fly Into Room', model: flyIntoRoomExample },
-    { id: 'prod1',  label: 'Ball (domain)', model: exampleProduction1Scene },
-    { id: 'robots', label: 'Two Robots',    model: twoRobotsScene },
+  const scenes: { id: string; label: string; model?: Model }[] = [
+    { id: 'sandbox', label: '✏ Sandbox' },
+    { id: 'model1',  label: 'Camera rot',    model: exampleModel1 },
+    { id: 'model2',  label: 'Ball pos',      model: exampleModel2 },
+    { id: 'model3',  label: 'Robot rot',     model: exampleModel3 },
+    { id: 'model4',  label: 'Robot quat',    model: exampleModel4 },
+    { id: 'fly',     label: 'Fly Into Room', model: flyIntoRoomExample },
+    { id: 'prod1',   label: 'Ball (domain)', model: exampleProduction1Scene },
+    { id: 'robots',  label: 'Two Robots',    model: twoRobotsScene },
   ];
 
-  function loadScene(id: string, model: typeof exampleModel1) {
+  function loadScene(id: string, model?: Model) {
+    if (!model) { loadSandbox(); return; }
     presenter?.loadModel(model);
     activeModel = id;
     sidebarOpen = false;
@@ -92,11 +111,15 @@
             </ul>
           </section>
 
-          <section class="sidebar-section inspector-section">
-            <details>
-              <summary class="section-heading">Inspector</summary>
-              <p class="inspector-placeholder">No scene loaded.</p>
-            </details>
+          <section class="sidebar-section inspector-section" class:expanded={activeModel === 'sandbox'}>
+            <h2 class="section-heading">Inspector</h2>
+            <div class="inspector-content">
+              {#if activeModel === 'sandbox'}
+                <ScriptEditor bind:script onreload={loadSandbox} />
+              {:else}
+                <p class="inspector-placeholder">No scene loaded.</p>
+              {/if}
+            </div>
           </section>
         </aside>
       {/if}
@@ -197,6 +220,8 @@
   .sidebar-section {
     display: flex;
     flex-direction: column;
+    flex: 1;
+    min-height: 0;
   }
 
   .section-heading {
@@ -265,8 +290,10 @@
   }
 
   .inspector-section {
-    margin-top: auto;
+    flex: 0 0 auto;
     border-top: 1px solid #2a2a2a;
+    display: flex;
+    flex-direction: column;
   }
 
   .inspector-placeholder {
@@ -275,6 +302,29 @@
     font-style: italic;
     font-size: 12px;
     margin: 0;
+  }
+
+  .inspector-content {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .inspector-section.expanded {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .inspector-section.expanded .inspector-content {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .inspector-section.expanded :global(.script-editor) {
+    flex: 1;
+    min-height: 0;
   }
 
   .main-pane {

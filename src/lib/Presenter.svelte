@@ -55,6 +55,10 @@
   let voiceMode = $state<VoiceMode>(
     (localStorage.getItem(VOICE_MODE_KEY) as VoiceMode | null) ?? 'espeak'
   );
+  const BUBBLE_SCALE_KEY = 'directionally_bubble_scale';
+  let bubbleScale = $state<number>(parseFloat(localStorage.getItem(BUBBLE_SCALE_KEY) ?? '1'));
+  $effect(() => { localStorage.setItem(BUBBLE_SCALE_KEY, String(bubbleScale)); });
+
   // Tracks the most recently loaded model to support re-synthesis when voiceMode changes.
   let currentLoadedModel: Model | null = null;
   let currentPosition = $state<number>(0);
@@ -110,10 +114,12 @@
     updateRendererSize();
     initializeCustomConsoleLog();
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && isToneSetup) {
-        e.preventDefault();
-        handlePlayPauseClick();
-      }
+      if (e.code !== 'Space' || !isToneSetup) return;
+      const t = e.target as HTMLElement | null;
+      // Don't intercept Space when the user is typing in any text field.
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      e.preventDefault();
+      handlePlayPauseClick();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => {
@@ -531,51 +537,123 @@
   // Creates a speech bubble sprite above the named actor and stores it for later removal.
   const activeSpeechBubbles = new Map<string, THREE.Sprite>();
 
+  /** Word-wrap text to canvas units, returning one string per line. */
+  function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let current = '';
+    for (const word of words) {
+      const test = current ? `${current} ${word}` : word;
+      if (current && ctx.measureText(test).width > maxWidth) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = test;
+      }
+    }
+    if (current) lines.push(current);
+    return lines.length > 0 ? lines : [''];
+  }
+
   function createSpeechBubble(actorId: string, text: string) {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     if (!context) return;
 
-    const fontSize = 48;
-    const borderSize = 2;
-    const baseWidth = 300;
-    const font = `${fontSize}px Arial`;
-    context.font = font;
-
-    const textWidth = context.measureText(text).width;
-    const doubleBorderSize = borderSize * 2;
-    const width = baseWidth + doubleBorderSize;
-    const height = fontSize + doubleBorderSize;
-    canvas.width = width;
-    canvas.height = height;
+    const fontSize = 32;
+    const font = `600 ${fontSize}px Arial, sans-serif`;
+    const padding = 22;
+    const lineHeight = fontSize * 1.45;
+    const maxContentWidth = 520;
+    const cornerRadius = 18;
+    const tailH = 22;
+    const tailW = 32;
 
     context.font = font;
+    const wrappedLines = wrapText(context, text, maxContentWidth);
+    const contentWidth = Math.min(
+      maxContentWidth,
+      Math.max(...wrappedLines.map(l => context.measureText(l).width)),
+    );
+    const bubbleW = Math.ceil(contentWidth + padding * 2);
+    const bubbleH = Math.ceil(wrappedLines.length * lineHeight + padding * 2);
+    const canvasW = bubbleW;
+    const canvasH = bubbleH + tailH;
+
+    canvas.width = canvasW;
+    canvas.height = canvasH;
+
+    // Re-apply font after canvas resize (resize clears the 2D context state).
+    context.font = font;
+
+    // Bubble body: rounded rectangle.
+    const r = cornerRadius;
+    context.beginPath();
+    context.moveTo(r, 0);
+    context.lineTo(bubbleW - r, 0);
+    context.arcTo(bubbleW, 0,      bubbleW, r,      r);
+    context.lineTo(bubbleW, bubbleH - r);
+    context.arcTo(bubbleW, bubbleH, bubbleW - r, bubbleH, r);
+    context.lineTo(r, bubbleH);
+    context.arcTo(0, bubbleH, 0, bubbleH - r, r);
+    context.lineTo(0, r);
+    context.arcTo(0, 0, r, 0, r);
+    context.closePath();
+    context.shadowColor = 'rgba(0,0,0,0.25)';
+    context.shadowBlur = 8;
+    context.shadowOffsetY = 3;
+    context.fillStyle = 'rgba(255,255,255,0.97)';
+    context.fill();
+    context.shadowColor = 'transparent';
+    context.shadowBlur = 0;
+    context.shadowOffsetY = 0;
+    context.strokeStyle = 'rgba(30,30,30,0.85)';
+    context.lineWidth = 3;
+    context.stroke();
+
+    // Tail: downward triangle from the bubble's bottom-centre.
+    const tailX = canvasW / 2;
+    context.beginPath();
+    context.moveTo(tailX - tailW / 2, bubbleH);
+    context.lineTo(tailX, bubbleH + tailH);
+    context.lineTo(tailX + tailW / 2, bubbleH);
+    context.closePath();
+    context.fillStyle = 'rgba(255,255,255,0.97)';
+    context.fill();
+    // Outline the two diagonal edges only (top edge is already bordered by the bubble).
+    context.beginPath();
+    context.moveTo(tailX - tailW / 2, bubbleH);
+    context.lineTo(tailX, bubbleH + tailH);
+    context.lineTo(tailX + tailW / 2, bubbleH);
+    context.strokeStyle = 'rgba(30,30,30,0.85)';
+    context.lineWidth = 3;
+    context.stroke();
+
+    // Text lines.
+    context.fillStyle = '#111';
     context.textBaseline = 'middle';
     context.textAlign = 'center';
-
-    context.fillStyle = 'white';
-    context.fillRect(0, 0, width, height);
-
-    const scaleFactor = Math.min(1, baseWidth / textWidth);
-    context.translate(width / 2, height / 2);
-    context.scale(scaleFactor, 1);
-    context.fillStyle = 'black';
-    context.fillText(text, 0, 0);
+    const textStartY = padding + lineHeight / 2;
+    for (let i = 0; i < wrappedLines.length; i++) {
+      context.fillText(wrappedLines[i], canvasW / 2, textStartY + i * lineHeight);
+    }
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.minFilter = THREE.LinearFilter;
     texture.wrapS = THREE.ClampToEdgeWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
 
-    const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
+    const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
     const sprite = new THREE.Sprite(spriteMaterial);
+    sprite.renderOrder = 999;
 
-    const labelBaseScale = 0.01;
+    // bubbleScale is captured by closure — uses the value current at bubble-creation time.
+    const labelBaseScale = 0.01 * bubbleScale;
     sprite.scale.set(canvas.width * labelBaseScale, canvas.height * labelBaseScale, 1);
 
     const actor = scene.getObjectByName(actorId);
     if (actor) {
-      sprite.position.set(0, 5, 0);
+      sprite.position.set(0, 4.5, 0);
       actor.add(sprite);
       activeSpeechBubbles.set(actorId, sprite);
     }
@@ -690,6 +768,23 @@
       flex-basis: 100%;
       order: 3;
     }
+
+  #bubble-scale-label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: #888;
+      font-size: 14px;
+      white-space: nowrap;
+      cursor: default;
+      user-select: none;
+    }
+
+  #bubble-scale-input {
+      width: 64px;
+      accent-color: #4a9eff;
+      cursor: pointer;
+    }
   }
 </style>
   
@@ -726,6 +821,17 @@
       <option value="web-speech">Browser voices</option>
       <option value="kokoro">Kokoro (~92 MB)</option>
     </select>
+    <label id="bubble-scale-label" title="Speech bubble size">
+      💬
+      <input
+        id="bubble-scale-input"
+        type="range"
+        min="0.5"
+        max="2.5"
+        step="0.1"
+        bind:value={bubbleScale}
+      />
+    </label>
     <input
       id="transport-slider"
       type="range"
