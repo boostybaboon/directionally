@@ -8,13 +8,15 @@ export default defineConfig({
 		sveltekit(),
 		// Enables top-level await and proper WASM loading for the eSpeak-NG module.
 		wasm(),
-		// Copies espeak-ng.data (eSpeak voice/phoneme data) from node_modules to the
-		// static root of the build output. Emscripten's locateFile callback fetches
-		// it from /espeak-ng.data at runtime — it cannot be bundled as a JS chunk.
+		// Copies espeak-ng.data (eSpeak voice/phoneme data) from node_modules into
+		// _app/immutable/chunks/. The package's pre.js overrides locateFile using
+		// import.meta.url to resolve the data file relative to the script's directory.
+		// In production, Rollup bundles the module into _app/immutable/chunks/, so
+		// import.meta.url points there — the data file must live in the same directory.
 		viteStaticCopy({
 			targets: [{
 				src: 'node_modules/@echogarden/espeak-ng-emscripten/espeak-ng.data',
-				dest: '',
+				dest: '_app/immutable/chunks',
 			}],
 		}),
 		// onnxruntime-node is a native Node.js addon bundled with kokoro-js.

@@ -1,7 +1,7 @@
 // @echogarden/espeak-ng-emscripten is imported dynamically — the WASM module and
-// its companion espeak-ng.data (served from /espeak-ng.data via vite-plugin-static-copy)
-// must not load at module-parse time in Node.js (SSR). The dynamic import defers
-// loading until synthesise() is called, which only ever happens in the browser.
+// its companion espeak-ng.data must not load at module-parse time in Node.js (SSR).
+// The dynamic import defers loading until synthesise() is called, which only ever
+// happens in the browser.
 
 import type { ESpeakConfig } from '../../core/domain/types.js';
 import type { EspeakWorker } from '@echogarden/espeak-ng-emscripten';
@@ -22,12 +22,12 @@ async function getWorker(): Promise<EspeakWorker> {
 
   // Assign synchronously before any await so concurrent callers share this promise.
   initPromise = (async () => {
-    // locateFile tells Emscripten where to fetch espeak-ng.data at runtime.
-    // vite-plugin-static-copy places the file at the static root of the build output.
     const { default: EspeakInitializer } = await import('@echogarden/espeak-ng-emscripten');
-    const m = await EspeakInitializer({
-      locateFile: (path: string) => `/${path}`,
-    });
+    // The package's pre.js defines its own locateFile using import.meta.url, deriving
+    // the data file path relative to the script's location. In production, Rollup
+    // bundles the module into _app/immutable/chunks/, so espeak-ng.data must live there
+    // (handled by viteStaticCopy in vite.config.ts). No locateFile override is needed.
+    const m = await EspeakInitializer({});
     const instance: EspeakWorker = await new m.eSpeakNGWorker();
     worker = instance;
     return instance;
