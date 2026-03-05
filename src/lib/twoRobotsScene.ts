@@ -19,6 +19,7 @@ const betaVoice: ActorVoice = {
 
 const production = new Production('Brief Encounter');
 
+
 const alpha = production.addActor('Alpha', {
   type: 'gltf',
   url: '/models/gltf/RobotExpressive.glb',
@@ -29,7 +30,7 @@ const beta = production.addActor('Beta', {
   url: '/models/gltf/RobotExpressive.glb',
 }, { voice: betaVoice });
 
-const act = production.addAct('Act 1');
+const act = production.addGroup('Act 1');
 
 // Timing map
 //  0–2  : both offstage, walking-in-place

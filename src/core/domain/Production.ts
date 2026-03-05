@@ -1,5 +1,6 @@
 import type { ActorAsset, ActorVoice } from './types.js';
-import { Act } from './Act.js';
+import { Group } from './Group.js';
+import type { Scene, SceneOptions } from './Scene.js';
 
 export type Actor = {
   id: string;
@@ -12,12 +13,15 @@ export type Actor = {
 export class Production {
   readonly title: string;
   readonly actors: Actor[] = [];
-  readonly acts: Act[] = [];
+
+  /** Root of the production tree. Authors interact via addGroup/addScene shortcuts. */
+  readonly root: Group;
 
   private nextActorIndex = 0;
 
   constructor(title: string) {
     this.title = title;
+    this.root = new Group(title);
   }
 
   /**
@@ -31,13 +35,22 @@ export class Production {
     return actor;
   }
 
-  addAct(name: string): Act {
-    const act = new Act(name);
-    this.acts.push(act);
-    return act;
+  /** Add a named group (act, episode, section…) directly under the root. */
+  addGroup(name: string): Group {
+    return this.root.addGroup(name);
   }
 
-  /** Convenience: look up an actor by id */
+  /** Add a scene directly under the root (no grouping needed). */
+  addScene(name: string, options: SceneOptions): Scene {
+    return this.root.addScene(name, options);
+  }
+
+  /** Depth-first ordered list of all leaf Scenes across the whole production. */
+  getScenes(): Scene[] {
+    return this.root.getScenes();
+  }
+
+  /** Convenience: look up an actor by id. */
   getActor(id: string): Actor | undefined {
     return this.actors.find((a) => a.id === id);
   }

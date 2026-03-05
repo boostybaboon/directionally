@@ -41,7 +41,7 @@ export function scriptToModel(lines: ScriptLine[]): Model {
 
   const actorIds = { alpha: alpha.id, beta: beta.id };
 
-  const act = production.addAct('Act 1');
+  const act = production.addGroup('Act 1');
 
   // Sequence speech lines: each starts after the estimated duration of the previous + pause.
   const speakLines = lines.filter(l => l.text.trim().length > 0);

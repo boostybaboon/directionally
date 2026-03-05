@@ -10,7 +10,7 @@ const production = new Production('Bouncing Ball');
 
 // No named actors — the ball is a set piece with animated keyframes
 
-const act = production.addAct('Act 1');
+const act = production.addGroup('Act 1');
 
 const scene = act.addScene('Bouncing Ball Scene', { duration: 4, backgroundColor: undefined });
 

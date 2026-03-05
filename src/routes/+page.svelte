@@ -236,27 +236,6 @@
     user-select: none;
   }
 
-  details > summary.section-heading {
-    list-style: none;
-    cursor: pointer;
-  }
-
-  details > summary.section-heading::-webkit-details-marker {
-    display: none;
-  }
-
-  details > summary.section-heading::before {
-    content: '▶';
-    font-size: 8px;
-    margin-right: 6px;
-    display: inline-block;
-    transition: transform 0.15s;
-  }
-
-  details[open] > summary.section-heading::before {
-    transform: rotate(90deg);
-  }
-
   .scene-list {
     list-style: none;
     margin: 0;
