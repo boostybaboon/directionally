@@ -13,22 +13,98 @@
   import ScriptEditor from '$lib/sandbox/ScriptEditor.svelte';
   import { scriptToModel } from '$lib/sandbox/scriptToModel';
   import type { ScriptLine } from '$lib/sandbox/types';
+  import { ProductionStore } from '../core/storage/ProductionStore.js';
+  import type { StoredProduction } from '../core/storage/types.js';
 
   let presenter: Presenter | undefined = $state();
-  let activeModel = $state('');
   let isMobile = $state(false);
   let sidebarOpen = $state(false);
 
-  const SANDBOX_KEY = 'directionally_sandbox_script';
-  let script = $state<ScriptLine[]>(
-    JSON.parse(localStorage.getItem(SANDBOX_KEY) ?? '[]')
-  );
+  // Productions
+  let productions = $state<StoredProduction[]>(ProductionStore.list());
+  let activeProductionId = $state<string | null>(null);
+  let script = $state<ScriptLine[]>([]);
+  let renamingId = $state<string | null>(null);
+  let renameValue = $state('');
+
+  // Examples (read-only, no persistence)
+  const examples: { id: string; label: string; model: Model }[] = [
+    { id: 'model1',  label: 'Camera rotation',  model: exampleModel1 },
+    { id: 'model2',  label: 'Ball position',     model: exampleModel2 },
+    { id: 'model3',  label: 'Robot rotation',    model: exampleModel3 },
+    { id: 'model4',  label: 'Robot quaternion',  model: exampleModel4 },
+    { id: 'fly',     label: 'Fly into room',     model: flyIntoRoomExample },
+    { id: 'prod1',   label: 'Bouncing ball',     model: exampleProduction1Scene },
+    { id: 'robots',  label: 'Two robots',        model: twoRobotsScene },
+  ];
+  let activeExampleId = $state<string | null>(null);
+
+  // Auto-save: whenever script changes while a production is active, persist it.
   $effect(() => {
-    localStorage.setItem(SANDBOX_KEY, JSON.stringify(script));
+    if (activeProductionId !== null) {
+      const current = ProductionStore.get(activeProductionId);
+      if (current) {
+        ProductionStore.save({ ...current, script, modifiedAt: Date.now() });
+      }
+    }
   });
-  function loadSandbox() {
+
+  function newProduction() {
+    const prod = ProductionStore.create('Untitled Production');
+    productions = ProductionStore.list();
+    loadProduction(prod);
+  }
+
+  function loadProduction(prod: StoredProduction) {
+    script = [...prod.script];
+    activeProductionId = prod.id;
+    activeExampleId = null;
     presenter?.loadModel(scriptToModel(script));
-    activeModel = 'sandbox';
+    sidebarOpen = false;
+  }
+
+  function reloadSandbox() {
+    presenter?.loadModel(scriptToModel(script));
+  }
+
+  function deleteProduction(id: string) {
+    ProductionStore.delete(id);
+    productions = ProductionStore.list();
+    if (activeProductionId === id) {
+      activeProductionId = null;
+    }
+  }
+
+  function duplicateProduction(prod: StoredProduction) {
+    const copy = ProductionStore.create(`${prod.name} (copy)`);
+    ProductionStore.save({ ...copy, script: [...prod.script], modifiedAt: Date.now() });
+    productions = ProductionStore.list();
+  }
+
+  function startRename(id: string) {
+    renameValue = productions.find((p) => p.id === id)?.name ?? '';
+    renamingId = id;
+  }
+
+  /** Svelte action: focus an input and select all text when it mounts. */
+  function focusAndSelect(el: HTMLInputElement) {
+    el.focus();
+    el.select();
+  }
+
+  function commitRename(id: string) {
+    const prod = productions.find((p) => p.id === id);
+    if (prod && renameValue.trim()) {
+      ProductionStore.save({ ...prod, name: renameValue.trim(), modifiedAt: Date.now() });
+      productions = ProductionStore.list();
+    }
+    renamingId = null;
+  }
+
+  function loadExample(id: string, model: Model) {
+    presenter?.loadModel(model);
+    activeExampleId = id;
+    activeProductionId = null;
     sidebarOpen = false;
   }
 
@@ -37,26 +113,24 @@
     isMobile = mq.matches;
     const onChange = (e: MediaQueryListEvent) => { isMobile = e.matches; };
     mq.addEventListener('change', onChange);
+
+    // Migrate legacy single-script localStorage key from pre-Phase-1
+    const LEGACY_KEY = 'directionally_sandbox_script';
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (legacy && productions.length === 0) {
+      try {
+        const legacyScript: ScriptLine[] = JSON.parse(legacy);
+        if (legacyScript.length > 0) {
+          const migrated = ProductionStore.create('My Production');
+          ProductionStore.save({ ...migrated, script: legacyScript, modifiedAt: Date.now() });
+          productions = ProductionStore.list();
+        }
+      } catch { /* ignore malformed data */ }
+      localStorage.removeItem(LEGACY_KEY);
+    }
+
     return () => mq.removeEventListener('change', onChange);
   });
-
-  const scenes: { id: string; label: string; model?: Model }[] = [
-    { id: 'sandbox', label: '✏ Sandbox' },
-    { id: 'model1',  label: 'Camera rot',    model: exampleModel1 },
-    { id: 'model2',  label: 'Ball pos',      model: exampleModel2 },
-    { id: 'model3',  label: 'Robot rot',     model: exampleModel3 },
-    { id: 'model4',  label: 'Robot quat',    model: exampleModel4 },
-    { id: 'fly',     label: 'Fly Into Room', model: flyIntoRoomExample },
-    { id: 'prod1',   label: 'Ball (domain)', model: exampleProduction1Scene },
-    { id: 'robots',  label: 'Two Robots',    model: twoRobotsScene },
-  ];
-
-  function loadScene(id: string, model?: Model) {
-    if (!model) { loadSandbox(); return; }
-    presenter?.loadModel(model);
-    activeModel = id;
-    sidebarOpen = false;
-  }
 </script>
 
 <!-- Single layout: Splitpanes always present; left pane collapses to 0 on mobile.
@@ -76,12 +150,19 @@
 
     <div class="drawer" class:open={sidebarOpen} aria-hidden={!sidebarOpen}>
       <aside class="sidebar">
-        {#each scenes as scene}
+        {#each productions as prod}
           <button
             class="scene-btn"
-            class:active={activeModel === scene.id}
-            onclick={() => loadScene(scene.id, scene.model)}
-          >{scene.label}</button>
+            class:active={activeProductionId === prod.id}
+            onclick={() => loadProduction(prod)}
+          >{prod.name}</button>
+        {/each}
+        {#each examples as ex}
+          <button
+            class="scene-btn"
+            class:active={activeExampleId === ex.id}
+            onclick={() => loadExample(ex.id, ex.model)}
+          >{ex.label}</button>
         {/each}
       </aside>
     </div>
@@ -96,28 +177,76 @@
     >
       {#if !isMobile}
         <aside class="sidebar">
+          <!-- Productions -->
           <section class="sidebar-section">
-            <h2 class="section-heading">Scenes</h2>
-            <ul class="scene-list">
-              {#each scenes as scene}
-                <li>
-                  <button
-                    class="scene-btn"
-                    class:active={activeModel === scene.id}
-                    onclick={() => loadScene(scene.id, scene.model)}
-                  >{scene.label}</button>
-                </li>
-              {/each}
-            </ul>
+            <div class="section-heading-row">
+              <h2 class="section-heading borderless">Productions</h2>
+              <button class="new-btn" onclick={newProduction} title="New production">+ New</button>
+            </div>
+            {#if productions.length === 0}
+              <p class="empty-hint">No productions yet.</p>
+            {:else}
+              <ul class="scene-list">
+                {#each productions as prod}
+                  <li class="production-row">
+                    {#if renamingId === prod.id}
+                      <form
+                        class="rename-form"
+                        onsubmit={(e) => { e.preventDefault(); commitRename(prod.id); }}
+                      >
+                        <input
+                          class="rename-input"
+                          bind:value={renameValue}
+                          onblur={() => commitRename(prod.id)}
+                          onkeydown={(e) => e.key === 'Escape' && (renamingId = null)}
+                          use:focusAndSelect
+                          aria-label="Production name"
+                        />
+                      </form>
+                    {:else}
+                      <button
+                        class="scene-btn"
+                        class:active={activeProductionId === prod.id}
+                        onclick={() => loadProduction(prod)}
+                      >{prod.name}</button>
+                      <div class="prod-actions">
+                        <button class="icon-btn" onclick={() => startRename(prod.id)} title="Rename">✎</button>
+                        <button class="icon-btn" onclick={() => duplicateProduction(prod)} title="Duplicate">⎘</button>
+                        <button class="icon-btn danger" onclick={() => deleteProduction(prod.id)} title="Delete">✕</button>
+                      </div>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
           </section>
 
-          <section class="sidebar-section inspector-section" class:expanded={activeModel === 'sandbox'}>
+          <!-- Examples (collapsible, read-only) -->
+          <section class="sidebar-section examples-section">
+            <details>
+              <summary class="section-heading">Examples</summary>
+              <ul class="scene-list">
+                {#each examples as ex}
+                  <li>
+                    <button
+                      class="scene-btn"
+                      class:active={activeExampleId === ex.id}
+                      onclick={() => loadExample(ex.id, ex.model)}
+                    >{ex.label}</button>
+                  </li>
+                {/each}
+              </ul>
+            </details>
+          </section>
+
+          <!-- Inspector: expands with script editor when a production is active -->
+          <section class="sidebar-section inspector-section" class:expanded={activeProductionId !== null}>
             <h2 class="section-heading">Inspector</h2>
             <div class="inspector-content">
-              {#if activeModel === 'sandbox'}
-                <ScriptEditor bind:script onreload={loadSandbox} />
+              {#if activeProductionId !== null}
+                <ScriptEditor bind:script onreload={reloadSandbox} />
               {:else}
-                <p class="inspector-placeholder">No scene loaded.</p>
+                <p class="inspector-placeholder">Select or create a production.</p>
               {/if}
             </div>
           </section>
@@ -236,6 +365,135 @@
     user-select: none;
   }
 
+  .section-heading.borderless {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  .section-heading-row {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px 6px;
+    border-bottom: 1px solid #2a2a2a;
+    gap: 6px;
+  }
+
+  .section-heading-row .section-heading {
+    flex: 1;
+    padding: 0;
+    border: none;
+  }
+
+  .new-btn {
+    background: none;
+    border: 1px solid #333;
+    border-radius: 3px;
+    color: #4a9eff;
+    font-size: 11px;
+    padding: 2px 7px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.1s, border-color 0.1s;
+  }
+
+  .new-btn:hover {
+    background: #1e2d3d;
+    border-color: #4a9eff;
+  }
+
+  .production-row {
+    display: flex;
+    align-items: center;
+  }
+
+  .production-row .scene-btn {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .prod-actions {
+    display: flex;
+    opacity: 0;
+    transition: opacity 0.1s;
+    flex-shrink: 0;
+  }
+
+  .production-row:hover .prod-actions,
+  .production-row:focus-within .prod-actions {
+    opacity: 1;
+  }
+
+  .icon-btn {
+    background: none;
+    border: none;
+    color: #555;
+    cursor: pointer;
+    padding: 4px 5px;
+    font-size: 12px;
+    border-radius: 3px;
+    line-height: 1;
+    transition: color 0.1s, background 0.1s;
+  }
+
+  .icon-btn:hover {
+    color: #bbb;
+    background: #2a2a2a;
+  }
+
+  .icon-btn.danger:hover {
+    color: #e06c75;
+    background: #2a1a1a;
+  }
+
+  .rename-form {
+    flex: 1;
+    display: flex;
+    padding: 2px 6px;
+  }
+
+  .rename-input {
+    flex: 1;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    border: 1px solid #4a9eff;
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-size: 13px;
+    outline: none;
+  }
+
+  .empty-hint {
+    padding: 10px 14px;
+    color: #444;
+    font-style: italic;
+    font-size: 12px;
+    margin: 0;
+  }
+
+  .examples-section details > summary.section-heading {
+    list-style: none;
+    cursor: pointer;
+  }
+
+  .examples-section details > summary.section-heading::-webkit-details-marker {
+    display: none;
+  }
+
+  .examples-section details > summary.section-heading::before {
+    content: '▶';
+    font-size: 8px;
+    margin-right: 6px;
+    display: inline-block;
+    transition: transform 0.15s;
+  }
+
+  .examples-section details[open] > summary.section-heading::before {
+    transform: rotate(90deg);
+  }
+
   .scene-list {
     list-style: none;
     margin: 0;
@@ -273,6 +531,11 @@
     border-top: 1px solid #2a2a2a;
     display: flex;
     flex-direction: column;
+  }
+
+  .examples-section {
+    flex: 0 0 auto;
+    border-top: 1px solid #2a2a2a;
   }
 
   .inspector-placeholder {
