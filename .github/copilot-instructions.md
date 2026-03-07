@@ -5,9 +5,9 @@ These instructions provide repo-specific technical context. Stylistic and proces
 ## Architecture
 
 ```
-src/core/domain/          # Production → Act → Scene domain model (no Three.js)
-  Production.ts           # addActor(), addAct() — actor roster + acts
-  Act.ts                  # addScene() — returns chainable Scene
+src/core/domain/          # Production → Group → Scene domain model (no Three.js)
+  Production.ts           # addActor(), addGroup(), addScene() — actor roster + nestable tree
+  Group.ts                # nestable container: children: Array<Group | Scene>, getScenes() DFS
   Scene.ts                # fluent builder: setCamera, addLight, addSetPiece, stage, addAction
   types.ts                # Vec3, GeometryConfig, LightConfig, SceneAction union, etc.
   SceneBridge.ts          # sceneToModel(scene, actors) → Model  (domain → renderer bridge)
@@ -16,9 +16,27 @@ src/core/scene/           # Headless playback core
   PlaybackEngine.ts       # play/pause/seek/rewind/stop/update — delegates from Presenter
   types.ts                # Transport interface, PlaybackState, AnimationEntry, EngineLoadPayload
 
+src/core/storage/         # Production persistence
+  ProductionStore.ts      # list/get/save/delete/create — localStorage-backed, no key names outside
+  types.ts                # StoredProduction: { id, name, createdAt, modifiedAt, script }
+
+src/core/document/        # Editing API — headless, no UI/browser dependencies
+  Command.ts              # interface Command { execute(doc): StoredProduction; label: string }
+  commands.ts             # RenameProductionCommand, AddScriptLineCommand, SetScriptCommand, etc.
+  ProductionDocument.ts   # execute(cmd), undo(), redo(), current, canUndo, canRedo, history[]
+
+src/core/catalogue/       # Bundled asset catalogue (characters, set pieces)
+  types.ts                # CharacterEntry, SetPieceEntry, CatalogueEntry, CatalogueKind
+  entries.ts              # Seed data: RobotExpressive (6 clips), Soldier (3 clips, MIT Three.js) + geometry primitives
+  catalogue.ts            # Pure service: getCharacters(), getSetPieces(), getById()
+
 src/lib/                  # UI layer (Svelte) + legacy model format
-  Presenter.svelte        # Mounts canvas, wires controls, owns render loop, delegates to PlaybackEngine
+  Presenter.svelte        # Mounts canvas, wires controls, owns render loop; transport state as $bindable props
+  TransportBar.svelte     # Transport controls component (bottom panel)
+  CataloguePanel.svelte   # Asset catalogue browser UI (Catalogue tab in left panel)
+  PreviewRenderer.svelte  # Self-contained Three.js canvas for catalogue preview (OrbitControls, clip discovery)
   Model.ts                # Legacy scene definition: camera, lights, meshes, gltfs, actions
+  types.ts                # VoiceMode, VoiceBackend (shared UI types)
   model/                  # Asset types: Mesh, GLTF, Light, Camera, Geometry, Material, Action
   exampleModel*.ts        # Direct Model construction (legacy examples)
   exampleProduction1.ts   # Example using Production API + SceneBridge
@@ -62,13 +80,27 @@ yarn preview
 
 ## Adding New Features
 
-**New scene (domain API):** `Production.addActor()` → `act.addScene()` → chain `.setCamera()`, `.addLight()`, `.addSetPiece()`, `.stage()`, `.addAction()` → `sceneToModel()` for rendering.
+**New scene (domain API):** `Production.addActor()` → `.addGroup()` or `.addScene()` on the production or a group → chain `.setCamera()`, `.addLight()`, `.addSetPiece()`, `.stage()`, `.addAction()` → `sceneToModel()` for rendering.
 
 **New asset/action type in legacy layer:** add type in `src/lib/model/`, extend `Model.ts` aggregator, handle in `Presenter.svelte`. Update `SceneBridge.ts` if it should be author-able via the domain API.
 
 **New SceneAction type:** add to discriminated union in `src/core/domain/types.ts`, handle in `SceneBridge.ts` (or log warning + skip if renderer support is pending).
 
 **Audio sync:** Tone.js transport remains the single source of truth; never invent a parallel clock.
+
+## Test & Static Analysis Discipline
+
+**Write tests before or alongside new modules** — especially for pure logic in `src/core/`. See `catalogue.test.ts`, `PlaybackEngine.test.ts`, and `ProductionDocument.test.ts` as exemplars.
+
+**inject dependencies for testability** — service functions take an optional `entries`/`animations`/etc. argument so tests pass controlled fixtures instead of real globals.
+
+**Run after every change:**
+```bash
+yarn test                                        # all tests must stay green
+npx svelte-check --tsconfig tsconfig.json        # 0 errors, 0 warnings
+```
+
+Tests live next to the code they exercise (`foo.test.ts` beside `foo.ts`). UI components are not unit-tested (only their data layer is). Integration smoke is done manually in the browser.
 
 ## Refactor Safety Checklist
 

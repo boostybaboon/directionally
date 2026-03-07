@@ -52,4 +52,22 @@ export class SphereGeometryAsset extends GeometryAsset {
     get threeGeometry(): THREE.SphereGeometry {
         return this._threeGeometry;
     }
-} 
+}
+
+export class CylinderGeometryAsset extends GeometryAsset {
+    private _threeGeometry: THREE.CylinderGeometry;
+
+    constructor(
+        public readonly radiusTop: number,
+        public readonly radiusBottom: number,
+        public readonly height: number,
+        public readonly radialSegments: number = 32
+    ) {
+        super();
+        this._threeGeometry = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, radialSegments);
+    }
+
+    get threeGeometry(): THREE.CylinderGeometry {
+        return this._threeGeometry;
+    }
+}

@@ -1,4 +1,5 @@
 import type { StoredProduction } from './types.js';
+import { defaultSceneShell } from './sceneBuilder.js';
 
 /**
  * Persistence service for user productions.
@@ -47,6 +48,8 @@ export const ProductionStore = {
       name,
       createdAt: now,
       modifiedAt: now,
+      actors: [],
+      scene: defaultSceneShell(),
       script: [],
     };
     this.save(production);

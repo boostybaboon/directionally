@@ -4,24 +4,44 @@
   import { onMount } from 'svelte';
   import type { Model } from './Model';
   import type { AnimationDict } from './model/Action';
-  import { PerspectiveCameraAsset } from './model/Camera';
   import { PlaybackEngine } from '../core/scene/PlaybackEngine';
+  import { buildSceneGraph } from './scene/buildSceneGraph.js';
+  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+  import { TransformControls } from 'three/addons/controls/TransformControls.js';
   import { synthesise, isAvailable } from './tts/KokoroSynthesiser';
   import { synthesise as espeakSynthesise } from './tts/EspeakSynthesiser';
   import type { ActorVoice, VoiceFallback } from '../core/domain/types';
+  import type { VoiceMode, VoiceBackend } from './types.js';
 
   let canvas: HTMLCanvasElement;
+  // Overlay div covering the editor (right) viewport — used as domElement for
+  // TransformControls so its NDC math is relative to the editor half only.
+  let editorOverlay: HTMLElement;
   let renderer: THREE.WebGLRenderer;
 
   let animationDict: AnimationDict = {};
 
-  let modelAnimationClips: { [key: string]: THREE.AnimationClip[] } = {};
-
   let mixers: THREE.AnimationMixer[] = [];
   let scene: THREE.Scene;
   let clock: THREE.Clock;
-  // TODO multiple cameras
   let camera: THREE.Camera;
+  // Editor camera for the design view — free-orbit, independent of the model's authored camera.
+  let editorCamera: THREE.PerspectiveCamera;
+  // OrbitControls attached to the editor camera; active only in design mode.
+  let orbitControls: OrbitControls;
+  // TransformControls for moving/rotating selected objects; lives on layer 1.
+  let transformControls: TransformControls;
+  // The Object3D helper returned by TransformControls.getHelper() — this is what
+  // gets added to the scene and must have its layer set (TC itself is not an Object3D).
+  let tcHelper: THREE.Object3D;
+  // Frustum helper visualising the playback camera in the design view (layer 1).
+  let cameraHelper: THREE.CameraHelper | null = null;
+  // Bounding-box highlight for the selected scene object in the design view (layer 1).
+  let selectionBox: THREE.BoxHelper | null = null;
+  // True while TransformControls is actively dragging — used to skip click-as-selection.
+  let tcDragging = false;
+  // Overlay pointer position sampled on pointerdown, used for drag vs click detection.
+  let overlayPointerDownPos = { x: 0, y: 0 };
 
   // Entries with fadeIn/fadeOut: weights are updated per-frame in animate() using
   // Tone transport time instead of Three.js mixer._time (which gets reset by seek()).
@@ -39,32 +59,41 @@
   // this to bail out if the scene changed while they were running.
   let sceneVersion = 0;
 
-  let isToneSetup = $state<boolean>(false);
-  let isPlaying = $state<boolean>(false);
-  // 'idle'    — no speech entries in the current scene
-  // 'loading' — synthesis in progress (any engine)
-  // 'espeak'  — eSpeak-NG synthesis succeeded for all lines
-  // 'kokoro'  — Kokoro synthesis succeeded for all lines
-  // 'browser' — using Web Speech API (selected mode, or fallback)
-  let voiceBackend = $state<'idle' | 'loading' | 'espeak' | 'kokoro' | 'browser'>('idle');
-  // 'espeak'     — eSpeak-NG WASM formant synthesis (~20 MB first load, then HTTP-cached)
-  // 'web-speech' — browser Web Speech API (OS voice, no download)
-  // 'kokoro'     — opt-in Kokoro neural synthesis (~92 MB model download)
-  type VoiceMode = 'espeak' | 'web-speech' | 'kokoro';
-  const VOICE_MODE_KEY = 'directionally_voice_mode';
-  let voiceMode = $state<VoiceMode>(
-    (localStorage.getItem(VOICE_MODE_KEY) as VoiceMode | null) ?? 'espeak'
-  );
-  const BUBBLE_SCALE_KEY = 'directionally_bubble_scale';
-  let bubbleScale = $state<number>(parseFloat(localStorage.getItem(BUBBLE_SCALE_KEY) ?? '1'));
-  $effect(() => { localStorage.setItem(BUBBLE_SCALE_KEY, String(bubbleScale)); });
+  interface PresenterProps {
+    /** When true: split-screen design/playback view. When false: full-canvas playback. */
+    designMode?: boolean;
+    /** Name of the currently selected scene object (actor ID or set-piece name). Cleared on scene reload. */
+    selectedObjectId?: string | null;
+    /** Fired when TransformControls drag ends; carries the object's new position and rotation. */
+    ontransformend?: (id: string, position: [number, number, number], rotation: [number, number, number]) => void;
+    voiceMode?: VoiceMode;
+    bubbleScale?: number;
+    isPlaying?: boolean;
+    isToneSetup?: boolean;
+    currentPosition?: number;
+    sceneDuration?: number;
+    voiceBackend?: VoiceBackend;
+    sliderValue?: number;
+    isSliderDragging?: boolean;
+  }
+
+  let {
+    designMode = $bindable(false),
+    selectedObjectId = $bindable<string | null>(null),
+    ontransformend,
+    voiceMode = $bindable('espeak' as VoiceMode),
+    bubbleScale = $bindable(1),
+    isPlaying = $bindable(false),
+    isToneSetup = $bindable(false),
+    currentPosition = $bindable(0),
+    sceneDuration = $bindable(0),
+    voiceBackend = $bindable('idle' as VoiceBackend),
+    sliderValue = $bindable(0),
+    isSliderDragging = $bindable(false),
+  }: PresenterProps = $props();
 
   // Tracks the most recently loaded model to support re-synthesis when voiceMode changes.
   let currentLoadedModel: Model | null = null;
-  let currentPosition = $state<number>(0);
-  let sliderValue = $state<number>(0);
-  let sceneDuration = $state<number>(0);
-  let isSliderDragging = false;
   let wasPlayingBeforeDrag = false;
 
   // H+ FOV adaptation: preserves horizontal coverage on viewports narrower than 16:9.
@@ -73,10 +102,17 @@
   let authoredFov = 50;
 
   $effect(() => {
-    localStorage.setItem(VOICE_MODE_KEY, voiceMode);
+    void voiceMode; // track voiceMode changes — re-synthesise speech when mode switches
     if (currentLoadedModel && currentLoadedModel.speechEntries.length > 0) {
       loadModel(currentLoadedModel);
     }
+  });
+
+  $effect(() => {
+    void designMode; // react when design/playback mode is toggled
+    if (!renderer) return;
+    updateRendererSize();
+    if (orbitControls) orbitControls.enabled = designMode;
   });
 
   // Function to initialize the custom console.log
@@ -105,6 +141,55 @@
   onMount(() => {
     renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
 
+    // Editor camera for the design viewport — free orbit, not tied to any model.
+    editorCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 500);
+    editorCamera.position.set(0, 12, 20);
+    editorCamera.lookAt(0, 0, 0);
+    editorCamera.layers.enable(1); // sees scene content (layer 0) + design overlays (layer 1)
+
+    // TransformControls is created BEFORE OrbitControls so its event listeners are
+    // registered first. This gives TC priority in the pointerdown chain: when the user
+    // clicks a gizmo handle, TC fires 'dragging-changed' (disabling orbit) before
+    // OrbitControls has a chance to claim the drag. Both share the overlay domElement —
+    // using different elements would reintroduce the drag-capture race.
+    transformControls = new TransformControls(editorCamera, editorOverlay);
+    // getHelper() returns the visual Object3D gizmo; TC itself is a Controls/EventDispatcher.
+    tcHelper = transformControls.getHelper();
+    // Do NOT move tcHelper to layer 1 — TC's internal hover raycaster defaults to layer 0
+    // only, so shifting picker meshes to layer 1 would blind its own hit-detection.
+    // Instead, visibility is toggled each frame based on designMode (see animate()).
+    tcHelper.visible = false; // hidden until design mode is entered
+    transformControls.addEventListener('dragging-changed', (event) => {
+      if (event.value) {
+        // Drag started — disable orbit so it doesn't fight the gizmo.
+        tcDragging = true;
+        orbitControls.enabled = false;
+      } else {
+        // Drag ended — re-enable orbit and emit the new transform.
+        tcDragging = false;
+        orbitControls.enabled = designMode;
+        if (selectedObjectId && transformControls.object) {
+          const obj = transformControls.object;
+          ontransformend?.(
+            selectedObjectId,
+            [obj.position.x, obj.position.y, obj.position.z],
+            [obj.rotation.x, obj.rotation.y, obj.rotation.z],
+          );
+        }
+      }
+    });
+
+    orbitControls = new OrbitControls(editorCamera, editorOverlay);
+    orbitControls.enabled = false; // only active in design mode
+    orbitControls.enableDamping = true;
+    orbitControls.dampingFactor = 0.08;
+    orbitControls.target.set(0, 1, 0); // orbit around roughly actor-eye-height
+    // Record pointer-down position on the overlay for drag vs click discrimination.
+    editorOverlay.addEventListener('pointerdown', (e) => {
+      overlayPointerDownPos = { x: e.clientX, y: e.clientY };
+      tcDragging = false;
+    });
+
     // ResizeObserver fires on any container size change: window resize, Splitpanes
     // divider drag, pane collapse — window 'resize' misses all but the first.
     const container = canvas.parentElement!;
@@ -114,25 +199,26 @@
     updateRendererSize();
     initializeCustomConsoleLog();
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code !== 'Space' || !isToneSetup) return;
       const t = e.target as HTMLElement | null;
-      // Don't intercept Space when the user is typing in any text field.
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      e.preventDefault();
-      handlePlayPauseClick();
+      const isTyping = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+      if (e.code === 'Space' && isToneSetup && !isTyping) {
+        e.preventDefault();
+        handlePlayPauseClick();
+        return;
+      }
+      if (!designMode || isTyping) return;
+      if (e.key === 'Escape') { selectSceneObject(null); return; }
+      if (e.key === 'g' || e.key === 'G') transformControls.setMode('translate');
+      if (e.key === 'r' || e.key === 'R') transformControls.setMode('rotate');
     };
     window.addEventListener('keydown', onKeyDown);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       resizeObserver.disconnect();
+      orbitControls.dispose();
+      transformControls.dispose();
     };
   });
-
-  function formatTime(s: number): string {
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    return `${m}:${sec.toFixed(1).padStart(4, '0')}`;
-  }
 
   const setupTone = async () => {
     if (!isToneSetup) {
@@ -146,11 +232,27 @@
   function updateRendererSize() {
     if (!canvas || !renderer) return;
     const container = canvas.parentElement;
-    if (container) {
-      const width = container.clientWidth;
-      const height = container.clientHeight;
-      if (width < 1 || height < 1) return;
-      renderer.setSize(width, height);
+    if (!container) return;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    if (width < 1 || height < 1) return;
+    renderer.setSize(width, height);
+    // Keep the editor overlay covering exactly the right half in pixel terms.
+    const half = Math.floor(width / 2);
+    if (editorOverlay) {
+      editorOverlay.style.width = `${width - half}px`;
+    }
+    if (designMode) {
+      if (camera instanceof THREE.PerspectiveCamera) {
+        camera.aspect = half / height;
+        camera.fov = 2 * Math.atan(Math.tan((authoredFov * Math.PI) / 360) * DESIGN_ASPECT / (half / height)) * (180 / Math.PI);
+        camera.updateProjectionMatrix();
+      }
+      if (editorCamera) {
+        editorCamera.aspect = (width - half) / height;
+        editorCamera.updateProjectionMatrix();
+      }
+    } else {
       if (camera instanceof THREE.PerspectiveCamera) {
         const aspect = width / height;
         camera.aspect = aspect;
@@ -170,86 +272,35 @@
       await setupTone();
     }
 
-    mixers = [];
-    animationDict = {};
+    // Save selection to restore after the scene is rebuilt.
+    const prevSelectedId = selectedObjectId;
+
+    // Clear existing selection overlays.
+    if (selectionBox) {
+      scene?.remove(selectionBox);
+      selectionBox.dispose();
+      selectionBox = null;
+    }
+    transformControls?.detach();
+    selectedObjectId = null;
+
     Tone.getTransport().cancel();
 
-    scene = new THREE.Scene();
-    if (model.backgroundColor !== undefined) {
-      scene.background = new THREE.Color(model.backgroundColor);
-    }
-
-    // Use the camera directly from the model
-    camera = model.camera.threeCamera;
-
-    // Read authoredFov from the asset's stored property, not from the Three.js camera object.
-    // The Three.js camera.fov is mutated by updateRendererSize() on every resize, so reading
-    // it back on a subsequent load would capture an already-adapted value, not the authored one.
-    if (model.camera instanceof PerspectiveCameraAsset) {
-      authoredFov = model.camera.fov;
-    }
-
+    ({ scene, camera, authoredFov, animationDict, mixers } = await buildSceneGraph(model));
     updateRendererSize();
 
-    // Add lights to the scene
-    model.lights.forEach(light => {
-      scene.add(light.threeObject);
-    });
+    // Playback camera frustum — visible to the editor camera (layer 1) only.
+    cameraHelper = new THREE.CameraHelper(camera);
+    cameraHelper.layers.set(1);
+    scene.add(cameraHelper);
 
-    // Load all meshes and add them to the scene
-    model.meshes.forEach(mesh => {
-      scene.add(mesh.threeMesh);
-      
-      // Handle parent-child relationships for meshes
-      if (mesh.parent) {
-        const parentObject = scene.getObjectByName(mesh.parent);
-        if (parentObject) {
-          scene.remove(mesh.threeMesh); // Remove from scene
-          parentObject.add(mesh.threeMesh); // Add to parent
-        } else {
-          console.warn(`Parent object ${mesh.parent} not found for ${mesh.name}`);
-        }
+    // Re-add the TC helper to the new scene; restore selection if still valid.
+    if (tcHelper) {
+      scene.add(tcHelper);
+      if (prevSelectedId && scene.getObjectByName(prevSelectedId)) {
+        selectSceneObject(prevSelectedId);
       }
-    });
-
-    // Load all GLTF assets and wait for them to be added to the scene
-    const gltfPromises = model.gltfs.map(async (gltf) => {
-      await gltf.load();
-
-      scene.add(gltf.threeObject);
-      modelAnimationClips[gltf.name] = gltf.animations;
-
-      // Handle parent-child relationships
-      if (gltf.parent) {
-        const parentObject = scene.getObjectByName(gltf.parent);
-        if (parentObject) {
-          scene.remove(gltf.threeObject); // Remove from scene
-          parentObject.add(gltf.threeObject); // Add to parent
-        } else {
-          console.warn(`Parent object ${gltf.parent} not found for ${gltf.name}`);
-        }
-      }
-    });
-
-    await Promise.all(gltfPromises);
-
-    //for each animation in model, add the animation to the animationDict
-    //and add its mixer to the mixers array
-    // Shared mixer map: all GLTF clips for the same actor use one mixer so they can be crossfaded
-    const actorMixerMap = new Map<string, THREE.AnimationMixer>();
-    model.actions.forEach((action) => {
-      var sceneObject = scene.getObjectByName(action.target);
-      if (!sceneObject) {
-        //is action.target the name of the camera?
-        if (action.target === camera.name) {
-          sceneObject = camera;
-        } else {
-          console.error(`Could not find object with name ${action.target}`);
-          return; // from this iteration of the loop
-        }
-      }
-      action.addAction(animationDict, mixers, sceneObject, modelAnimationClips[action.target], actorMixerMap);
-    });
+    }
 
     Object.values(animationDict).forEach((animGroup) => {
       animGroup.forEach((anim) => {
@@ -429,7 +480,42 @@
 
     // Drive mixers via the playback engine
     engine.update(delta);
-    renderer.render(scene, camera);
+
+    if (designMode) {
+      // Keep the frustum helper in sync with the playback camera's current transform.
+      cameraHelper?.update();
+      // Keep the selection bounding box tight around any animated object.
+      selectionBox?.update();
+      // Advance damped orbital movement.
+      orbitControls?.update();
+      const w = renderer.domElement.width;
+      const h = renderer.domElement.height;
+      const half = Math.floor(w / 2);
+
+      renderer.setScissorTest(true);
+
+      // Left viewport — playback camera, scene content only.
+      // Hide the gizmo here: it lives on layer 0 so the playback camera would see it.
+      if (tcHelper) tcHelper.visible = false;
+      renderer.setViewport(0, 0, half, h);
+      renderer.setScissor(0, 0, half, h);
+      renderer.render(scene, camera);
+
+      // Right viewport — editor camera, scene + design overlays.
+      // Show gizmo only when an object is attached (not when deselected).
+      if (tcHelper) tcHelper.visible = selectedObjectId != null;
+      renderer.setViewport(half, 0, w - half, h);
+      renderer.setScissor(half, 0, w - half, h);
+      renderer.render(scene, editorCamera);
+
+      renderer.setScissorTest(false);
+      // Restore full-canvas viewport so the next mode switch starts clean.
+      renderer.setViewport(0, 0, w, h);
+    } else {
+      // Hide gizmo in playback-only mode.
+      if (tcHelper) tcHelper.visible = false;
+      renderer.render(scene, camera);
+    }
   };
 
   const playSequence = () => {
@@ -465,7 +551,73 @@
     sliderValue = 0;
   };
 
-  const handlePlayPauseClick = () => {
+  /**
+   * Select a scene object by name (actor ID or set-piece name), replacing any
+   * existing bounding-box highlight. Pass null to deselect.
+   * Only valid after a scene has been loaded.
+   */
+  function selectSceneObject(name: string | null) {
+    if (selectionBox) {
+      scene?.remove(selectionBox);
+      selectionBox.dispose();
+      selectionBox = null;
+    }
+    selectedObjectId = name;
+    if (name && scene) {
+      const obj = scene.getObjectByName(name);
+      if (obj) {
+        selectionBox = new THREE.BoxHelper(obj, 0x4a9eff);
+        selectionBox.layers.set(1); // design-only overlay
+        scene.add(selectionBox);
+        transformControls?.attach(obj);
+      } else {
+        transformControls?.detach();
+      }
+    } else {
+      transformControls?.detach();
+    }
+  }
+
+  /**
+   * Click handler for the editor overlay in design mode.
+   * Raycasts from the editor camera using the overlay's own bounds (correct NDC for
+   * the right-half viewport) to find and select or deselect a scene object.
+   */
+  function handleOverlayPointerUp(e: PointerEvent) {
+    if (!designMode || !scene || !editorCamera) return;
+    if (e.button !== 0) return; // only left-button clicks
+    // Skip if the pointer moved enough to be a drag (gizmo drag or orbit).
+    const dx = e.clientX - overlayPointerDownPos.x;
+    const dy = e.clientY - overlayPointerDownPos.y;
+    if (Math.sqrt(dx * dx + dy * dy) > 4) return;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    const raycaster = new THREE.Raycaster();
+    raycaster.layers.set(0); // only intersect scene content — skip layer 1 design overlays
+    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), editorCamera);
+    // Exclude the TC gizmo helper: its layer-0 meshes would otherwise be hit first,
+    // producing a bogus scene-root object with no name and preventing proper selection.
+    const allHits = raycaster.intersectObjects(scene.children, true);
+    const hits = tcHelper
+      ? allHits.filter((h) => !tcHelper.getObjectById(h.object.id))
+      : allHits;
+    if (hits.length === 0) {
+      selectSceneObject(null);
+      return;
+    }
+    // Walk up to the immediate child of the scene to get the root object name.
+    let obj: THREE.Object3D | null = hits[0].object;
+    while (obj && obj.parent !== scene) {
+      obj = obj.parent;
+    }
+    if (obj && obj.name) {
+      // Toggle: clicking the already-selected object deselects it.
+      selectSceneObject(obj.name === selectedObjectId ? null : obj.name);
+    }
+  }
+
+  export const handlePlayPauseClick = () => {
     if (!isPlaying) {
       playSequence();
     } else {
@@ -474,16 +626,15 @@
     isPlaying = !isPlaying;
   };
 
-  const handleRewindClick = () => {
+  export const handleRewindClick = () => {
     rewindSequence();
   };
 
-  const handleSliderInput = (event: Event) => {
-    const time = parseFloat((event.target as HTMLInputElement).value);
+  export const handleSliderInput = (time: number) => {
     setSequenceTo(time);
   };
 
-  const handleSliderPointerDown = () => {
+  export const handleSliderPointerDown = () => {
     wasPlayingBeforeDrag = isPlaying;
     isSliderDragging = true;
     if (isPlaying) {
@@ -492,7 +643,7 @@
     }
   };
 
-  const handleSliderPointerUp = () => {
+  export const handleSliderPointerUp = () => {
     isSliderDragging = false;
     if (wasPlayingBeforeDrag) {
       playSequence();
@@ -688,162 +839,65 @@
     position: relative;
   }
 
-  #transport {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
-    background: #1a1a1a;
-    border-top: 1px solid #333;
-    user-select: none;
-  }
-
-  .transport-btn {
-    font-size: 16px;
-    padding: 4px 10px;
-    background: #2a2a2a;
-    color: #e0e0e0;
-    border: 1px solid #444;
-    border-radius: 4px;
-    cursor: pointer;
-    line-height: 1;
-  }
-
-  .transport-btn:disabled {
-    opacity: 0.35;
-    cursor: default;
-  }
-
-  .transport-btn:not(:disabled):hover {
-    background: #3a3a3a;
-  }
-
-  #timecode {
-    font-family: monospace;
-    font-size: 13px;
-    color: #aaa;
-    white-space: nowrap;
-    min-width: 12ch;
-  }
-
-  #transport-slider {
-    flex: 1;
-    min-width: 0;
-    accent-color: #4a9eff;
-  }
-
   #log-panel {
     display: none;
   }
 
-  #voices-status {
-    font-size: 12px;
-    white-space: nowrap;
-    border-radius: 3px;
-    padding: 2px 6px;
+  #editor-overlay {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 50%;
+    height: 100%;
+    pointer-events: none;
   }
 
-  .voices-loading { color: #888; font-style: italic; }
-  .voices-kokoro  { color: #4caf7d; background: #1a2e22; }
-  .voices-browser { color: #c8a84b; background: #2a2318; cursor: help; }
+  #editor-overlay.active {
+    pointer-events: all;
+    cursor: default;
+  }
 
-  @media (max-width: 640px) {
-    #transport {
-      flex-wrap: wrap;
-      gap: 8px;
-    }
+  .mode-toggle {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    background: rgba(28, 28, 32, 0.80);
+    color: #e8e8e8;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 6px;
+    padding: 4px 14px;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+    user-select: none;
+  }
 
-    .transport-btn {
-      min-width: 44px;
-      min-height: 44px;
-      padding: 8px 14px;
-      font-size: 18px;
-    }
-
-    #timecode {
-      order: 2;
-    }
-
-    #transport-slider {
-      flex-basis: 100%;
-      order: 3;
-    }
-
-  #bubble-scale-label {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      color: #888;
-      font-size: 14px;
-      white-space: nowrap;
-      cursor: default;
-      user-select: none;
-    }
-
-  #bubble-scale-input {
-      width: 64px;
-      accent-color: #4a9eff;
-      cursor: pointer;
-    }
+  .mode-toggle:hover {
+    background: rgba(55, 55, 65, 0.90);
   }
 </style>
   
 <div id="content">
   <div id="render-container">
     <canvas bind:this={canvas} id="c"></canvas>
-  </div>
-  <div id="transport">
-    <button class="transport-btn" onclick={handleRewindClick} disabled={!isToneSetup} title="Rewind to start">⏮</button>
-    <button class="transport-btn" onclick={handlePlayPauseClick} disabled={!isToneSetup} title={isPlaying ? 'Pause' : 'Play'}>
-      {isPlaying ? '⏸' : '▶'}
-    </button>
-    <span id="timecode">{formatTime(currentPosition)} / {formatTime(sceneDuration || 16)}</span>
-    {#if voiceBackend !== 'idle'}
-      <span
-        id="voices-status"
-        class="voices-{voiceBackend}"
-        title={voiceBackend === 'browser' && voiceMode === 'kokoro' ? 'Kokoro unavailable on this CPU/browser. Using browser voices.' : undefined}
-      >{voiceBackend === 'loading'
-          ? 'Synthesising…'
-          : voiceBackend === 'espeak'
-          ? '🔊 eSpeak'
-          : voiceBackend === 'kokoro'
-          ? '🔊 Kokoro'
-          : '🔊 Browser voices'}</span>
-    {/if}
-    <select
-      id="voice-mode"
-      bind:value={voiceMode}
-      title="Voice synthesis mode"
-      disabled={!isToneSetup}
-    >
-      <option value="espeak">eSpeak (fast)</option>
-      <option value="web-speech">Browser voices</option>
-      <option value="kokoro">Kokoro (~92 MB)</option>
-    </select>
-    <label id="bubble-scale-label" title="Speech bubble size">
-      💬
-      <input
-        id="bubble-scale-input"
-        type="range"
-        min="0.5"
-        max="2.5"
-        step="0.1"
-        bind:value={bubbleScale}
-      />
-    </label>
-    <input
-      id="transport-slider"
-      type="range"
-      min="0"
-      max={sceneDuration || 16}
-      step="0.01"
-      bind:value={sliderValue}
-      oninput={handleSliderInput}
-      onpointerdown={handleSliderPointerDown}
-      onpointerup={handleSliderPointerUp}
-      disabled={!isToneSetup}
-    />
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      bind:this={editorOverlay}
+      id="editor-overlay"
+      role="application"
+      aria-label="Design viewport"
+      class:active={designMode}
+      onpointerup={handleOverlayPointerUp}
+      onkeydown={() => {}}
+    ></div>
+    <button
+      class="mode-toggle"
+      onclick={() => { designMode = !designMode; }}
+      title={designMode ? 'Switch to playback view' : 'Switch to design view'}
+    >{designMode ? '▶ Playback' : '✏ Design'}</button>
   </div>
   <div id="log-panel"></div>
 </div>

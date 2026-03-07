@@ -4,42 +4,51 @@
 
   interface Props {
     script:   ScriptLine[];
-    onreload: () => void;
+    onchange: (script: ScriptLine[]) => void;
+    /** Cast to populate the actor dropdown. Falls back to SANDBOX_ACTORS when absent. */
+    actors?:  { id: string; label: string }[];
   }
 
-  let { script = $bindable(), onreload }: Props = $props();
+  let { script, onchange, actors }: Props = $props();
+
+  const castActors = $derived(actors?.length ? actors : SANDBOX_ACTORS);
+
+  // Local copy for smooth in-progress editing. Synced from prop on undo/redo.
+  let localScript = $state<ScriptLine[]>([...script]);
+  $effect(() => { localScript = [...script]; });
 
   function addLine() {
-    const lastActorId = script.at(-1)?.actorId ?? 'alpha';
-    const nextActorId = lastActorId === 'alpha' ? 'beta' : 'alpha';
-    script = [...script, { actorId: nextActorId, text: '', pauseAfter: 0 }];
-    // No reload — empty text produces no speech output.
+    const lastActorId  = localScript.at(-1)?.actorId ?? castActors[0].id;
+    const lastIdx      = castActors.findIndex((a) => a.id === lastActorId);
+    const nextActorId  = castActors[(lastIdx + 1) % castActors.length].id;
+    localScript = [...localScript, { actorId: nextActorId, text: '', pauseAfter: 0 }];
+    onchange([...localScript]);
   }
 
   function deleteLine(i: number) {
-    script = script.filter((_, idx) => idx !== i);
-    onreload();
+    localScript = localScript.filter((_, idx) => idx !== i);
+    onchange([...localScript]);
   }
 
   function updateLine(i: number, patch: Partial<ScriptLine>) {
-    script = script.map((line, idx) => idx === i ? { ...line, ...patch } : line);
+    localScript = localScript.map((line, idx) => idx === i ? { ...line, ...patch } : line);
   }
 </script>
 
 <div class="script-editor">
-  {#if script.length === 0}
+  {#if localScript.length === 0}
     <p class="empty-hint">Add lines to build a scene.</p>
   {:else}
     <ol class="line-list">
-      {#each script as line, i (i)}
+      {#each localScript as line, i (i)}
         <li class="line-row">
           <select
             class="actor-select"
             value={line.actorId}
-            onchange={(e) => { updateLine(i, { actorId: (e.currentTarget as HTMLSelectElement).value as ScriptLine['actorId'] }); onreload(); }}
+            onchange={(e) => { updateLine(i, { actorId: (e.currentTarget as HTMLSelectElement).value as ScriptLine['actorId'] }); onchange([...localScript]); }}
             aria-label="Actor"
           >
-            {#each SANDBOX_ACTORS as actor}
+            {#each castActors as actor}
               <option value={actor.id}>{actor.label}</option>
             {/each}
           </select>
@@ -50,7 +59,7 @@
             placeholder="Dialogue…"
             value={line.text}
             oninput={(e)  => updateLine(i, { text: (e.currentTarget as HTMLTextAreaElement).value })}
-            onblur={onreload}
+            onblur={() => onchange([...localScript])}
             aria-label="Dialogue line"
           ></textarea>
 
@@ -65,7 +74,7 @@
                 step="0.5"
                 value={line.pauseAfter}
                 oninput={(e)  => updateLine(i, { pauseAfter: parseFloat((e.currentTarget as HTMLInputElement).value) || 0 })}
-                onblur={onreload}
+                onblur={() => onchange([...localScript])}
                 aria-label="Pause after line in seconds"
               />s
             </label>
@@ -84,7 +93,7 @@
 
   <div class="toolbar">
     <button class="add-btn" onclick={addLine}>+ Add line</button>
-    <button class="reload-btn" onclick={onreload} title="Recompile and reload the scene now">↺ Reload</button>
+    <button class="reload-btn" onclick={() => onchange([...localScript])} title="Recompile and reload the scene now">↺ Reload</button>
   </div>
 </div>
 

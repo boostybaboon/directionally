@@ -3,9 +3,10 @@
 export type Vec3 = [number, number, number];
 
 export type GeometryConfig =
-  | { type: 'box';    width: number; height: number; depth: number }
-  | { type: 'plane';  width: number; height: number }
-  | { type: 'sphere'; radius: number; widthSegments?: number; heightSegments?: number };
+  | { type: 'box';      width: number; height: number; depth: number }
+  | { type: 'plane';    width: number; height: number }
+  | { type: 'sphere';   radius: number; widthSegments?: number; heightSegments?: number }
+  | { type: 'cylinder'; radiusTop: number; radiusBottom: number; height: number; radialSegments?: number };
 
 export type MaterialConfig = {
   color: number;
@@ -147,6 +148,9 @@ export type SpeakAction = {
   actorId: string;
   startTime: number;
   text: string;
+  /** Authoring hint: gap after this line before the next starts (seconds). Stored
+   *  for round-trip fidelity; does not affect playback (baked into startTime). */
+  pauseAfter?: number;
   /** Per-line voice override. When absent, the actor's default voice is used. */
   voice?: ActorVoice;
 };

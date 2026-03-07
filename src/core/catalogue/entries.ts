@@ -1,0 +1,56 @@
+import type { CatalogueEntry } from './types.js';
+
+/**
+ * Bundled asset catalogue — characters and set pieces shipped with the application.
+ * Order within each group is display order in the UI.
+ */
+export const CATALOGUE_ENTRIES: CatalogueEntry[] = [
+  // ── Characters ────────────────────────────────────────────────────────────
+  {
+    kind: 'character',
+    id: 'robot-expressive',
+    label: 'Robot',
+    gltfPath: '/models/gltf/RobotExpressive.glb',
+    defaultAnimation: 'Idle',
+    defaultScale: 1,
+  },
+  {
+    kind: 'character',
+    id: 'soldier',
+    label: 'Soldier',
+    gltfPath: '/models/gltf/Soldier.glb',
+    // Clips present in the Three.js Soldier example asset (MIT licensed).
+    defaultAnimation: 'idle',
+    defaultScale: 1,
+  },
+
+  // ── Set pieces ────────────────────────────────────────────────────────────
+  {
+    kind: 'set-piece',
+    id: 'floor-plane',
+    label: 'Floor (plane)',
+    geometry: { type: 'plane', width: 10, height: 10 },
+    material: { color: 0x444444, roughness: 0.8, metalness: 0.1 },
+  },
+  {
+    kind: 'set-piece',
+    id: 'box',
+    label: 'Box',
+    geometry: { type: 'box', width: 1, height: 1, depth: 1 },
+    material: { color: 0x8844aa, roughness: 0.5, metalness: 0.2 },
+  },
+  {
+    kind: 'set-piece',
+    id: 'sphere',
+    label: 'Sphere',
+    geometry: { type: 'sphere', radius: 0.5 },
+    material: { color: 0x4488cc, roughness: 0.5, metalness: 0.2 },
+  },
+  {
+    kind: 'set-piece',
+    id: 'cylinder',
+    label: 'Cylinder',
+    geometry: { type: 'cylinder', radiusTop: 0.5, radiusBottom: 0.5, height: 1 },
+    material: { color: 0xaa6644, roughness: 0.5, metalness: 0.2 },
+  },
+];

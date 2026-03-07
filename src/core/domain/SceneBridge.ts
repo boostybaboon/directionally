@@ -9,6 +9,7 @@ import {
 } from '../../lib/model/Light.js';
 import {
   BoxGeometryAsset,
+  CylinderGeometryAsset,
   PlaneGeometryAsset,
   SphereGeometryAsset,
   type GeometryAsset,
@@ -38,6 +39,8 @@ function buildGeometry(config: GeometryConfig): GeometryAsset {
       return new PlaneGeometryAsset(config.width, config.height);
     case 'sphere':
       return new SphereGeometryAsset(config.radius, config.widthSegments, config.heightSegments);
+    case 'cylinder':
+      return new CylinderGeometryAsset(config.radiusTop, config.radiusBottom, config.height, config.radialSegments);
   }
 }
 
