@@ -91,9 +91,8 @@ export function restageCast(
     actorId:       sa.id,
     animationName: idleClipFor(sa),
     startTime:     0,
-    endTime:       duration,
-    // No fadeIn on the default idle — it is the initial pose, not a transition.
-    // A fadeIn of 0.3 would make weight=0 at t=0 and cause a T-pose flash on load.
+    // No endTime → end = Infinity → no hard-stop Tone schedule → idle keeps playing
+    // through scene end instead of snapping to bind/T-pose when the scheduler fires.
     fadeIn:        0,
     loop:          'repeat',
   }));

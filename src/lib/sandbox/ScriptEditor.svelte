@@ -17,74 +17,121 @@
   let localScript = $state<ScriptLine[]>([...script]);
   $effect(() => { localScript = [...script]; });
 
+  // Index of the line currently open for editing (-1 = none).
+  let editingIdx = $state<number>(-1);
+
+  function actorLabel(id: string): string {
+    return castActors.find((a) => a.id === id)?.label ?? id;
+  }
+
   function addLine() {
-    const lastActorId  = localScript.at(-1)?.actorId ?? castActors[0].id;
-    const lastIdx      = castActors.findIndex((a) => a.id === lastActorId);
-    const nextActorId  = castActors[(lastIdx + 1) % castActors.length].id;
+    const lastActorId = localScript.at(-1)?.actorId ?? castActors[0].id;
+    const lastIdx     = castActors.findIndex((a) => a.id === lastActorId);
+    const nextActorId = castActors[(lastIdx + 1) % castActors.length].id;
     localScript = [...localScript, { actorId: nextActorId, text: '', pauseAfter: 0 }];
+    editingIdx  = localScript.length - 1;
     onchange([...localScript]);
   }
 
   function deleteLine(i: number) {
     localScript = localScript.filter((_, idx) => idx !== i);
+    if (editingIdx === i) editingIdx = -1;
+    else if (editingIdx > i) editingIdx -= 1;
     onchange([...localScript]);
   }
 
   function updateLine(i: number, patch: Partial<ScriptLine>) {
     localScript = localScript.map((line, idx) => idx === i ? { ...line, ...patch } : line);
   }
+
+  function commitLine(i: number) {
+    editingIdx = -1;
+    onchange([...localScript]);
+  }
 </script>
 
-<div class="script-editor">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="screenplay"
+  onclick={(e) => {
+    if (editingIdx >= 0 && !(e.target as HTMLElement).closest('.beat')) {
+      commitLine(editingIdx);
+    }
+  }}
+>
   {#if localScript.length === 0}
-    <p class="empty-hint">Add lines to build a scene.</p>
+    <p class="empty-hint">No dialogue yet — add a line to begin.</p>
   {:else}
-    <ol class="line-list">
+    <ol class="beats">
       {#each localScript as line, i (i)}
-        <li class="line-row">
-          <select
-            class="actor-select"
-            value={line.actorId}
-            onchange={(e) => { updateLine(i, { actorId: (e.currentTarget as HTMLSelectElement).value as ScriptLine['actorId'] }); onchange([...localScript]); }}
-            aria-label="Actor"
+        <li class="beat" class:editing={editingIdx === i}>
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="beat-inner"
+            onclick={(e) => {
+              const tag = (e.target as HTMLElement).tagName.toLowerCase();
+              if (['textarea', 'select', 'input', 'button'].includes(tag)) return;
+              editingIdx = editingIdx === i ? -1 : i;
+              if (editingIdx === -1) onchange([...localScript]);
+            }}
+            onkeydown={(e) => { if (e.key === 'Escape') commitLine(i); }}
           >
-            {#each castActors as actor}
-              <option value={actor.id}>{actor.label}</option>
-            {/each}
-          </select>
-
-          <textarea
-            class="line-text"
-            rows="2"
-            placeholder="Dialogue…"
-            value={line.text}
-            oninput={(e)  => updateLine(i, { text: (e.currentTarget as HTMLTextAreaElement).value })}
-            onblur={() => onchange([...localScript])}
-            aria-label="Dialogue line"
-          ></textarea>
-
-          <div class="line-meta">
-            <label class="pause-label">
-              pause
-              <input
-                type="number"
-                class="pause-input"
-                min="0"
-                max="30"
-                step="0.5"
-                value={line.pauseAfter}
-                oninput={(e)  => updateLine(i, { pauseAfter: parseFloat((e.currentTarget as HTMLInputElement).value) || 0 })}
-                onblur={() => onchange([...localScript])}
-                aria-label="Pause after line in seconds"
-              />s
-            </label>
-
-            <button
-              class="delete-btn"
-              onclick={() => deleteLine(i)}
-              aria-label="Delete line"
-              title="Delete line"
-            >✕</button>
+          {#if editingIdx === i}
+            <!-- Editing mode -->
+            <div class="beat-edit">
+              <div class="edit-top">
+                <select
+                  class="actor-select"
+                  value={line.actorId}
+                  onchange={(e) => { updateLine(i, { actorId: (e.currentTarget as HTMLSelectElement).value }); onchange([...localScript]); }}
+                  aria-label="Actor"
+                >
+                  {#each castActors as actor}
+                    <option value={actor.id}>{actor.label.toUpperCase()}</option>
+                  {/each}
+                </select>
+                <button
+                  class="delete-btn"
+                  onclick={(e) => { e.stopPropagation(); deleteLine(i); }}
+                  title="Delete line"
+                  aria-label="Delete line"
+                >✕</button>
+              </div>
+              <textarea
+                class="dialogue-input"
+                rows="3"
+                placeholder="Dialogue…"
+                value={line.text}
+                oninput={(e) => updateLine(i, { text: (e.currentTarget as HTMLTextAreaElement).value })}
+                onblur={() => commitLine(i)}
+                onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); commitLine(i); } }}
+              ></textarea>
+              <label class="pause-row">
+                <span class="pause-label">pause after</span>
+                <input
+                  type="number"
+                  class="pause-input"
+                  min="0"
+                  max="30"
+                  step="0.5"
+                  value={line.pauseAfter}
+                  oninput={(e) => updateLine(i, { pauseAfter: parseFloat((e.currentTarget as HTMLInputElement).value) || 0 })}
+                  onblur={() => commitLine(i)}
+                  aria-label="Pause after line in seconds"
+                />
+                <span class="pause-unit">s</span>
+              </label>
+            </div>
+          {:else}
+            <!-- Read mode -->
+            <div class="beat-read">
+              <span class="character-name">{actorLabel(line.actorId).toUpperCase()}</span>
+              <p class="dialogue-text">{line.text || '…'}</p>
+              {#if line.pauseAfter > 0}
+                <span class="pause-tag">({line.pauseAfter}s)</span>
+              {/if}
+            </div>
+          {/if}
           </div>
         </li>
       {/each}
@@ -93,112 +140,175 @@
 
   <div class="toolbar">
     <button class="add-btn" onclick={addLine}>+ Add line</button>
-    <button class="reload-btn" onclick={() => onchange([...localScript])} title="Recompile and reload the scene now">↺ Reload</button>
   </div>
 </div>
 
 <style>
-  .script-editor {
+  .screenplay {
     display: flex;
     flex-direction: column;
+    height: 100%;
     min-height: 0;
     overflow: hidden;
+    font-family: 'Courier New', 'Courier', monospace;
   }
 
   .empty-hint {
-    padding: 12px 14px;
+    padding: 16px 14px;
     color: #444;
     font-style: italic;
     font-size: 12px;
     margin: 0;
+    font-family: inherit;
   }
 
-  .line-list {
+  .beats {
     list-style: none;
     margin: 0;
-    padding: 4px 0;
+    padding: 8px 0;
     overflow-y: auto;
     flex: 1;
     min-height: 0;
   }
 
-  .line-row {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 6px 10px;
-    border-bottom: 1px solid #222;
+  .beat {
+    padding: 10px 16px;
+    border-bottom: 1px solid #1e1e1e;
+    cursor: pointer;
+    transition: background 0.1s;
   }
 
-  .line-row:last-child {
+  .beat:last-child {
     border-bottom: none;
   }
 
-  .actor-select {
-    background: #252525;
+  .beat:hover:not(.editing) {
+    background: #1e1e1e;
+  }
+
+  .beat.editing {
+    background: #1a1a24;
+    cursor: default;
+  }
+
+  /* Read mode */
+
+  .beat-read {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .character-name {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
     color: #4a9eff;
-    border: 1px solid #333;
-    border-radius: 3px;
+    user-select: none;
+  }
+
+  .dialogue-text {
+    margin: 0;
+    padding: 0 0 0 16px;
+    font-size: 12px;
+    color: #ccc;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .pause-tag {
+    display: block;
+    padding-left: 16px;
+    font-size: 10px;
+    color: #555;
+    font-style: italic;
+    margin-top: 2px;
+  }
+
+  /* Edit mode */
+
+  .beat-edit {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .edit-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .actor-select {
+    background: #252535;
+    color: #4a9eff;
+    border: 1px solid #3a3a4a;
+    border-radius: 2px;
     padding: 2px 6px;
     font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-weight: 700;
+    font-family: inherit;
+    letter-spacing: 0.1em;
     cursor: pointer;
-    align-self: flex-start;
   }
 
   .actor-select:focus {
     outline: 1px solid #4a9eff;
   }
 
-  .line-text {
+  .dialogue-input {
     resize: vertical;
-    background: #1e1e1e;
+    background: #141418;
     color: #d4d4d4;
-    border: 1px solid #333;
-    border-radius: 3px;
-    padding: 5px 7px;
+    border: 1px solid #3a3a4a;
+    border-radius: 2px;
+    padding: 6px 8px;
     font-size: 12px;
     font-family: inherit;
-    line-height: 1.4;
-    min-height: 38px;
+    line-height: 1.5;
+    min-height: 48px;
+    margin-left: 16px;
   }
 
-  .line-text:focus {
+  .dialogue-input:focus {
     outline: 1px solid #4a9eff;
     border-color: #4a9eff;
   }
 
-  .line-meta {
+  .pause-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    gap: 6px;
+    margin-left: 16px;
   }
 
   .pause-label {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    color: #666;
+    font-size: 10px;
+    color: #555;
+    font-style: italic;
     user-select: none;
   }
 
   .pause-input {
     width: 44px;
-    background: #1e1e1e;
+    background: #141418;
     color: #d4d4d4;
-    border: 1px solid #333;
-    border-radius: 3px;
+    border: 1px solid #3a3a4a;
+    border-radius: 2px;
     padding: 2px 4px;
     font-size: 11px;
+    font-family: inherit;
     text-align: right;
   }
 
   .pause-input:focus {
     outline: 1px solid #4a9eff;
+  }
+
+  .pause-unit {
+    font-size: 10px;
+    color: #555;
   }
 
   .delete-btn {
@@ -208,7 +318,7 @@
     cursor: pointer;
     font-size: 12px;
     padding: 2px 4px;
-    border-radius: 3px;
+    border-radius: 2px;
     line-height: 1;
     transition: color 0.1s, background 0.1s;
   }
@@ -220,14 +330,12 @@
 
   .toolbar {
     display: flex;
-    gap: 6px;
     padding: 6px 10px;
-    border-top: 1px solid #2a2a2a;
+    border-top: 1px solid #222;
     flex-shrink: 0;
   }
 
-  .add-btn,
-  .reload-btn {
+  .add-btn {
     flex: 1;
     background: #252525;
     color: #bbb;
@@ -235,14 +343,53 @@
     border-radius: 3px;
     padding: 5px 8px;
     font-size: 11px;
+    font-family: inherit;
     cursor: pointer;
     transition: background 0.1s, color 0.1s;
   }
 
-  .add-btn:hover,
-  .reload-btn:hover {
+  .add-btn:hover {
     background: #1e2d3d;
     color: #4a9eff;
     border-color: #4a9eff;
+  }
+
+  /* Print styles */
+
+  @media print {
+    .screenplay {
+      font-family: 'Courier New', monospace;
+      color: #000;
+      background: #fff;
+      font-size: 12pt;
+      overflow: visible;
+      height: auto;
+    }
+
+    .beats {
+      overflow: visible;
+    }
+
+    .beat {
+      padding: 8pt 0;
+      border-bottom: none;
+      cursor: default;
+      page-break-inside: avoid;
+    }
+
+    .character-name {
+      color: #000;
+      font-weight: bold;
+    }
+
+    .dialogue-text {
+      color: #000;
+    }
+
+    .pause-tag {
+      color: #666;
+    }
+
+    .toolbar { display: none; }
   }
 </style>
