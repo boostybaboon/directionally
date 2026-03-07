@@ -6,13 +6,13 @@ import type { StagedActor, AnimateAction, Vec3 } from '../domain/types.js';
 const FALLBACK_IDLE_CLIP = 'Idle';
 
 /**
- * Conservative spoken-word duration estimate in seconds.
- * eSpeak synthesises faster than neural — this generous estimate prevents
+ * Spoken-word duration estimate in seconds.
+ * eSpeak synthesises faster than neural — the small constant prevents
  * lines overlapping in the rare case synthesis runs slower than expected.
  */
 export function estimateDuration(text: string): number {
   const words = text.trim().split(/\s+/).filter(Boolean).length;
-  return words / 2.5 + 0.6;
+  return words / 2.5 + 0.3;
 }
 
 /** Spread N actors evenly across the X axis; first half face +X, second half -X. */

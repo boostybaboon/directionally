@@ -180,11 +180,28 @@ export type LightingAction = {
   keyframes: KeyframeData;
 };
 
-// Keyframe the camera over time
+// Keyframe the camera over time (raw KeyframeData; prefer CameraTrackAction for new authoring)
 export type CameraAction = {
   type: 'camera';
   startTime: number;
   keyframes: KeyframeData;
+};
+
+/**
+ * A single spatial keyframe used by camera tracks and (in future) character movement paths.
+ * `lookAt` is the world-space point the camera (or actor) faces at this moment.
+ */
+export type PathKeyframe = { time: number; position: Vec3; lookAt: Vec3 };
+
+/**
+ * Animate the playback camera through a sequence of position + lookAt keyframes.
+ * The path is baked into VectorKeyframeTrack (position) + QuaternionKeyframeTrack
+ * (quaternion derived from lookAt) at scene-build time — no render-loop lookAt() needed.
+ * The PathKeyframe type is intentionally shared with future character MovePath actions.
+ */
+export type CameraTrackAction = {
+  type: 'cameraTrack';
+  keyframes: PathKeyframe[];
 };
 
 export type SceneAction =
@@ -194,4 +211,5 @@ export type SceneAction =
   | EnterAction
   | ExitAction
   | LightingAction
-  | CameraAction;
+  | CameraAction
+  | CameraTrackAction;

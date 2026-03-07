@@ -176,7 +176,10 @@ describe('SetSpeakLinesCommand', () => {
     expect(result.scene!.duration).toBeGreaterThan(6);
   });
 
-  it('extends looping idle anim endTimes to match new scene duration', () => {
+  it('preserves looping idle anim endTime unchanged (no T-pose snap at scene end)', () => {
+    // SetSpeakLinesCommand must NOT overwrite endTime on looping idle anims.
+    // If it did, the PlaybackEngine schedules a Tone stop at that time which
+    // snaps the actor to bind pose (T-pose) when the scene ends.
     const scene = makeScene({
       actions: [
         { type: 'animate', actorId: 'a1', animationName: 'Idle', startTime: 0, endTime: 6, fadeIn: 0.3, loop: 'repeat' },
@@ -186,7 +189,7 @@ describe('SetSpeakLinesCommand', () => {
     const lines = [makeLine('a1', 'A very long piece of dialogue text for duration testing purposes today')];
     const result = new SetSpeakLinesCommand(lines).execute(doc);
     const idle = result.scene!.actions.find((a) => a.type === 'animate') as { endTime: number };
-    expect(idle.endTime).toBeCloseTo(result.scene!.duration!);
+    expect(idle.endTime).toBe(6);
   });
 
   it('preserves pauseAfter on the resulting SpeakAction for round-trip fidelity', () => {

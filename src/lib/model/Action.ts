@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { PathKeyframe } from '../../core/domain/types.js';
 
 export enum LoopStyle {
   LoopRepeat,
@@ -212,4 +213,75 @@ export class GLTFAction extends Action {
       console.error('Animation not found:', this.animationName);
     }
   }
-} 
+}
+
+/**
+ * Drives the playback camera along a spatial path defined by PathKeyframe[]
+ * (position + lookAt at each keyframe time). Position is interpolated via
+ * VectorKeyframeTrack; orientation is baked as quaternions and interpolated
+ * via QuaternionKeyframeTrack — no per-frame camera.lookAt() call needed.
+ *
+ * The PathKeyframe type is shared with future character MovePath actions so
+ * the same spline editor UI and runtime can serve both camera and actor paths.
+ */
+export class CameraPathAction extends Action {
+  constructor(
+    name: string,
+    target: string,
+    private readonly keyframes: PathKeyframe[],
+  ) {
+    super(name, target, 0);
+  }
+
+  addAction(
+    animationDict: AnimationDict,
+    mixers: THREE.AnimationMixer[],
+    target: THREE.Object3D,
+    _meshClips: THREE.AnimationClip[],
+    _mixerMap?: Map<string, THREE.AnimationMixer>,
+  ): void {
+    if (this.keyframes.length === 0) return;
+
+    const times = this.keyframes.map((k) => k.time);
+    const posValues: number[] = [];
+    const quatValues: number[] = [];
+    const up = new THREE.Vector3(0, 1, 0);
+
+    for (const kf of this.keyframes) {
+      const pos    = new THREE.Vector3(...kf.position);
+      const lookAt = new THREE.Vector3(...kf.lookAt);
+      posValues.push(pos.x, pos.y, pos.z);
+      const q = new THREE.Quaternion().setFromRotationMatrix(
+        new THREE.Matrix4().lookAt(pos, lookAt, up),
+      );
+      quatValues.push(q.x, q.y, q.z, q.w);
+    }
+
+    const clipDuration = times[times.length - 1];
+    const clip = new THREE.AnimationClip(this.name, clipDuration, [
+      new THREE.VectorKeyframeTrack('.position', times, posValues),
+      new THREE.QuaternionKeyframeTrack('.quaternion', times, quatValues, THREE.InterpolateLinear),
+    ]);
+
+    const mixer = new THREE.AnimationMixer(target);
+    mixers.push(mixer);
+
+    const animAction = mixer.clipAction(clip);
+    animAction.loop = THREE.LoopOnce;
+    animAction.clampWhenFinished = true;
+    animAction.play();
+    animAction.paused = true;
+
+    if (!animationDict[this.name]) animationDict[this.name] = [];
+    animationDict[this.name].push({
+      anim: animAction,
+      start: 0,
+      end: clipDuration,
+      clipDuration,
+      loop: THREE.LoopOnce,
+      repetitions: 1,
+      fadeIn: 0,
+      fadeOut: 0,
+    });
+  }
+}

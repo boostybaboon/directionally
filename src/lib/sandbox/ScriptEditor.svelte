@@ -30,7 +30,9 @@
     const nextActorId = castActors[(lastIdx + 1) % castActors.length].id;
     localScript = [...localScript, { actorId: nextActorId, text: '', pauseAfter: 0 }];
     editingIdx  = localScript.length - 1;
-    onchange([...localScript]);
+    // Don't call onchange here — empty lines are filtered by SetSpeakLinesCommand and
+    // would cause the $effect to reset localScript before the user can type anything.
+    // onchange fires from commitLine() once the user has finished editing.
   }
 
   function deleteLine(i: number) {
@@ -50,6 +52,7 @@
   }
 </script>
 
+<!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="screenplay"
@@ -111,9 +114,9 @@
                 <input
                   type="number"
                   class="pause-input"
-                  min="0"
+                  min="-2"
                   max="30"
-                  step="0.5"
+                  step="0.1"
                   value={line.pauseAfter}
                   oninput={(e) => updateLine(i, { pauseAfter: parseFloat((e.currentTarget as HTMLInputElement).value) || 0 })}
                   onblur={() => commitLine(i)}
@@ -127,8 +130,8 @@
             <div class="beat-read">
               <span class="character-name">{actorLabel(line.actorId).toUpperCase()}</span>
               <p class="dialogue-text">{line.text || '…'}</p>
-              {#if line.pauseAfter > 0}
-                <span class="pause-tag">({line.pauseAfter}s)</span>
+              {#if line.pauseAfter !== 0}
+                <span class="pause-tag">{line.pauseAfter > 0 ? '+' : ''}{line.pauseAfter}s</span>
               {/if}
             </div>
           {/if}
@@ -139,7 +142,8 @@
   {/if}
 
   <div class="toolbar">
-    <button class="add-btn" onclick={addLine}>+ Add line</button>
+    <button class="add-btn" onclick={(e) => { e.stopPropagation(); addLine(); }}>+ Add line</button>
+    <button class="print-btn" onclick={(e) => { e.stopPropagation(); window.print(); }} title="Print screenplay">⎙ Print</button>
   </div>
 </div>
 
@@ -330,6 +334,7 @@
 
   .toolbar {
     display: flex;
+    gap: 6px;
     padding: 6px 10px;
     border-top: 1px solid #222;
     flex-shrink: 0;
@@ -349,6 +354,25 @@
   }
 
   .add-btn:hover {
+    background: #1e2d3d;
+    color: #4a9eff;
+    border-color: #4a9eff;
+  }
+
+  .print-btn {
+    background: #252525;
+    color: #888;
+    border: 1px solid #333;
+    border-radius: 3px;
+    padding: 5px 10px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .print-btn:hover {
     background: #1e2d3d;
     color: #4a9eff;
     border-color: #4a9eff;

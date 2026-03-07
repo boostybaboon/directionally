@@ -677,6 +677,20 @@
     }
   };
 
+  /**
+   * Returns the current design camera position and the OrbitControls look-at target.
+   * Use this to capture a camera keyframe at the current playback time.
+   * Returns null when design mode is not yet initialised.
+   */
+  export function getDesignCameraState(): { position: [number, number, number]; lookAt: [number, number, number] } | null {
+    if (!editorCamera || !orbitControls) return null;
+    const p = editorCamera.position;
+    const t = orbitControls.target;
+    return {
+      position: [+p.x.toFixed(3), +p.y.toFixed(3), +p.z.toFixed(3)],
+      lookAt:   [+t.x.toFixed(3), +t.y.toFixed(3), +t.z.toFixed(3)],
+    };
+  }
 
   // Pitch and rate per fallback gender — audibly distinguishes characters even
   // when the browser only has one installed voice.
@@ -824,13 +838,40 @@
     const sprite = new THREE.Sprite(spriteMaterial);
     sprite.renderOrder = 999;
 
-    // bubbleScale is captured by closure — uses the value current at bubble-creation time.
-    const labelBaseScale = 0.01 * bubbleScale;
-    sprite.scale.set(canvas.width * labelBaseScale, canvas.height * labelBaseScale, 1);
-
     const actor = scene.getObjectByName(actorId);
     if (actor) {
-      sprite.position.set(0, 4.5, 0);
+      // Measure the actor's world-space bounding box.
+      const box = new THREE.Box3().setFromObject(actor);
+      const actorHeight = Math.max(0.5, box.max.y - box.min.y);
+
+      // Screen-invariant sizing: decide how tall the bubble should be in *screen
+      // pixels*, then convert to world units via the camera frustum.  This keeps
+      // the bubble the same apparent size regardless of character defaultScale,
+      // camera zoom, FOV, or canvas resolution.
+      const actorCenter  = box.getCenter(new THREE.Vector3());
+      const distToActor  = camera.position.distanceTo(actorCenter);
+      const activeCam    = camera instanceof THREE.PerspectiveCamera ? camera : editorCamera;
+      const vFovRad      = (activeCam.fov * Math.PI) / 180;
+      const worldPerPx   = (2 * distToActor * Math.tan(vFovRad / 2)) / renderer.domElement.height;
+
+      // Target ~130 screen-pixels tall, scaled by the user's bubble-scale slider.
+      const targetWorldH = 130 * bubbleScale * worldPerPx;
+      const spriteScale  = targetWorldH / canvas.height;
+
+      // The sprite is a child of the actor, so actor.scale would amplify
+      // sprite.scale in world space.  Divide by actor world scale to cancel it.
+      const actorWorldScale = actor.getWorldScale(new THREE.Vector3());
+      const localScale = spriteScale / actorWorldScale.y;
+      sprite.scale.set(canvas.width * localScale, canvas.height * localScale, 1);
+
+      // Place the sprite centre just above the bounding-box top.
+      const gap      = actorHeight * 0.08 + targetWorldH / 2;
+      const worldTopY = box.max.y + gap;
+      const actorWorld = new THREE.Vector3();
+      actor.getWorldPosition(actorWorld);
+      const localPos = actor.worldToLocal(new THREE.Vector3(actorWorld.x, worldTopY, actorWorld.z));
+      sprite.position.copy(localPos);
+
       actor.add(sprite);
       activeSpeechBubbles.set(actorId, sprite);
     }

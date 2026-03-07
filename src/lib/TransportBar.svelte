@@ -76,11 +76,12 @@
     <input
       id="bubble-scale-input"
       type="range"
-      min="0.5"
-      max="2.5"
-      step="0.1"
+      min="0.1"
+      max="1.5"
+      step="0.05"
       bind:value={bubbleScale}
     />
+    <span class="bubble-scale-value">{bubbleScale.toFixed(1)}</span>
   </label>
   <input
     id="transport-slider"
@@ -188,6 +189,14 @@
       width: 64px;
       accent-color: #4a9eff;
       cursor: pointer;
+    }
+
+    .bubble-scale-value {
+      min-width: 2.2ch;
+      text-align: right;
+      font-size: 11px;
+      color: #666;
+      font-variant-numeric: tabular-nums;
     }
   }
 </style>

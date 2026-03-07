@@ -20,9 +20,9 @@
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import type { StoredProduction } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
-  import { RenameProductionCommand, SetScriptCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand } from '../core/document/commands.js';
+  import { RenameProductionCommand, SetScriptCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand, AddCameraKeyframeCommand, RemoveCameraKeyframeCommand } from '../core/document/commands.js';
   import type { StoredActor } from '../core/storage/types.js';
-  import type { SpeakAction } from '../core/domain/types.js';
+  import type { SpeakAction, PathKeyframe } from '../core/domain/types.js';
   import { getCharacters, getSetPieces } from '../core/catalogue/catalogue.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
   import type { SetPiece } from '../core/domain/types.js';
@@ -99,6 +99,10 @@
   let newSetPieceCatalogueId = $state(CATALOGUE_SET_PIECES[0]?.id ?? '');
   const scenePieces = $derived(docSnapshot?.scene?.set ?? []);
   const sceneLights = $derived(docSnapshot?.scene?.lights ?? []);
+  const cameraKeyframes = $derived(
+    (docSnapshot?.scene?.actions.find((a) => a.type === 'cameraTrack') as { keyframes: PathKeyframe[] } | undefined)
+      ?.keyframes ?? []
+  );
 
   // Selected scene object (actor ID or set-piece name); driven by Presenter raycasting.
   let selectedObjectId = $state<string | null>(null);
@@ -233,6 +237,18 @@
 
   function removeSetPiece(name: string) {
     activeDoc?.execute(new RemoveSetPieceCommand(name));
+  }
+
+  function captureCameraKeyframe() {
+    if (!activeDoc || !designMode) return;
+    const state = presenter?.getDesignCameraState();
+    if (!state) return;
+    const time = parseFloat(currentPosition.toFixed(2));
+    activeDoc.execute(new AddCameraKeyframeCommand(time, state.position, state.lookAt));
+  }
+
+  function removeCameraKeyframe(index: number) {
+    activeDoc?.execute(new RemoveCameraKeyframeCommand(index));
   }
 
   /**
@@ -665,6 +681,31 @@
                       </ul>
                     {/if}
                   </div>
+
+                  <!-- Camera -->
+                  <div class="stage-section">
+                    <div class="stage-section-header">
+                      <span class="stage-section-label">Camera</span>
+                      {#if designMode}
+                        <button class="new-btn" onclick={captureCameraKeyframe} title="Capture keyframe at current time">
+                          + Keyframe
+                        </button>
+                      {/if}
+                    </div>
+                    {#if cameraKeyframes.length === 0}
+                      <p class="stage-empty">{designMode ? 'No keyframes — orbit the design camera and click + Keyframe.' : 'No camera keyframes. Enable design mode to add.'}</p>
+                    {:else}
+                      <ul class="cast-list">
+                        {#each cameraKeyframes as kf, i}
+                          <li class="cast-row">
+                            <span class="cast-role kf-time">{kf.time.toFixed(2)}s</span>
+                            <span class="cast-char kf-pos">{kf.position.map((v) => v.toFixed(1)).join(', ')}</span>
+                            <button class="icon-btn danger" onclick={() => removeCameraKeyframe(i)} title="Remove keyframe">✕</button>
+                          </li>
+                        {/each}
+                      </ul>
+                    {/if}
+                  </div>
                 {:else}
                   <p class="panel-placeholder">Select or create a production.</p>
                 {/if}
@@ -994,7 +1035,7 @@
     min-height: 0;
   }
 
-  .stage-tab-content :global(.script-editor) {
+  .stage-tab-content :global(.screenplay) {
     flex: 1;
     min-height: 0;
   }

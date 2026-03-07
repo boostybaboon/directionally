@@ -201,15 +201,29 @@ Keeps a local copy of the script for smooth in-progress typing. On blur or struc
 
 ---
 
-### Phase 6 — Script as document
+### Phase 6 — Script as document ✅ COMPLETE
 *Screenplay view of the domain model; two-way editor. Fills the Script tab in the right panel.*
 
-- Scene's `speak` actions rendered as a screenplay: `SCENE HEADING`, `ACTION` lines, `CHARACTER NAME`, `Dialogue`.
-- Editing a character line updates the corresponding `speak` action in the domain model.
-- Adding a CHARACTER / DIALOGUE block creates a new `speak` action.
-- Export to printable HTML or PDF — for sending to a producer or actor.
+- Screenplay format: `CHARACTER NAME` heading + indented dialogue, Courier monospace.
+- Click any beat to open inline editor (actor dropdown, textarea, pause duration). Click again, click away, or press Escape to close.
+- `@media print` CSS included; ⎙ Print button calls `window.print()`.
+- `+ Add line` auto-opens new beat for immediate editing; alternates actors for flow.
+- Props interface: `{ script, onchange, actors? }` — callers unchanged.
 
-**Phase complete when:** screenplay view of `twoRobotsScene` matches its authored lines; print export produces readable output.
+**Phase complete when:** screenplay view of `twoRobotsScene` matches its authored lines; print export produces readable output. ✅
+
+---
+
+### Phase 6.5 — Screenplay enrichment *(deferred)*
+*Proper screenplay formatting is a discipline of its own — needs a dedicated session.*
+
+- Scene headings (`INT. WAREHOUSE — DAY`).
+- Action / stage direction lines (non-dialogue beats).
+- Industry-standard pagination (55 lines/page, page numbers top-right).
+- Title page (title, author, draft date, contact block).
+- Scene index / breakdown sheet export.
+- PDF export via `jsPDF` or server-side Puppeteer (browser `window.print()` is the zero-effort fallback for now).
+- Research note: WGA / British standard formatting rules differ — decide which to target.
 
 ---
 
@@ -219,6 +233,7 @@ Keeps a local copy of the script for smooth in-progress typing. On blur or struc
 - Timeline-style camera path editor over `addAction({ type: 'camera', ... })` (already in domain model).
 - Design camera (free-orbit whilst editing) vs named playback cameras with keyframed position + lookAt.
 - `cameraCut` action: switch active playback camera at a given time.
+- **Path primitive designed for reuse** — the spline/keyframe data structure and the design-canvas path gizmo are extracted as a general `AnimatedPath` type so character movement (`moveTo` action, Phase 7.5+) can reuse the same editor UI and runtime interpolation without a second implementation.
 
 ---
 
@@ -293,8 +308,9 @@ Possible directions:
 | ProductionDocument — command execution + undo/redo | ✅ Complete |
 | Scene composer — storage format + migration | ✅ Complete (Phase 5b) |
 | `buildSceneGraph` extracted (Tone-free scene construction) | ✅ Complete (Phase 5c step 1) |
-| Design/playback canvas split + gizmos + object placement | Phase 5c |
-| Screenplay editor | Phase 6 |
+| Design/playback canvas split + gizmos + object placement | ✅ Complete (Phase 5c) |
+| Screenplay editor | ✅ Complete (Phase 6) |
+| Screenplay enrichment (pagination, headings, PDF) | Phase 6.5 (deferred) |
 | Camera tracks UI | Phase 7 |
 | Asset properties editing | Phase 8 |
 | Lighting rig | Phase 9 |

@@ -20,6 +20,7 @@ import { GLTFAsset } from '../../lib/model/GLTF.js';
 import {
   KeyframeAction,
   GLTFAction,
+  CameraPathAction,
   KeyframeTrackType,
   LoopStyle as ModelLoopStyle,
   type Action,
@@ -231,6 +232,12 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
             kf.loop !== 'repeat',
           ),
         );
+        break;
+      }
+      case 'cameraTrack': {
+        if (action.keyframes.length > 0) {
+          actions.push(new CameraPathAction('camera_cameraTrack', 'camera', action.keyframes));
+        }
         break;
       }
       case 'speak':
