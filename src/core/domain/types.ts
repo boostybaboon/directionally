@@ -34,6 +34,7 @@ export type StagedActor = {
   actorId: string;
   startPosition?: Vec3;  // omit = offstage (not visible at scene start)
   startRotation?: Vec3;
+  startScale?: Vec3;     // uniform scale applied at spawn; derived from catalogue defaultScale
   offstage?: boolean;    // explicit offstage; actor is loaded but not placed
 };
 

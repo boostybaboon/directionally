@@ -24,8 +24,9 @@ export class GLTFAsset extends Object3DAsset {
       this._threeObject = gltf.scene;
       this._animations = gltf.animations;
       this._threeObject.name = this.name;
-      this._threeObject.position.copy(this.position);
-      this._threeObject.rotation.copy(this.rotation);
+      this._threeObject.position.copy(this._position);
+      this._threeObject.rotation.copy(this._rotation);
+      this._threeObject.scale.copy(this._scale);
     } catch (error) {
       console.error('Failed to load GLTF model:', error);
       // Keep the fallback empty Object3D

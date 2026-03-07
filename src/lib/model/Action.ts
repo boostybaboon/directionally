@@ -177,7 +177,9 @@ export class GLTFAction extends Action {
       mixers.push(mixer);
     }
 
-    const clip = meshAnimationClips.find((meshClip) => meshClip.name === this.animationName);
+    const clip = meshAnimationClips.find((meshClip) => meshClip.name === this.animationName)
+      // Case-insensitive fallback for models whose clip names differ only in casing.
+      ?? meshAnimationClips.find((meshClip) => meshClip.name.toLowerCase() === this.animationName.toLowerCase());
 
     if (clip) {
       // Create a uniquely-named copy so multiple segments of the same base clip

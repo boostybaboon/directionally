@@ -39,6 +39,21 @@ export class AddActorCommand implements Command {
   }
 }
 
+export class RenameActorCommand implements Command {
+  readonly label: string;
+  constructor(private readonly actorId: string, private readonly name: string) {
+    this.label = `Rename actor to "${name}"`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    return touch({
+      ...doc,
+      actors: (doc.actors ?? []).map((a) =>
+        a.id === this.actorId ? { ...a, role: this.name } : a
+      ),
+    });
+  }
+}
+
 export class RemoveActorCommand implements Command {
   readonly label: string;
   constructor(private readonly actorId: string) {

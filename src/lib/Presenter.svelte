@@ -66,6 +66,8 @@
     selectedObjectId?: string | null;
     /** Fired when TransformControls drag ends; carries the object's new position and rotation. */
     ontransformend?: (id: string, position: [number, number, number], rotation: [number, number, number]) => void;
+    /** Fired when a catalogue item from the left panel is dropped onto the design viewport. */
+    oncataloguedrop?: (kind: 'character' | 'setpiece', id: string, position: [number, number, number]) => void;
     voiceMode?: VoiceMode;
     bubbleScale?: number;
     isPlaying?: boolean;
@@ -81,6 +83,7 @@
     designMode = $bindable(false),
     selectedObjectId = $bindable<string | null>(null),
     ontransformend,
+    oncataloguedrop,
     voiceMode = $bindable('espeak' as VoiceMode),
     bubbleScale = $bindable(1),
     isPlaying = $bindable(false),
@@ -583,6 +586,29 @@
    * Raycasts from the editor camera using the overlay's own bounds (correct NDC for
    * the right-half viewport) to find and select or deselect a scene object.
    */
+  /**
+   * Drop handler for catalogue items dragged from the left panel.
+   * Raycasts against the y=0 ground plane to find the world-space drop position.
+   */
+  function handleCatalogueDrop(e: DragEvent) {
+    if (!designMode || !editorCamera) return;
+    e.preventDefault();
+    const raw = e.dataTransfer?.getData('application/directionally-catalogue');
+    if (!raw) return;
+    let payload: { kind: 'character' | 'setpiece'; id: string };
+    try { payload = JSON.parse(raw); } catch { return; }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), editorCamera);
+    const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const hit = new THREE.Vector3();
+    const intersected = raycaster.ray.intersectPlane(groundPlane, hit);
+    const position: [number, number, number] = intersected ? [hit.x, 0, hit.z] : [0, 0, 0];
+    oncataloguedrop?.(payload.kind, payload.id, position);
+  }
+
   function handleOverlayPointerUp(e: PointerEvent) {
     if (!designMode || !scene || !editorCamera) return;
     if (e.button !== 0) return; // only left-button clicks
@@ -891,6 +917,8 @@
       aria-label="Design viewport"
       class:active={designMode}
       onpointerup={handleOverlayPointerUp}
+      ondragover={(e) => { if (designMode) e.preventDefault(); }}
+      ondrop={handleCatalogueDrop}
       onkeydown={() => {}}
     ></div>
     <button

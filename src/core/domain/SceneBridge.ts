@@ -156,6 +156,7 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
       const gltf = new GLTFAsset(actor.id, asset.url);
       if (staged.startPosition) gltf.position = new THREE.Vector3(...staged.startPosition);
       if (staged.startRotation) gltf.rotation = new THREE.Euler(...staged.startRotation);
+      if (staged.startScale)    gltf.scale    = new THREE.Vector3(...staged.startScale);
       gltfs.push(gltf);
     } else {
       const mesh = new MeshAsset(actor.id, buildGeometry(asset.geometry), buildMaterial(asset.material));

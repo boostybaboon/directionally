@@ -32,6 +32,13 @@
             <button
               class="catalogue-item catalogue-item--character"
               class:active={expanded}
+              draggable="true"
+              ondragstart={(e) => {
+                e.dataTransfer?.setData(
+                  'application/directionally-catalogue',
+                  JSON.stringify({ kind: 'character', id: entry.id }),
+                );
+              }}
               onclick={() => toggleCharacter(entry.id)}
               aria-expanded={expanded}
             >
@@ -60,14 +67,22 @@
       <ul class="catalogue-list">
         {#each setPieces as entry (entry.id)}
           <li>
-            <div
+            <button
+              type="button"
               class="catalogue-item catalogue-item--setpiece"
               title={entry.label}
+              draggable="true"
+              ondragstart={(e) => {
+                e.dataTransfer?.setData(
+                  'application/directionally-catalogue',
+                  JSON.stringify({ kind: 'setpiece', id: entry.id }),
+                );
+              }}
             >
               <span class="item-icon" aria-hidden="true">◻</span>
               <span class="item-label">{entry.label}</span>
               <span class="item-meta">{GEOMETRY_LABELS[entry.geometry.type] ?? entry.geometry.type}</span>
-            </div>
+            </button>
           </li>
         {/each}
       </ul>
@@ -135,6 +150,14 @@
     border-left-color: #4a9eff;
   }
 
+  .catalogue-item[draggable='true'] {
+    cursor: grab;
+  }
+
+  .catalogue-item[draggable='true']:active {
+    cursor: grabbing;
+  }
+
   .catalogue-item--character.active {
     background: #1e2d3d22;
     border-left-color: #4a9eff;
@@ -143,7 +166,11 @@
 
   .catalogue-item--setpiece {
     border-left: 2px solid transparent;
-    cursor: default;
+    background: none;
+    border-right: none;
+    border-top: none;
+    border-bottom: none;
+    text-align: left;
     color: #888;
   }
 

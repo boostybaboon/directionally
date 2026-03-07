@@ -30,6 +30,12 @@ function idleClipFor(sa: StoredActor): string {
   return character?.defaultAnimation ?? FALLBACK_IDLE_CLIP;
 }
 
+function defaultScaleFor(sa: StoredActor): number {
+  const entry     = getById(sa.catalogueId, CATALOGUE_ENTRIES);
+  const character = entry?.kind === 'character' ? entry : undefined;
+  return character?.defaultScale ?? 1;
+}
+
 /**
  * Default scene shell: camera, lights, and a ground plane.
  * Cast and actions are empty — call `restageCast` to populate actors.
@@ -69,9 +75,15 @@ export function restageCast(
   const total    = actors.length;
   const duration = scene.duration ?? 6;
 
+  const existingById = new Map(scene.stagedActors.map((s) => [s.actorId, s]));
   const stagedActors: StagedActor[] = actors.map((sa, i) => {
+    const existing = existingById.get(sa.id);
+    if (existing) return existing;
     const { position, rotation } = actorPlacement(i, total);
-    return { actorId: sa.id, startPosition: position, startRotation: rotation };
+    const scale = defaultScaleFor(sa);
+    const staged: StagedActor = { actorId: sa.id, startPosition: position, startRotation: rotation };
+    if (scale !== 1) staged.startScale = [scale, scale, scale];
+    return staged;
   });
 
   const idleActions: AnimateAction[] = actors.map((sa) => ({
@@ -80,7 +92,9 @@ export function restageCast(
     animationName: idleClipFor(sa),
     startTime:     0,
     endTime:       duration,
-    fadeIn:        0.3,
+    // No fadeIn on the default idle — it is the initial pose, not a transition.
+    // A fadeIn of 0.3 would make weight=0 at t=0 and cause a T-pose flash on load.
+    fadeIn:        0,
     loop:          'repeat',
   }));
 

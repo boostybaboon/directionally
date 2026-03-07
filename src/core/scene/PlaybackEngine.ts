@@ -173,6 +173,11 @@ export class PlaybackEngine {
         }
       }
     });
+
+    // Force all mixers to evaluate the new pose immediately — without an update()
+    // call Three.js won't apply the action time changes to the bone transforms,
+    // leaving the mesh in its last-computed state (typically the bind/T-pose on load).
+    this.mixers.forEach((m) => m.update(0));
   }
 
   update(delta: number) {

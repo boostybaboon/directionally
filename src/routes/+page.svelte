@@ -20,7 +20,7 @@
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import type { StoredProduction } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
-  import { RenameProductionCommand, SetScriptCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand } from '../core/document/commands.js';
+  import { RenameProductionCommand, SetScriptCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand } from '../core/document/commands.js';
   import type { StoredActor } from '../core/storage/types.js';
   import type { SpeakAction } from '../core/domain/types.js';
   import { getCharacters, getSetPieces } from '../core/catalogue/catalogue.js';
@@ -69,11 +69,18 @@
   let activeProductionId = $state<string | null>(null);
   /** Active document — owns undo/redo history and command execution. */
   let activeDoc = $state<ProductionDocument | null>(null);
-  /** Cast list from the active document; updates automatically on undo/redo. */
-  const actors = $derived(activeDoc?.current.actors ?? []);
+  /**
+   * Reactive snapshot of the active document's current state.
+   * ProductionDocument.current is a class getter (not $state), so Svelte can't
+   * track it directly. This is updated in the document's onChange callback so
+   * all $derived expressions stay in sync when commands execute.
+   */
+  let docSnapshot = $state<StoredProduction | null>(null);
+  /** Cast list from the active document; updates automatically on command execution. */
+  const actors = $derived(docSnapshot?.actors ?? []);
   /** Dialogue lines for the ScriptEditor, derived from the scene's speak actions. */
   const speakLines = $derived<ScriptLine[]>(
-    (activeDoc?.current.scene?.actions ?? [])
+    (docSnapshot?.scene?.actions ?? [])
       .filter((a): a is SpeakAction => a.type === 'speak')
       .map((a) => ({ actorId: a.actorId, text: a.text, pauseAfter: a.pauseAfter ?? 0 }))
   );
@@ -84,12 +91,14 @@
   let newActorCatalogueId = $state(CATALOGUE_CHARACTERS[0]?.id ?? '');
   let renamingId = $state<string | null>(null);
   let renameValue = $state('');
+  let renamingActorId = $state<string | null>(null);
+  let renameActorValue = $state('');
 
   // Set-piece management UI state
   let addingSetPiece = $state(false);
   let newSetPieceCatalogueId = $state(CATALOGUE_SET_PIECES[0]?.id ?? '');
-  const scenePieces = $derived(activeDoc?.current.scene?.set ?? []);
-  const sceneLights = $derived(activeDoc?.current.scene?.lights ?? []);
+  const scenePieces = $derived(docSnapshot?.scene?.set ?? []);
+  const sceneLights = $derived(docSnapshot?.scene?.lights ?? []);
 
   // Selected scene object (actor ID or set-piece name); driven by Presenter raycasting.
   let selectedObjectId = $state<string | null>(null);
@@ -151,9 +160,11 @@
       (updated) => {
         productions = ProductionStore.list();
         presenter?.loadModel(modelFromProduction(updated));
+        docSnapshot = updated;
       },
       (updated) => ProductionStore.save(updated),
     );
+    docSnapshot = prod;
     activeProductionId = prod.id;
     activeExampleId = null;
     presenter?.loadModel(modelFromProduction(prod));
@@ -225,6 +236,43 @@
   }
 
   /**
+   * Called by Presenter when a catalogue item is dropped onto the design viewport.
+   * Adds the character/set-piece at the drop world-position and selects it.
+   */
+  function handleCatalogueDrop(
+    kind: 'character' | 'setpiece',
+    id: string,
+    position: [number, number, number],
+  ) {
+    if (!activeDoc) return;
+    if (kind === 'character') {
+      const entry = CATALOGUE_CHARACTERS.find((c) => c.id === id);
+      if (!entry) return;
+      const actors = activeDoc.current.actors ?? [];
+      const base = entry.label;
+      const sameLabel = actors.filter((a) => a.role === base || a.role.startsWith(base + ' '));
+      const role = sameLabel.length === 0 ? base : `${base} ${sameLabel.length + 1}`;
+      const actor: StoredActor = { id: crypto.randomUUID(), role, catalogueId: id };
+      activeDoc.execute(new AddActorCommand(actor));
+      // Set selectedObjectId now so the next loadModel (triggered by MoveStagedActorCommand)
+      // finds it in prevSelectedId and auto-selects the newly placed actor.
+      selectedObjectId = actor.id;
+      activeDoc.execute(new MoveStagedActorCommand(actor.id, position));
+    } else {
+      const entry = CATALOGUE_SET_PIECES.find((p) => p.id === id);
+      if (!entry) return;
+      const existing = activeDoc.current.scene?.set ?? [];
+      const base = entry.id;
+      const count = existing.filter((p) => p.name === base || p.name.startsWith(base + '-')).length;
+      const name = count === 0 ? base : `${base}-${count + 1}`;
+      const piece: SetPiece = { name, geometry: entry.geometry, material: entry.material };
+      activeDoc.execute(new AddSetPieceCommand(piece));
+      selectedObjectId = name;
+      activeDoc.execute(new MoveSetPieceCommand(name, position));
+    }
+  }
+
+  /**
    * Called by Presenter when a TransformControls drag ends.
    * Fires MoveStagedActorCommand or MoveSetPieceCommand depending on whether
    * the selected id belongs to an actor or a set piece.
@@ -249,6 +297,19 @@
     el.select();
   }
 
+  function startActorRename(id: string) {
+    renameActorValue = actors.find((a) => a.id === id)?.role ?? '';
+    renamingActorId = id;
+  }
+
+  function commitActorRename(id: string) {
+    const trimmed = renameActorValue.trim();
+    if (trimmed && activeDoc) {
+      activeDoc.execute(new RenameActorCommand(id, trimmed));
+    }
+    renamingActorId = null;
+  }
+
   function commitRename(id: string) {
     const trimmed = renameValue.trim();
     if (trimmed) {
@@ -270,6 +331,8 @@
     presenter?.loadModel(model);
     activeExampleId = id;
     activeProductionId = null;
+    activeDoc = null;
+    docSnapshot = null;
     sidebarOpen = false;
   }
 
@@ -466,6 +529,7 @@
             bind:designMode={designMode}
             bind:selectedObjectId={selectedObjectId}
             ontransformend={handleTransformEnd}
+            oncataloguedrop={handleCatalogueDrop}
           />
         </div>
       </Pane>
@@ -511,7 +575,18 @@
                       <ul class="cast-list">
                         {#each actors as actor}
                           <li class="cast-row" class:selected={selectedObjectId === actor.id}>
-                            <span class="cast-role">{actor.role}</span>
+                            {#if renamingActorId === actor.id}
+                              <input
+                                class="cast-role-input"
+                                type="text"
+                                bind:value={renameActorValue}
+                                onblur={() => commitActorRename(actor.id)}
+                                onkeydown={(e) => { if (e.key === 'Enter') commitActorRename(actor.id); if (e.key === 'Escape') renamingActorId = null; }}
+                                use:focusAndSelect
+                              />
+                            {:else}
+                              <button class="cast-role-btn" title="Click to rename" onclick={() => startActorRename(actor.id)}>{actor.role}</button>
+                            {/if}
                             <span class="cast-char">{CATALOGUE_CHARACTERS.find(c => c.id === actor.catalogueId)?.label ?? actor.catalogueId}</span>
                             <button class="icon-btn danger" onclick={() => removeActor(actor.id)} title="Remove actor">✕</button>
                           </li>
@@ -982,6 +1057,38 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .cast-role-btn {
+    font-weight: 600;
+    color: #ccc;
+    font-size: 12px;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cast-role-btn:hover {
+    color: #fff;
+    text-decoration: underline;
+  }
+
+  .cast-role-input {
+    font-weight: 600;
+    font-size: 12px;
+    background: #1a1a2a;
+    border: 1px solid #4a9eff;
+    border-radius: 2px;
+    color: #fff;
+    padding: 1px 4px;
+    flex: 1;
+    min-width: 0;
   }
 
   .cast-char {

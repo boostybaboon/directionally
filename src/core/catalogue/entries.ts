@@ -21,7 +21,7 @@ export const CATALOGUE_ENTRIES: CatalogueEntry[] = [
     gltfPath: '/models/gltf/Soldier.glb',
     // Clips present in the Three.js Soldier example asset (MIT licensed).
     defaultAnimation: 'idle',
-    defaultScale: 1,
+    defaultScale: 2.7,
   },
 
   // ── Set pieces ────────────────────────────────────────────────────────────
