@@ -40,6 +40,13 @@
   let selectionBox: THREE.BoxHelper | null = null;
   // True while TransformControls is actively dragging — used to skip click-as-selection.
   let tcDragging = false;
+  // Current gizmo mode — reactive so the mode-button toolbar re-renders.
+  let tcMode = $state<'translate' | 'rotate'>('translate');
+
+  function setGizmoMode(mode: 'translate' | 'rotate') {
+    tcMode = mode;
+    transformControls?.setMode(mode);
+  }
   // Overlay pointer position sampled on pointerdown, used for drag vs click detection.
   let overlayPointerDownPos = { x: 0, y: 0 };
 
@@ -211,8 +218,8 @@
       }
       if (!designMode || isTyping) return;
       if (e.key === 'Escape') { selectSceneObject(null); return; }
-      if (e.key === 'g' || e.key === 'G') transformControls.setMode('translate');
-      if (e.key === 'r' || e.key === 'R') transformControls.setMode('rotate');
+      if (e.key === 'g' || e.key === 'G') setGizmoMode('translate');
+      if (e.key === 'r' || e.key === 'R') setGizmoMode('rotate');
     };
     window.addEventListener('keydown', onKeyDown);
     return () => {
@@ -945,6 +952,45 @@
   .mode-toggle:hover {
     background: rgba(55, 55, 65, 0.90);
   }
+
+  .gizmo-toolbar {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    z-index: 10;
+    display: flex;
+    gap: 4px;
+  }
+
+  .gizmo-btn {
+    width: 44px;
+    height: 44px;
+    background: rgba(28, 28, 32, 0.82);
+    color: #aaa;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s, color 0.1s;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .gizmo-btn:hover {
+    background: rgba(55, 55, 65, 0.90);
+    color: #e0e0e0;
+  }
+
+  .gizmo-btn.active {
+    background: rgba(74, 158, 255, 0.22);
+    color: #4a9eff;
+    border-color: rgba(74, 158, 255, 0.45);
+  }
 </style>
   
 <div id="content">
@@ -967,6 +1013,24 @@
       onclick={() => { designMode = !designMode; }}
       title={designMode ? 'Switch to playback view' : 'Switch to design view'}
     >{designMode ? '▶ Playback' : '✏ Design'}</button>
+    {#if designMode && selectedObjectId}
+      <div class="gizmo-toolbar" role="toolbar" aria-label="Gizmo mode">
+        <button
+          class="gizmo-btn" class:active={tcMode === 'translate'}
+          onclick={() => setGizmoMode('translate')}
+          title="Move (G)"
+          aria-label="Move"
+          aria-pressed={tcMode === 'translate'}
+        >⇔</button>
+        <button
+          class="gizmo-btn" class:active={tcMode === 'rotate'}
+          onclick={() => setGizmoMode('rotate')}
+          title="Rotate (R)"
+          aria-label="Rotate"
+          aria-pressed={tcMode === 'rotate'}
+        >↻</button>
+      </div>
+    {/if}
   </div>
   <div id="log-panel"></div>
 </div>
