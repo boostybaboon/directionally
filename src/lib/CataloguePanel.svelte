@@ -2,6 +2,14 @@
   import { getCharacters, getSetPieces } from '../core/catalogue/catalogue.js';
   import PreviewRenderer from './PreviewRenderer.svelte';
 
+  interface Props {
+    /** Called when the user taps / clicks "Add to scene". Provides a touch-friendly
+     *  alternative to drag-and-drop (which is unsupported on mobile). */
+    onadd?: (kind: 'character' | 'setpiece', id: string) => void;
+  }
+
+  let { onadd }: Props = $props();
+
   const characters = getCharacters();
   const setPieces = getSetPieces();
 
@@ -48,10 +56,13 @@
             </button>
             {#if expanded}
               <div class="character-preview">
-                <PreviewRenderer
-                  gltfPath={entry.gltfPath}
-                />
+                <PreviewRenderer gltfPath={entry.gltfPath} />
               </div>
+              {#if onadd}
+                <button class="add-to-scene-btn" onclick={() => { onadd('character', entry.id); toggleCharacter(entry.id); }}>
+                  + Add to scene
+                </button>
+              {/if}
             {/if}
           </li>
         {/each}
@@ -66,7 +77,7 @@
     {:else}
       <ul class="catalogue-list">
         {#each setPieces as entry (entry.id)}
-          <li>
+          <li class="setpiece-row">
             <button
               type="button"
               class="catalogue-item catalogue-item--setpiece"
@@ -83,6 +94,9 @@
               <span class="item-label">{entry.label}</span>
               <span class="item-meta">{GEOMETRY_LABELS[entry.geometry.type] ?? entry.geometry.type}</span>
             </button>
+            {#if onadd}
+              <button class="add-inline-btn" onclick={() => onadd('setpiece', entry.id)} title="Add {entry.label} to scene" aria-label="Add {entry.label} to scene">+</button>
+            {/if}
           </li>
         {/each}
       </ul>
@@ -219,4 +233,53 @@
     font-size: 12px;
     margin: 0;
   }
+
+  /* Add-to-scene affordances (visible on mobile; handy fallback on desktop too) */
+
+  .add-to-scene-btn {
+    display: block;
+    width: calc(100% - 24px);
+    margin: 8px 12px 10px;
+    padding: 8px;
+    background: #1a2a3a;
+    color: #4a9eff;
+    border: 1px solid #2a4a6a;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: center;
+    min-height: 36px;
+  }
+  .add-to-scene-btn:hover { background: #1e3248; }
+  .add-to-scene-btn:active { background: #22395a; }
+
+  .setpiece-row {
+    display: flex;
+    align-items: center;
+  }
+  .setpiece-row .catalogue-item--setpiece {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .add-inline-btn {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    margin-right: 6px;
+    background: #1a2a3a;
+    color: #4a9eff;
+    border: 1px solid #2a4a6a;
+    border-radius: 4px;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 32px;
+  }
+  .add-inline-btn:hover { background: #1e3248; }
+  .add-inline-btn:active { background: #22395a; }
 </style>

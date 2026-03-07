@@ -355,7 +355,12 @@
   onMount(() => {
     const mq = window.matchMedia('(max-width: 640px)');
     isMobile = mq.matches;
-    const onChange = (e: MediaQueryListEvent) => { isMobile = e.matches; };
+    // Right panel takes up too much space on phone; default it closed.
+    if (isMobile) rightPanelOpen = false;
+    const onChange = (e: MediaQueryListEvent) => {
+      isMobile = e.matches;
+      if (e.matches) rightPanelOpen = false;
+    };
     mq.addEventListener('change', onChange);
 
     function handleKeyDown(e: KeyboardEvent) {
@@ -513,7 +518,7 @@
 
                 </aside>
               {:else}
-                <CataloguePanel />
+                <CataloguePanel onadd={(kind, id) => handleCatalogueDrop(kind, id, [0, 0, 0])} />
               {/if}
             </div>
           </div>

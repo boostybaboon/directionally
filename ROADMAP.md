@@ -237,7 +237,86 @@ Keeps a local copy of the script for smooth in-progress typing. On blur or struc
 
 ---
 
-### Phase 8 — Properties panel — asset editing
+### Phase 8 — Ground-zero animation authoring *(next — highest-risk item)*
+*De-risk the animation authoring problem. No custom bone posing, no drag timeline — just enough numeric UI to recreate TwoRobots and FlyIntoRoom from the authoring tool instead of from code.*
+
+#### Scope — what this is NOT
+
+- Bone posing / inverse kinematics (use a DCC tool for that)
+- A drag-and-drop visual timeline (deferred to Phase 8.5)
+- A curve editor (deferred)
+
+#### Runtime gap to close first
+
+`storedSceneToModel.ts` (the stored-production → renderer path) must handle `MoveAction` and `LightingAction`. `SceneBridge.ts` (domain-object path) already does. Parity is needed before authoring can be verified end-to-end. Add tests.
+
+#### Three authoring surfaces
+
+**Surface A — GLTF clip sequencer** (Stage tab, per actor)
+
+A list of `AnimateAction` rows. Each row: clip name (dropdown from the character's `animationClips` catalogue entry), start time, end time (blank = scene end), fade-in, fade-out seconds. Add / delete per row. Covers TwoRobots: `Idle → Walking → Idle → Walking` with crossfade windows.
+
+**Surface B — Transform keyframe editor** (Stage tab, per actor or set piece)
+
+Two collapsible tracks per object: `.position` (Vec3) and `.rotation` (Euler XYZ, converted to quaternion at build time). Each track shows a list of `{ time, value }` rows editable by typing, plus a **"Capture at ▶"** button which appends a keyframe at the current transport-head time using the object's live world-space value read from the scene graph.
+
+Typical workflow to walk a character:
+1. Scrub to t=2. Drag Alpha to (-8, 0, 0). Press "Capture position".
+2. Scrub to t=4. Drag Alpha to (-2.5, 0, 0). Press "Capture position".
+3. A `MoveAction` for `alpha / .position` is now stored and plays back.
+
+Covers TwoRobots movement + rotation, and the FlyIntoRoom door-hinge case (`.rotation` Y on the `hinge` set piece). `SetPiece.parent` already exists in the data model — add a UI picker so `door.parent = 'hinge'` can be authored without code.
+
+**Surface C — Scalar keyframe editor** (Stage tab, per light)
+
+Same keyframe-list pattern for a single scalar property (`.intensity`). Covers FlyIntoRoom spotlight fade-in/out. `LightingAction` type + `SceneBridge` handler already exist.
+
+#### Scrub-and-capture paradigm — known precedents and open questions
+
+*This is the standard keyframe-insertion paradigm in every major animation tool (After Effects, Unreal Sequencer, Blender's Dope Sheet, Unity's Animator). The workflow is: move the playhead, pose the thing, press a key or button to record.* Directionally's equivalent is: scrub transport → drag/type value → press Capture.
+
+**Open question — timeline length**: Currently the transport slider auto-sizes to current scene content (dialogue duration + 1 s padding). For authoring a 100 s walk before any dialogue exists, you would need to set the scene `duration` explicitly first. The fix is:
+
+- Add a **manual duration override** field (editable integer or float, seconds) in the Stage tab's scene header. When set, the transport slider uses this value instead of the computed content duration. After dialogue is added and the content duration exceeds it, the override is ignored and removed.
+- This mirrors the DAW pattern: in REAPER/Pro Tools you set a project length explicitly, then content drives it once it's larger. The auto-sizing remains useful for short-form productions where duration is implicit from the script.
+
+This is a small addition to Phase 8 step 1 (opening the scene header for editing) and unblocks the longer-scene authoring workflow before surface B is built.
+
+#### New commands (all through `ProductionDocument.execute()` → full undo/redo)
+
+| Command | What it does |
+|---|---|
+| `SetSceneDurationCommand` | Sets an explicit scene duration override |
+| `AddAnimateSegmentCommand` | Appends an `AnimateAction` for an actor |
+| `RemoveAnimateSegmentCommand` | Removes by actor + segment index |
+| `UpdateAnimateSegmentCommand` | Patches timing / fade on an existing segment |
+| `SetMoveTrackCommand` | Replaces the full `MoveAction` for a target + property (on commit) |
+| `CaptureTransformKeyframeCommand` | Appends one keyframe to a target's `MoveAction`, or creates it |
+| `SetLightingTrackCommand` | Replaces the `LightingAction` for a light, or creates it |
+| `SetSetPieceParentCommand` | Sets `SetPiece.parent` for hierarchical assemblies |
+
+#### Implementation steps
+
+1. Close `storedSceneToModel.ts` runtime gap + tests.
+2. Add manual `duration` override field (scene header + `SetSceneDurationCommand`) — unblocks long-scene authoring.
+3. Implement new commands with tests.
+4. Surface A — GLTF clip sequencer rows in Stage tab.
+5. Surface B — transform keyframe list. Add `getObjectTransform(id)` export to `Presenter.svelte` (mirrors `getDesignCameraState()`).
+6. Surface C — scalar keyframe list per light.
+7. Set piece parent picker.
+
+#### Phase 8.5 — Visual timeline *(deferred, additive)*
+
+Once the numeric surfaces prove the UX, a visual timeline panel layers on top:
+- Per-actor track rows, clip bars draggable to reposition/resize
+- Keyframe diamonds draggable along the time axis
+- Scalar value curve editor (bezier handles)
+
+The numeric Phase 8 authoring surfaces remain alongside it.
+
+---
+
+### Phase 9 — Properties panel — asset editing
 *Fills the Properties tab in the right panel.*
 
 - Editable position / rotation / scale for the selected asset.
@@ -246,27 +325,27 @@ Keeps a local copy of the script for smooth in-progress typing. On blur or struc
 
 ---
 
-### Phase 9 — Lighting rig
+### Phase 10 — Lighting rig
 
 - Add lights from catalogue; fix `point` light gap (scaffolded in domain types, currently skipped).
 - Animate intensity/colour via `lighting` actions (already in domain model + SceneBridge).
 
 ---
 
-### Phase 10 — Sound & music
+### Phase 11 — Sound & music
 
 - `SoundEffect` action: file path + trigger time, wired into `PlaybackEngine`.
 - `BackgroundMusic` action: loop, volume, fade in/out.
 
 ---
 
-### Phase 11 — Dance choreography *(deferred — needs spike)*
+### Phase 12 — Dance choreography *(deferred — needs spike)*
 
 MIDI → keyframe synchronisation shape is unclear. Spike before committing to an approach.
 
 ---
 
-### Phase 12 — Remote asset store *(deferred)*
+### Phase 13 — Remote asset store *(deferred)*
 
 `CharacterEntry.gltfPath: string` is already URL-agnostic — a relative path serves the local catalogue, an absolute URL serves a remote one. A future `AssetStore` interface encapsulates discovery and credential injection:
 
@@ -303,7 +382,7 @@ Possible directions:
 | `src/core/timeline/` | Empty scaffold — reserved for timeline editor |
 | Transport bar (bottom panel) + left panel tabs | ✅ Complete |
 | Asset catalogue | ✅ Complete |
-| Remote asset store | Phase 12 |
+| Remote asset store | Phase 13 |
 | Right panel (collapsible) | ✅ Complete |
 | ProductionDocument — command execution + undo/redo | ✅ Complete |
 | Scene composer — storage format + migration | ✅ Complete (Phase 5b) |
@@ -311,8 +390,9 @@ Possible directions:
 | Design/playback canvas split + gizmos + object placement | ✅ Complete (Phase 5c) |
 | Screenplay editor | ✅ Complete (Phase 6) |
 | Screenplay enrichment (pagination, headings, PDF) | Phase 6.5 (deferred) |
-| Camera tracks UI | Phase 7 |
-| Asset properties editing | Phase 8 |
-| Lighting rig | Phase 9 |
-| Sound effects / music | Phase 10 |
+| Camera tracks UI | ✅ Complete (Phase 7) |
+| Ground-zero animation authoring | Phase 8 (next) |
+| Asset properties editing | Phase 9 |
+| Lighting rig | Phase 10 |
+| Sound effects / music | Phase 11 |
 
