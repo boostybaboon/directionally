@@ -124,7 +124,7 @@ export type KeyframeData = {
 };
 
 // Move or rotate an actor or the camera via keyframes
-export type MoveAction = {
+export type TransformTrack = {
   type: 'move';
   targetId: string;    // actorId or 'camera'
   startTime: number;
@@ -132,7 +132,7 @@ export type MoveAction = {
 };
 
 // Play a named animation clip embedded in a GLTF asset
-export type AnimateAction = {
+export type ClipTrack = {
   type: 'animate';
   actorId: string;
   startTime: number;
@@ -173,7 +173,7 @@ export type ExitAction = {
 };
 
 // Keyframe a light property over time
-export type LightingAction = {
+export type LightingTrack = {
   type: 'lighting';
   lightId: string;
   startTime: number;
@@ -205,11 +205,51 @@ export type CameraTrackAction = {
 };
 
 export type SceneAction =
-  | MoveAction
-  | AnimateAction
+  | TransformTrack
+  | ClipTrack
   | SpeakAction
   | EnterAction
   | ExitAction
-  | LightingAction
+  | LightingTrack
   | CameraAction
   | CameraTrackAction;
+
+// ── Block types (high-level authored primitives, compiled to Tracks at playback) ──
+
+/**
+ * A character's activity in a time window: the clip to play, the movement
+ * path, and the facing direction. Compiled to ClipTrack + TransformTrack(s)
+ * at playback time by `actorBlockToTracks` — never stored as raw Tracks.
+ */
+export type ActorBlock = {
+  type: 'actorBlock';
+  actorId: string;
+  startTime: number;
+  endTime: number;
+  /** Clip name to play; omit → idle / hold last pose. */
+  clip?: string;
+  /** World position at startTime; omit → inherit previous block's endPosition. */
+  startPosition?: Vec3;
+  /** World position at endTime; omit → stay at startPosition (stationary). */
+  endPosition?: Vec3;
+  /** Facing direction vector at startTime; omit → inherit. */
+  startFacing?: Vec3;
+  /** Facing direction vector at endTime; omit → auto: face travel direction, or forward if stationary. */
+  endFacing?: Vec3;
+};
+
+/**
+ * A light's intensity envelope in a time window.
+ * Compiled to a LightingTrack at playback time — never stored as a raw Track.
+ * Implemented in Phase 8.7.
+ */
+export type LightBlock = {
+  type: 'lightBlock';
+  lightId: string;
+  startTime: number;
+  endTime: number;
+  startIntensity?: number;
+  endIntensity?: number;
+};
+
+export type Block = ActorBlock | LightBlock;

@@ -2,6 +2,7 @@ import { Scene } from '../domain/Scene.js';
 import { sceneToModel } from '../domain/SceneBridge.js';
 import { getById } from '../catalogue/catalogue.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
+import { actorBlockToTracks } from '../domain/blockCompiler.js';
 import type { Actor } from '../domain/Production.js';
 import type { ActorVoice } from '../domain/types.js';
 import type { Model } from '../../lib/Model.js';
@@ -72,7 +73,12 @@ export function storedSceneToModel(storedScene: StoredScene, storedActors: Store
     const { actorId, ...opts } = staged;
     scene.stage(actorId, opts);
   }
-  for (const action of storedScene.actions) {
+
+  // Compile ActorBlocks to tracks and merge with authored actions
+  const compiledBlockTracks = (storedScene.blocks ?? [])
+    .flatMap((block) => block.type === 'actorBlock' ? actorBlockToTracks(block) : []);
+
+  for (const action of [...storedScene.actions, ...compiledBlockTracks]) {
     scene.addAction(action);
   }
 

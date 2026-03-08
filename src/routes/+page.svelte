@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import Presenter from '$lib/Presenter.svelte';
   import TransportBar from '$lib/TransportBar.svelte';
+  import TimelinePanel from '$lib/TimelinePanel.svelte';
   import CataloguePanel from '$lib/CataloguePanel.svelte';
   import type { VoiceMode, VoiceBackend } from '$lib/types.js';
   import { Splitpanes, Pane } from 'svelte-splitpanes';
@@ -20,9 +21,9 @@
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import type { StoredProduction } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
-  import { RenameProductionCommand, SetScriptCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand, AddCameraKeyframeCommand, RemoveCameraKeyframeCommand } from '../core/document/commands.js';
+  import { RenameProductionCommand, SetScriptCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand, AddCameraKeyframeCommand, RemoveCameraKeyframeCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand } from '../core/document/commands.js';
   import type { StoredActor } from '../core/storage/types.js';
-  import type { SpeakAction, PathKeyframe } from '../core/domain/types.js';
+  import type { SpeakAction, PathKeyframe, ClipTrack, TransformTrack, LightingTrack, LoopStyle, ActorBlock } from '../core/domain/types.js';
   import { getCharacters, getSetPieces } from '../core/catalogue/catalogue.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
   import type { SetPiece } from '../core/domain/types.js';
@@ -58,6 +59,7 @@
   const BOTTOM_PANEL_KEY = 'directionally_bottom_panel_open';
   let bottomPanelOpen = $state((localStorage.getItem(BOTTOM_PANEL_KEY) ?? 'true') === 'true');
   $effect(() => { localStorage.setItem(BOTTOM_PANEL_KEY, String(bottomPanelOpen)); });
+  let bottomTab = $state<'transport' | 'timeline'>('transport');
   const RIGHT_PANEL_KEY = 'directionally_right_panel_open';
   let rightPanelOpen = $state((localStorage.getItem(RIGHT_PANEL_KEY) ?? 'true') === 'true');
   $effect(() => { localStorage.setItem(RIGHT_PANEL_KEY, String(rightPanelOpen)); });
@@ -104,8 +106,61 @@
       ?.keyframes ?? []
   );
 
+  // Contextual label for the gizmo toolbar: communicates what a drag will do.
+  // For actors: t≈0 sets the base start position; any other time captures a keyframe.
+  // Set pieces always set position (no keyframe support yet).
+  const clipTracks = $derived(
+    (docSnapshot?.scene?.actions ?? []).flatMap((a, i) => a.type === 'animate' ? [{ action: a as ClipTrack, index: i }] : [])
+  );
+  const transformTracks = $derived(
+    (docSnapshot?.scene?.actions ?? []).flatMap((a, i) => a.type === 'move' ? [{ action: a as TransformTrack, index: i }] : [])
+  );
+  const lightingTracks = $derived(
+    (docSnapshot?.scene?.actions ?? []).flatMap((a, i) => a.type === 'lighting' ? [{ action: a as LightingTrack, index: i }] : [])
+  );
+  const actorBlocks = $derived(
+    (docSnapshot?.scene?.blocks ?? []).flatMap((b, i) => b.type === 'actorBlock' ? [{ block: b as ActorBlock, index: i }] : [])
+  );
+
+  // Per-actor and per-light expand state
+  let expandedActorAnim = $state(new Set<string>());
+  let expandedActorSettings = $state(new Set<string>());
+  let expandedLightAnim = $state(new Set<string>());
+
+  // New-clip-segment form — one active form per actor at a time
+  let clipFormActorId = $state<string | null>(null);
+  let clipFormName = $state('');
+  let clipFormStart = $state(0);
+  let clipFormEnd = $state<number | ''>('');   // empty string → undefined end
+  let clipFormLoop = $state<LoopStyle>('once');
+
+  // New-block form — one active form per actor at a time
+  let blockFormActorId = $state<string | null>(null);
+  let blockFormStart = $state(0);
+  let blockFormEnd = $state(2);
+  let blockFormClip = $state('');
+
+  // Per-light intensity input values (light.id → string)
+  let lightIntensityValues = $state<Record<string, string>>({});
+
+  // Clip names discovered from loaded GLTFs at runtime, keyed by actor ID.
+  let discoveredClips = $state<Record<string, string[]>>({});
+
+  // Per-actor scale input values (actor.id → string) for the settings panel.
+  let actorScaleValues = $state<Record<string, string>>({}); 
+
   // Selected scene object (actor ID or set-piece name); driven by Presenter raycasting.
   let selectedObjectId = $state<string | null>(null);
+
+  const dragHint = $derived(
+    selectedObjectId && designMode
+      ? (actors.some((a) => a.id === selectedObjectId)
+          ? currentPosition < 0.05
+            ? 'drag → start position'
+            : 'drag to preview · ⊕ Capture to lock'
+          : '')
+      : ''
+  );
 
   // Examples (read-only, no persistence)
   const examples: { id: string; label: string; model: Model }[] = [
@@ -171,7 +226,7 @@
     docSnapshot = prod;
     activeProductionId = prod.id;
     activeExampleId = null;
-    presenter?.loadModel(modelFromProduction(prod));
+    presenter?.loadModel(modelFromProduction(prod), 0);
     sidebarOpen = false;
   }
 
@@ -251,6 +306,92 @@
     activeDoc?.execute(new RemoveCameraKeyframeCommand(index));
   }
 
+  // ── Animation authoring handlers ───────────────────────────────────────────
+
+  function setSceneDuration(value: string) {
+    if (!activeDoc) return;
+    const n = parseFloat(value);
+    activeDoc.execute(new SetSceneDurationCommand(isNaN(n) || value.trim() === '' ? undefined : n));
+  }
+
+  function openClipForm(actorId: string, defaultClip: string) {
+    clipFormActorId = actorId;
+    clipFormName = defaultClip;
+    clipFormStart = parseFloat(currentPosition.toFixed(2));
+    clipFormEnd = '';
+    clipFormLoop = 'once';
+  }
+
+  function commitAddClip() {
+    if (!activeDoc || !clipFormActorId) return;
+    const seg: ClipTrack = {
+      type: 'animate',
+      actorId: clipFormActorId,
+      startTime: clipFormStart,
+      animationName: clipFormName,
+      loop: clipFormLoop,
+      ...(clipFormEnd !== '' ? { endTime: Number(clipFormEnd) } : {}),
+    };
+    activeDoc.execute(new AddAnimateSegmentCommand(seg));
+    clipFormActorId = null;
+  }
+
+  function removeClipSegment(globalIndex: number) {
+    activeDoc?.execute(new RemoveAnimateSegmentCommand(globalIndex));
+  }
+
+  function updateClipLoop(globalIndex: number, loop: LoopStyle) {
+    activeDoc?.execute(new UpdateAnimateSegmentCommand(globalIndex, { loop }));
+  }
+
+  function capturePositionKeyframe(targetId: string) {
+    if (!activeDoc) return;
+    const transform = presenter?.getObjectTransform(targetId);
+    if (!transform) return;
+    const time = parseFloat(currentPosition.toFixed(2));
+    activeDoc.execute(new CapturePositionKeyframeCommand(targetId, time, transform.position));
+  }
+
+  function removePositionKeyframe(targetId: string, kfIndex: number) {
+    activeDoc?.execute(new RemoveTransformKeyframeCommand(targetId, '.position', kfIndex));
+  }
+
+  function captureLightIntensity(lightId: string, intensityStr: string) {
+    if (!activeDoc) return;
+    const intensity = parseFloat(intensityStr);
+    if (isNaN(intensity)) return;
+    const time = parseFloat(currentPosition.toFixed(2));
+    activeDoc.execute(new CaptureLightIntensityKeyframeCommand(lightId, time, intensity));
+  }
+
+  function removeLightIntensityKeyframe(lightId: string, kfIndex: number) {
+    activeDoc?.execute(new RemoveLightKeyframeCommand(lightId, '.intensity', kfIndex));
+  }
+
+  function openBlockForm(actorId: string) {
+    blockFormActorId = actorId;
+    blockFormStart = parseFloat(currentPosition.toFixed(2));
+    blockFormEnd = parseFloat((currentPosition + 2).toFixed(2));
+    blockFormClip = '';
+  }
+
+  function commitAddBlock() {
+    if (!activeDoc || !blockFormActorId) return;
+    const block: ActorBlock = {
+      type: 'actorBlock',
+      actorId: blockFormActorId,
+      startTime: blockFormStart,
+      endTime: blockFormEnd,
+      ...(blockFormClip.trim() ? { clip: blockFormClip.trim() } : {}),
+    };
+    activeDoc.execute(new AddActorBlockCommand(block));
+    blockFormActorId = null;
+  }
+
+  function removeBlock(index: number) {
+    activeDoc?.execute(new RemoveActorBlockCommand(index));
+  }
+
   /**
    * Called by Presenter when a catalogue item is dropped onto the design viewport.
    * Adds the character/set-piece at the drop world-position and selects it.
@@ -301,7 +442,11 @@
     if (!activeDoc) return;
     const isActor = (activeDoc.current.actors ?? []).some((a) => a.id === id);
     if (isActor) {
-      activeDoc.execute(new MoveStagedActorCommand(id, position, rotation));
+      // t≈0: drag sets the actor's base spawn position.
+      // t>0: drag is a visual preview only — press ⊕ Capture to lock as a keyframe.
+      if (currentPosition < 0.05) {
+        activeDoc.execute(new MoveStagedActorCommand(id, position, rotation));
+      }
     } else {
       activeDoc.execute(new MoveSetPieceCommand(id, position, rotation));
     }
@@ -344,7 +489,7 @@
   }
 
   function loadExample(id: string, model: Model) {
-    presenter?.loadModel(model);
+    presenter?.loadModel(model, 0);
     activeExampleId = id;
     activeProductionId = null;
     activeDoc = null;
@@ -551,6 +696,8 @@
             bind:selectedObjectId={selectedObjectId}
             ontransformend={handleTransformEnd}
             oncataloguedrop={handleCatalogueDrop}
+            ondiscoverclips={(clips) => { discoveredClips = clips; }}
+            {dragHint}
           />
         </div>
       </Pane>
@@ -584,6 +731,26 @@
             <div class="tab-content stage-tab-content">
               {#if rightTab === 'stage'}
                 {#if activeDoc}
+                  <!-- Scene duration override -->
+                  <div class="stage-section">
+                    <div class="stage-section-header">
+                      <span class="stage-section-label">Scene</span>
+                    </div>
+                    <div class="anim-row">
+                      <label class="anim-label" for="scene-duration">Duration (s)</label>
+                      <input
+                        id="scene-duration"
+                        class="anim-number"
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        placeholder="auto"
+                        value={docSnapshot?.scene?.duration ?? ''}
+                        onchange={(e) => setSceneDuration(e.currentTarget.value)}
+                      />
+                    </div>
+                  </div>
+
                   <!-- Cast -->
                   <div class="stage-section">
                     <div class="stage-section-header">
@@ -609,8 +776,70 @@
                               <button class="cast-role-btn" title="Click to rename" onclick={() => startActorRename(actor.id)}>{actor.role}</button>
                             {/if}
                             <span class="cast-char">{CATALOGUE_CHARACTERS.find(c => c.id === actor.catalogueId)?.label ?? actor.catalogueId}</span>
+                            <button
+                              class="icon-btn"
+                              class:active={expandedActorSettings.has(actor.id)}
+                              title="Actor settings (idle clip, scale)"
+                              onclick={() => {
+                                const next = new Set(expandedActorSettings);
+                                next.has(actor.id) ? next.delete(actor.id) : next.add(actor.id);
+                                expandedActorSettings = next;
+                                if (!actorScaleValues[actor.id]) {
+                                  actorScaleValues = { ...actorScaleValues, [actor.id]: String(actor.scale ?? '') };
+                                }
+                              }}
+                            >⚙</button>
                             <button class="icon-btn danger" onclick={() => removeActor(actor.id)} title="Remove actor">✕</button>
                           </li>
+                          {#if expandedActorSettings.has(actor.id)}
+                            {@const clips = discoveredClips[actor.id] ?? []}
+                            <li class="anim-light-expand">
+                              <div class="anim-subsection">
+                                <div class="anim-row">
+                                  <label class="anim-label" for="idle-{actor.id}">Idle clip</label>
+                                  {#if clips.length > 0}
+                                    <select
+                                      id="idle-{actor.id}"
+                                      class="actor-char-select"
+                                      value={actor.idleAnimation ?? ''}
+                                      onchange={(e) => activeDoc?.execute(new SetActorIdleAnimationCommand(actor.id, e.currentTarget.value || undefined))}
+                                    >
+                                      <option value="">(catalogue default)</option>
+                                      {#each clips as clip}
+                                        <option>{clip}</option>
+                                      {/each}
+                                    </select>
+                                  {:else}
+                                    <input
+                                      id="idle-{actor.id}"
+                                      class="rename-input"
+                                      type="text"
+                                      placeholder="clip name (load scene first)"
+                                      value={actor.idleAnimation ?? ''}
+                                      onchange={(e) => activeDoc?.execute(new SetActorIdleAnimationCommand(actor.id, e.currentTarget.value.trim() || undefined))}
+                                    />
+                                  {/if}
+                                </div>
+                                <div class="anim-row">
+                                  <label class="anim-label" for="scale-{actor.id}">Scale</label>
+                                  <input
+                                    id="scale-{actor.id}"
+                                    class="anim-number"
+                                    type="number"
+                                    step="0.1"
+                                    min="0.01"
+                                    placeholder="default"
+                                    value={actorScaleValues[actor.id] ?? (actor.scale ?? '')}
+                                    oninput={(e) => { actorScaleValues = { ...actorScaleValues, [actor.id]: e.currentTarget.value }; }}
+                                    onchange={(e) => {
+                                      const n = parseFloat(e.currentTarget.value);
+                                      activeDoc?.execute(new SetActorScaleCommand(actor.id, isNaN(n) || e.currentTarget.value.trim() === '' ? undefined : n));
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            </li>
+                          {/if}
                         {/each}
                       </ul>
                     {/if}
@@ -634,6 +863,139 @@
                       </form>
                     {/if}
                   </div>
+
+                  <!-- Animations (Surface A — clip sequencer, Surface B — position keyframes) -->
+                  {#if actors.length > 0}
+                  <div class="stage-section">
+                    <div class="stage-section-header">
+                      <span class="stage-section-label">Animations</span>
+                    </div>
+                    {#each actors as actor}
+                      {@const actorClips = clipTracks.filter(e => e.action.actorId === actor.id)}
+                      {@const actorMoveTrack = transformTracks.find(e => e.action.targetId === actor.id && e.action.keyframes.property === '.position')}
+                      {@const availableClips = discoveredClips[actor.id] ?? []}
+                      <div class="anim-actor-group">
+                        <button
+                          class="anim-actor-header"
+                          onclick={() => {
+                            const next = new Set(expandedActorAnim);
+                            next.has(actor.id) ? next.delete(actor.id) : next.add(actor.id);
+                            expandedActorAnim = next;
+                          }}
+                        >
+                          <span class="anim-actor-toggle">{expandedActorAnim.has(actor.id) ? '▾' : '▸'}</span>
+                          <span class="anim-actor-name">{actor.role}</span>
+                        </button>
+                        {#if expandedActorAnim.has(actor.id)}
+                          <!-- Clips sub-section -->
+                          <div class="anim-subsection">
+                            <span class="anim-sublabel">Clips</span>
+                            {#if actorClips.length > 0}
+                              <ul class="cast-list">
+                                {#each actorClips as { action, index }}
+                                  <li class="cast-row">
+                                    <span class="cast-role anim-clip-name">{action.animationName}</span>
+                                    <span class="cast-char">{action.startTime.toFixed(1)}s{action.endTime !== undefined ? `–${action.endTime.toFixed(1)}s` : ''}</span>
+                                    <select
+                                      class="anim-loop-sel"
+                                      value={action.loop ?? 'once'}
+                                      onchange={(e) => updateClipLoop(index, e.currentTarget.value as LoopStyle)}
+                                    >
+                                      <option value="once">×1</option>
+                                      <option value="repeat">loop</option>
+                                    </select>
+                                    <button class="icon-btn danger" onclick={() => removeClipSegment(index)} title="Remove clip">✕</button>
+                                  </li>
+                                {/each}
+                              </ul>
+                            {/if}
+                            {#if clipFormActorId === actor.id}
+                              <form class="add-actor-form" onsubmit={(e) => { e.preventDefault(); commitAddClip(); }}>
+                                {#if availableClips.length > 0}
+                                  <select class="actor-char-select" bind:value={clipFormName}>
+                                    {#each availableClips as clip}
+                                      <option>{clip}</option>
+                                    {/each}
+                                  </select>
+                                {:else}
+                                  <input class="rename-input" placeholder="Clip name" bind:value={clipFormName} />
+                                {/if}
+                                <input class="anim-number" type="number" step="0.1" min="0" placeholder="Start (s)" bind:value={clipFormStart} />
+                                <input class="anim-number" type="number" step="0.1" min="0" placeholder="End (opt)" bind:value={clipFormEnd} />
+                                <select class="anim-loop-sel" bind:value={clipFormLoop}>
+                                  <option value="once">×1</option>
+                                  <option value="repeat">loop</option>
+                                </select>
+                                <div class="add-actor-btns">
+                                  <button class="new-btn" type="submit">Add</button>
+                                  <button class="icon-btn" type="button" onclick={() => (clipFormActorId = null)}>Cancel</button>
+                                </div>
+                              </form>
+                            {:else}
+                              <button class="new-btn anim-add-btn" onclick={() => openClipForm(actor.id, availableClips[0] ?? '')}>+ Clip</button>
+                            {/if}
+                          </div>
+                          <!-- Blocks sub-section (high-level authored) -->
+                          {@const thisActorBlocks = actorBlocks.filter(e => e.block.actorId === actor.id)}
+                          <div class="anim-subsection">
+                            <span class="anim-sublabel">Blocks</span>
+                            {#if thisActorBlocks.length > 0}
+                              <ul class="cast-list">
+                                {#each thisActorBlocks as { block, index }}
+                                  <li class="cast-row">
+                                    <span class="cast-role anim-clip-name">{block.clip ?? '— idle —'}</span>
+                                    <span class="cast-char">{block.startTime.toFixed(1)}s–{block.endTime.toFixed(1)}s</span>
+                                    <button class="icon-btn danger" onclick={() => removeBlock(index)} title="Remove block">✕</button>
+                                  </li>
+                                {/each}
+                              </ul>
+                            {/if}
+                            {#if blockFormActorId === actor.id}
+                              <form class="add-actor-form" onsubmit={(e) => { e.preventDefault(); commitAddBlock(); }}>
+                                <input class="anim-number" type="number" step="0.1" min="0" placeholder="Start (s)" bind:value={blockFormStart} />
+                                <input class="anim-number" type="number" step="0.1" min="0" placeholder="End (s)" bind:value={blockFormEnd} />
+                                {#if availableClips.length > 0}
+                                  <select class="actor-char-select" bind:value={blockFormClip}>
+                                    <option value="">— idle —</option>
+                                    {#each availableClips as clip}
+                                      <option>{clip}</option>
+                                    {/each}
+                                  </select>
+                                {:else}
+                                  <input class="rename-input" placeholder="Clip (optional)" bind:value={blockFormClip} />
+                                {/if}
+                                <div class="add-actor-btns">
+                                  <button class="new-btn" type="submit">Add</button>
+                                  <button class="icon-btn" type="button" onclick={() => (blockFormActorId = null)}>Cancel</button>
+                                </div>
+                              </form>
+                            {:else}
+                              <button class="new-btn anim-add-btn" onclick={() => openBlockForm(actor.id)}>+ Block</button>
+                            {/if}
+                          </div>
+                          <!-- Position track sub-section -->
+                          <div class="anim-subsection">
+                            <span class="anim-sublabel">Position track</span>
+                            {#if actorMoveTrack}
+                              <ul class="cast-list">
+                                {#each actorMoveTrack.action.keyframes.times as t, ki}
+                                  <li class="cast-row">
+                                    <span class="cast-role kf-time">{t.toFixed(2)}s</span>
+                                    <span class="cast-char kf-pos">{actorMoveTrack.action.keyframes.values.slice(ki * 3, ki * 3 + 3).map(v => v.toFixed(2)).join(', ')}</span>
+                                    <button class="icon-btn danger" onclick={() => removePositionKeyframe(actor.id, ki)} title="Remove keyframe">✕</button>
+                                  </li>
+                                {/each}
+                              </ul>
+                            {:else}
+                              <p class="stage-empty">No position keyframes.</p>
+                            {/if}
+                            <button class="new-btn anim-add-btn" onclick={() => capturePositionKeyframe(actor.id)} title="Capture current world position at playhead time">⊕ Capture at ▶ {currentPosition.toFixed(1)}s</button>
+                          </div>
+                        {/if}
+                      </div>
+                    {/each}
+                  </div>
+                  {/if}
 
                   <!-- Set Pieces -->
                   <div class="stage-section">
@@ -678,10 +1040,56 @@
                     {:else}
                       <ul class="cast-list">
                         {#each sceneLights as light}
+                          {@const lightIntTrack = lightingTracks.find(e => e.action.lightId === light.id && e.action.keyframes.property === '.intensity')}
                           <li class="cast-row">
                             <span class="cast-role">{light.id}</span>
                             <span class="cast-char">{light.type}</span>
+                            <button
+                              class="icon-btn"
+                              class:active={expandedLightAnim.has(light.id)}
+                              title="Animate intensity"
+                              onclick={() => {
+                                const next = new Set(expandedLightAnim);
+                                next.has(light.id) ? next.delete(light.id) : next.add(light.id);
+                                expandedLightAnim = next;
+                                if (!lightIntensityValues[light.id]) {
+                                  lightIntensityValues = { ...lightIntensityValues, [light.id]: String(light.intensity) };
+                                }
+                              }}
+                            >✦</button>
                           </li>
+                          {#if expandedLightAnim.has(light.id)}
+                            <li class="anim-light-expand">
+                              <div class="anim-subsection">
+                                <span class="anim-sublabel">Intensity track</span>
+                                {#if lightIntTrack}
+                                  <ul class="cast-list">
+                                    {#each lightIntTrack.action.keyframes.times as t, ki}
+                                      <li class="cast-row">
+                                        <span class="cast-role kf-time">{t.toFixed(2)}s</span>
+                                        <span class="cast-char">{lightIntTrack.action.keyframes.values[ki].toFixed(2)}</span>
+                                        <button class="icon-btn danger" onclick={() => removeLightIntensityKeyframe(light.id, ki)} title="Remove">✕</button>
+                                      </li>
+                                    {/each}
+                                  </ul>
+                                {:else}
+                                  <p class="stage-empty">No intensity keyframes.</p>
+                                {/if}
+                                <div class="anim-row">
+                                  <input
+                                    class="anim-number"
+                                    type="number"
+                                    step="0.1"
+                                    min="0"
+                                    placeholder="Intensity"
+                                    value={lightIntensityValues[light.id] ?? light.intensity}
+                                    oninput={(e) => { lightIntensityValues = { ...lightIntensityValues, [light.id]: e.currentTarget.value }; }}
+                                  />
+                                  <button class="new-btn anim-add-btn" onclick={() => captureLightIntensity(light.id, lightIntensityValues[light.id] ?? String(light.intensity))}>⊕ {currentPosition.toFixed(1)}s</button>
+                                </div>
+                              </div>
+                            </li>
+                          {/if}
                         {/each}
                       </ul>
                     {/if}
@@ -733,28 +1141,52 @@
   </div>
   <div class="bottom-panel">
     <div class="bottom-panel-header">
-      <button class="panel-toggle" onclick={() => (bottomPanelOpen = !bottomPanelOpen)}>
-        {bottomPanelOpen ? '▼' : '▲'} Transport
-      </button>
+      <button
+        class="panel-tab"
+        class:active={bottomTab === 'transport'}
+        onclick={() => { bottomTab = 'transport'; bottomPanelOpen = true; }}
+      >Transport</button>
+      <button
+        class="panel-tab"
+        class:active={bottomTab === 'timeline'}
+        onclick={() => { bottomTab = 'timeline'; bottomPanelOpen = true; }}
+      >Timeline</button>
+      <button
+        class="panel-toggle"
+        onclick={() => (bottomPanelOpen = !bottomPanelOpen)}
+        aria-label="Toggle bottom panel"
+      >{bottomPanelOpen ? '▼' : '▲'}</button>
     </div>
     {#if bottomPanelOpen}
       <div class="bottom-panel-body">
-        <TransportBar
-          {isPlaying}
-          {isToneSetup}
-          {currentPosition}
-          {sceneDuration}
-          {voiceBackend}
-          bind:voiceMode={voiceMode}
-          bind:bubbleScale={bubbleScale}
-          bind:sliderValue={sliderValue}
-          bind:isSliderDragging={isSliderDragging}
-          onplaypause={() => presenter?.handlePlayPauseClick()}
-          onrewind={() => presenter?.handleRewindClick()}
-          onsliderinput={(t) => presenter?.handleSliderInput(t)}
-          onsliderpointerdown={() => presenter?.handleSliderPointerDown()}
-          onsliderpointerup={() => presenter?.handleSliderPointerUp()}
-        />
+        {#if bottomTab === 'transport'}
+          <TransportBar
+            {isPlaying}
+            {isToneSetup}
+            {currentPosition}
+            {sceneDuration}
+            {voiceBackend}
+            bind:voiceMode={voiceMode}
+            bind:bubbleScale={bubbleScale}
+            bind:sliderValue={sliderValue}
+            bind:isSliderDragging={isSliderDragging}
+            onplaypause={() => presenter?.handlePlayPauseClick()}
+            onrewind={() => presenter?.handleRewindClick()}
+            onsliderinput={(t) => presenter?.handleSliderInput(t)}
+            onsliderpointerdown={() => presenter?.handleSliderPointerDown()}
+            onsliderpointerup={() => presenter?.handleSliderPointerUp()}
+          />
+        {:else}
+          <TimelinePanel
+            {actors}
+            {actorBlocks}
+            {sceneDuration}
+            {currentPosition}
+            {discoveredClips}
+            onupdateblock={(i, patch) => activeDoc?.execute(new UpdateActorBlockCommand(i, patch))}
+            onremoveblock={(i) => activeDoc?.execute(new RemoveActorBlockCommand(i))}
+          />
+        {/if}
       </div>
     {/if}
   </div>
@@ -1305,22 +1737,159 @@
   .bottom-panel-header {
     display: flex;
     align-items: center;
-    padding: 0 4px;
   }
 
-  .panel-toggle {
+  .panel-tab {
     background: none;
     border: none;
-    color: #888;
+    border-bottom: 2px solid transparent;
+    color: #666;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: color 0.1s, border-color 0.1s;
+  }
+
+  .panel-tab:hover { color: #bbb; }
+  .panel-tab.active { color: #4a9eff; border-bottom-color: #4a9eff; }
+
+  .panel-toggle {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: #555;
     font-size: 11px;
     padding: 4px 8px;
     cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
     transition: color 0.1s;
   }
 
   .panel-toggle:hover {
     color: #ccc;
+  }
+
+  /* ── Animation authoring UI ────────────────────── */
+
+  .anim-actor-group {
+    border-left: 2px solid #2a2a2a;
+    margin-bottom: 4px;
+  }
+
+  .anim-actor-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    background: none;
+    border: none;
+    color: #bbb;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 6px;
+    cursor: pointer;
+    text-align: left;
+    border-radius: 3px;
+  }
+
+  .anim-actor-header:hover {
+    background: #222;
+    color: #fff;
+  }
+
+  .anim-actor-toggle {
+    color: #666;
+    font-size: 10px;
+    flex-shrink: 0;
+  }
+
+  .anim-actor-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .anim-subsection {
+    padding: 4px 8px 6px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .anim-sublabel {
+    font-size: 10px;
+    font-weight: 600;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .anim-clip-name {
+    flex: 1;
+  }
+
+  .anim-loop-sel {
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 3px;
+    color: #aaa;
+    font-size: 11px;
+    padding: 1px 4px;
+    flex-shrink: 0;
+  }
+
+  .anim-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .anim-label {
+    font-size: 11px;
+    color: #888;
+    flex-shrink: 0;
+  }
+
+  .anim-number {
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 3px;
+    color: #ccc;
+    font-size: 12px;
+    padding: 2px 6px;
+    width: 70px;
+    flex-shrink: 0;
+  }
+
+  .anim-add-btn {
+    margin-top: 2px;
+    align-self: flex-start;
+  }
+
+  .anim-light-expand {
+    background: none;
+    padding: 0;
+    list-style: none;
+  }
+
+  .kf-time {
+    color: #4a9eff;
+    font-variant-numeric: tabular-nums;
+    min-width: 52px;
+    flex-shrink: 0;
+  }
+
+  .kf-pos {
+    color: #aaa;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .icon-btn.active {
+    color: #4a9eff;
   }
 </style>

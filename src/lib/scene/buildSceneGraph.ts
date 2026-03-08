@@ -18,6 +18,8 @@ export type SceneGraphResult = {
   animationDict: AnimationDict;
   /** One mixer per GLTF object (shared across all clips for that object). */
   mixers: THREE.AnimationMixer[];
+  /** Animation clip names discovered from loaded GLTFs, keyed by object name (actor ID). */
+  discoveredClips: Record<string, string[]>;
 };
 
 /**
@@ -60,12 +62,14 @@ export async function buildSceneGraph(model: Model): Promise<SceneGraphResult> {
 
   // Clip lookup built during GLTF loading; used only to wire up actions below.
   const modelAnimationClips: { [key: string]: THREE.AnimationClip[] } = {};
+  const discoveredClips: Record<string, string[]> = {};
 
   await Promise.all(
     model.gltfs.map(async (gltf) => {
       await gltf.load();
       scene.add(gltf.threeObject);
       modelAnimationClips[gltf.name] = gltf.animations;
+      discoveredClips[gltf.name] = gltf.animations.map((a) => a.name);
       if (gltf.parent) {
         const parentObject = scene.getObjectByName(gltf.parent);
         if (parentObject) {
@@ -103,5 +107,5 @@ export async function buildSceneGraph(model: Model): Promise<SceneGraphResult> {
     );
   });
 
-  return { scene, camera, authoredFov, animationDict, mixers };
+  return { scene, camera, authoredFov, animationDict, mixers, discoveredClips };
 }

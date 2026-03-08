@@ -9,7 +9,6 @@ const robot: CharacterEntry = {
   id: 'robot-a',
   label: 'Robot A',
   gltfPath: '/models/gltf/RobotExpressive.glb',
-  animationClips: ['Idle', 'Walking'],
 };
 
 const box: SetPieceEntry = {

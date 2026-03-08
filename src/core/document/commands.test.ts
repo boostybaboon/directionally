@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { AddActorCommand, RemoveActorCommand, SetSpeakLinesCommand, MoveStagedActorCommand, MoveSetPieceCommand } from './commands';
+import { AddActorCommand, RemoveActorCommand, SetSpeakLinesCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand } from './commands';
 import type { StoredActor, StoredProduction, StoredScene } from '../storage/types';
 import type { ScriptLine } from '../../lib/sandbox/types';
+import type { ClipTrack, LightingTrack, TransformTrack, StagedActor } from '../domain/types';
 import { defaultSceneShell, estimateDuration } from '../storage/sceneBuilder';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -326,3 +327,380 @@ describe('MoveSetPieceCommand', () => {
     expect(result.scene).toBeUndefined();
   });
 });
+
+// ── SetSceneDurationCommand ───────────────────────────────────────────────────
+
+describe('SetSceneDurationCommand', () => {
+  it('sets duration on scene', () => {
+    const doc = makeProduction({ scene: makeScene() });
+    const result = new SetSceneDurationCommand(30).execute(doc);
+    expect(result.scene!.duration).toBe(30);
+  });
+
+  it('clears duration when undefined is passed', () => {
+    const doc = makeProduction({ scene: makeScene({ duration: 30 }) });
+    const result = new SetSceneDurationCommand(undefined).execute(doc);
+    expect(result.scene!.duration).toBeUndefined();
+  });
+
+  it('is a no-op when no scene', () => {
+    const doc = makeProduction();
+    expect(new SetSceneDurationCommand(10).execute(doc).scene).toBeUndefined();
+  });
+});
+
+// ── AddAnimateSegmentCommand ──────────────────────────────────────────────────
+
+describe('AddAnimateSegmentCommand', () => {
+  const seg: ClipTrack = { type: 'animate', actorId: 'a1', startTime: 0, animationName: 'Walk', loop: 'repeat' };
+
+  it('appends a new ClipTrack', () => {
+    const doc = makeProduction({ scene: makeScene() });
+    const result = new AddAnimateSegmentCommand(seg).execute(doc);
+    const added = result.scene!.actions.find((a) => a.type === 'animate') as ClipTrack | undefined;
+    expect(added?.animationName).toBe('Walk');
+    expect(added?.actorId).toBe('a1');
+  });
+
+  it('is a no-op when no scene', () => {
+    const doc = makeProduction();
+    expect(new AddAnimateSegmentCommand(seg).execute(doc).scene).toBeUndefined();
+  });
+});
+
+// ── RemoveAnimateSegmentCommand ───────────────────────────────────────────────
+
+describe('RemoveAnimateSegmentCommand', () => {
+  it('removes action at given global index', () => {
+    const seg: ClipTrack = { type: 'animate', actorId: 'a1', startTime: 0, animationName: 'Walk' };
+    const scene = makeScene({ actions: [seg] });
+    const doc = makeProduction({ scene });
+    const result = new RemoveAnimateSegmentCommand(0).execute(doc);
+    expect(result.scene!.actions).toHaveLength(0);
+  });
+
+  it('leaves other actions intact', () => {
+    const seg1: ClipTrack = { type: 'animate', actorId: 'a1', startTime: 0, animationName: 'Walk' };
+    const seg2: ClipTrack = { type: 'animate', actorId: 'a1', startTime: 5, animationName: 'Idle' };
+    const scene = makeScene({ actions: [seg1, seg2] });
+    const doc = makeProduction({ scene });
+    const result = new RemoveAnimateSegmentCommand(0).execute(doc);
+    expect((result.scene!.actions[0] as ClipTrack).animationName).toBe('Idle');
+  });
+});
+
+// ── UpdateAnimateSegmentCommand ───────────────────────────────────────────────
+
+describe('UpdateAnimateSegmentCommand', () => {
+  it('patches animationName', () => {
+    const seg: ClipTrack = { type: 'animate', actorId: 'a1', startTime: 0, animationName: 'Walk' };
+    const doc = makeProduction({ scene: makeScene({ actions: [seg] }) });
+    const result = new UpdateAnimateSegmentCommand(0, { animationName: 'Run' }).execute(doc);
+    expect((result.scene!.actions[0] as ClipTrack).animationName).toBe('Run');
+  });
+
+  it('patches startTime and loop', () => {
+    const seg: ClipTrack = { type: 'animate', actorId: 'a1', startTime: 0, animationName: 'Walk' };
+    const doc = makeProduction({ scene: makeScene({ actions: [seg] }) });
+    const result = new UpdateAnimateSegmentCommand(0, { startTime: 2, loop: 'repeat' }).execute(doc);
+    expect((result.scene!.actions[0] as ClipTrack).startTime).toBe(2);
+    expect((result.scene!.actions[0] as ClipTrack).loop).toBe('repeat');
+  });
+
+  it('is a no-op when index points to non-animate action', () => {
+    const doc = makeProduction({ scene: makeScene() });
+    const before = JSON.stringify(doc.scene!.actions);
+    new UpdateAnimateSegmentCommand(0, { animationName: 'X' }).execute(doc);
+    expect(JSON.stringify(doc.scene!.actions)).toBe(before);
+  });
+});
+
+// ── CapturePositionKeyframeCommand ────────────────────────────────────────────
+
+describe('CapturePositionKeyframeCommand', () => {
+  it('creates a new TransformTrack when none exists', () => {
+    const doc = makeProduction({ scene: makeScene() });
+    const result = new CapturePositionKeyframeCommand('a1', 1.0, [1, 2, 3]).execute(doc);
+    const move = result.scene!.actions.find((a) => a.type === 'move') as TransformTrack | undefined;
+    expect(move?.targetId).toBe('a1');
+    expect(move?.keyframes.times).toEqual([1.0]);
+    expect(move?.keyframes.values).toEqual([1, 2, 3]);
+  });
+
+  it('appends a keyframe to the existing TransformTrack in time order', () => {
+    const existing: TransformTrack = {
+      type: 'move', targetId: 'a1', startTime: 0,
+      keyframes: { property: '.position', times: [0], values: [0, 0, 0], trackType: 'vector' },
+    };
+    const doc = makeProduction({ scene: makeScene({ actions: [existing] }) });
+    const result = new CapturePositionKeyframeCommand('a1', 2.0, [5, 0, 0]).execute(doc);
+    const move = result.scene!.actions[0] as TransformTrack;
+    expect(move.keyframes.times).toEqual([0, 2.0]);
+    expect(move.keyframes.values).toEqual([0, 0, 0, 5, 0, 0]);
+  });
+
+  it('replaces a keyframe within 50ms snap', () => {
+    const existing: TransformTrack = {
+      type: 'move', targetId: 'a1', startTime: 0,
+      keyframes: { property: '.position', times: [1.0], values: [1, 2, 3], trackType: 'vector' },
+    };
+    const doc = makeProduction({ scene: makeScene({ actions: [existing] }) });
+    const result = new CapturePositionKeyframeCommand('a1', 1.02, [9, 9, 9]).execute(doc);
+    const move = result.scene!.actions[0] as TransformTrack;
+    expect(move.keyframes.times).toHaveLength(1);
+    expect(move.keyframes.values).toEqual([9, 9, 9]);
+  });
+});
+
+// ── RemoveTransformKeyframeCommand ────────────────────────────────────────────
+
+describe('RemoveTransformKeyframeCommand', () => {
+  it('removes the keyframe at the given index', () => {
+    const existing: TransformTrack = {
+      type: 'move', targetId: 'a1', startTime: 0,
+      keyframes: { property: '.position', times: [0, 1], values: [0, 0, 0, 5, 0, 0], trackType: 'vector' },
+    };
+    const doc = makeProduction({ scene: makeScene({ actions: [existing] }) });
+    const result = new RemoveTransformKeyframeCommand('a1', '.position', 1).execute(doc);
+    const move = result.scene!.actions[0] as TransformTrack;
+    expect(move.keyframes.times).toEqual([0]);
+    expect(move.keyframes.values).toEqual([0, 0, 0]);
+  });
+
+  it('removes the TransformTrack when the last keyframe is deleted', () => {
+    const existing: TransformTrack = {
+      type: 'move', targetId: 'a1', startTime: 0,
+      keyframes: { property: '.position', times: [1.0], values: [1, 2, 3], trackType: 'vector' },
+    };
+    const doc = makeProduction({ scene: makeScene({ actions: [existing] }) });
+    const result = new RemoveTransformKeyframeCommand('a1', '.position', 0).execute(doc);
+    expect(result.scene!.actions).toHaveLength(0);
+  });
+});
+
+// ── CaptureLightIntensityKeyframeCommand ──────────────────────────────────────
+
+describe('CaptureLightIntensityKeyframeCommand', () => {
+  it('creates a new LightingTrack when none exists', () => {
+    const doc = makeProduction({ scene: makeScene() });
+    const result = new CaptureLightIntensityKeyframeCommand('sun', 0, 1.5).execute(doc);
+    const la = result.scene!.actions.find((a) => a.type === 'lighting') as LightingTrack | undefined;
+    expect(la?.lightId).toBe('sun');
+    expect(la?.keyframes.times).toEqual([0]);
+    expect(la?.keyframes.values).toEqual([1.5]);
+  });
+
+  it('appends a keyframe and keeps time-sorted order', () => {
+    const existing: LightingTrack = {
+      type: 'lighting', lightId: 'sun', startTime: 0,
+      keyframes: { property: '.intensity', times: [0], values: [1], trackType: 'number' },
+    };
+    const doc = makeProduction({ scene: makeScene({ actions: [existing] }) });
+    const result = new CaptureLightIntensityKeyframeCommand('sun', 2, 0.5).execute(doc);
+    const la = result.scene!.actions[0] as LightingTrack;
+    expect(la.keyframes.times).toEqual([0, 2]);
+    expect(la.keyframes.values).toEqual([1, 0.5]);
+  });
+
+  it('replaces a keyframe within 50ms snap', () => {
+    const existing: LightingTrack = {
+      type: 'lighting', lightId: 'sun', startTime: 0,
+      keyframes: { property: '.intensity', times: [1.0], values: [1], trackType: 'number' },
+    };
+    const doc = makeProduction({ scene: makeScene({ actions: [existing] }) });
+    const result = new CaptureLightIntensityKeyframeCommand('sun', 1.01, 2).execute(doc);
+    const la = result.scene!.actions[0] as LightingTrack;
+    expect(la.keyframes.times).toHaveLength(1);
+    expect(la.keyframes.values).toEqual([2]);
+  });
+});
+
+// ── RemoveLightKeyframeCommand ────────────────────────────────────────────────
+
+describe('RemoveLightKeyframeCommand', () => {
+  it('removes the keyframe at the given index', () => {
+    const existing: LightingTrack = {
+      type: 'lighting', lightId: 'sun', startTime: 0,
+      keyframes: { property: '.intensity', times: [0, 2], values: [1, 0.5], trackType: 'number' },
+    };
+    const doc = makeProduction({ scene: makeScene({ actions: [existing] }) });
+    const result = new RemoveLightKeyframeCommand('sun', '.intensity', 0).execute(doc);
+    const la = result.scene!.actions[0] as LightingTrack;
+    expect(la.keyframes.times).toEqual([2]);
+    expect(la.keyframes.values).toEqual([0.5]);
+  });
+
+  it('removes the LightingTrack when the last keyframe is deleted', () => {
+    const existing: LightingTrack = {
+      type: 'lighting', lightId: 'sun', startTime: 0,
+      keyframes: { property: '.intensity', times: [0], values: [1], trackType: 'number' },
+    };
+    const doc = makeProduction({ scene: makeScene({ actions: [existing] }) });
+    const result = new RemoveLightKeyframeCommand('sun', '.intensity', 0).execute(doc);
+    expect(result.scene!.actions).toHaveLength(0);
+  });
+});
+
+// ── SetActorIdleAnimationCommand ────────────────────────────────────────────
+
+describe('SetActorIdleAnimationCommand', () => {
+  it('sets idleAnimation on the actor', () => {
+    const actor = makeActor('a1');
+    const doc = makeProduction({ actors: [actor] });
+    const result = new SetActorIdleAnimationCommand('a1', 'Walk').execute(doc);
+    expect(result.actors![0].idleAnimation).toBe('Walk');
+  });
+
+  it('updates the idle animate action in the scene', () => {
+    const actor = makeActor('a1');
+    const doc = makeProduction({ actors: [actor], scene: makeScene() });
+    const result = new SetActorIdleAnimationCommand('a1', 'Run').execute(doc);
+    const idle = (result.scene!.actions as ClipTrack[]).find(
+      (a) => a.type === 'animate' && a.actorId === 'a1' && a.loop === 'repeat',
+    );
+    expect(idle?.animationName).toBe('Run');
+  });
+
+  it('clears idleAnimation when undefined is passed', () => {
+    const actor: StoredActor = { ...makeActor('a1'), idleAnimation: 'Walk' };
+    const doc = makeProduction({ actors: [actor] });
+    const result = new SetActorIdleAnimationCommand('a1', undefined).execute(doc);
+    expect(result.actors![0].idleAnimation).toBeUndefined();
+  });
+
+  it('is a no-op when actorId not found', () => {
+    const doc = makeProduction({ actors: [makeActor('a1')] });
+    const result = new SetActorIdleAnimationCommand('x', 'Run').execute(doc);
+    expect(result.actors![0].idleAnimation).toBeUndefined();
+  });
+});
+
+// ── SetActorScaleCommand ──────────────────────────────────────────────────
+
+describe('SetActorScaleCommand', () => {
+  it('sets scale on the actor', () => {
+    const actor = makeActor('a1');
+    const doc = makeProduction({ actors: [actor] });
+    const result = new SetActorScaleCommand('a1', 2).execute(doc);
+    expect(result.actors![0].scale).toBe(2);
+  });
+
+  it('updates startScale on the staged actor', () => {
+    const actor = makeActor('a1');
+    const staged: StagedActor = { actorId: 'a1', startPosition: [0, 0, 0] };
+    const scene = makeScene({ stagedActors: [staged] });
+    const doc = makeProduction({ actors: [actor], scene });
+    const result = new SetActorScaleCommand('a1', 3).execute(doc);
+    expect(result.scene!.stagedActors[0].startScale).toEqual([3, 3, 3]);
+  });
+
+  it('removes startScale when undefined is passed', () => {
+    const actor: StoredActor = { ...makeActor('a1'), scale: 2 };
+    const staged: StagedActor = { actorId: 'a1', startPosition: [0, 0, 0], startScale: [2, 2, 2] };
+    const scene = makeScene({ stagedActors: [staged] });
+    const doc = makeProduction({ actors: [actor], scene });
+    const result = new SetActorScaleCommand('a1', undefined).execute(doc);
+    expect(result.actors![0].scale).toBeUndefined();
+    expect(result.scene!.stagedActors[0].startScale).toBeUndefined();
+  });
+
+  it('does not alter other staged actors', () => {
+    const staged1: StagedActor = { actorId: 'a1', startPosition: [0, 0, 0] };
+    const staged2: StagedActor = { actorId: 'a2', startPosition: [1, 0, 0] };
+    const scene = makeScene({ stagedActors: [staged1, staged2] });
+    const doc = makeProduction({ actors: [makeActor('a1'), makeActor('a2')], scene });
+    const result = new SetActorScaleCommand('a1', 2).execute(doc);
+    expect(result.scene!.stagedActors[1].startScale).toBeUndefined();
+  });
+});
+
+// ── AddActorBlockCommand ────────────────────────────────────────────────
+
+describe('AddActorBlockCommand', () => {
+  const block = (): import('../domain/types').ActorBlock => ({
+    type: 'actorBlock', actorId: 'a1', startTime: 1, endTime: 4, clip: 'Walk',
+  });
+
+  it('appends a block to an empty blocks list', () => {
+    const doc = makeProduction({ scene: makeScene() });
+    const result = new AddActorBlockCommand(block()).execute(doc);
+    expect(result.scene!.blocks).toHaveLength(1);
+    expect(result.scene!.blocks![0]).toMatchObject({ actorId: 'a1', clip: 'Walk' });
+  });
+
+  it('appends after existing blocks', () => {
+    const doc = makeProduction({ scene: makeScene({ blocks: [block()] }) });
+    const result = new AddActorBlockCommand({ ...block(), startTime: 5, endTime: 8 }).execute(doc);
+    expect(result.scene!.blocks).toHaveLength(2);
+  });
+
+  it('is a no-op when no scene', () => {
+    const doc = makeProduction();
+    expect(new AddActorBlockCommand(block()).execute(doc).scene).toBeUndefined();
+  });
+});
+
+// ── RemoveActorBlockCommand ────────────────────────────────────────────
+
+describe('RemoveActorBlockCommand', () => {
+  const b1 = (): import('../domain/types').ActorBlock => ({ type: 'actorBlock', actorId: 'a1', startTime: 0, endTime: 2 });
+  const b2 = (): import('../domain/types').ActorBlock => ({ type: 'actorBlock', actorId: 'a1', startTime: 3, endTime: 5 });
+
+  it('removes the block at the given index', () => {
+    const doc = makeProduction({ scene: makeScene({ blocks: [b1(), b2()] }) });
+    const result = new RemoveActorBlockCommand(0).execute(doc);
+    expect(result.scene!.blocks).toHaveLength(1);
+    expect(result.scene!.blocks![0].startTime).toBe(3);
+  });
+
+  it('results in an empty blocks array when the last block is removed', () => {
+    const doc = makeProduction({ scene: makeScene({ blocks: [b1()] }) });
+    const result = new RemoveActorBlockCommand(0).execute(doc);
+    expect(result.scene!.blocks).toHaveLength(0);
+  });
+
+  it('is a no-op when no scene', () => {
+    expect(new RemoveActorBlockCommand(0).execute(makeProduction()).scene).toBeUndefined();
+  });
+});
+
+// ── UpdateActorBlockCommand ────────────────────────────────────────────
+
+describe('UpdateActorBlockCommand', () => {
+  const base = (): import('../domain/types').ActorBlock => ({
+    type: 'actorBlock', actorId: 'a1', startTime: 0, endTime: 4, clip: 'Walk',
+  });
+
+  it('patches a single field', () => {
+    const doc = makeProduction({ scene: makeScene({ blocks: [base()] }) });
+    const result = new UpdateActorBlockCommand(0, { clip: 'Run' }).execute(doc);
+    expect((result.scene!.blocks![0] as import('../domain/types').ActorBlock).clip).toBe('Run');
+  });
+
+  it('patches timing fields', () => {
+    const doc = makeProduction({ scene: makeScene({ blocks: [base()] }) });
+    const result = new UpdateActorBlockCommand(0, { startTime: 2, endTime: 6 }).execute(doc);
+    expect(result.scene!.blocks![0].startTime).toBe(2);
+    expect(result.scene!.blocks![0].endTime).toBe(6);
+  });
+
+  it('preserves other blocks unchanged', () => {
+    const other: import('../domain/types').ActorBlock = { type: 'actorBlock', actorId: 'a2', startTime: 10, endTime: 12 };
+    const doc = makeProduction({ scene: makeScene({ blocks: [base(), other] }) });
+    const result = new UpdateActorBlockCommand(0, { clip: 'Idle' }).execute(doc);
+    expect(result.scene!.blocks![1]).toEqual(other);
+  });
+
+  it('is a no-op when no scene', () => {
+    expect(new UpdateActorBlockCommand(0, { clip: 'Run' }).execute(makeProduction()).scene).toBeUndefined();
+  });
+
+  it('is a no-op when index is out of range', () => {
+    const doc = makeProduction({ scene: makeScene({ blocks: [base()] }) });
+    const result = new UpdateActorBlockCommand(5, { clip: 'Run' }).execute(doc);
+    const block = result.scene!.blocks![0];
+    if (block.type !== 'actorBlock') throw new Error('expected actorBlock');
+    expect(block.clip).toBe('Walk');
+  });
+});
+

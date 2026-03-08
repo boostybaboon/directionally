@@ -75,6 +75,10 @@
     ontransformend?: (id: string, position: [number, number, number], rotation: [number, number, number]) => void;
     /** Fired when a catalogue item from the left panel is dropped onto the design viewport. */
     oncataloguedrop?: (kind: 'character' | 'setpiece', id: string, position: [number, number, number]) => void;
+    /** Fired after a model finishes loading; maps each GLTF object name (actor ID) to its discovered clip names. */
+    ondiscoverclips?: (clips: Record<string, string[]>) => void;
+    /** Contextual hint shown in the gizmo toolbar to communicate what the next drag will do. */
+    dragHint?: string;
     voiceMode?: VoiceMode;
     bubbleScale?: number;
     isPlaying?: boolean;
@@ -91,6 +95,7 @@
     selectedObjectId = $bindable<string | null>(null),
     ontransformend,
     oncataloguedrop,
+    ondiscoverclips,
     voiceMode = $bindable('espeak' as VoiceMode),
     bubbleScale = $bindable(1),
     isPlaying = $bindable(false),
@@ -100,6 +105,7 @@
     voiceBackend = $bindable('idle' as VoiceBackend),
     sliderValue = $bindable(0),
     isSliderDragging = $bindable(false),
+    dragHint = '',
   }: PresenterProps = $props();
 
   // Tracks the most recently loaded model to support re-synthesis when voiceMode changes.
@@ -276,7 +282,7 @@
   }
 
   //need a method to load a model into the scene, and set up the animations
-  export async function loadModel(model: Model) {
+  export async function loadModel(model: Model, seekTo?: number) {
     currentLoadedModel = model;
     if (!isToneSetup) {
       await setupTone();
@@ -296,7 +302,9 @@
 
     Tone.getTransport().cancel();
 
-    ({ scene, camera, authoredFov, animationDict, mixers } = await buildSceneGraph(model));
+    const graphResult = await buildSceneGraph(model);
+    ({ scene, camera, authoredFov, animationDict, mixers } = graphResult);
+    ondiscoverclips?.(graphResult.discoveredClips);
     updateRendererSize();
 
     // Playback camera frustum — visible to the editor camera (layer 1) only.
@@ -456,7 +464,9 @@
     engine.load({ animations: animationDict, mixers, duration: model.duration });
     sceneDuration = model.duration ?? 0;
 
-    setSequenceTo(0);
+    // Preserve playhead when reloading due to a command (seekTo omitted);
+    // reset to 0 only for fresh production/example loads (seekTo === 0).
+    setSequenceTo(seekTo ?? engine.getPosition());
 
     clock = new THREE.Clock();
     renderer.setAnimationLoop(animate);
@@ -696,6 +706,23 @@
     return {
       position: [+p.x.toFixed(3), +p.y.toFixed(3), +p.z.toFixed(3)],
       lookAt:   [+t.x.toFixed(3), +t.y.toFixed(3), +t.z.toFixed(3)],
+    };
+  }
+
+  /**
+   * Returns the current world-space position and Euler rotation (XYZ, radians)
+   * of the named object in the live Three.js scene graph.
+   * Returns null when the object is not found or the scene is not yet built.
+   */
+  export function getObjectTransform(id: string): { position: [number, number, number]; rotation: [number, number, number] } | null {
+    const obj = scene?.getObjectByName(id);
+    if (!obj) return null;
+    const p = obj.getWorldPosition(new THREE.Vector3());
+    const q = obj.getWorldQuaternion(new THREE.Quaternion());
+    const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+    return {
+      position: [+p.x.toFixed(3), +p.y.toFixed(3), +p.z.toFixed(3)],
+      rotation: [+e.x.toFixed(4), +e.y.toFixed(4), +e.z.toFixed(4)],
     };
   }
 
@@ -991,6 +1018,15 @@
     color: #4a9eff;
     border-color: rgba(74, 158, 255, 0.45);
   }
+
+  .drag-hint {
+    font-size: 11px;
+    color: rgba(200, 200, 210, 0.75);
+    white-space: nowrap;
+    padding: 0 4px;
+    pointer-events: none;
+    user-select: none;
+  }
 </style>
   
 <div id="content">
@@ -1029,6 +1065,9 @@
           aria-label="Rotate"
           aria-pressed={tcMode === 'rotate'}
         >↻</button>
+        {#if dragHint}
+          <span class="drag-hint">{dragHint}</span>
+        {/if}
       </div>
     {/if}
   </div>

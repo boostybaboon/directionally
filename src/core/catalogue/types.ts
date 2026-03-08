@@ -8,8 +8,6 @@ export interface CharacterEntry {
   label: string;
   /** URL passed to the GLTF loader, e.g. '/models/gltf/RobotExpressive.glb' */
   gltfPath: string;
-  /** Animation clip names available on this GLTF. Omit to discover at load time. */
-  animationClips?: string[];
   /** Clip name to use for the idle/standing pose in scene authoring. */
   defaultAnimation?: string;
   defaultScale?: number;

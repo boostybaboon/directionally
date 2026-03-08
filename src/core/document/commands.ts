@@ -1,7 +1,7 @@
 import type { Command } from './Command.js';
 import type { StoredProduction, StoredActor, StoredScene } from '../storage/types.js';
 import type { ScriptLine } from '../../lib/sandbox/types.js';
-import type { CameraConfig, Vec3, SetPiece, StagedActor, SpeakAction, CameraTrackAction, PathKeyframe } from '../domain/types.js';
+import type { CameraConfig, Vec3, SetPiece, StagedActor, SpeakAction, CameraTrackAction, PathKeyframe, ClipTrack, TransformTrack, LightingTrack, LoopStyle, ActorBlock } from '../domain/types.js';
 import { restageCast, estimateDuration } from '../storage/sceneBuilder.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -356,5 +356,351 @@ export class RemoveCameraKeyframeCommand implements Command {
           ...doc.scene.actions.slice(trackIdx + 1),
         ];
     return touch({ ...doc, scene: { ...doc.scene, actions: newActions } });
+  }
+}
+
+// ── Scene duration command ─────────────────────────────────────────────────────
+
+/**
+ * Set (or clear) an explicit scene duration override for the transport timeline.
+ * Pass `undefined` to revert to auto-computed duration.
+ */
+export class SetSceneDurationCommand implements Command {
+  readonly label: string;
+  constructor(private readonly duration: number | undefined) {
+    this.label = duration === undefined ? 'Clear scene duration' : `Set scene duration to ${duration.toFixed(1)}s`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const { duration: _removed, ...rest } = doc.scene;
+    const newScene = this.duration !== undefined ? { ...rest, duration: this.duration } : rest;
+    return touch({ ...doc, scene: newScene as StoredScene });
+  }
+}
+
+// ── Animate-segment commands (Surface A — GLTF clip sequencer) ────────────────
+
+/**
+ * Append a new ClipTrack (GLTF clip segment) to the scene action list.
+ */
+export class AddAnimateSegmentCommand implements Command {
+  readonly label: string;
+  constructor(private readonly segment: ClipTrack) {
+    this.label = `Add clip "${segment.animationName}" for ${segment.actorId}`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    return touch({ ...doc, scene: { ...doc.scene, actions: [...doc.scene.actions, this.segment] } });
+  }
+}
+
+/**
+ * Remove the ClipTrack at `index` (position in `scene.actions`).
+ */
+export class RemoveAnimateSegmentCommand implements Command {
+  readonly label = 'Remove clip segment';
+  constructor(private readonly index: number) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    return touch({ ...doc, scene: { ...doc.scene, actions: doc.scene.actions.filter((_, i) => i !== this.index) } });
+  }
+}
+
+/**
+ * Patch fields on the ClipTrack at `index` (position in `scene.actions`).
+ * Only the provided fields in `patch` are changed; others are preserved.
+ */
+export class UpdateAnimateSegmentCommand implements Command {
+  readonly label = 'Update clip segment';
+  constructor(
+    private readonly index: number,
+    private readonly patch: Partial<Pick<ClipTrack, 'animationName' | 'startTime' | 'endTime' | 'fadeIn' | 'fadeOut' | 'loop'>>,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const action = doc.scene.actions[this.index];
+    if (!action || action.type !== 'animate') return doc;
+    const updated: ClipTrack = { ...action, ...this.patch };
+    const newActions = [
+      ...doc.scene.actions.slice(0, this.index),
+      updated,
+      ...doc.scene.actions.slice(this.index + 1),
+    ];
+    return touch({ ...doc, scene: { ...doc.scene, actions: newActions } });
+  }
+}
+
+// ── Transform-keyframe commands (Surface B — scrub-and-capture) ───────────────
+
+/** Number of value components per keyframe for each Three.js track type. */
+function trackStride(trackType: 'number' | 'vector' | 'quaternion'): number {
+  if (trackType === 'vector') return 3;
+  if (trackType === 'quaternion') return 4;
+  return 1;
+}
+
+/**
+ * Upsert a position keyframe (`.position` vector track) for `targetId` at `time`.
+ * Replaces any existing keyframe within 50 ms of `time`.
+ * Creates the TransformTrack if it does not yet exist.
+ */
+export class CapturePositionKeyframeCommand implements Command {
+  readonly label: string;
+  constructor(
+    private readonly targetId: string,
+    private readonly time: number,
+    private readonly position: [number, number, number],
+  ) {
+    this.label = `Capture position keyframe for ${targetId} at ${time.toFixed(1)}s`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const SNAP = 0.05;
+    const property = '.position';
+    const moveIdx = doc.scene.actions.findIndex(
+      (a) => a.type === 'move' && (a as TransformTrack).targetId === this.targetId && (a as TransformTrack).keyframes.property === property,
+    );
+    if (moveIdx >= 0) {
+      const existing = doc.scene.actions[moveIdx] as TransformTrack;
+      const pairs: { time: number; vals: number[] }[] = [];
+      for (let i = 0; i < existing.keyframes.times.length; i++) {
+        if (Math.abs(existing.keyframes.times[i] - this.time) > SNAP) {
+          pairs.push({ time: existing.keyframes.times[i], vals: existing.keyframes.values.slice(i * 3, i * 3 + 3) });
+        }
+      }
+      pairs.push({ time: this.time, vals: [...this.position] });
+      pairs.sort((a, b) => a.time - b.time);
+      const updated: TransformTrack = {
+        ...existing,
+        keyframes: { ...existing.keyframes, times: pairs.map((p) => p.time), values: pairs.flatMap((p) => p.vals) },
+      };
+      return touch({ ...doc, scene: { ...doc.scene, actions: [...doc.scene.actions.slice(0, moveIdx), updated, ...doc.scene.actions.slice(moveIdx + 1)] } });
+    }
+    const newAction: TransformTrack = {
+      type: 'move', targetId: this.targetId, startTime: 0,
+      keyframes: { property, times: [this.time], values: [...this.position], trackType: 'vector' },
+    };
+    return touch({ ...doc, scene: { ...doc.scene, actions: [...doc.scene.actions, newAction] } });
+  }
+}
+
+/**
+ * Remove a single keyframe at `kfIndex` from the TransformTrack for `targetId` / `property`.
+ * Removes the entire TransformTrack when no keyframes remain.
+ */
+export class RemoveTransformKeyframeCommand implements Command {
+  readonly label = 'Remove transform keyframe';
+  constructor(
+    private readonly targetId: string,
+    private readonly property: string,
+    private readonly kfIndex: number,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const moveIdx = doc.scene.actions.findIndex(
+      (a) => a.type === 'move' && (a as TransformTrack).targetId === this.targetId && (a as TransformTrack).keyframes.property === this.property,
+    );
+    if (moveIdx < 0) return doc;
+    const existing = doc.scene.actions[moveIdx] as TransformTrack;
+    const stride = trackStride(existing.keyframes.trackType);
+    const newTimes = existing.keyframes.times.filter((_, i) => i !== this.kfIndex);
+    const newValues = existing.keyframes.values.filter((_, i) => Math.floor(i / stride) !== this.kfIndex);
+    const newActions = newTimes.length === 0
+      ? doc.scene.actions.filter((_, i) => i !== moveIdx)
+      : [
+          ...doc.scene.actions.slice(0, moveIdx),
+          { ...existing, keyframes: { ...existing.keyframes, times: newTimes, values: newValues } } as TransformTrack,
+          ...doc.scene.actions.slice(moveIdx + 1),
+        ];
+    return touch({ ...doc, scene: { ...doc.scene, actions: newActions } });
+  }
+}
+
+// ── Light-keyframe commands (Surface C — scalar keyframe editor) ──────────────
+
+/**
+ * Upsert a light intensity keyframe (`.intensity` scalar track) for `lightId` at `time`.
+ * Replaces any existing keyframe within 50 ms of `time`.
+ * Creates the LightingTrack if it does not yet exist.
+ */
+export class CaptureLightIntensityKeyframeCommand implements Command {
+  readonly label: string;
+  constructor(
+    private readonly lightId: string,
+    private readonly time: number,
+    private readonly intensity: number,
+  ) {
+    this.label = `Capture light intensity keyframe for ${lightId} at ${time.toFixed(1)}s`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const SNAP = 0.05;
+    const property = '.intensity';
+    const lightIdx = doc.scene.actions.findIndex(
+      (a) => a.type === 'lighting' && (a as LightingTrack).lightId === this.lightId && (a as LightingTrack).keyframes.property === property,
+    );
+    if (lightIdx >= 0) {
+      const existing = doc.scene.actions[lightIdx] as LightingTrack;
+      const pairs: { time: number; val: number }[] = [];
+      for (let i = 0; i < existing.keyframes.times.length; i++) {
+        if (Math.abs(existing.keyframes.times[i] - this.time) > SNAP) {
+          pairs.push({ time: existing.keyframes.times[i], val: existing.keyframes.values[i] });
+        }
+      }
+      pairs.push({ time: this.time, val: this.intensity });
+      pairs.sort((a, b) => a.time - b.time);
+      const updated: LightingTrack = {
+        ...existing,
+        keyframes: { ...existing.keyframes, times: pairs.map((p) => p.time), values: pairs.map((p) => p.val) },
+      };
+      return touch({ ...doc, scene: { ...doc.scene, actions: [...doc.scene.actions.slice(0, lightIdx), updated, ...doc.scene.actions.slice(lightIdx + 1)] } });
+    }
+    const newAction: LightingTrack = {
+      type: 'lighting', lightId: this.lightId, startTime: 0,
+      keyframes: { property, times: [this.time], values: [this.intensity], trackType: 'number' },
+    };
+    return touch({ ...doc, scene: { ...doc.scene, actions: [...doc.scene.actions, newAction] } });
+  }
+}
+
+/**
+ * Remove a single keyframe at `kfIndex` from the LightingTrack for `lightId` / `property`.
+ * Removes the entire LightingTrack when no keyframes remain.
+ */
+export class RemoveLightKeyframeCommand implements Command {
+  readonly label = 'Remove light keyframe';
+  constructor(
+    private readonly lightId: string,
+    private readonly property: string,
+    private readonly kfIndex: number,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const lightIdx = doc.scene.actions.findIndex(
+      (a) => a.type === 'lighting' && (a as LightingTrack).lightId === this.lightId && (a as LightingTrack).keyframes.property === this.property,
+    );
+    if (lightIdx < 0) return doc;
+    const existing = doc.scene.actions[lightIdx] as LightingTrack;
+    const newTimes = existing.keyframes.times.filter((_, i) => i !== this.kfIndex);
+    const newValues = existing.keyframes.values.filter((_, i) => i !== this.kfIndex);
+    const newActions = newTimes.length === 0
+      ? doc.scene.actions.filter((_, i) => i !== lightIdx)
+      : [
+          ...doc.scene.actions.slice(0, lightIdx),
+          { ...existing, keyframes: { ...existing.keyframes, times: newTimes, values: newValues } } as LightingTrack,
+          ...doc.scene.actions.slice(lightIdx + 1),
+        ];
+    return touch({ ...doc, scene: { ...doc.scene, actions: newActions } });
+  }
+}
+
+// ── Per-actor configuration commands ─────────────────────────────────────────
+
+/**
+ * Set (or clear) the idle animation clip for an actor.
+ * Rebuilds idle actions in the scene so the change takes effect immediately.
+ * Pass `undefined` to revert to the catalogue default.
+ */
+export class SetActorIdleAnimationCommand implements Command {
+  readonly label: string;
+  constructor(private readonly actorId: string, private readonly idleAnimation: string | undefined) {
+    this.label = idleAnimation
+      ? `Set idle clip for actor to "${idleAnimation}"`
+      : `Reset idle clip for actor`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    const actors = doc.actors?.map((a) =>
+      a.id === this.actorId ? { ...a, idleAnimation: this.idleAnimation } : a,
+    );
+    if (!actors) return doc;
+    if (!doc.scene) return touch({ ...doc, actors });
+    const { stagedActors, actions } = restageCast(actors, doc.scene);
+    return touch({ ...doc, actors, scene: { ...doc.scene, stagedActors, actions } });
+  }
+}
+
+/**
+ * Set (or clear) the uniform scale override for an actor.
+ * Directly patches the staged actor's startScale so it applies on the next load.
+ * Pass `undefined` to revert to the catalogue default scale.
+ */
+export class SetActorScaleCommand implements Command {
+  readonly label: string;
+  constructor(private readonly actorId: string, private readonly scale: number | undefined) {
+    this.label = scale !== undefined
+      ? `Set scale for actor to ${scale.toFixed(2)}`
+      : `Reset scale for actor`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    const actors = doc.actors?.map((a) =>
+      a.id === this.actorId ? { ...a, scale: this.scale } : a,
+    );
+    if (!actors) return doc;
+    if (!doc.scene) return touch({ ...doc, actors });
+    const scaleVec: Vec3 | undefined =
+      this.scale !== undefined ? [this.scale, this.scale, this.scale] : undefined;
+    const stagedActors = doc.scene.stagedActors.map((sa) => {
+      if (sa.actorId !== this.actorId) return sa;
+      if (scaleVec) return { ...sa, startScale: scaleVec };
+      const { startScale: _removed, ...rest } = sa;
+      return rest;
+    });
+    return touch({ ...doc, actors, scene: { ...doc.scene, stagedActors } });
+  }
+}
+
+// ── ActorBlock commands (Phase 8.5 — high-level authored blocks) ──────────────────
+
+/**
+ * Append a new `ActorBlock` to `scene.blocks`.
+ * Blocks are compiled to Tracks at load time by `storedSceneToModel`.
+ */
+export class AddActorBlockCommand implements Command {
+  readonly label: string;
+  constructor(private readonly block: ActorBlock) {
+    this.label = `Add block for ${block.actorId} at ${block.startTime.toFixed(1)}s`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const blocks = [...(doc.scene.blocks ?? []), this.block];
+    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+  }
+}
+
+/**
+ * Remove the `ActorBlock` at `index` from `scene.blocks`.
+ */
+export class RemoveActorBlockCommand implements Command {
+  readonly label = 'Remove actor block';
+  constructor(private readonly index: number) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const blocks = (doc.scene.blocks ?? []).filter((_, i) => i !== this.index);
+    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+  }
+}
+
+/**
+ * Patch fields on the `ActorBlock` at `index`.
+ * Only the provided keys in `patch` are changed; others are preserved.
+ */
+export class UpdateActorBlockCommand implements Command {
+  readonly label = 'Update actor block';
+  constructor(
+    private readonly index: number,
+    private readonly patch: Partial<Omit<ActorBlock, 'type'>>,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const blocks = doc.scene.blocks ?? [];
+    const block = blocks[this.index];
+    if (!block || block.type !== 'actorBlock') return doc;
+    const updated: ActorBlock = { ...block, ...this.patch };
+    const newBlocks = [
+      ...blocks.slice(0, this.index),
+      updated,
+      ...blocks.slice(this.index + 1),
+    ];
+    return touch({ ...doc, scene: { ...doc.scene, blocks: newBlocks } });
   }
 }

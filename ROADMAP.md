@@ -287,37 +287,126 @@ This is a small addition to Phase 8 step 1 (opening the scene header for editing
 | Command | What it does |
 |---|---|
 | `SetSceneDurationCommand` | Sets an explicit scene duration override |
-| `AddAnimateSegmentCommand` | Appends an `AnimateAction` for an actor |
+| `AddAnimateSegmentCommand` | Appends a `ClipTrack` for an actor |
 | `RemoveAnimateSegmentCommand` | Removes by actor + segment index |
 | `UpdateAnimateSegmentCommand` | Patches timing / fade on an existing segment |
-| `SetMoveTrackCommand` | Replaces the full `MoveAction` for a target + property (on commit) |
-| `CaptureTransformKeyframeCommand` | Appends one keyframe to a target's `MoveAction`, or creates it |
-| `SetLightingTrackCommand` | Replaces the `LightingAction` for a light, or creates it |
+| `SetMoveTrackCommand` | Replaces the full `TransformTrack` for a target + property (on commit) |
+| `CaptureTransformKeyframeCommand` | Appends one keyframe to a target's `TransformTrack`, or creates it |
+| `SetLightingTrackCommand` | Replaces the `LightingTrack` for a light, or creates it |
 | `SetSetPieceParentCommand` | Sets `SetPiece.parent` for hierarchical assemblies |
 
-#### Implementation steps
+#### Implementation steps (all complete ✅)
 
-1. Close `storedSceneToModel.ts` runtime gap + tests.
-2. Add manual `duration` override field (scene header + `SetSceneDurationCommand`) — unblocks long-scene authoring.
-3. Implement new commands with tests.
-4. Surface A — GLTF clip sequencer rows in Stage tab.
-5. Surface B — transform keyframe list. Add `getObjectTransform(id)` export to `Presenter.svelte` (mirrors `getDesignCameraState()`).
-6. Surface C — scalar keyframe list per light.
-7. Set piece parent picker.
+1. Closed `storedSceneToModel.ts` runtime gap + tests.
+2. Added manual `duration` override field (`SetSceneDurationCommand`).
+3. Commands with tests: `AddAnimateSegmentCommand`, `RemoveAnimateSegmentCommand`, `UpdateAnimateSegmentCommand`, `CapturePositionKeyframeCommand`, `RemoveTransformKeyframeCommand`, `CaptureLightIntensityKeyframeCommand`, `RemoveLightKeyframeCommand`, `SetActorIdleAnimationCommand`, `SetActorScaleCommand`.
+4. Surface A — GLTF clip sequencer (per actor, dynamic clip discovery from loaded GLTF at runtime).
+5. Surface B — position keyframe list + scrub-and-capture workflow (`getObjectTransform` on Presenter; drag-to-preview, ⊕ Capture to lock).
+6. Surface C — light intensity keyframe list.
+7. Per-actor idle clip and scale overrides (settings panel in Cast section).
+8. Design-mode drag dispatch by time: t≈0 sets spawn position; t>0 is a visual preview, ⊕ Capture locks keyframe.
 
-#### Phase 8.5 — Visual timeline *(deferred, additive)*
+**Open items from Phase 8 (low priority, deferred):**
+- `SetSetPieceParentCommand` + UI picker (hierarchical set pieces, e.g. door+hinge)
+- Editable keyframe values by typing (currently capture-only)
+- fadeIn/fadeOut fields on clip form
 
-Once the numeric surfaces prove the UX, a visual timeline panel layers on top:
-- Per-actor track rows, clip bars draggable to reposition/resize
-- Keyframe diamonds draggable along the time axis
-- Scalar value curve editor (bezier handles)
+---
 
-The numeric Phase 8 authoring surfaces remain alongside it.
+### Phase 8.5 — Block-based character animation *(next)*
+
+*Replace the separate clip-list + position-keyframe authoring with a unified `ActorBlock` type that expresses intent at the right level of abstraction: "walk from A to B", "idle here", "turn to face".*
+
+#### Naming convention (locked)
+
+- **`*Block`** — high-level authored director intent (`ActorBlock`, `LightBlock`). These are what the author writes.
+- **`*Track`** — low-level compiled keyframe primitives (`ClipTrack`, `TransformTrack`, `LightingTrack`). These are what the renderer plays. Never stored; always derived.
+- **`*Action`** — event triggers (`SpeakAction`, `EnterAction`, `ExitAction`). Point-in-time, not range-based.
+
+#### Design rationale
+
+The Phase 8 surfaces are correct but low-level: the user must independently coordinate a clip segment, a position track, and a facing rotation — three separate actions that represent one intent. An `ActorBlock` unifies these into a single authored object.
+
+#### The `Block` type family
+
+```typescript
+// New first-class serialised types in src/core/domain/types.ts
+type ActorBlock = {
+  type: 'actorBlock';
+  actorId: string;
+  startTime: number;
+  endTime: number;
+  clip?: string;           // omit → idle / hold last pose
+  startPosition?: Vec3;    // omit → inherit previous block's endPosition
+  endPosition?: Vec3;      // omit → stay at startPosition
+  startFacing?: Vec3;      // direction vector; omit → inherit
+  endFacing?: Vec3;        // omit → auto: face travel direction; forward if stationary
+};
+
+type LightBlock = {        // Phase 8.7
+  type: 'lightBlock';
+  lightId: string;
+  startTime: number;
+  endTime: number;
+  startIntensity?: number;
+  endIntensity?: number;
+};
+
+type Block = ActorBlock | LightBlock;  // extensible; AudioBlock, CameraBlock future
+```
+
+`Block` entries are stored in `StoredScene.blocks: Block[]` (new field alongside existing `actions`). At playback, `actorBlockToTracks(block: ActorBlock) → SceneAction[]` in `blockCompiler.ts` compiles each block to a `ClipTrack` + optional `TransformTrack` (position) + optional `TransformTrack` (facing quaternion track). The compiled tracks are not stored.
+
+Old `ClipTrack`/`TransformTrack` entries in `actions` continue to work unchanged (played back directly). No migration.
+
+#### Turn variant
+
+A turn is an `ActorBlock` with `startPosition === endPosition` and `startFacing !== endFacing`. The compiler detects this and emits only a facing interpolation track (2-keyframe quaternion `TransformTrack`), no position track. No separate `TurnBlock` type needed.
+
+#### UI: per-actor block list (Phase 8.5) → visual timeline (Phase 8.6)
+
+Phase 8.5 delivers a **list UI**: each actor has a collapsible section showing its blocks as rows (start, end, clip dropdown, position fields). Add/remove/edit via commands. The drag-to-preview + ⊕ Capture pattern from Phase 8 is retained for position fields.
+
+Phase 8.6 upgrades this to a **visual horizontal track**: blocks are draggable coloured rectangles on a time axis, sized by duration. Gaps are shown as grey (implicit idle). Clicking a block opens a popover. This is the primary authoring surface once implemented.
+
+#### New commands (Phase 8.5)
+
+| Command | What it does |
+|---|---|
+| `AddActorBlockCommand` | Appends an `ActorBlock` to `scene.blocks` |
+| `RemoveActorBlockCommand` | Removes by index |
+| `UpdateActorBlockCommand(index, patch)` | Patches any field of an `ActorBlock` |
+
+#### Implementation steps (Phase 8.5)
+
+1. Add `ActorBlock`, `LightBlock`, `Block` types to `src/core/domain/types.ts`; add `blocks?: Block[]` to `StoredScene`.
+2. Implement `actorBlockToTracks(block: ActorBlock): SceneAction[]` in a new `src/core/domain/blockCompiler.ts`; full test coverage.
+3. Wire compiler into `storedSceneToModel.ts` — merge compiled tracks with existing `scene.actions` before building the model.
+4. `AddActorBlockCommand`, `RemoveActorBlockCommand`, `UpdateActorBlockCommand` with tests.
+5. UI: per-actor block list rows in Stage tab (replaces/accompanies the Phase 8 clip sequencer; both surfaces remain).
+
+---
+
+### Phase 8.6 — Visual timeline strip *(additive, after 8.5)*
+
+- Per-actor and per-light horizontal track strips below the transport bar (or in a resizable bottom panel).
+- Blocks rendered as coloured rectangles, draggable to reposition/resize (fires `UpdateActorBlockCommand`).
+- Gaps rendered in grey — implicit idle with no authored block.
+- Click block → popover with full block fields (clip, positions, facing).
+- Playhead needle tracks transport position.
+- Phase 8 numeric surfaces remain accessible as a detail view.
+
+---
+
+### Phase 8.7 — LightBlock + AudioBlock
+
+- `LightBlock` type (designed in 8.5, implemented here): `startIntensity`, `endIntensity`, easing curve.
+- Replaces the Phase 8 Surface C scalar keyframe editor for lights.
+- `AudioBlock`: `audioUrl`, `volume`, `fadeIn`, `fadeOut` — initial sound/music authoring surface (merged with Phase 11 scope).
 
 ---
 
 ### Phase 9 — Properties panel — asset editing
-*Fills the Properties tab in the right panel.*
 
 - Editable position / rotation / scale for the selected asset.
 - Material editor: colour, roughness, metalness, optional texture URL.
@@ -328,14 +417,14 @@ The numeric Phase 8 authoring surfaces remain alongside it.
 ### Phase 10 — Lighting rig
 
 - Add lights from catalogue; fix `point` light gap (scaffolded in domain types, currently skipped).
-- Animate intensity/colour via `lighting` actions (already in domain model + SceneBridge).
+- `LightBlock` (from Phase 8.7) is the authoring surface.
 
 ---
 
-### Phase 11 — Sound & music
+### Phase 11 — Sound & music *(merged into Phase 8.7 scope)*
 
-- `SoundEffect` action: file path + trigger time, wired into `PlaybackEngine`.
-- `BackgroundMusic` action: loop, volume, fade in/out.
+- `AudioBlock` covers `SoundEffect` + `BackgroundMusic` use cases.
+- Remaining work: timeline strip rendering for audio blocks, waveform preview (deferred).
 
 ---
 
@@ -391,8 +480,12 @@ Possible directions:
 | Screenplay editor | ✅ Complete (Phase 6) |
 | Screenplay enrichment (pagination, headings, PDF) | Phase 6.5 (deferred) |
 | Camera tracks UI | ✅ Complete (Phase 7) |
-| Ground-zero animation authoring | Phase 8 (next) |
+| Ground-zero animation authoring (clip sequencer, keyframe capture, per-actor settings) | ✅ Complete (Phase 8) |
+| `ClipTrack` / `TransformTrack` / `LightingTrack` type rename | ✅ Complete |
+| `ActorBlock` — unified clip+position+facing authoring primitive | Phase 8.5 (next) |
+| Visual timeline strip (draggable block rectangles) | Phase 8.6 |
+| `LightBlock` + `AudioBlock` | Phase 8.7 |
 | Asset properties editing | Phase 9 |
 | Lighting rig | Phase 10 |
-| Sound effects / music | Phase 11 |
+| Sound effects / music | Phase 11 (merged into 8.7) |
 

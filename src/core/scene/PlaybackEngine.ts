@@ -181,7 +181,10 @@ export class PlaybackEngine {
   }
 
   update(delta: number) {
-    // Drive mixers; called from Presenter animation loop
+    // Drive mixers only while playing — when paused the scene graph already holds the correct
+    // pose from the last seek() call, and unconditional updates would re-apply animation
+    // values over manual TransformControls position adjustments.
+    if (!this.state.isPlaying) return;
     this.mixers.forEach((m) => m.update(delta));
   }
 

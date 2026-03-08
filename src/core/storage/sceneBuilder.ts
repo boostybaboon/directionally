@@ -1,7 +1,7 @@
 import { getById } from '../catalogue/catalogue.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
 import type { StoredActor, StoredScene } from './types.js';
-import type { StagedActor, AnimateAction, Vec3 } from '../domain/types.js';
+import type { StagedActor, ClipTrack, Vec3 } from '../domain/types.js';
 
 const FALLBACK_IDLE_CLIP = 'Idle';
 
@@ -25,12 +25,14 @@ export function actorPlacement(i: number, total: number): { position: Vec3; rota
 }
 
 function idleClipFor(sa: StoredActor): string {
+  if (sa.idleAnimation) return sa.idleAnimation;
   const entry     = getById(sa.catalogueId, CATALOGUE_ENTRIES);
   const character = entry?.kind === 'character' ? entry : undefined;
   return character?.defaultAnimation ?? FALLBACK_IDLE_CLIP;
 }
 
 function defaultScaleFor(sa: StoredActor): number {
+  if (sa.scale !== undefined) return sa.scale;
   const entry     = getById(sa.catalogueId, CATALOGUE_ENTRIES);
   const character = entry?.kind === 'character' ? entry : undefined;
   return character?.defaultScale ?? 1;
@@ -86,7 +88,7 @@ export function restageCast(
     return staged;
   });
 
-  const idleActions: AnimateAction[] = actors.map((sa) => ({
+  const idleActions: ClipTrack[] = actors.map((sa) => ({
     type:          'animate',
     actorId:       sa.id,
     animationName: idleClipFor(sa),

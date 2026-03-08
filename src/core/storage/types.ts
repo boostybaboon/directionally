@@ -5,6 +5,7 @@ import type {
   SetPiece,
   StagedActor,
   SceneAction,
+  Block,
 } from '../domain/types.js';
 
 /**
@@ -17,6 +18,10 @@ export type StoredActor = {
   role: string;
   /** id of a CharacterEntry in the catalogue. */
   catalogueId: string;
+  /** User-nominated idle/default animation clip. Overrides the catalogue default. */
+  idleAnimation?: string;
+  /** Uniform scale override. Overrides the catalogue defaultScale. */
+  scale?: number;
 };
 
 /**
@@ -30,6 +35,8 @@ export type StoredScene = {
   set: SetPiece[];
   stagedActors: StagedActor[];
   actions: SceneAction[];
+  /** High-level authored blocks. Compiled to Tracks at load time; never stored as raw Tracks. */
+  blocks?: Block[];
   duration?: number;
   backgroundColor?: number;
 };
