@@ -79,6 +79,11 @@
     ondiscoverclips?: (clips: Record<string, string[]>) => void;
     /** Contextual hint shown in the gizmo toolbar to communicate what the next drag will do. */
     dragHint?: string;
+    /**
+     * When false, TransformControls gizmo is shown but non-interactive.
+     * Use to block actor drags when no meaningful commit is possible (e.g. t>0, no block selected).
+     */
+    transformEnabled?: boolean;
     voiceMode?: VoiceMode;
     bubbleScale?: number;
     isPlaying?: boolean;
@@ -106,6 +111,7 @@
     sliderValue = $bindable(0),
     isSliderDragging = $bindable(false),
     dragHint = '',
+    transformEnabled = true,
   }: PresenterProps = $props();
 
   // Tracks the most recently loaded model to support re-synthesis when voiceMode changes.
@@ -129,6 +135,10 @@
     if (!renderer) return;
     updateRendererSize();
     if (orbitControls) orbitControls.enabled = designMode;
+  });
+
+  $effect(() => {
+    if (transformControls) transformControls.enabled = transformEnabled;
   });
 
   // Function to initialize the custom console.log
@@ -576,7 +586,7 @@
    * existing bounding-box highlight. Pass null to deselect.
    * Only valid after a scene has been loaded.
    */
-  function selectSceneObject(name: string | null) {
+  export function selectSceneObject(name: string | null) {
     if (selectionBox) {
       scene?.remove(selectionBox);
       selectionBox.dispose();

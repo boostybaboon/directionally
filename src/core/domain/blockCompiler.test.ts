@@ -170,4 +170,45 @@ describe('actorBlockToTracks', () => {
       if (track.type === 'move')    expect((track as TransformTrack).targetId).toBe('robot-beta');
     }
   });
+
+  it('keyframe times are relative (0-based) even when startTime is non-zero', () => {
+    const result = actorBlockToTracks(makeBlock({
+      startTime: 3,
+      endTime: 7,
+      startPosition: [0, 0, 0],
+      endPosition:   [4, 0, 0],
+    }));
+    const pos = result.find((a) => (a as TransformTrack).keyframes?.property === '.position') as TransformTrack;
+    const facing = result.find((a) => (a as TransformTrack).keyframes?.property === '.quaternion') as TransformTrack;
+    expect(pos.keyframes.times).toEqual([0, 4]);
+    expect(facing.keyframes.times).toEqual([0, 4]);
+  });
+
+  it('uses inferredStartPos when block has no explicit startPosition', () => {
+    const inferredStart: [number, number, number] = [10, 0, 0];
+    const result = actorBlockToTracks(makeBlock({
+      endPosition: [14, 0, 0],
+    }), inferredStart);
+    const pos = result.find((a) => (a as TransformTrack).keyframes?.property === '.position') as TransformTrack;
+    expect(pos).toBeDefined();
+    expect(pos.keyframes.values.slice(0, 3)).toEqual([10, 0, 0]);
+    expect(pos.keyframes.values.slice(3, 6)).toEqual([14, 0, 0]);
+  });
+
+  it('explicit startPosition overrides inferredStartPos', () => {
+    const result = actorBlockToTracks(makeBlock({
+      startPosition: [1, 0, 0],
+      endPosition:   [5, 0, 0],
+    }), [99, 0, 0] as [number, number, number]);
+    const pos = result.find((a) => (a as TransformTrack).keyframes?.property === '.position') as TransformTrack;
+    expect(pos.keyframes.values.slice(0, 3)).toEqual([1, 0, 0]);
+  });
+
+  it('no position track when inferredStartPos equals endPosition', () => {
+    const result = actorBlockToTracks(makeBlock({
+      endPosition: [5, 0, 0],
+    }), [5, 0, 0] as [number, number, number]);
+    const pos = result.find((a) => (a as TransformTrack).keyframes?.property === '.position');
+    expect(pos).toBeUndefined();
+  });
 });

@@ -4,7 +4,7 @@ import { getById } from '../catalogue/catalogue.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
 import { actorBlockToTracks } from '../domain/blockCompiler.js';
 import type { Actor } from '../domain/Production.js';
-import type { ActorVoice } from '../domain/types.js';
+import type { ActorVoice, ActorBlock, Vec3 } from '../domain/types.js';
 import type { Model } from '../../lib/Model.js';
 import type { StoredScene, StoredActor } from './types.js';
 
@@ -74,9 +74,27 @@ export function storedSceneToModel(storedScene: StoredScene, storedActors: Store
     scene.stage(actorId, opts);
   }
 
-  // Compile ActorBlocks to tracks and merge with authored actions
-  const compiledBlockTracks = (storedScene.blocks ?? [])
-    .flatMap((block) => block.type === 'actorBlock' ? actorBlockToTracks(block) : []);
+  // Compile ActorBlocks to tracks with per-actor inferred-start chains.
+  // Sort each actor's blocks by startTime, then thread each block's endPosition
+  // forward as the inferred start of the next block for that actor.
+  const blocksByActor = new Map<string, ActorBlock[]>();
+  for (const block of (storedScene.blocks ?? [])) {
+    if (block.type === 'actorBlock') {
+      if (!blocksByActor.has(block.actorId)) blocksByActor.set(block.actorId, []);
+      blocksByActor.get(block.actorId)!.push(block);
+    }
+  }
+
+  const compiledBlockTracks: ReturnType<typeof actorBlockToTracks> = [];
+  for (const [, blocks] of blocksByActor) {
+    blocks.sort((a, b) => a.startTime - b.startTime);
+    const staged = storedScene.stagedActors.find((s) => s.actorId === blocks[0].actorId);
+    let inferredStart: Vec3 | undefined = staged?.startPosition;
+    for (const block of blocks) {
+      compiledBlockTracks.push(...actorBlockToTracks(block, inferredStart));
+      inferredStart = block.endPosition ?? inferredStart;
+    }
+  }
 
   for (const action of [...storedScene.actions, ...compiledBlockTracks]) {
     scene.addAction(action);

@@ -21,9 +21,9 @@
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import type { StoredProduction } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
-  import { RenameProductionCommand, SetScriptCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand, AddCameraKeyframeCommand, RemoveCameraKeyframeCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand } from '../core/document/commands.js';
+  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand, AddCameraKeyframeCommand, RemoveCameraKeyframeCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand } from '../core/document/commands.js';
   import type { StoredActor } from '../core/storage/types.js';
-  import type { SpeakAction, PathKeyframe, ClipTrack, TransformTrack, LightingTrack, LoopStyle, ActorBlock } from '../core/domain/types.js';
+  import type { SpeakAction, PathKeyframe, TransformTrack, LightingTrack, ActorBlock } from '../core/domain/types.js';
   import { getCharacters, getSetPieces } from '../core/catalogue/catalogue.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
   import type { SetPiece } from '../core/domain/types.js';
@@ -59,7 +59,6 @@
   const BOTTOM_PANEL_KEY = 'directionally_bottom_panel_open';
   let bottomPanelOpen = $state((localStorage.getItem(BOTTOM_PANEL_KEY) ?? 'true') === 'true');
   $effect(() => { localStorage.setItem(BOTTOM_PANEL_KEY, String(bottomPanelOpen)); });
-  let bottomTab = $state<'transport' | 'timeline'>('transport');
   const RIGHT_PANEL_KEY = 'directionally_right_panel_open';
   let rightPanelOpen = $state((localStorage.getItem(RIGHT_PANEL_KEY) ?? 'true') === 'true');
   $effect(() => { localStorage.setItem(RIGHT_PANEL_KEY, String(rightPanelOpen)); });
@@ -109,12 +108,6 @@
   // Contextual label for the gizmo toolbar: communicates what a drag will do.
   // For actors: t≈0 sets the base start position; any other time captures a keyframe.
   // Set pieces always set position (no keyframe support yet).
-  const clipTracks = $derived(
-    (docSnapshot?.scene?.actions ?? []).flatMap((a, i) => a.type === 'animate' ? [{ action: a as ClipTrack, index: i }] : [])
-  );
-  const transformTracks = $derived(
-    (docSnapshot?.scene?.actions ?? []).flatMap((a, i) => a.type === 'move' ? [{ action: a as TransformTrack, index: i }] : [])
-  );
   const lightingTracks = $derived(
     (docSnapshot?.scene?.actions ?? []).flatMap((a, i) => a.type === 'lighting' ? [{ action: a as LightingTrack, index: i }] : [])
   );
@@ -122,23 +115,18 @@
     (docSnapshot?.scene?.blocks ?? []).flatMap((b, i) => b.type === 'actorBlock' ? [{ block: b as ActorBlock, index: i }] : [])
   );
 
+  // Selected block (for Stage tab Block section)
+  let selBlockIdx = $state<number | null>(null);
+  const selBlock = $derived(
+    selBlockIdx !== null ? (actorBlocks.find((e) => e.index === selBlockIdx) ?? null) : null
+  );
+  const selBlockActor = $derived(
+    selBlock ? (actors.find((a) => a.id === selBlock.block.actorId) ?? null) : null
+  );
+
   // Per-actor and per-light expand state
-  let expandedActorAnim = $state(new Set<string>());
   let expandedActorSettings = $state(new Set<string>());
   let expandedLightAnim = $state(new Set<string>());
-
-  // New-clip-segment form — one active form per actor at a time
-  let clipFormActorId = $state<string | null>(null);
-  let clipFormName = $state('');
-  let clipFormStart = $state(0);
-  let clipFormEnd = $state<number | ''>('');   // empty string → undefined end
-  let clipFormLoop = $state<LoopStyle>('once');
-
-  // New-block form — one active form per actor at a time
-  let blockFormActorId = $state<string | null>(null);
-  let blockFormStart = $state(0);
-  let blockFormEnd = $state(2);
-  let blockFormClip = $state('');
 
   // Per-light intensity input values (light.id → string)
   let lightIntensityValues = $state<Record<string, string>>({});
@@ -152,15 +140,29 @@
   // Selected scene object (actor ID or set-piece name); driven by Presenter raycasting.
   let selectedObjectId = $state<string | null>(null);
 
-  const dragHint = $derived(
-    selectedObjectId && designMode
-      ? (actors.some((a) => a.id === selectedObjectId)
-          ? currentPosition < 0.05
-            ? 'drag → start position'
-            : 'drag to preview · ⊕ Capture to lock'
-          : '')
-      : ''
-  );
+  const dragHint = $derived((() => {
+    if (!selectedObjectId || !designMode) return '';
+    if (!actors.some((a) => a.id === selectedObjectId)) return '';
+    const hasBlockSelected = selBlockIdx !== null &&
+      selBlock?.block.actorId === selectedObjectId;
+    if (hasBlockSelected) {
+      return `drag to preview end pos · ⇥ seek then ⊕ Capture to lock`;
+    }
+    if (currentPosition < 0.05) {
+      return 'drag → sets spawn position';
+    }
+    return 'drag disabled · deselect block + seek t=0 to set spawn';
+  })());
+
+  // Gizmo is interactive for set pieces always; for actors only when a meaningful
+  // commit is available (t≈0 spawn, or a block is selected for end-pos preview).
+  const transformEnabled = $derived((() => {
+    if (!selectedObjectId || !designMode) return true; // no-op when gizmo is hidden anyway
+    const isActor = actors.some((a) => a.id === selectedObjectId);
+    if (!isActor) return true; // set pieces always draggable
+    const blockSelected = selBlockIdx !== null && selBlock?.block.actorId === selectedObjectId;
+    return blockSelected || currentPosition < 0.05;
+  })());
 
   // Examples (read-only, no persistence)
   const examples: { id: string; label: string; model: Model }[] = [
@@ -176,44 +178,13 @@
 
   // Auto-save handled by ProductionDocument.execute() — no $effect needed.
 
-  /**
-   * One-time migration: productions that carry a flat `script` array but no `scene`
-   * (created before Phase 5b) are converted to the scene-based path.
-   *
-   * Actor IDs used in the script are materialised as StoredActors so speak actions
-   * can reference them. Legacy productions used 'alpha' / 'beta' literals; those
-   * map to Robot characters with matching IDs so existing script lines stay valid.
-   */
-  function migrateLegacyProduction(prod: StoredProduction): StoredProduction {
-    if (prod.scene || !prod.script || prod.script.length === 0) return prod;
-
-    let working: StoredProduction = { ...prod, scene: defaultSceneShell(), actors: prod.actors ?? [] };
-
-    const existingIds = new Set((prod.actors ?? []).map((a) => a.id));
-    const referencedIds = [...new Set(prod.script.map((l) => l.actorId))];
-    for (const id of referencedIds) {
-      if (!existingIds.has(id)) {
-        const role = id === 'alpha' ? 'Alpha' : id === 'beta' ? 'Beta' : id;
-        working = new AddActorCommand({ id, role, catalogueId: 'robot-expressive' }).execute(working);
-      }
-    }
-
-    working = new SetSpeakLinesCommand(prod.script).execute(working);
-    return { ...working, script: undefined };
-  }
-
   function newProduction() {
     const prod = ProductionStore.create('Untitled Production');
     productions = ProductionStore.list();
     loadProduction(prod);
   }
 
-  function loadProduction(rawProd: StoredProduction) {
-    const prod = migrateLegacyProduction(rawProd);
-    if (prod !== rawProd) {
-      ProductionStore.save(prod);
-      productions = ProductionStore.list();
-    }
+  function loadProduction(prod: StoredProduction) {
     activeDoc = new ProductionDocument(
       prod,
       (updated) => {
@@ -294,14 +265,6 @@
     activeDoc?.execute(new RemoveSetPieceCommand(name));
   }
 
-  function captureCameraKeyframe() {
-    if (!activeDoc || !designMode) return;
-    const state = presenter?.getDesignCameraState();
-    if (!state) return;
-    const time = parseFloat(currentPosition.toFixed(2));
-    activeDoc.execute(new AddCameraKeyframeCommand(time, state.position, state.lookAt));
-  }
-
   function removeCameraKeyframe(index: number) {
     activeDoc?.execute(new RemoveCameraKeyframeCommand(index));
   }
@@ -314,46 +277,12 @@
     activeDoc.execute(new SetSceneDurationCommand(isNaN(n) || value.trim() === '' ? undefined : n));
   }
 
-  function openClipForm(actorId: string, defaultClip: string) {
-    clipFormActorId = actorId;
-    clipFormName = defaultClip;
-    clipFormStart = parseFloat(currentPosition.toFixed(2));
-    clipFormEnd = '';
-    clipFormLoop = 'once';
-  }
-
-  function commitAddClip() {
-    if (!activeDoc || !clipFormActorId) return;
-    const seg: ClipTrack = {
-      type: 'animate',
-      actorId: clipFormActorId,
-      startTime: clipFormStart,
-      animationName: clipFormName,
-      loop: clipFormLoop,
-      ...(clipFormEnd !== '' ? { endTime: Number(clipFormEnd) } : {}),
-    };
-    activeDoc.execute(new AddAnimateSegmentCommand(seg));
-    clipFormActorId = null;
-  }
-
-  function removeClipSegment(globalIndex: number) {
-    activeDoc?.execute(new RemoveAnimateSegmentCommand(globalIndex));
-  }
-
-  function updateClipLoop(globalIndex: number, loop: LoopStyle) {
-    activeDoc?.execute(new UpdateAnimateSegmentCommand(globalIndex, { loop }));
-  }
-
-  function capturePositionKeyframe(targetId: string) {
-    if (!activeDoc) return;
-    const transform = presenter?.getObjectTransform(targetId);
-    if (!transform) return;
+  function captureCameraKeyframe() {
+    if (!activeDoc || !designMode) return;
+    const state = presenter?.getDesignCameraState();
+    if (!state) return;
     const time = parseFloat(currentPosition.toFixed(2));
-    activeDoc.execute(new CapturePositionKeyframeCommand(targetId, time, transform.position));
-  }
-
-  function removePositionKeyframe(targetId: string, kfIndex: number) {
-    activeDoc?.execute(new RemoveTransformKeyframeCommand(targetId, '.position', kfIndex));
+    activeDoc.execute(new AddCameraKeyframeCommand(time, state.position, state.lookAt));
   }
 
   function captureLightIntensity(lightId: string, intensityStr: string) {
@@ -368,28 +297,19 @@
     activeDoc?.execute(new RemoveLightKeyframeCommand(lightId, '.intensity', kfIndex));
   }
 
-  function openBlockForm(actorId: string) {
-    blockFormActorId = actorId;
-    blockFormStart = parseFloat(currentPosition.toFixed(2));
-    blockFormEnd = parseFloat((currentPosition + 2).toFixed(2));
-    blockFormClip = '';
-  }
-
-  function commitAddBlock() {
-    if (!activeDoc || !blockFormActorId) return;
-    const block: ActorBlock = {
-      type: 'actorBlock',
-      actorId: blockFormActorId,
-      startTime: blockFormStart,
-      endTime: blockFormEnd,
-      ...(blockFormClip.trim() ? { clip: blockFormClip.trim() } : {}),
-    };
-    activeDoc.execute(new AddActorBlockCommand(block));
-    blockFormActorId = null;
-  }
-
   function removeBlock(index: number) {
     activeDoc?.execute(new RemoveActorBlockCommand(index));
+  }
+
+  function captureBlockPosition(end: boolean) {
+    if (selBlockIdx === null || !activeDoc || !selBlock) return;
+    if (!designMode) designMode = true;
+    const transform = presenter?.getObjectTransform(selBlock.block.actorId);
+    if (!transform) return;
+    const pos = transform.position as [number, number, number];
+    activeDoc.execute(new UpdateActorBlockCommand(selBlockIdx, {
+      [end ? 'endPosition' : 'startPosition']: pos,
+    }));
   }
 
   /**
@@ -442,9 +362,9 @@
     if (!activeDoc) return;
     const isActor = (activeDoc.current.actors ?? []).some((a) => a.id === id);
     if (isActor) {
-      // t≈0: drag sets the actor's base spawn position.
-      // t>0: drag is a visual preview only — press ⊕ Capture to lock as a keyframe.
-      if (currentPosition < 0.05) {
+      // t≈0 with no block selected: drag sets the actor's base spawn position.
+      // When a block is selected, drag is always a visual preview — press ⊕ Capture to lock.
+      if (currentPosition < 0.05 && selBlockIdx === null) {
         activeDoc.execute(new MoveStagedActorCommand(id, position, rotation));
       }
     } else {
@@ -515,22 +435,6 @@
       if (mod && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); activeDoc.redo(); }
     }
     window.addEventListener('keydown', handleKeyDown);
-
-    // Migrate legacy single-script localStorage key from pre-Phase-1
-    const LEGACY_KEY = 'directionally_sandbox_script';
-    const legacy = localStorage.getItem(LEGACY_KEY);
-    if (legacy && productions.length === 0) {
-      try {
-        const legacyScript: ScriptLine[] = JSON.parse(legacy);
-        if (legacyScript.length > 0) {
-          const base = ProductionStore.create('My Production');
-          const migrated = migrateLegacyProduction({ ...base, script: legacyScript });
-          ProductionStore.save({ ...migrated, modifiedAt: Date.now() });
-          productions = ProductionStore.list();
-        }
-      } catch { /* ignore malformed data */ }
-      localStorage.removeItem(LEGACY_KEY);
-    }
 
     return () => {
       mq.removeEventListener('change', onChange);
@@ -698,6 +602,7 @@
             oncataloguedrop={handleCatalogueDrop}
             ondiscoverclips={(clips) => { discoveredClips = clips; }}
             {dragHint}
+            {transformEnabled}
           />
         </div>
       </Pane>
@@ -864,137 +769,61 @@
                     {/if}
                   </div>
 
-                  <!-- Animations (Surface A — clip sequencer, Surface B — position keyframes) -->
-                  {#if actors.length > 0}
-                  <div class="stage-section">
-                    <div class="stage-section-header">
-                      <span class="stage-section-label">Animations</span>
-                    </div>
-                    {#each actors as actor}
-                      {@const actorClips = clipTracks.filter(e => e.action.actorId === actor.id)}
-                      {@const actorMoveTrack = transformTracks.find(e => e.action.targetId === actor.id && e.action.keyframes.property === '.position')}
-                      {@const availableClips = discoveredClips[actor.id] ?? []}
-                      <div class="anim-actor-group">
-                        <button
-                          class="anim-actor-header"
-                          onclick={() => {
-                            const next = new Set(expandedActorAnim);
-                            next.has(actor.id) ? next.delete(actor.id) : next.add(actor.id);
-                            expandedActorAnim = next;
-                          }}
-                        >
-                          <span class="anim-actor-toggle">{expandedActorAnim.has(actor.id) ? '▾' : '▸'}</span>
-                          <span class="anim-actor-name">{actor.role}</span>
-                        </button>
-                        {#if expandedActorAnim.has(actor.id)}
-                          <!-- Clips sub-section -->
-                          <div class="anim-subsection">
-                            <span class="anim-sublabel">Clips</span>
-                            {#if actorClips.length > 0}
-                              <ul class="cast-list">
-                                {#each actorClips as { action, index }}
-                                  <li class="cast-row">
-                                    <span class="cast-role anim-clip-name">{action.animationName}</span>
-                                    <span class="cast-char">{action.startTime.toFixed(1)}s{action.endTime !== undefined ? `–${action.endTime.toFixed(1)}s` : ''}</span>
-                                    <select
-                                      class="anim-loop-sel"
-                                      value={action.loop ?? 'once'}
-                                      onchange={(e) => updateClipLoop(index, e.currentTarget.value as LoopStyle)}
-                                    >
-                                      <option value="once">×1</option>
-                                      <option value="repeat">loop</option>
-                                    </select>
-                                    <button class="icon-btn danger" onclick={() => removeClipSegment(index)} title="Remove clip">✕</button>
-                                  </li>
-                                {/each}
-                              </ul>
-                            {/if}
-                            {#if clipFormActorId === actor.id}
-                              <form class="add-actor-form" onsubmit={(e) => { e.preventDefault(); commitAddClip(); }}>
-                                {#if availableClips.length > 0}
-                                  <select class="actor-char-select" bind:value={clipFormName}>
-                                    {#each availableClips as clip}
-                                      <option>{clip}</option>
-                                    {/each}
-                                  </select>
-                                {:else}
-                                  <input class="rename-input" placeholder="Clip name" bind:value={clipFormName} />
-                                {/if}
-                                <input class="anim-number" type="number" step="0.1" min="0" placeholder="Start (s)" bind:value={clipFormStart} />
-                                <input class="anim-number" type="number" step="0.1" min="0" placeholder="End (opt)" bind:value={clipFormEnd} />
-                                <select class="anim-loop-sel" bind:value={clipFormLoop}>
-                                  <option value="once">×1</option>
-                                  <option value="repeat">loop</option>
-                                </select>
-                                <div class="add-actor-btns">
-                                  <button class="new-btn" type="submit">Add</button>
-                                  <button class="icon-btn" type="button" onclick={() => (clipFormActorId = null)}>Cancel</button>
-                                </div>
-                              </form>
-                            {:else}
-                              <button class="new-btn anim-add-btn" onclick={() => openClipForm(actor.id, availableClips[0] ?? '')}>+ Clip</button>
-                            {/if}
-                          </div>
-                          <!-- Blocks sub-section (high-level authored) -->
-                          {@const thisActorBlocks = actorBlocks.filter(e => e.block.actorId === actor.id)}
-                          <div class="anim-subsection">
-                            <span class="anim-sublabel">Blocks</span>
-                            {#if thisActorBlocks.length > 0}
-                              <ul class="cast-list">
-                                {#each thisActorBlocks as { block, index }}
-                                  <li class="cast-row">
-                                    <span class="cast-role anim-clip-name">{block.clip ?? '— idle —'}</span>
-                                    <span class="cast-char">{block.startTime.toFixed(1)}s–{block.endTime.toFixed(1)}s</span>
-                                    <button class="icon-btn danger" onclick={() => removeBlock(index)} title="Remove block">✕</button>
-                                  </li>
-                                {/each}
-                              </ul>
-                            {/if}
-                            {#if blockFormActorId === actor.id}
-                              <form class="add-actor-form" onsubmit={(e) => { e.preventDefault(); commitAddBlock(); }}>
-                                <input class="anim-number" type="number" step="0.1" min="0" placeholder="Start (s)" bind:value={blockFormStart} />
-                                <input class="anim-number" type="number" step="0.1" min="0" placeholder="End (s)" bind:value={blockFormEnd} />
-                                {#if availableClips.length > 0}
-                                  <select class="actor-char-select" bind:value={blockFormClip}>
-                                    <option value="">— idle —</option>
-                                    {#each availableClips as clip}
-                                      <option>{clip}</option>
-                                    {/each}
-                                  </select>
-                                {:else}
-                                  <input class="rename-input" placeholder="Clip (optional)" bind:value={blockFormClip} />
-                                {/if}
-                                <div class="add-actor-btns">
-                                  <button class="new-btn" type="submit">Add</button>
-                                  <button class="icon-btn" type="button" onclick={() => (blockFormActorId = null)}>Cancel</button>
-                                </div>
-                              </form>
-                            {:else}
-                              <button class="new-btn anim-add-btn" onclick={() => openBlockForm(actor.id)}>+ Block</button>
-                            {/if}
-                          </div>
-                          <!-- Position track sub-section -->
-                          <div class="anim-subsection">
-                            <span class="anim-sublabel">Position track</span>
-                            {#if actorMoveTrack}
-                              <ul class="cast-list">
-                                {#each actorMoveTrack.action.keyframes.times as t, ki}
-                                  <li class="cast-row">
-                                    <span class="cast-role kf-time">{t.toFixed(2)}s</span>
-                                    <span class="cast-char kf-pos">{actorMoveTrack.action.keyframes.values.slice(ki * 3, ki * 3 + 3).map(v => v.toFixed(2)).join(', ')}</span>
-                                    <button class="icon-btn danger" onclick={() => removePositionKeyframe(actor.id, ki)} title="Remove keyframe">✕</button>
-                                  </li>
-                                {/each}
-                              </ul>
-                            {:else}
-                              <p class="stage-empty">No position keyframes.</p>
-                            {/if}
-                            <button class="new-btn anim-add-btn" onclick={() => capturePositionKeyframe(actor.id)} title="Capture current world position at playhead time">⊕ Capture at ▶ {currentPosition.toFixed(1)}s</button>
-                          </div>
+                  <!-- Selected block properties -->
+                  {#if selBlock}
+                    {@const blkClips = discoveredClips[selBlock.block.actorId] ?? []}
+                    <div class="stage-section">
+                      <div class="stage-section-header">
+                        <span class="stage-section-label">Block — {selBlockActor?.role ?? selBlock.block.actorId}</span>
+                        <button class="icon-btn danger" onclick={() => { removeBlock(selBlockIdx!); selBlockIdx = null; }} title="Remove block">✕</button>
+                      </div>
+                      <div class="anim-row">
+                        <label class="anim-label" for="blk-clip">Clip</label>
+                        {#if blkClips.length > 0}
+                          <select
+                            id="blk-clip"
+                            class="actor-char-select"
+                            value={selBlock.block.clip ?? ''}
+                            onchange={(e) => activeDoc?.execute(new UpdateActorBlockCommand(selBlockIdx!, { clip: e.currentTarget.value || undefined }))}
+                          >
+                            <option value="">— idle —</option>
+                            {#each blkClips as cl}<option>{cl}</option>{/each}
+                          </select>
+                        {:else}
+                          <input
+                            id="blk-clip"
+                            class="rename-input"
+                            placeholder="clip name"
+                            value={selBlock.block.clip ?? ''}
+                            onchange={(e) => activeDoc?.execute(new UpdateActorBlockCommand(selBlockIdx!, { clip: e.currentTarget.value.trim() || undefined }))}
+                          />
                         {/if}
                       </div>
-                    {/each}
-                  </div>
+                      <div class="anim-row">
+                        <label class="anim-label" for="blk-start">Start</label>
+                        <input id="blk-start" class="anim-number" type="number" step="0.1" min="0"
+                          value={selBlock.block.startTime}
+                          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n)) activeDoc?.execute(new UpdateActorBlockCommand(selBlockIdx!, { startTime: n })); }}
+                        />
+                        <label class="anim-label" for="blk-end">End</label>
+                        <input id="blk-end" class="anim-number" type="number" step="0.1" min="0"
+                          value={selBlock.block.endTime}
+                          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n)) activeDoc?.execute(new UpdateActorBlockCommand(selBlockIdx!, { endTime: n })); }}
+                        />
+                      </div>
+                      <div class="anim-row">
+                        <button class="new-btn" onclick={() => presenter?.handleSliderInput(selBlock.block.endTime)} title="Seek playhead to end of block">⇥ t={selBlock.block.endTime.toFixed(1)}s</button>
+                        <button class="new-btn" onclick={() => captureBlockPosition(true)} title="Drag actor in viewport first, then capture">⊕ Capture end pos</button>
+                      </div>
+                      <div class="anim-row">
+                        <span class="anim-label">End pos</span>
+                        {#if selBlock.block.endPosition}
+                          <span class="anim-label blk-pos">{selBlock.block.endPosition.map((v) => v.toFixed(1)).join(', ')}</span>
+                        {:else}
+                          <span class="anim-label blk-pos blk-pos-none">stationary</span>
+                        {/if}
+                      </div>
+                    </div>
                   {/if}
 
                   <!-- Set Pieces -->
@@ -1119,6 +948,39 @@
                       </ul>
                     {/if}
                   </div>
+
+                  <!-- Voice -->
+                  <div class="stage-section">
+                    <div class="stage-section-header">
+                      <span class="stage-section-label">Voice</span>
+                    </div>
+                    <div class="anim-row">
+                      <label class="anim-label" for="voice-mode-stage">Mode</label>
+                      <select
+                        id="voice-mode-stage"
+                        class="actor-char-select"
+                        bind:value={voiceMode}
+                        disabled={!isToneSetup}
+                      >
+                        <option value="espeak">eSpeak (fast)</option>
+                        <option value="web-speech">Browser voices</option>
+                        <option value="kokoro">Kokoro (~92 MB)</option>
+                      </select>
+                    </div>
+                    <div class="anim-row">
+                      <label class="anim-label" for="bubble-scale-stage">Bubble</label>
+                      <input
+                        id="bubble-scale-stage"
+                        type="range"
+                        min="0.1"
+                        max="1.5"
+                        step="0.05"
+                        bind:value={bubbleScale}
+                        style="flex:1"
+                      />
+                      <span class="anim-label">{bubbleScale.toFixed(1)}</span>
+                    </div>
+                  </div>
                 {:else}
                   <p class="panel-placeholder">Select or create a production.</p>
                 {/if}
@@ -1141,16 +1003,7 @@
   </div>
   <div class="bottom-panel">
     <div class="bottom-panel-header">
-      <button
-        class="panel-tab"
-        class:active={bottomTab === 'transport'}
-        onclick={() => { bottomTab = 'transport'; bottomPanelOpen = true; }}
-      >Transport</button>
-      <button
-        class="panel-tab"
-        class:active={bottomTab === 'timeline'}
-        onclick={() => { bottomTab = 'timeline'; bottomPanelOpen = true; }}
-      >Timeline</button>
+      <span class="bottom-panel-label">Timeline</span>
       <button
         class="panel-toggle"
         onclick={() => (bottomPanelOpen = !bottomPanelOpen)}
@@ -1159,34 +1012,52 @@
     </div>
     {#if bottomPanelOpen}
       <div class="bottom-panel-body">
-        {#if bottomTab === 'transport'}
-          <TransportBar
-            {isPlaying}
-            {isToneSetup}
-            {currentPosition}
-            {sceneDuration}
-            {voiceBackend}
-            bind:voiceMode={voiceMode}
-            bind:bubbleScale={bubbleScale}
-            bind:sliderValue={sliderValue}
-            bind:isSliderDragging={isSliderDragging}
-            onplaypause={() => presenter?.handlePlayPauseClick()}
-            onrewind={() => presenter?.handleRewindClick()}
-            onsliderinput={(t) => presenter?.handleSliderInput(t)}
-            onsliderpointerdown={() => presenter?.handleSliderPointerDown()}
-            onsliderpointerup={() => presenter?.handleSliderPointerUp()}
-          />
-        {:else}
-          <TimelinePanel
-            {actors}
-            {actorBlocks}
-            {sceneDuration}
-            {currentPosition}
-            {discoveredClips}
-            onupdateblock={(i, patch) => activeDoc?.execute(new UpdateActorBlockCommand(i, patch))}
-            onremoveblock={(i) => activeDoc?.execute(new RemoveActorBlockCommand(i))}
-          />
-        {/if}
+        <TransportBar
+          {isPlaying}
+          {isToneSetup}
+          {currentPosition}
+          {sceneDuration}
+          {voiceBackend}
+          bind:sliderValue={sliderValue}
+          bind:isSliderDragging={isSliderDragging}
+          onplaypause={() => presenter?.handlePlayPauseClick()}
+          onrewind={() => presenter?.handleRewindClick()}
+          onsliderinput={(t) => presenter?.handleSliderInput(t)}
+          onsliderpointerdown={() => presenter?.handleSliderPointerDown()}
+          onsliderpointerup={() => presenter?.handleSliderPointerUp()}
+        />
+        <TimelinePanel
+          {actors}
+          {actorBlocks}
+          {sceneDuration}
+          {currentPosition}
+          {discoveredClips}
+          selectedBlockIndex={selBlockIdx}
+          focusedActorId={selectedObjectId}
+          onblockselect={(i) => {
+            selBlockIdx = i;
+            if (i !== null) {
+              if (rightTab !== 'stage') rightTab = 'stage';
+              const b = actorBlocks.find((e) => e.index === i);
+              if (b) {
+                presenter?.selectSceneObject(b.block.actorId);
+                presenter?.handleSliderInput(b.block.endTime);
+              }
+            }
+          }}
+          onaddblock={(actorId, startTime, endTime) => {
+            if (!activeDoc) return;
+            if (!designMode) designMode = true;
+            const newBlock: ActorBlock = { type: 'actorBlock', actorId, startTime, endTime };
+            activeDoc.execute(new AddActorBlockCommand(newBlock));
+            const newIdx = (activeDoc.current.scene?.blocks?.length ?? 1) - 1;
+            selBlockIdx = newIdx;
+            if (rightTab !== 'stage') rightTab = 'stage';
+            selectedObjectId = actorId;
+          }}
+          onupdateblock={(i, patch) => activeDoc?.execute(new UpdateActorBlockCommand(i, patch))}
+          onremoveblock={(i) => { activeDoc?.execute(new RemoveActorBlockCommand(i)); if (selBlockIdx === i) selBlockIdx = null; }}
+        />
       </div>
     {/if}
   </div>
@@ -1739,22 +1610,15 @@
     align-items: center;
   }
 
-  .panel-tab {
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: #666;
+  .bottom-panel-label {
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
+    color: #555;
     padding: 4px 10px;
-    cursor: pointer;
-    transition: color 0.1s, border-color 0.1s;
+    user-select: none;
   }
-
-  .panel-tab:hover { color: #bbb; }
-  .panel-tab.active { color: #4a9eff; border-bottom-color: #4a9eff; }
 
   .panel-toggle {
     margin-left: auto;
@@ -1771,75 +1635,25 @@
     color: #ccc;
   }
 
-  /* ── Animation authoring UI ────────────────────── */
+  /* ── Block section position display ───────────── */
 
-  .anim-actor-group {
-    border-left: 2px solid #2a2a2a;
-    margin-bottom: 4px;
-  }
-
-  .anim-actor-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    background: none;
-    border: none;
-    color: #bbb;
-    font-size: 12px;
-    font-weight: 600;
-    padding: 4px 6px;
-    cursor: pointer;
-    text-align: left;
-    border-radius: 3px;
-  }
-
-  .anim-actor-header:hover {
-    background: #222;
-    color: #fff;
-  }
-
-  .anim-actor-toggle {
-    color: #666;
+  .blk-pos {
+    font-variant-numeric: tabular-nums;
+    color: #888;
     font-size: 10px;
-    flex-shrink: 0;
+  }
+  .blk-pos-none {
+    font-style: italic;
+    color: #555;
   }
 
-  .anim-actor-name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
+  /* ── Shared animation/block authoring layout ───── */
 
   .anim-subsection {
     padding: 4px 8px 6px 12px;
     display: flex;
     flex-direction: column;
     gap: 4px;
-  }
-
-  .anim-sublabel {
-    font-size: 10px;
-    font-weight: 600;
-    color: #666;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .anim-clip-name {
-    flex: 1;
-  }
-
-  .anim-loop-sel {
-    background: #2a2a2a;
-    border: 1px solid #3a3a3a;
-    border-radius: 3px;
-    color: #aaa;
-    font-size: 11px;
-    padding: 1px 4px;
-    flex-shrink: 0;
   }
 
   .anim-row {

@@ -35,8 +35,9 @@ function vec3Equal(a: Vec3, b: Vec3): boolean {
  * The compiled tracks are not stored — they are merged with `scene.actions` at
  * load time by `storedSceneToModel`.
  */
-export function actorBlockToTracks(block: ActorBlock): SceneAction[] {
+export function actorBlockToTracks(block: ActorBlock, inferredStartPos?: Vec3): SceneAction[] {
   const result: SceneAction[] = [];
+  const duration = block.endTime - block.startTime;
 
   // Clip track
   if (block.clip) {
@@ -50,11 +51,14 @@ export function actorBlockToTracks(block: ActorBlock): SceneAction[] {
     result.push(clipTrack);
   }
 
+  // Explicit startPosition overrides the inferred chain; fall back to inferredStartPos
+  const effectiveStart = block.startPosition ?? inferredStartPos;
+
   // Position track — only when both endpoints are defined and differ
   const hasMovement =
-    block.startPosition !== undefined &&
+    effectiveStart !== undefined &&
     block.endPosition !== undefined &&
-    !vec3Equal(block.startPosition, block.endPosition);
+    !vec3Equal(effectiveStart, block.endPosition);
 
   if (hasMovement) {
     const posTrack: TransformTrack = {
@@ -63,8 +67,10 @@ export function actorBlockToTracks(block: ActorBlock): SceneAction[] {
       startTime: block.startTime,
       keyframes: {
         property: '.position',
-        times: [block.startTime, block.endTime],
-        values: [...block.startPosition!, ...block.endPosition!],
+        // Keyframe times are relative to startTime — PlaybackEngine sets
+        // anim.time = sceneTime - anim.start, so 0 == block start.
+        times: [0, duration],
+        values: [...effectiveStart!, ...block.endPosition!],
         trackType: 'vector',
       },
     };
@@ -76,8 +82,8 @@ export function actorBlockToTracks(block: ActorBlock): SceneAction[] {
   let endFacing   = block.endFacing;
 
   if (!startFacing && !endFacing && hasMovement) {
-    const dx = block.endPosition![0] - block.startPosition![0];
-    const dz = block.endPosition![2] - block.startPosition![2];
+    const dx = block.endPosition![0] - effectiveStart![0];
+    const dz = block.endPosition![2] - effectiveStart![2];
     const len = Math.sqrt(dx * dx + dz * dz);
     if (len > 0.001) {
       const dir: Vec3 = [dx / len, 0, dz / len];
@@ -98,7 +104,7 @@ export function actorBlockToTracks(block: ActorBlock): SceneAction[] {
       startTime: block.startTime,
       keyframes: {
         property: '.quaternion',
-        times: [block.startTime, block.endTime],
+        times: [0, duration],
         values: [...sq, ...eq],
         trackType: 'quaternion',
       },
