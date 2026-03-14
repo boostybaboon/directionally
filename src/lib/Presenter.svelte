@@ -81,10 +81,11 @@
     /** Contextual hint shown in the gizmo toolbar to communicate what the next drag will do. */
     dragHint?: string;
     /**
-     * When false, TransformControls gizmo is shown but non-interactive.
-     * Use to block actor drags when no meaningful commit is possible (e.g. t>0, no block selected).
+     * Optional guard called before committing a viewport click as a selection.
+     * Return false to silently ignore the click (e.g. actors at t>0 with no block selected).
+     * Set pieces should always return true. Defaults to always-allow.
      */
-    transformEnabled?: boolean;
+    objectSelectable?: (id: string) => boolean;
     voiceMode?: VoiceMode;
     bubbleScale?: number;
     isPlaying?: boolean;
@@ -112,7 +113,7 @@
     sliderValue = $bindable(0),
     isSliderDragging = $bindable(false),
     dragHint = '',
-    transformEnabled = true,
+    objectSelectable,
   }: PresenterProps = $props();
 
   // Tracks the most recently loaded model to support re-synthesis when voiceMode changes.
@@ -138,9 +139,6 @@
     if (orbitControls) orbitControls.enabled = designMode;
   });
 
-  $effect(() => {
-    if (transformControls) transformControls.enabled = transformEnabled;
-  });
 
   // Function to initialize the custom console.log
   function initializeCustomConsoleLog() {
@@ -673,6 +671,7 @@
       obj = obj.parent;
     }
     if (obj && obj.name) {
+      if (!(objectSelectable?.(obj.name) ?? true)) return;
       // Toggle: clicking the already-selected object deselects it.
       selectSceneObject(obj.name === selectedObjectId ? null : obj.name);
     }
@@ -1067,22 +1066,24 @@
       onclick={() => { designMode = !designMode; }}
       title={designMode ? 'Switch to playback view' : 'Switch to design view'}
     >{designMode ? '▶ Playback' : '✏ Design'}</button>
-    {#if designMode && selectedObjectId}
+    {#if designMode}
       <div class="gizmo-toolbar" role="toolbar" aria-label="Gizmo mode">
-        <button
-          class="gizmo-btn" class:active={tcMode === 'translate'}
-          onclick={() => setGizmoMode('translate')}
-          title="Move (G)"
-          aria-label="Move"
-          aria-pressed={tcMode === 'translate'}
-        >⇔</button>
-        <button
-          class="gizmo-btn" class:active={tcMode === 'rotate'}
-          onclick={() => setGizmoMode('rotate')}
-          title="Rotate (R)"
-          aria-label="Rotate"
-          aria-pressed={tcMode === 'rotate'}
-        >↻</button>
+        {#if selectedObjectId}
+          <button
+            class="gizmo-btn" class:active={tcMode === 'translate'}
+            onclick={() => setGizmoMode('translate')}
+            title="Move (G)"
+            aria-label="Move"
+            aria-pressed={tcMode === 'translate'}
+          >⇔</button>
+          <button
+            class="gizmo-btn" class:active={tcMode === 'rotate'}
+            onclick={() => setGizmoMode('rotate')}
+            title="Rotate (R)"
+            aria-label="Rotate"
+            aria-pressed={tcMode === 'rotate'}
+          >↻</button>
+        {/if}
         {#if dragHint}
           <span class="drag-hint">{dragHint}</span>
         {/if}

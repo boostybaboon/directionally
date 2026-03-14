@@ -182,6 +182,15 @@
     selBlock ? (actors.find((a) => a.id === selBlock.block.actorId) ?? null) : null
   );
 
+  // If the user clicks a different actor (or a set piece) in the viewport,
+  // clear the block selection so the Stage panel doesn't show a stale block.
+  $effect(() => {
+    if (selectedObjectId !== null && selBlock !== null && selBlock.block.actorId !== selectedObjectId) {
+      selBlockIdx = null;
+      presenter?.selectSceneObject(null);
+    }
+  });
+
   // Per-actor and per-light expand state
   let expandedActorSettings = $state(new Set<string>());
   let expandedLightAnim = $state(new Set<string>());
@@ -199,27 +208,14 @@
   let selectedObjectId = $state<string | null>(null);
 
   const dragHint = $derived((() => {
-    if (!selectedObjectId || !designMode) return '';
-    if (!actors.some((a) => a.id === selectedObjectId)) return '';
-    const hasBlockSelected = selBlockIdx !== null &&
-      selBlock?.block.actorId === selectedObjectId;
-    if (hasBlockSelected) {
-      return `drag actor → end position auto-captured`;
+    if (!designMode) return '';
+    if (selectedObjectId && selBlockIdx !== null && selBlock?.block.actorId === selectedObjectId) {
+      return 'drag actor → end position auto-captured';
     }
     if (currentPosition < 0.05) {
-      return 'drag → sets spawn position';
+      return selectedObjectId ? 'drag → sets spawn position' : 'click an item, then drag to set its start position';
     }
-    return 'drag disabled · deselect block + seek t=0 to set spawn';
-  })());
-
-  // Gizmo is interactive for set pieces always; for actors only when a meaningful
-  // commit is available (t≈0 spawn, or a block is selected for end-pos preview).
-  const transformEnabled = $derived((() => {
-    if (!selectedObjectId || !designMode) return true; // no-op when gizmo is hidden anyway
-    const isActor = actors.some((a) => a.id === selectedObjectId);
-    if (!isActor) return true; // set pieces always draggable
-    const blockSelected = selBlockIdx !== null && selBlock?.block.actorId === selectedObjectId;
-    return blockSelected || currentPosition < 0.05;
+    return '';
   })());
 
   // Examples (read-only, no persistence)
@@ -662,7 +658,11 @@
             oncataloguedrop={handleCatalogueDrop}
             ondiscoverclips={(clips) => { discoveredClips = clips; }}
             {dragHint}
-            {transformEnabled}
+            objectSelectable={(id) =>
+              !actors.some((a) => a.id === id) ||
+              currentPosition < 0.05 ||
+              (selBlockIdx !== null && selBlock?.block.actorId === id)
+            }
           />
         </div>
       </Pane>
@@ -835,7 +835,7 @@
                     <div class="stage-section">
                       <div class="stage-section-header">
                         <span class="stage-section-label">Block — {selBlockActor?.role ?? selBlock.block.actorId}</span>
-                        <button class="icon-btn danger" onclick={() => { removeBlock(selBlockIdx!); selBlockIdx = null; }} title="Remove block">✕</button>
+                        <button class="icon-btn danger" onclick={() => { removeBlock(selBlockIdx!); selBlockIdx = null; presenter?.selectSceneObject(null); }} title="Remove block">✕</button>
                       </div>
                       <div class="anim-row">
                         <label class="anim-label" for="blk-clip">Clip</label>
@@ -1079,8 +1079,8 @@
           bind:sliderValue={sliderValue}
           bind:isSliderDragging={isSliderDragging}
           onplaypause={() => presenter?.handlePlayPauseClick()}
-          onrewind={() => presenter?.handleRewindClick()}
-          onsliderinput={(t) => presenter?.handleSliderInput(t)}
+          onrewind={() => { selBlockIdx = null; presenter?.selectSceneObject(null); presenter?.handleRewindClick(); }}
+          onsliderinput={(t) => { selBlockIdx = null; presenter?.selectSceneObject(null); presenter?.handleSliderInput(t); }}
           onsliderpointerdown={() => presenter?.handleSliderPointerDown()}
           onsliderpointerup={() => presenter?.handleSliderPointerUp()}
         />
@@ -1103,6 +1103,8 @@
                 presenter?.selectSceneObject(b.block.actorId);
                 presenter?.handleSliderInput(b.block.endTime);
               }
+            } else {
+              presenter?.selectSceneObject(null);
             }
           }}
           onaddblock={(actorId, startTime, endTime) => {
@@ -1118,7 +1120,7 @@
             presenter?.handleSliderInput(endTime);
           }}
           onupdateblock={(i, patch) => activeDoc?.execute(new UpdateActorBlockCommand(i, patch))}
-          onremoveblock={(i) => { activeDoc?.execute(new RemoveActorBlockCommand(i)); if (selBlockIdx === i) selBlockIdx = null; }}
+          onremoveblock={(i) => { activeDoc?.execute(new RemoveActorBlockCommand(i)); if (selBlockIdx === i) { selBlockIdx = null; presenter?.selectSceneObject(null); } }}
         />
       </div>
     {/if}

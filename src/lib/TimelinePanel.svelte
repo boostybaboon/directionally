@@ -144,7 +144,9 @@
           startTime: parseFloat(previewTimes.startTime.toFixed(2)),
           endTime: parseFloat(previewTimes.endTime.toFixed(2)),
         });
-        onblockselect?.(null);
+        // Keep the block selected so the Stage panel stays in sync and the
+        // actor remains highlighted in the viewport after a move/resize.
+        onblockselect?.(drag.blockIndex);
       } else {
         onblockselect?.(selectedBlockIndex === drag.blockIndex ? null : drag.blockIndex);
       }
