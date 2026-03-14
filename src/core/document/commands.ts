@@ -139,10 +139,10 @@ export class SetSpeakLinesCommand implements Command {
     const active = this.lines.filter((l) => l.text.trim().length > 0);
     let t = 1.0;
     const speakActions: SpeakAction[] = active.map((line) => {
-      const start = t;
+      const start = line.startTime ?? t;
       // Clamp so the next line always starts at least 0.1 s after this one,
       // even when a large negative pauseAfter is used on a short line.
-      t = Math.max(start + 0.1, t + estimateDuration(line.text) + line.pauseAfter);
+      t = Math.max(start + 0.1, start + estimateDuration(line.text) + line.pauseAfter);
       return {
         type:       'speak',
         actorId:    line.actorId,
@@ -152,7 +152,7 @@ export class SetSpeakLinesCommand implements Command {
       };
     });
 
-    const duration = Math.max(6, t + 1);
+    const duration = Math.max(doc.scene.duration ?? 6, t + 1);
 
     // Preserve non-speak actions. Looping idle animate actions intentionally have
     // no endTime (→ Infinity in GLTFAction) so no Tone hard-stop schedule fires and

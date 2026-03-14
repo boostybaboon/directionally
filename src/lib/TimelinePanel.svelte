@@ -10,6 +10,8 @@
     discoveredClips?: Record<string, string[]>;
     selectedBlockIndex?: number | null;
     focusedActorId?: string | null;
+    speechSegments?: { index: number; actorId: string; startTime: number; endTime: number; text: string }[];
+    onspeechmove?: (segIndex: number, newStartTime: number) => void;
     onblockselect?: (index: number | null) => void;
     onaddblock?: (actorId: string, startTime: number, endTime: number) => void;
     onupdateblock?: (index: number, patch: Partial<Omit<ActorBlock, 'type'>>) => void;
@@ -24,6 +26,8 @@
     discoveredClips = {},
     selectedBlockIndex = null,
     focusedActorId = null,
+    speechSegments = [],
+    onspeechmove,
     onblockselect,
     onaddblock,
     onupdateblock,
@@ -101,7 +105,10 @@
   }
 
   function onpointermove(e: PointerEvent) {
-    if (drag) {
+    if (speechDrag) {
+      const dt = xt(e.clientX - speechDrag.startX);
+      speechDrag.previewStart = Math.max(0, speechDrag.origStart + dt);
+    } else if (drag) {
       const dt = xt(e.clientX - drag.startX);
       const dur = drag.origEnd - drag.origStart;
       if (drag.mode === 'move') {
@@ -123,6 +130,13 @@
   }
 
   function onpointerup(e: PointerEvent) {
+    if (speechDrag) {
+      if (Math.abs(e.clientX - speechDrag.startX) > 2) {
+        onspeechmove?.(speechDrag.segIndex, parseFloat(speechDrag.previewStart.toFixed(2)));
+      }
+      speechDrag = null;
+      return;
+    }
     if (drag) {
       const moved = Math.abs(e.clientX - drag.startX) > 4;
       if (moved && previewTimes) {
@@ -157,6 +171,31 @@
     currentTime: number;
   }
   let drawState = $state<DrawState | null>(null);
+
+  // ── Speech block drag ───────────────────────────────────────────────────────
+
+  interface SpeechDragState {
+    segIndex: number;
+    startX: number;
+    origStart: number;
+    previewStart: number;
+    duration: number;
+  }
+  let speechDrag = $state<SpeechDragState | null>(null);
+
+  function startSpeechDrag(e: PointerEvent, seg: { index: number; startTime: number; endTime: number }) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    speechDrag = {
+      segIndex: seg.index,
+      startX: e.clientX,
+      origStart: seg.startTime,
+      previewStart: seg.startTime,
+      duration: seg.endTime - seg.startTime,
+    };
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  }
 
   function startDraw(e: PointerEvent, actorId: string) {
     if (e.button !== 0 || drag) return;
@@ -241,6 +280,36 @@
           {/if}
         </div>
       </div>
+      <!-- Speech segments row (shown when the actor has any dialogue) -->
+      {@const aSegs = speechSegments.filter((s) => s.actorId === actor.id)}
+      {#if aSegs.length > 0}
+        <div class="tl-row tl-speech-row">
+          <div class="tl-label" style:width="{LABEL_W}px">
+            <span class="tl-label-text tl-speech-label">speech</span>
+          </div>
+          <div class="tl-track tl-speech-track">
+            {#each aSegs as seg}
+              {@const effStart = (speechDrag?.segIndex === seg.index) ? speechDrag.previewStart : seg.startTime}
+              {@const dur = seg.endTime - seg.startTime}
+              {@const left = tx(effStart)}
+              {@const w = Math.max(tx(effStart + dur) - tx(effStart), 6)}
+              <!-- svelte-ignore a11y_interactive_supports_focus -->
+              <div
+                class="tl-speech-block"
+                class:tl-speech-block-dragging={speechDrag?.segIndex === seg.index}
+                style:left="{left}px"
+                style:width="{w}px"
+                title="{seg.text}"
+                role="button"
+                tabindex="-1"
+                onpointerdown={(e) => startSpeechDrag(e, seg)}
+              >
+                <span class="tl-speech-block-label">{seg.text}</span>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
     {/each}
   {/if}
 </div>
@@ -418,4 +487,52 @@
 
   .tl-resize-l { left: 0; }
   .tl-resize-r { right: 0; }
+
+  /* ── Speech rows ──────────────────────────────────── */
+
+  .tl-speech-row .tl-track {
+    height: 18px;
+    cursor: default;
+  }
+
+  .tl-speech-label {
+    color: #9b7fcc;
+    font-style: italic;
+  }
+
+  .tl-speech-block {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    border-radius: 2px;
+    background: rgba(140, 90, 210, 0.55);
+    border: 1px solid rgba(180, 130, 255, 0.35);
+    overflow: hidden;
+    cursor: grab;
+    z-index: 2;
+    min-width: 6px;
+    transition: opacity 0.08s;
+  }
+
+  .tl-speech-block:hover {
+    background: rgba(160, 110, 230, 0.7);
+    border-color: rgba(200, 160, 255, 0.6);
+  }
+
+  .tl-speech-block-dragging {
+    cursor: grabbing;
+    opacity: 0.85;
+    z-index: 10;
+  }
+
+  .tl-speech-block-label {
+    font-size: 9px;
+    color: rgba(255, 255, 255, 0.8);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 3px;
+    line-height: 14px;
+    display: block;
+  }
 </style>

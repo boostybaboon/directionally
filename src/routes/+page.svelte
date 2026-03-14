@@ -16,7 +16,7 @@
   import type { Model } from '$lib/Model';
   import ScriptEditor from '$lib/sandbox/ScriptEditor.svelte';
   import { storedSceneToModel } from '../core/storage/storedSceneToModel.js';
-  import { defaultSceneShell } from '../core/storage/sceneBuilder.js';
+  import { defaultSceneShell, estimateDuration } from '../core/storage/sceneBuilder.js';
   import type { ScriptLine } from '$lib/sandbox/types';
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import type { StoredProduction } from '../core/storage/types.js';
@@ -79,12 +79,70 @@
   let docSnapshot = $state<StoredProduction | null>(null);
   /** Cast list from the active document; updates automatically on command execution. */
   const actors = $derived(docSnapshot?.actors ?? []);
-  /** Dialogue lines for the ScriptEditor, derived from the scene's speak actions. */
-  const speakLines = $derived<ScriptLine[]>(
+  /** Dialogue lines for the ScriptEditor — derived from doc.script so explicit startTimes round-trip. */
+  const speakLines = $derived<ScriptLine[]>(docSnapshot?.script ?? []);
+
+  /** Speech segments derived from scheduled scene actions, used to display speech blocks on the timeline. */
+  const speechSegments = $derived(
     (docSnapshot?.scene?.actions ?? [])
       .filter((a): a is SpeakAction => a.type === 'speak')
-      .map((a) => ({ actorId: a.actorId, text: a.text, pauseAfter: a.pauseAfter ?? 0 }))
+      .map((a, i) => ({
+        index: i,
+        actorId: a.actorId,
+        startTime: a.startTime,
+        endTime: a.startTime + estimateDuration(a.text),
+        text: a.text,
+      }))
   );
+
+  /** Move a speech segment by adjusting timing while preserving the glue chain.
+   * For the first line: set its startTime. For subsequent lines: adjust pauseAfter
+   * of the previous line so the dragged line lands at newStartTime, then clear any
+   * explicit startTime on the dragged line (timing flows from the chain). */
+  function handleSpeechMove(segIndex: number, newStartTime: number) {
+    if (!activeDoc) return;
+
+    const activeLines = speakLines.filter((l) => l.text.trim().length > 0);
+
+    if (segIndex === 0) {
+      // First line has no predecessor — pin its startTime.
+      let count = -1;
+      const updated = speakLines.map((line) => {
+        if (line.text.trim().length === 0) return line;
+        count++;
+        return count === 0 ? { ...line, startTime: parseFloat(newStartTime.toFixed(2)) } : line;
+      });
+      activeDoc.execute(new SetSpeakLinesCommand(updated));
+      return;
+    }
+
+    // Simulate the chain up to the predecessor to find where its speech ends.
+    let t = 1.0;
+    for (let i = 0; i < segIndex - 1; i++) {
+      const l = activeLines[i];
+      const start = l.startTime ?? t;
+      t = Math.max(start + 0.1, start + estimateDuration(l.text) + l.pauseAfter);
+    }
+    const prevLine = activeLines[segIndex - 1];
+    const prevStart = prevLine.startTime ?? t;
+    const prevSpeechEnd = prevStart + estimateDuration(prevLine.text);
+    const newPauseAfter = parseFloat((newStartTime - prevSpeechEnd).toFixed(2));
+
+    // Update pauseAfter on the predecessor; strip any explicit startTime from the
+    // dragged line so it remains glued (timing flows from the chain).
+    let count = -1;
+    const updated = speakLines.map((line) => {
+      if (line.text.trim().length === 0) return line;
+      count++;
+      if (count === segIndex - 1) return { ...line, pauseAfter: newPauseAfter };
+      if (count === segIndex) {
+        const { startTime: _pin, ...rest } = line;
+        return rest as typeof line;
+      }
+      return line;
+    });
+    activeDoc.execute(new SetSpeakLinesCommand(updated));
+  }
 
   // Cast management UI state
   let addingActor = $state(false);
@@ -146,7 +204,7 @@
     const hasBlockSelected = selBlockIdx !== null &&
       selBlock?.block.actorId === selectedObjectId;
     if (hasBlockSelected) {
-      return `drag to preview end pos · ⇥ seek then ⊕ Capture to lock`;
+      return `drag actor → end position auto-captured`;
     }
     if (currentPosition < 0.05) {
       return 'drag → sets spawn position';
@@ -362,9 +420,11 @@
     if (!activeDoc) return;
     const isActor = (activeDoc.current.actors ?? []).some((a) => a.id === id);
     if (isActor) {
-      // t≈0 with no block selected: drag sets the actor's base spawn position.
-      // When a block is selected, drag is always a visual preview — press ⊕ Capture to lock.
-      if (currentPosition < 0.05 && selBlockIdx === null) {
+      if (selBlockIdx !== null && selBlock?.block.actorId === id) {
+        // Block selected: drag auto-captures end position.
+        activeDoc.execute(new UpdateActorBlockCommand(selBlockIdx, { endPosition: position }));
+      } else if (currentPosition < 0.05 && selBlockIdx === null) {
+        // t≈0, no block: drag sets the actor's base spawn position.
         activeDoc.execute(new MoveStagedActorCommand(id, position, rotation));
       }
     } else {
@@ -812,15 +872,12 @@
                         />
                       </div>
                       <div class="anim-row">
-                        <button class="new-btn" onclick={() => presenter?.handleSliderInput(selBlock.block.endTime)} title="Seek playhead to end of block">⇥ t={selBlock.block.endTime.toFixed(1)}s</button>
-                        <button class="new-btn" onclick={() => captureBlockPosition(true)} title="Drag actor in viewport first, then capture">⊕ Capture end pos</button>
-                      </div>
-                      <div class="anim-row">
                         <span class="anim-label">End pos</span>
                         {#if selBlock.block.endPosition}
                           <span class="anim-label blk-pos">{selBlock.block.endPosition.map((v) => v.toFixed(1)).join(', ')}</span>
+                          <button class="icon-btn" onclick={() => activeDoc?.execute(new UpdateActorBlockCommand(selBlockIdx!, { endPosition: undefined }))} title="Clear end position (actor stays put)">✕</button>
                         {:else}
-                          <span class="anim-label blk-pos blk-pos-none">stationary</span>
+                          <span class="anim-label blk-pos blk-pos-none">stationary · drag to set</span>
                         {/if}
                       </div>
                     </div>
@@ -989,6 +1046,7 @@
                   <ScriptEditor
                     script={speakLines}
                     actors={actors.map(a => ({ id: a.id, label: a.role }))}
+                    currentPosition={currentPosition}
                     onchange={(s) => activeDoc?.execute(new SetSpeakLinesCommand(s))}
                   />
                 {:else}
@@ -1032,6 +1090,8 @@
           {sceneDuration}
           {currentPosition}
           {discoveredClips}
+          {speechSegments}
+          onspeechmove={handleSpeechMove}
           selectedBlockIndex={selBlockIdx}
           focusedActorId={selectedObjectId}
           onblockselect={(i) => {
@@ -1054,6 +1114,8 @@
             selBlockIdx = newIdx;
             if (rightTab !== 'stage') rightTab = 'stage';
             selectedObjectId = actorId;
+            presenter?.selectSceneObject(actorId);
+            presenter?.handleSliderInput(endTime);
           }}
           onupdateblock={(i, patch) => activeDoc?.execute(new UpdateActorBlockCommand(i, patch))}
           onremoveblock={(i) => { activeDoc?.execute(new RemoveActorBlockCommand(i)); if (selBlockIdx === i) selBlockIdx = null; }}
@@ -1591,7 +1653,6 @@
   .tab-content {
     flex: 1;
     min-height: 0;
-    overflow: hidden;
     display: flex;
     flex-direction: column;
   }

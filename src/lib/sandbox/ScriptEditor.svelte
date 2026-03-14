@@ -7,9 +7,11 @@
     onchange: (script: ScriptLine[]) => void;
     /** Cast to populate the actor dropdown. Falls back to SANDBOX_ACTORS when absent. */
     actors?:  { id: string; label: string }[];
+    /** Current playhead position, used for the “@ now” button. */
+    currentPosition?: number;
   }
 
-  let { script, onchange, actors }: Props = $props();
+  let { script, onchange, actors, currentPosition = 0 }: Props = $props();
 
   const castActors = $derived(actors?.length ? actors : SANDBOX_ACTORS);
 
@@ -124,15 +126,45 @@
                 />
                 <span class="pause-unit">s</span>
               </label>
+              <label class="pause-row">
+                <span class="pause-label">@ time</span>
+                <input
+                  type="number"
+                  class="pause-input"
+                  min="0"
+                  step="0.1"
+                  placeholder="auto"
+                  value={line.startTime ?? ''}
+                  oninput={(e) => {
+                    const v = (e.currentTarget as HTMLInputElement).value;
+                    updateLine(i, { startTime: v === '' ? undefined : (parseFloat(v) || 0) });
+                  }}
+                  onblur={() => commitLine(i)}
+                  aria-label="Start time in seconds (leave blank for auto)"
+                />
+                <span class="pause-unit">s</span>
+                <button
+                  class="now-btn"
+                  onclick={(e) => { e.stopPropagation(); updateLine(i, { startTime: parseFloat(currentPosition.toFixed(2)) }); commitLine(i); }}
+                  title="Set to current playhead position"
+                >★ now</button>
+              </label>
             </div>
           {:else}
             <!-- Read mode -->
             <div class="beat-read">
               <span class="character-name">{actorLabel(line.actorId).toUpperCase()}</span>
               <p class="dialogue-text">{line.text || '…'}</p>
-              {#if line.pauseAfter !== 0}
-                <span class="pause-tag">{line.pauseAfter > 0 ? '+' : ''}{line.pauseAfter}s</span>
-              {/if}
+              <div class="beat-meta">
+                {#if line.startTime !== undefined}
+                  <span class="pause-tag">@ {line.startTime}s</span>
+                {:else}
+                  <span class="pause-tag auto-tag">@ auto</span>
+                {/if}
+                {#if line.pauseAfter !== 0}
+                  <span class="pause-tag">{line.pauseAfter > 0 ? '+' : ''}{line.pauseAfter}s</span>
+                {/if}
+              </div>
             </div>
           {/if}
           </div>
@@ -222,12 +254,40 @@
   }
 
   .pause-tag {
-    display: block;
-    padding-left: 16px;
     font-size: 10px;
     color: #555;
     font-style: italic;
     margin-top: 2px;
+  }
+
+  .auto-tag {
+    color: #3a3a3a;
+  }
+
+  .beat-meta {
+    display: flex;
+    gap: 8px;
+    padding-left: 16px;
+    flex-wrap: wrap;
+  }
+
+  .now-btn {
+    background: #252535;
+    color: #9b7fcc;
+    border: 1px solid #3a3a4a;
+    border-radius: 2px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .now-btn:hover {
+    background: #2a1e40;
+    color: #c4a0ff;
+    border-color: #9b7fcc;
   }
 
   /* Edit mode */

@@ -7,6 +7,8 @@ export type ScriptLine = {
   text: string;
   /** Seconds of silence to leave after this line finishes before the next one starts. */
   pauseAfter: number;
+  /** Explicit start time in seconds. When absent, the line is auto-sequenced after the previous one. */
+  startTime?: number;
 };
 
 /** Fallback cast used when a production has no actors defined. */

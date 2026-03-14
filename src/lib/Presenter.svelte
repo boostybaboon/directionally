@@ -12,6 +12,7 @@
   import { synthesise as espeakSynthesise } from './tts/EspeakSynthesiser';
   import type { ActorVoice, VoiceFallback } from '../core/domain/types';
   import type { VoiceMode, VoiceBackend } from './types.js';
+  import { estimateDuration } from '../core/storage/sceneBuilder.js';
 
   let canvas: HTMLCanvasElement;
   // Overlay div covering the editor (right) viewport — used as domElement for
@@ -566,6 +567,13 @@
     engine.seek(time);
     currentPosition = engine.getPosition();
     sliderValue = currentPosition;
+    // Reconcile speech bubbles: clear all, then recreate any whose window covers the new time.
+    activeSpeechBubbles.forEach((sprite, actorId) => removeSpeechBubble(actorId));
+    currentLoadedModel?.speechEntries.forEach((entry) => {
+      if (time >= entry.startTime && time < entry.startTime + estimateDuration(entry.text)) {
+        createSpeechBubble(entry.actorId, entry.text);
+      }
+    });
   };
 
   const rewindSequence = () => {
