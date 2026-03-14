@@ -1,7 +1,7 @@
 import type { Command } from './Command.js';
 import type { StoredProduction, StoredActor, StoredScene } from '../storage/types.js';
 import type { ScriptLine } from '../../lib/sandbox/types.js';
-import type { CameraConfig, Vec3, SetPiece, StagedActor, SpeakAction, CameraTrackAction, PathKeyframe, ClipTrack, TransformTrack, LightingTrack, LoopStyle, ActorBlock } from '../domain/types.js';
+import type { CameraConfig, Vec3, SetPiece, StagedActor, SpeakAction, CameraTrackAction, PathKeyframe, ClipTrack, TransformTrack, LightingTrack, LoopStyle, ActorBlock, LightBlock, CameraBlock, SetPieceBlock } from '../domain/types.js';
 import { restageCast, estimateDuration } from '../storage/sceneBuilder.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -696,6 +696,150 @@ export class UpdateActorBlockCommand implements Command {
     const block = blocks[this.index];
     if (!block || block.type !== 'actorBlock') return doc;
     const updated: ActorBlock = { ...block, ...this.patch };
+    const newBlocks = [
+      ...blocks.slice(0, this.index),
+      updated,
+      ...blocks.slice(this.index + 1),
+    ];
+    return touch({ ...doc, scene: { ...doc.scene, blocks: newBlocks } });
+  }
+}
+
+// ── LightBlock commands ───────────────────────────────────────────────────────
+
+/** Append a new `LightBlock` to `scene.blocks`. */
+export class AddLightBlockCommand implements Command {
+  readonly label: string;
+  constructor(private readonly block: LightBlock) {
+    this.label = `Add light block for ${block.lightId} at ${block.startTime.toFixed(1)}s`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const blocks = [...(doc.scene.blocks ?? []), this.block];
+    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+  }
+}
+
+/** Remove the `LightBlock` at `index` from `scene.blocks`. */
+export class RemoveLightBlockCommand implements Command {
+  readonly label = 'Remove light block';
+  constructor(private readonly index: number) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const blocks = (doc.scene.blocks ?? []).filter((_, i) => i !== this.index);
+    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+  }
+}
+
+/** Patch fields on the `LightBlock` at `index`. */
+export class UpdateLightBlockCommand implements Command {
+  readonly label = 'Update light block';
+  constructor(
+    private readonly index: number,
+    private readonly patch: Partial<Omit<LightBlock, 'type'>>,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const blocks = doc.scene.blocks ?? [];
+    const block = blocks[this.index];
+    if (!block || block.type !== 'lightBlock') return doc;
+    const updated: LightBlock = { ...block, ...this.patch };
+    const newBlocks = [
+      ...blocks.slice(0, this.index),
+      updated,
+      ...blocks.slice(this.index + 1),
+    ];
+    return touch({ ...doc, scene: { ...doc.scene, blocks: newBlocks } });
+  }
+}
+
+// ── CameraBlock commands ──────────────────────────────────────────────────────
+
+/** Append a new `CameraBlock` to `scene.blocks`. */
+export class AddCameraBlockCommand implements Command {
+  readonly label: string;
+  constructor(private readonly block: CameraBlock) {
+    this.label = `Add camera block at ${block.startTime.toFixed(1)}s`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const blocks = [...(doc.scene.blocks ?? []), this.block];
+    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+  }
+}
+
+/** Remove the `CameraBlock` at `index` from `scene.blocks`. */
+export class RemoveCameraBlockCommand implements Command {
+  readonly label = 'Remove camera block';
+  constructor(private readonly index: number) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const blocks = (doc.scene.blocks ?? []).filter((_, i) => i !== this.index);
+    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+  }
+}
+
+/** Patch fields on the `CameraBlock` at `index`. */
+export class UpdateCameraBlockCommand implements Command {
+  readonly label = 'Update camera block';
+  constructor(
+    private readonly index: number,
+    private readonly patch: Partial<Omit<CameraBlock, 'type'>>,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const blocks = doc.scene.blocks ?? [];
+    const block = blocks[this.index];
+    if (!block || block.type !== 'cameraBlock') return doc;
+    const updated: CameraBlock = { ...block, ...this.patch };
+    const newBlocks = [
+      ...blocks.slice(0, this.index),
+      updated,
+      ...blocks.slice(this.index + 1),
+    ];
+    return touch({ ...doc, scene: { ...doc.scene, blocks: newBlocks } });
+  }
+}
+
+// ── SetPieceBlock commands ────────────────────────────────────────────────────
+
+/** Append a new `SetPieceBlock` to `scene.blocks`. */
+export class AddSetPieceBlockCommand implements Command {
+  readonly label: string;
+  constructor(private readonly block: SetPieceBlock) {
+    this.label = `Add set piece block for "${block.targetId}" at ${block.startTime.toFixed(1)}s`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const blocks = [...(doc.scene.blocks ?? []), this.block];
+    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+  }
+}
+
+/** Remove the `SetPieceBlock` at `index` from `scene.blocks`. */
+export class RemoveSetPieceBlockCommand implements Command {
+  readonly label = 'Remove set piece block';
+  constructor(private readonly index: number) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const blocks = (doc.scene.blocks ?? []).filter((_, i) => i !== this.index);
+    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+  }
+}
+
+/** Patch fields on the `SetPieceBlock` at `index`. */
+export class UpdateSetPieceBlockCommand implements Command {
+  readonly label = 'Update set piece block';
+  constructor(
+    private readonly index: number,
+    private readonly patch: Partial<Omit<SetPieceBlock, 'type'>>,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scene) return doc;
+    const blocks = doc.scene.blocks ?? [];
+    const block = blocks[this.index];
+    if (!block || block.type !== 'setPieceBlock') return doc;
+    const updated: SetPieceBlock = { ...block, ...this.patch };
     const newBlocks = [
       ...blocks.slice(0, this.index),
       updated,

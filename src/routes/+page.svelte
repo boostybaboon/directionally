@@ -21,9 +21,9 @@
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import type { StoredProduction } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
-  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand, AddCameraKeyframeCommand, RemoveCameraKeyframeCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand } from '../core/document/commands.js';
+  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand, AddCameraKeyframeCommand, RemoveCameraKeyframeCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand } from '../core/document/commands.js';
   import type { StoredActor } from '../core/storage/types.js';
-  import type { SpeakAction, PathKeyframe, TransformTrack, LightingTrack, ActorBlock } from '../core/domain/types.js';
+  import type { SpeakAction, PathKeyframe, TransformTrack, LightingTrack, ActorBlock, LightBlock, CameraBlock, SetPieceBlock } from '../core/domain/types.js';
   import { getCharacters, getSetPieces } from '../core/catalogue/catalogue.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
   import type { SetPiece } from '../core/domain/types.js';
@@ -172,18 +172,49 @@
   const actorBlocks = $derived(
     (docSnapshot?.scene?.blocks ?? []).flatMap((b, i) => b.type === 'actorBlock' ? [{ block: b as ActorBlock, index: i }] : [])
   );
+  const lightBlocks = $derived(
+    (docSnapshot?.scene?.blocks ?? []).flatMap((b, i) => b.type === 'lightBlock' ? [{ block: b as LightBlock, index: i }] : [])
+  );
+  const cameraBlocks = $derived(
+    (docSnapshot?.scene?.blocks ?? []).flatMap((b, i) => b.type === 'cameraBlock' ? [{ block: b as CameraBlock, index: i }] : [])
+  );
+  const setPieceBlocks = $derived(
+    (docSnapshot?.scene?.blocks ?? []).flatMap((b, i) => b.type === 'setPieceBlock' ? [{ block: b as SetPieceBlock, index: i }] : [])
+  );
 
   // Selected block (for Stage tab Block section)
   let selBlockIdx = $state<number | null>(null);
+  // Generic: any block type at the selected index
+  const selBlockEntry = $derived(
+    selBlockIdx !== null ? ((docSnapshot?.scene?.blocks ?? [])[selBlockIdx] ?? null) : null
+  );
   const selBlock = $derived(
-    selBlockIdx !== null ? (actorBlocks.find((e) => e.index === selBlockIdx) ?? null) : null
+    selBlockEntry?.type === 'actorBlock'
+      ? (actorBlocks.find((e) => e.index === selBlockIdx) ?? null)
+      : null
   );
   const selBlockActor = $derived(
     selBlock ? (actors.find((a) => a.id === selBlock.block.actorId) ?? null) : null
   );
+  const selLightBlock = $derived(
+    selBlockEntry?.type === 'lightBlock'
+      ? (lightBlocks.find((e) => e.index === selBlockIdx) ?? null)
+      : null
+  );
+  const selCameraBlock = $derived(
+    selBlockEntry?.type === 'cameraBlock'
+      ? (cameraBlocks.find((e) => e.index === selBlockIdx) ?? null)
+      : null
+  );
+  const selSetPieceBlock = $derived(
+    selBlockEntry?.type === 'setPieceBlock'
+      ? (setPieceBlocks.find((e) => e.index === selBlockIdx) ?? null)
+      : null
+  );
 
-  // If the user clicks a different actor (or a set piece) in the viewport,
+  // If the user clicks a different actor in the viewport while an actor block is selected,
   // clear the block selection so the Stage panel doesn't show a stale block.
+  // Non-actor block types (light/camera/setPiece) are not tied to viewport selection.
   $effect(() => {
     if (selectedObjectId !== null && selBlock !== null && selBlock.block.actorId !== selectedObjectId) {
       selBlockIdx = null;
@@ -211,6 +242,12 @@
     if (!designMode) return '';
     if (selectedObjectId && selBlockIdx !== null && selBlock?.block.actorId === selectedObjectId) {
       return 'drag actor → end position auto-captured';
+    }
+    if (selSetPieceBlock && selectedObjectId === selSetPieceBlock.block.targetId) {
+      return 'drag set piece → end position auto-captured';
+    }
+    if (selCameraBlock && !selectedObjectId) {
+      return 'orbit camera → end look-at auto-captured on drag end';
     }
     if (currentPosition < 0.05) {
       return selectedObjectId ? 'drag → sets spawn position' : 'click an item, then drag to set its start position';
@@ -366,6 +403,17 @@
     }));
   }
 
+  function captureDesignCameraForBlock() {
+    if (selBlockIdx === null || !activeDoc || !selCameraBlock) return;
+    if (!designMode) designMode = true;
+    const state = presenter?.getDesignCameraState();
+    if (!state) return;
+    activeDoc.execute(new UpdateCameraBlockCommand(selBlockIdx, {
+      endPosition: state.position,
+      endLookAt: state.lookAt,
+    }));
+  }
+
   /**
    * Called by Presenter when a catalogue item is dropped onto the design viewport.
    * Adds the character/set-piece at the drop world-position and selects it.
@@ -424,7 +472,12 @@
         activeDoc.execute(new MoveStagedActorCommand(id, position, rotation));
       }
     } else {
-      activeDoc.execute(new MoveSetPieceCommand(id, position, rotation));
+      if (selBlockIdx !== null && selSetPieceBlock?.block.targetId === id) {
+        // Set piece block selected: drag auto-captures end position/rotation.
+        activeDoc.execute(new UpdateSetPieceBlockCommand(selBlockIdx, { endPosition: position, endRotation: rotation }));
+      } else {
+        activeDoc.execute(new MoveSetPieceCommand(id, position, rotation));
+      }
     }
   }
 
@@ -883,6 +936,121 @@
                     </div>
                   {/if}
 
+                  <!-- Selected light block properties -->
+                  {#if selLightBlock}
+                    <div class="stage-section">
+                      <div class="stage-section-header">
+                        <span class="stage-section-label">Block — {selLightBlock.block.lightId}</span>
+                        <button class="icon-btn danger" onclick={() => { activeDoc?.execute(new RemoveLightBlockCommand(selBlockIdx!)); selBlockIdx = null; }} title="Remove block">✕</button>
+                      </div>
+                      <div class="anim-row">
+                        <label class="anim-label" for="lblk-start">Start</label>
+                        <input id="lblk-start" class="anim-number" type="number" step="0.1" min="0"
+                          value={selLightBlock.block.startTime}
+                          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n)) activeDoc?.execute(new UpdateLightBlockCommand(selBlockIdx!, { startTime: n })); }}
+                        />
+                        <label class="anim-label" for="lblk-end">End</label>
+                        <input id="lblk-end" class="anim-number" type="number" step="0.1" min="0"
+                          value={selLightBlock.block.endTime}
+                          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n)) activeDoc?.execute(new UpdateLightBlockCommand(selBlockIdx!, { endTime: n })); }}
+                        />
+                      </div>
+                      <div class="anim-row">
+                        <label class="anim-label" for="lblk-endint">End intensity</label>
+                        <input id="lblk-endint" class="anim-number" type="number" step="0.1" min="0"
+                          placeholder="unchanged"
+                          value={selLightBlock.block.endIntensity ?? ''}
+                          onchange={(e) => { const n = parseFloat(e.currentTarget.value); activeDoc?.execute(new UpdateLightBlockCommand(selBlockIdx!, { endIntensity: isNaN(n) ? undefined : n })); }}
+                        />
+                      </div>
+                    </div>
+                  {/if}
+
+                  <!-- Selected camera block properties -->
+                  {#if selCameraBlock}
+                    <div class="stage-section">
+                      <div class="stage-section-header">
+                        <span class="stage-section-label">Block — Camera</span>
+                        <button class="icon-btn danger" onclick={() => { activeDoc?.execute(new RemoveCameraBlockCommand(selBlockIdx!)); selBlockIdx = null; }} title="Remove block">✕</button>
+                      </div>
+                      <div class="anim-row">
+                        <label class="anim-label" for="cblk-start">Start</label>
+                        <input id="cblk-start" class="anim-number" type="number" step="0.1" min="0"
+                          value={selCameraBlock.block.startTime}
+                          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n)) activeDoc?.execute(new UpdateCameraBlockCommand(selBlockIdx!, { startTime: n })); }}
+                        />
+                        <label class="anim-label" for="cblk-end">End</label>
+                        <input id="cblk-end" class="anim-number" type="number" step="0.1" min="0"
+                          value={selCameraBlock.block.endTime}
+                          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n)) activeDoc?.execute(new UpdateCameraBlockCommand(selBlockIdx!, { endTime: n })); }}
+                        />
+                      </div>
+                      <div class="anim-row">
+                        <span class="anim-label">End pos</span>
+                        {#if selCameraBlock.block.endPosition}
+                          <span class="anim-label blk-pos">{selCameraBlock.block.endPosition.map((v) => v.toFixed(1)).join(', ')}</span>
+                          <button class="icon-btn" onclick={() => activeDoc?.execute(new UpdateCameraBlockCommand(selBlockIdx!, { endPosition: undefined }))} title="Clear">✕</button>
+                        {:else}
+                          <span class="anim-label blk-pos blk-pos-none">not set · orbit to capture</span>
+                        {/if}
+                      </div>
+                      <div class="anim-row">
+                        <span class="anim-label">End look-at</span>
+                        {#if selCameraBlock.block.endLookAt}
+                          <span class="anim-label blk-pos">{selCameraBlock.block.endLookAt.map((v) => v.toFixed(1)).join(', ')}</span>
+                          <button class="icon-btn" onclick={() => activeDoc?.execute(new UpdateCameraBlockCommand(selBlockIdx!, { endLookAt: undefined }))} title="Clear">✕</button>
+                        {:else}
+                          <span class="anim-label blk-pos blk-pos-none">not set · orbit to capture</span>
+                        {/if}
+                      </div>
+                      {#if designMode}
+                        <div class="anim-row">
+                          <button class="new-btn" onclick={captureDesignCameraForBlock} title="Capture current design camera as block end state">⊕ Capture camera</button>
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
+
+                  <!-- Selected set piece block properties -->
+                  {#if selSetPieceBlock}
+                    <div class="stage-section">
+                      <div class="stage-section-header">
+                        <span class="stage-section-label">Block — {selSetPieceBlock.block.targetId}</span>
+                        <button class="icon-btn danger" onclick={() => { activeDoc?.execute(new RemoveSetPieceBlockCommand(selBlockIdx!)); selBlockIdx = null; }} title="Remove block">✕</button>
+                      </div>
+                      <div class="anim-row">
+                        <label class="anim-label" for="spblk-start">Start</label>
+                        <input id="spblk-start" class="anim-number" type="number" step="0.1" min="0"
+                          value={selSetPieceBlock.block.startTime}
+                          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n)) activeDoc?.execute(new UpdateSetPieceBlockCommand(selBlockIdx!, { startTime: n })); }}
+                        />
+                        <label class="anim-label" for="spblk-end">End</label>
+                        <input id="spblk-end" class="anim-number" type="number" step="0.1" min="0"
+                          value={selSetPieceBlock.block.endTime}
+                          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n)) activeDoc?.execute(new UpdateSetPieceBlockCommand(selBlockIdx!, { endTime: n })); }}
+                        />
+                      </div>
+                      <div class="anim-row">
+                        <span class="anim-label">End pos</span>
+                        {#if selSetPieceBlock.block.endPosition}
+                          <span class="anim-label blk-pos">{selSetPieceBlock.block.endPosition.map((v) => v.toFixed(1)).join(', ')}</span>
+                          <button class="icon-btn" onclick={() => activeDoc?.execute(new UpdateSetPieceBlockCommand(selBlockIdx!, { endPosition: undefined }))} title="Clear end position">✕</button>
+                        {:else}
+                          <span class="anim-label blk-pos blk-pos-none">stationary · drag to set</span>
+                        {/if}
+                      </div>
+                      <div class="anim-row">
+                        <span class="anim-label">End rotation</span>
+                        {#if selSetPieceBlock.block.endRotation}
+                          <span class="anim-label blk-pos">{selSetPieceBlock.block.endRotation.map((v) => (v * 180 / Math.PI).toFixed(1)).join('°, ')}°</span>
+                          <button class="icon-btn" onclick={() => activeDoc?.execute(new UpdateSetPieceBlockCommand(selBlockIdx!, { endRotation: undefined }))} title="Clear end rotation">✕</button>
+                        {:else}
+                          <span class="anim-label blk-pos blk-pos-none">no rotation · drag to set</span>
+                        {/if}
+                      </div>
+                    </div>
+                  {/if}
+
                   <!-- Set Pieces -->
                   <div class="stage-section">
                     <div class="stage-section-header">
@@ -1087,6 +1255,11 @@
         <TimelinePanel
           {actors}
           {actorBlocks}
+          lightBlocks={lightBlocks}
+          cameraBlocks={cameraBlocks}
+          setPieceBlocks={setPieceBlocks}
+          lights={sceneLights}
+          setPieces={scenePieces}
           {sceneDuration}
           {currentPosition}
           {discoveredClips}
@@ -1121,6 +1294,33 @@
           }}
           onupdateblock={(i, patch) => activeDoc?.execute(new UpdateActorBlockCommand(i, patch))}
           onremoveblock={(i) => { activeDoc?.execute(new RemoveActorBlockCommand(i)); if (selBlockIdx === i) { selBlockIdx = null; presenter?.selectSceneObject(null); } }}
+          onaddlightblock={(lightId, startTime, endTime) => {
+            if (!activeDoc) return;
+            const newBlock: LightBlock = { type: 'lightBlock', lightId, startTime, endTime };
+            activeDoc.execute(new AddLightBlockCommand(newBlock));
+            selBlockIdx = (activeDoc.current.scene?.blocks?.length ?? 1) - 1;
+            if (rightTab !== 'stage') rightTab = 'stage';
+          }}
+          onupdatelightblock={(i, patch) => activeDoc?.execute(new UpdateLightBlockCommand(i, patch))}
+          onremovelightblock={(i) => { activeDoc?.execute(new RemoveLightBlockCommand(i)); if (selBlockIdx === i) selBlockIdx = null; }}
+          onaddcamerablock={(startTime, endTime) => {
+            if (!activeDoc) return;
+            const newBlock: CameraBlock = { type: 'cameraBlock', startTime, endTime };
+            activeDoc.execute(new AddCameraBlockCommand(newBlock));
+            selBlockIdx = (activeDoc.current.scene?.blocks?.length ?? 1) - 1;
+            if (rightTab !== 'stage') rightTab = 'stage';
+          }}
+          onupdatecamerablock={(i, patch) => activeDoc?.execute(new UpdateCameraBlockCommand(i, patch))}
+          onremovecamerablock={(i) => { activeDoc?.execute(new RemoveCameraBlockCommand(i)); if (selBlockIdx === i) selBlockIdx = null; }}
+          onaddsetpieceblock={(targetId, startTime, endTime) => {
+            if (!activeDoc) return;
+            const newBlock: SetPieceBlock = { type: 'setPieceBlock', targetId, startTime, endTime };
+            activeDoc.execute(new AddSetPieceBlockCommand(newBlock));
+            selBlockIdx = (activeDoc.current.scene?.blocks?.length ?? 1) - 1;
+            if (rightTab !== 'stage') rightTab = 'stage';
+          }}
+          onupdatesetpieceblock={(i, patch) => activeDoc?.execute(new UpdateSetPieceBlockCommand(i, patch))}
+          onremovesetpieceblock={(i) => { activeDoc?.execute(new RemoveSetPieceBlockCommand(i)); if (selBlockIdx === i) selBlockIdx = null; }}
         />
       </div>
     {/if}

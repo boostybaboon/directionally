@@ -1,4 +1,15 @@
-import type { ActorBlock, ClipTrack, SceneAction, TransformTrack, Vec3 } from './types.js';
+import type {
+  ActorBlock,
+  CameraBlock,
+  CameraTrackAction,
+  ClipTrack,
+  LightBlock,
+  LightingTrack,
+  SceneAction,
+  SetPieceBlock,
+  TransformTrack,
+  Vec3,
+} from './types.js';
 
 /**
  * Convert a facing direction vector to a pure Y-axis rotation quaternion [x, y, z, w].
@@ -113,4 +124,125 @@ export function actorBlockToTracks(block: ActorBlock, inferredStartPos?: Vec3): 
   }
 
   return result;
+}
+
+/**
+ * Convert an Euler XYZ triple (radians) to a quaternion [x, y, z, w].
+ * Uses the intrinsic XYZ application order matching Three.js Euler default.
+ */
+function eulerXYZToQuat(euler: Vec3): [number, number, number, number] {
+  const hx = euler[0] / 2, hy = euler[1] / 2, hz = euler[2] / 2;
+  const cx = Math.cos(hx), sx = Math.sin(hx);
+  const cy = Math.cos(hy), sy = Math.sin(hy);
+  const cz = Math.cos(hz), sz = Math.sin(hz);
+  return [
+    sx * cy * cz + cx * sy * sz,
+    cx * sy * cz - sx * cy * sz,
+    cx * cy * sz + sx * sy * cz,
+    cx * cy * cz - sx * sy * sz,
+  ];
+}
+
+/**
+ * Compile a `LightBlock` to a single `LightingTrack` animating `.intensity`.
+ *
+ * The effective start intensity is `block.startIntensity ?? inferredStartIntensity ?? 1`.
+ * The effective end intensity is `block.endIntensity ?? effectiveStart` (hold constant
+ * when no endpoint is given).
+ */
+export function lightBlockToTracks(block: LightBlock, inferredStartIntensity?: number): LightingTrack[] {
+  const effectiveStart = block.startIntensity ?? inferredStartIntensity ?? 1;
+  const effectiveEnd   = block.endIntensity   ?? effectiveStart;
+  const duration       = block.endTime - block.startTime;
+  return [{
+    type: 'lighting',
+    lightId: block.lightId,
+    startTime: block.startTime,
+    keyframes: {
+      property: '.intensity',
+      times:    [0, duration],
+      values:   [effectiveStart, effectiveEnd],
+      trackType: 'number',
+    },
+  }];
+}
+
+/**
+ * Compile a `SetPieceBlock` to position and/or rotation `TransformTrack`s.
+ *
+ * Position track is emitted when `inferredStartPos` and `block.endPosition` are
+ * both defined and differ.  Rotation track is emitted when `inferredStartRot`
+ * and `block.endRotation` are both defined and differ; Euler XYZ values are
+ * converted to quaternions for smooth Three.js interpolation.
+ */
+export function setPieceBlockToTracks(
+  block: SetPieceBlock,
+  inferredStartPos?: Vec3,
+  inferredStartRot?: Vec3,
+): TransformTrack[] {
+  const result: TransformTrack[] = [];
+  const duration = block.endTime - block.startTime;
+
+  const hasPosition =
+    inferredStartPos !== undefined &&
+    block.endPosition !== undefined &&
+    !vec3Equal(inferredStartPos, block.endPosition);
+
+  if (hasPosition) {
+    result.push({
+      type: 'move',
+      targetId: block.targetId,
+      startTime: block.startTime,
+      keyframes: {
+        property: '.position',
+        times:    [0, duration],
+        values:   [...inferredStartPos!, ...block.endPosition!],
+        trackType: 'vector',
+      },
+    });
+  }
+
+  const hasRotation =
+    inferredStartRot !== undefined &&
+    block.endRotation !== undefined &&
+    !vec3Equal(inferredStartRot, block.endRotation);
+
+  if (hasRotation) {
+    const sq = eulerXYZToQuat(inferredStartRot!);
+    const eq = eulerXYZToQuat(block.endRotation!);
+    result.push({
+      type: 'move',
+      targetId: block.targetId,
+      startTime: block.startTime,
+      keyframes: {
+        property: '.quaternion',
+        times:    [0, duration],
+        values:   [...sq, ...eq],
+        trackType: 'quaternion',
+      },
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Compile a `CameraBlock` to a `CameraTrackAction` with two `PathKeyframe`s.
+ *
+ * The start keyframe uses the inferred camera state (from `CameraConfig` or the
+ * previous block's end state).  `endPosition` / `endLookAt` default to holding
+ * the inferred start when absent.
+ */
+export function cameraBlockToTracks(
+  block: CameraBlock,
+  inferredStartPos: Vec3,
+  inferredStartLookAt: Vec3,
+): CameraTrackAction[] {
+  return [{
+    type: 'cameraTrack',
+    keyframes: [
+      { time: block.startTime, position: inferredStartPos,               lookAt: inferredStartLookAt              },
+      { time: block.endTime,   position: block.endPosition ?? inferredStartPos, lookAt: block.endLookAt ?? inferredStartLookAt },
+    ],
+  }];
 }

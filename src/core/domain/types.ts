@@ -241,7 +241,6 @@ export type ActorBlock = {
 /**
  * A light's intensity envelope in a time window.
  * Compiled to a LightingTrack at playback time — never stored as a raw Track.
- * Implemented in Phase 8.7.
  */
 export type LightBlock = {
   type: 'lightBlock';
@@ -252,4 +251,38 @@ export type LightBlock = {
   endIntensity?: number;
 };
 
-export type Block = ActorBlock | LightBlock;
+/**
+ * Animate the camera through a position + lookAt transition.
+ * Compiled to a CameraTrackAction at playback time — never stored as a raw Track.
+ * Start position/lookAt are inferred from the scene's CameraConfig or the
+ * previous CameraBlock's end state.
+ */
+export type CameraBlock = {
+  type: 'cameraBlock';
+  startTime: number;
+  endTime: number;
+  /** Camera end position; omit → stay at inferred start position. */
+  endPosition?: Vec3;
+  /** Camera lookAt end point; omit → stay at inferred start lookAt. */
+  endLookAt?: Vec3;
+};
+
+/**
+ * Animate a set piece's position and/or rotation over a time window.
+ * Compiled to TransformTrack(s) at playback time — never stored as raw Tracks.
+ * Start state is inferred from the SetPiece config or the previous SetPieceBlock's
+ * end state for the same targetId.
+ */
+export type SetPieceBlock = {
+  type: 'setPieceBlock';
+  /** Must match SetPiece.name exactly. */
+  targetId: string;
+  startTime: number;
+  endTime: number;
+  /** Set piece end position; omit → stay at inferred start position. */
+  endPosition?: Vec3;
+  /** Set piece end rotation (Euler XYZ, radians); omit → stay at inferred start rotation. */
+  endRotation?: Vec3;
+};
+
+export type Block = ActorBlock | LightBlock | CameraBlock | SetPieceBlock;

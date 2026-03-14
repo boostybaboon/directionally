@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { actorBlockToTracks } from './blockCompiler';
-import type { ActorBlock, ClipTrack, TransformTrack } from './types';
+import { actorBlockToTracks, lightBlockToTracks, setPieceBlockToTracks, cameraBlockToTracks } from './blockCompiler';
+import type { ActorBlock, ClipTrack, LightBlock, LightingTrack, CameraBlock, CameraTrackAction, SetPieceBlock, TransformTrack } from './types';
 
 function makeBlock(overrides: Partial<ActorBlock> = {}): ActorBlock {
   return {
@@ -210,5 +210,216 @@ describe('actorBlockToTracks', () => {
     }), [5, 0, 0] as [number, number, number]);
     const pos = result.find((a) => (a as TransformTrack).keyframes?.property === '.position');
     expect(pos).toBeUndefined();
+  });
+});
+
+// ── lightBlockToTracks ────────────────────────────────────────────────────────
+
+function makeLightBlock(overrides: Partial<LightBlock> = {}): LightBlock {
+  return { type: 'lightBlock', lightId: 'sun', startTime: 1, endTime: 5, ...overrides };
+}
+
+describe('lightBlockToTracks', () => {
+  it('returns a single LightingTrack for .intensity', () => {
+    const result = lightBlockToTracks(makeLightBlock({ startIntensity: 2, endIntensity: 0 }));
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe('lighting');
+    expect(result[0].keyframes.property).toBe('.intensity');
+    expect(result[0].keyframes.trackType).toBe('number');
+  });
+
+  it('keyframe times are relative (0-based)', () => {
+    const result = lightBlockToTracks(makeLightBlock({ startTime: 2, endTime: 6, startIntensity: 1, endIntensity: 0 }));
+    expect(result[0].keyframes.times).toEqual([0, 4]);
+  });
+
+  it('propagates lightId to the track', () => {
+    const result = lightBlockToTracks(makeLightBlock({ lightId: 'hemi', startIntensity: 1, endIntensity: 0.5 }));
+    expect(result[0].lightId).toBe('hemi');
+  });
+
+  it('uses inferredStartIntensity when startIntensity is absent', () => {
+    const result = lightBlockToTracks(makeLightBlock({ endIntensity: 0.5 }), 3);
+    expect(result[0].keyframes.values[0]).toBe(3);
+    expect(result[0].keyframes.values[1]).toBe(0.5);
+  });
+
+  it('defaults start intensity to 1 when neither startIntensity nor inferred is available', () => {
+    const result = lightBlockToTracks(makeLightBlock({ endIntensity: 0 }));
+    expect(result[0].keyframes.values[0]).toBe(1);
+  });
+
+  it('holds start intensity constant when endIntensity is absent', () => {
+    const result = lightBlockToTracks(makeLightBlock({ startIntensity: 2 }));
+    expect(result[0].keyframes.values).toEqual([2, 2]);
+  });
+
+  it('startTime on the track matches block.startTime', () => {
+    const result = lightBlockToTracks(makeLightBlock({ startTime: 3, endTime: 7 }));
+    expect(result[0].startTime).toBe(3);
+  });
+});
+
+// ── setPieceBlockToTracks ─────────────────────────────────────────────────────
+
+function makeSetPieceBlock(overrides: Partial<SetPieceBlock> = {}): SetPieceBlock {
+  return { type: 'setPieceBlock', targetId: 'door', startTime: 0, endTime: 2, ...overrides };
+}
+
+describe('setPieceBlockToTracks', () => {
+  it('returns empty array when no position or rotation change', () => {
+    expect(setPieceBlockToTracks(makeSetPieceBlock())).toEqual([]);
+  });
+
+  it('emits a position TransformTrack when start and end positions differ', () => {
+    const result = setPieceBlockToTracks(
+      makeSetPieceBlock({ endPosition: [3, 0, 0] }),
+      [0, 0, 0],
+    );
+    const pos = result.find((t) => t.keyframes.property === '.position') as TransformTrack;
+    expect(pos).toBeDefined();
+    expect(pos.type).toBe('move');
+    expect(pos.targetId).toBe('door');
+    expect(pos.keyframes.trackType).toBe('vector');
+    expect(pos.keyframes.values).toEqual([0, 0, 0, 3, 0, 0]);
+    expect(pos.keyframes.times).toEqual([0, 2]);
+  });
+
+  it('does not emit a position track when start and end positions are equal', () => {
+    const result = setPieceBlockToTracks(
+      makeSetPieceBlock({ endPosition: [1, 0, 1] }),
+      [1, 0, 1],
+    );
+    expect(result.find((t) => t.keyframes.property === '.position')).toBeUndefined();
+  });
+
+  it('does not emit a position track when inferredStartPos is absent', () => {
+    const result = setPieceBlockToTracks(makeSetPieceBlock({ endPosition: [5, 0, 0] }));
+    expect(result).toHaveLength(0);
+  });
+
+  it('emits a quaternion TransformTrack when rotation changes', () => {
+    const result = setPieceBlockToTracks(
+      makeSetPieceBlock({ endRotation: [0, Math.PI / 2, 0] }),
+      undefined,
+      [0, 0, 0],
+    );
+    const rot = result.find((t) => t.keyframes.property === '.quaternion') as TransformTrack;
+    expect(rot).toBeDefined();
+    expect(rot.keyframes.trackType).toBe('quaternion');
+    expect(rot.keyframes.values).toHaveLength(8);
+  });
+
+  it('start quaternion for zero Euler rotation is [0,0,0,1]', () => {
+    const result = setPieceBlockToTracks(
+      makeSetPieceBlock({ endRotation: [0, Math.PI, 0] }),
+      undefined,
+      [0, 0, 0],
+    );
+    const rot = result.find((t) => t.keyframes.property === '.quaternion') as TransformTrack;
+    const [qx, qy, qz, qw] = rot.keyframes.values;
+    expect(qx).toBeCloseTo(0);
+    expect(qy).toBeCloseTo(0);
+    expect(qz).toBeCloseTo(0);
+    expect(qw).toBeCloseTo(1);
+  });
+
+  it('end quaternion for 180° Y rotation is [0,1,0,0]', () => {
+    const result = setPieceBlockToTracks(
+      makeSetPieceBlock({ endRotation: [0, Math.PI, 0] }),
+      undefined,
+      [0, 0, 0],
+    );
+    const rot = result.find((t) => t.keyframes.property === '.quaternion') as TransformTrack;
+    const [, , , , qx, qy, qz, qw] = rot.keyframes.values;
+    expect(qx).toBeCloseTo(0);
+    expect(qy).toBeCloseTo(1);
+    expect(qz).toBeCloseTo(0);
+    expect(qw).toBeCloseTo(0);
+  });
+
+  it('does not emit rotation track when inferredStartRot is absent', () => {
+    const result = setPieceBlockToTracks(makeSetPieceBlock({ endRotation: [0, 1, 0] }));
+    expect(result.find((t) => t.keyframes.property === '.quaternion')).toBeUndefined();
+  });
+
+  it('emits both position and rotation tracks when both change', () => {
+    const result = setPieceBlockToTracks(
+      makeSetPieceBlock({ endPosition: [2, 0, 0], endRotation: [0, Math.PI / 2, 0] }),
+      [0, 0, 0],
+      [0, 0, 0],
+    );
+    expect(result).toHaveLength(2);
+    expect(result.map((t) => t.keyframes.property).sort()).toEqual(['.position', '.quaternion'].sort());
+  });
+
+  it('keyframe times are relative (0=startTime) regardless of block.startTime', () => {
+    const result = setPieceBlockToTracks(
+      makeSetPieceBlock({ startTime: 3, endTime: 7, endPosition: [1, 0, 0] }),
+      [0, 0, 0],
+    );
+    const pos = result.find((t) => t.keyframes.property === '.position') as TransformTrack;
+    expect(pos.keyframes.times).toEqual([0, 4]);
+    expect(pos.startTime).toBe(3);
+  });
+});
+
+// ── cameraBlockToTracks ───────────────────────────────────────────────────────
+
+function makeCameraBlock(overrides: Partial<CameraBlock> = {}): CameraBlock {
+  return { type: 'cameraBlock', startTime: 0, endTime: 3, ...overrides };
+}
+
+describe('cameraBlockToTracks', () => {
+  const startPos: [number, number, number] = [0, 5, 12];
+  const startLookAt: [number, number, number] = [0, 1, 0];
+
+  it('returns a single CameraTrackAction', () => {
+    const result = cameraBlockToTracks(makeCameraBlock(), startPos, startLookAt);
+    expect(result).toHaveLength(1);
+    expect(result[0].type).toBe('cameraTrack');
+  });
+
+  it('produces exactly two PathKeyframes', () => {
+    const result = cameraBlockToTracks(makeCameraBlock(), startPos, startLookAt);
+    expect(result[0].keyframes).toHaveLength(2);
+  });
+
+  it('start keyframe time matches block.startTime', () => {
+    const result = cameraBlockToTracks(makeCameraBlock({ startTime: 2, endTime: 5 }), startPos, startLookAt);
+    expect(result[0].keyframes[0].time).toBe(2);
+    expect(result[0].keyframes[1].time).toBe(5);
+  });
+
+  it('start keyframe uses inferred position and lookAt', () => {
+    const result = cameraBlockToTracks(makeCameraBlock(), startPos, startLookAt);
+    expect(result[0].keyframes[0].position).toEqual([0, 5, 12]);
+    expect(result[0].keyframes[0].lookAt).toEqual([0, 1, 0]);
+  });
+
+  it('end keyframe uses block.endPosition and endLookAt when provided', () => {
+    const result = cameraBlockToTracks(
+      makeCameraBlock({ endPosition: [4, 5, 8], endLookAt: [0, 2, 0] }),
+      startPos,
+      startLookAt,
+    );
+    expect(result[0].keyframes[1].position).toEqual([4, 5, 8]);
+    expect(result[0].keyframes[1].lookAt).toEqual([0, 2, 0]);
+  });
+
+  it('end keyframe falls back to inferred start when endPosition is absent', () => {
+    const result = cameraBlockToTracks(makeCameraBlock(), startPos, startLookAt);
+    expect(result[0].keyframes[1].position).toEqual(startPos);
+    expect(result[0].keyframes[1].lookAt).toEqual(startLookAt);
+  });
+
+  it('mixes: endPosition provided, endLookAt absent → lookAt held constant', () => {
+    const result = cameraBlockToTracks(
+      makeCameraBlock({ endPosition: [10, 5, 5] }),
+      startPos,
+      startLookAt,
+    );
+    expect(result[0].keyframes[1].position).toEqual([10, 5, 5]);
+    expect(result[0].keyframes[1].lookAt).toEqual(startLookAt);
   });
 });

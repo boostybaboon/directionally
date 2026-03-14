@@ -2,9 +2,9 @@ import { Scene } from '../domain/Scene.js';
 import { sceneToModel } from '../domain/SceneBridge.js';
 import { getById } from '../catalogue/catalogue.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
-import { actorBlockToTracks } from '../domain/blockCompiler.js';
+import { actorBlockToTracks, lightBlockToTracks, setPieceBlockToTracks, cameraBlockToTracks } from '../domain/blockCompiler.js';
 import type { Actor } from '../domain/Production.js';
-import type { ActorVoice, ActorBlock, Vec3 } from '../domain/types.js';
+import type { ActorVoice, ActorBlock, LightBlock, SetPieceBlock, CameraBlock, Vec3 } from '../domain/types.js';
 import type { Model } from '../../lib/Model.js';
 import type { StoredScene, StoredActor } from './types.js';
 
@@ -93,6 +93,57 @@ export function storedSceneToModel(storedScene: StoredScene, storedActors: Store
     for (const block of blocks) {
       compiledBlockTracks.push(...actorBlockToTracks(block, inferredStart));
       inferredStart = block.endPosition ?? inferredStart;
+    }
+  }
+
+  // Compile LightBlocks to LightingTracks — inferred start from the light's config intensity.
+  const lightBlocksByLight = new Map<string, LightBlock[]>();
+  for (const block of (storedScene.blocks ?? [])) {
+    if (block.type === 'lightBlock') {
+      if (!lightBlocksByLight.has(block.lightId)) lightBlocksByLight.set(block.lightId, []);
+      lightBlocksByLight.get(block.lightId)!.push(block);
+    }
+  }
+  for (const [lightId, blocks] of lightBlocksByLight) {
+    blocks.sort((a, b) => a.startTime - b.startTime);
+    const lightCfg = storedScene.lights.find((l) => l.id === lightId);
+    let inferredIntensity: number | undefined = lightCfg?.intensity;
+    for (const block of blocks) {
+      compiledBlockTracks.push(...lightBlockToTracks(block, inferredIntensity));
+      inferredIntensity = block.endIntensity ?? inferredIntensity;
+    }
+  }
+
+  // Compile SetPieceBlocks to TransformTracks — inferred start from the set piece's config.
+  const setPieceBlocksByTarget = new Map<string, SetPieceBlock[]>();
+  for (const block of (storedScene.blocks ?? [])) {
+    if (block.type === 'setPieceBlock') {
+      if (!setPieceBlocksByTarget.has(block.targetId)) setPieceBlocksByTarget.set(block.targetId, []);
+      setPieceBlocksByTarget.get(block.targetId)!.push(block);
+    }
+  }
+  for (const [targetId, blocks] of setPieceBlocksByTarget) {
+    blocks.sort((a, b) => a.startTime - b.startTime);
+    const pieceCfg = storedScene.set.find((p) => p.name === targetId);
+    let inferredPos: Vec3 | undefined = pieceCfg?.position;
+    let inferredRot: Vec3 | undefined = pieceCfg?.rotation;
+    for (const block of blocks) {
+      compiledBlockTracks.push(...setPieceBlockToTracks(block, inferredPos, inferredRot));
+      inferredPos = block.endPosition ?? inferredPos;
+      inferredRot = block.endRotation ?? inferredRot;
+    }
+  }
+
+  // Compile CameraBlocks to CameraTrackActions — inferred start from the scene's CameraConfig.
+  const cameraBlocks = (storedScene.blocks ?? []).filter((b): b is CameraBlock => b.type === 'cameraBlock');
+  if (cameraBlocks.length > 0) {
+    cameraBlocks.sort((a, b) => a.startTime - b.startTime);
+    let inferredPos: Vec3 = storedScene.camera.position;
+    let inferredLookAt: Vec3 = storedScene.camera.lookAt;
+    for (const block of cameraBlocks) {
+      compiledBlockTracks.push(...cameraBlockToTracks(block, inferredPos, inferredLookAt));
+      inferredPos   = block.endPosition ?? inferredPos;
+      inferredLookAt = block.endLookAt  ?? inferredLookAt;
     }
   }
 
