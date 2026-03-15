@@ -21,9 +21,9 @@
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import type { StoredProduction } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
-  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand, AddCameraKeyframeCommand, RemoveCameraKeyframeCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand } from '../core/document/commands.js';
+  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand } from '../core/document/commands.js';
   import type { StoredActor } from '../core/storage/types.js';
-  import type { SpeakAction, PathKeyframe, TransformTrack, LightingTrack, ActorBlock, LightBlock, CameraBlock, SetPieceBlock } from '../core/domain/types.js';
+  import type { SpeakAction, TransformTrack, LightingTrack, ActorBlock, LightBlock, CameraBlock, SetPieceBlock } from '../core/domain/types.js';
   import { getCharacters, getSetPieces } from '../core/catalogue/catalogue.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
   import type { SetPiece } from '../core/domain/types.js';
@@ -158,10 +158,6 @@
   let newSetPieceCatalogueId = $state(CATALOGUE_SET_PIECES[0]?.id ?? '');
   const scenePieces = $derived(docSnapshot?.scene?.set ?? []);
   const sceneLights = $derived(docSnapshot?.scene?.lights ?? []);
-  const cameraKeyframes = $derived(
-    (docSnapshot?.scene?.actions.find((a) => a.type === 'cameraTrack') as { keyframes: PathKeyframe[] } | undefined)
-      ?.keyframes ?? []
-  );
 
   // Contextual label for the gizmo toolbar: communicates what a drag will do.
   // For actors: t≈0 sets the base start position; any other time captures a keyframe.
@@ -356,24 +352,12 @@
     activeDoc?.execute(new RemoveSetPieceCommand(name));
   }
 
-  function removeCameraKeyframe(index: number) {
-    activeDoc?.execute(new RemoveCameraKeyframeCommand(index));
-  }
-
   // ── Animation authoring handlers ───────────────────────────────────────────
 
   function setSceneDuration(value: string) {
     if (!activeDoc) return;
     const n = parseFloat(value);
     activeDoc.execute(new SetSceneDurationCommand(isNaN(n) || value.trim() === '' ? undefined : n));
-  }
-
-  function captureCameraKeyframe() {
-    if (!activeDoc || !designMode) return;
-    const state = presenter?.getDesignCameraState();
-    if (!state) return;
-    const time = parseFloat(currentPosition.toFixed(2));
-    activeDoc.execute(new AddCameraKeyframeCommand(time, state.position, state.lookAt));
   }
 
   function captureLightIntensity(lightId: string, intensityStr: string) {
@@ -412,6 +396,15 @@
       endPosition: state.position,
       endLookAt: state.lookAt,
     }));
+  }
+
+  function captureInitialCamera() {
+    if (!activeDoc || !designMode) return;
+    const state = presenter?.getDesignCameraState();
+    if (!state) return;
+    const current = activeDoc.current.scene?.camera;
+    if (!current) return;
+    activeDoc.execute(new UpdateCameraCommand({ ...current, position: state.position, lookAt: state.lookAt }));
   }
 
   /**
@@ -1005,7 +998,7 @@
                       </div>
                       {#if designMode}
                         <div class="anim-row">
-                          <button class="new-btn" onclick={captureDesignCameraForBlock} title="Capture current design camera as block end state">⊕ Capture camera</button>
+                          <button class="new-btn" onclick={captureDesignCameraForBlock} title="Capture current design camera as block end state">⊕ Capture end</button>
                         </div>
                       {/if}
                     </div>
@@ -1154,23 +1147,15 @@
                     <div class="stage-section-header">
                       <span class="stage-section-label">Camera</span>
                       {#if designMode}
-                        <button class="new-btn" onclick={captureCameraKeyframe} title="Capture keyframe at current time">
-                          + Keyframe
-                        </button>
+                        <button class="new-btn" onclick={captureInitialCamera} title="Capture design camera as the scene's starting position">⊕ Initial pos</button>
                       {/if}
                     </div>
-                    {#if cameraKeyframes.length === 0}
-                      <p class="stage-empty">{designMode ? 'No keyframes — orbit the design camera and click + Keyframe.' : 'No camera keyframes. Enable design mode to add.'}</p>
-                    {:else}
-                      <ul class="cast-list">
-                        {#each cameraKeyframes as kf, i}
-                          <li class="cast-row">
-                            <span class="cast-role kf-time">{kf.time.toFixed(2)}s</span>
-                            <span class="cast-char kf-pos">{kf.position.map((v) => v.toFixed(1)).join(', ')}</span>
-                            <button class="icon-btn danger" onclick={() => removeCameraKeyframe(i)} title="Remove keyframe">✕</button>
-                          </li>
-                        {/each}
-                      </ul>
+                    <div class="anim-row">
+                      <span class="anim-label">Initial pos</span>
+                      <span class="anim-label blk-pos">{(docSnapshot?.scene?.camera.position ?? []).map((v: number) => v.toFixed(1)).join(', ')}</span>
+                    </div>
+                    {#if !designMode}
+                      <p class="stage-empty">Enable design mode to capture initial camera position.</p>
                     {/if}
                   </div>
 
@@ -1271,10 +1256,14 @@
             selBlockIdx = i;
             if (i !== null) {
               if (rightTab !== 'stage') rightTab = 'stage';
-              const b = actorBlocks.find((e) => e.index === i);
-              if (b) {
-                presenter?.selectSceneObject(b.block.actorId);
-                presenter?.handleSliderInput(b.block.endTime);
+              const raw = (docSnapshot?.scene?.blocks ?? [])[i];
+              if (raw) presenter?.handleSliderInput(raw.endTime);
+              if (raw?.type === 'actorBlock') {
+                presenter?.selectSceneObject(raw.actorId);
+              } else if (raw?.type === 'setPieceBlock') {
+                presenter?.selectSceneObject(raw.targetId);
+              } else {
+                presenter?.selectSceneObject(null);
               }
             } else {
               presenter?.selectSceneObject(null);
@@ -1958,12 +1947,6 @@
     font-variant-numeric: tabular-nums;
     min-width: 52px;
     flex-shrink: 0;
-  }
-
-  .kf-pos {
-    color: #aaa;
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
   }
 
   .icon-btn.active {

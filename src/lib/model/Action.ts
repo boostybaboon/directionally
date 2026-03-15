@@ -230,7 +230,7 @@ export class CameraPathAction extends Action {
     target: string,
     private readonly keyframes: PathKeyframe[],
   ) {
-    super(name, target, 0);
+    super(name, target, keyframes[0]?.time ?? 0);
   }
 
   addAction(
@@ -242,7 +242,10 @@ export class CameraPathAction extends Action {
   ): void {
     if (this.keyframes.length === 0) return;
 
-    const times = this.keyframes.map((k) => k.time);
+    // Make times relative so that elapsed=0 aligns with the first keyframe.
+    // Absolute start offset is stored in AnimationEntry.start (= this.startTime).
+    const firstTime = this.keyframes[0].time;
+    const relativeTimes = this.keyframes.map((k) => k.time - firstTime);
     const posValues: number[] = [];
     const quatValues: number[] = [];
     const up = new THREE.Vector3(0, 1, 0);
@@ -257,10 +260,10 @@ export class CameraPathAction extends Action {
       quatValues.push(q.x, q.y, q.z, q.w);
     }
 
-    const clipDuration = times[times.length - 1];
+    const clipDuration = relativeTimes[relativeTimes.length - 1];
     const clip = new THREE.AnimationClip(this.name, clipDuration, [
-      new THREE.VectorKeyframeTrack('.position', times, posValues),
-      new THREE.QuaternionKeyframeTrack('.quaternion', times, quatValues, THREE.InterpolateLinear),
+      new THREE.VectorKeyframeTrack('.position', relativeTimes, posValues),
+      new THREE.QuaternionKeyframeTrack('.quaternion', relativeTimes, quatValues, THREE.InterpolateLinear),
     ]);
 
     const mixer = new THREE.AnimationMixer(target);
@@ -275,8 +278,8 @@ export class CameraPathAction extends Action {
     if (!animationDict[this.name]) animationDict[this.name] = [];
     animationDict[this.name].push({
       anim: animAction,
-      start: 0,
-      end: clipDuration,
+      start: this.startTime,
+      end: this.startTime + clipDuration,
       clipDuration,
       loop: THREE.LoopOnce,
       repetitions: 1,

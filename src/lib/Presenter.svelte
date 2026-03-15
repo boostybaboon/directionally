@@ -275,6 +275,7 @@
       }
       if (editorCamera) {
         editorCamera.aspect = (width - half) / height;
+        editorCamera.fov = 2 * Math.atan(Math.tan((authoredFov * Math.PI) / 360) * DESIGN_ASPECT / ((width - half) / height)) * (180 / Math.PI);
         editorCamera.updateProjectionMatrix();
       }
     } else {
