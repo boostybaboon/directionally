@@ -323,9 +323,12 @@
     scene.add(cameraHelper);
 
     // Re-add the TC helper to the new scene; restore selection if still valid.
+    // Only restore if nothing else has set a selection since we cleared it — the
+    // add-block handlers call selectSceneObject() synchronously while buildSceneGraph
+    // is awaited, and we must not clobber that with the stale prevSelectedId.
     if (tcHelper) {
       scene.add(tcHelper);
-      if (prevSelectedId && scene.getObjectByName(prevSelectedId)) {
+      if (selectedObjectId === null && prevSelectedId && scene.getObjectByName(prevSelectedId)) {
         selectSceneObject(prevSelectedId);
       }
     }

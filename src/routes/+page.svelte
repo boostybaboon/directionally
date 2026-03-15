@@ -345,6 +345,7 @@
     const name = count === 0 ? base : `${base}-${count + 1}`;
     const piece: SetPiece = { name, geometry: entry.geometry, material: entry.material };
     activeDoc.execute(new AddSetPieceCommand(piece));
+    activeDoc.execute(new MoveSetPieceCommand(name, [0, 0, 0], [0, 0, 0]));
     addingSetPiece = false;
   }
 
@@ -704,11 +705,17 @@
             oncataloguedrop={handleCatalogueDrop}
             ondiscoverclips={(clips) => { discoveredClips = clips; }}
             {dragHint}
-            objectSelectable={(id) =>
-              !actors.some((a) => a.id === id) ||
-              currentPosition < 0.05 ||
-              (selBlockIdx !== null && selBlock?.block.actorId === id)
-            }
+            objectSelectable={(id) => {
+              const isActor = actors.some((a) => a.id === id);
+              const isSetPiece = scenePieces.some((p) => p.name === id);
+              if (isActor) {
+                return currentPosition < 0.05 || (selBlockIdx !== null && selBlock?.block.actorId === id);
+              }
+              if (isSetPiece) {
+                return currentPosition < 0.05 || (selBlockIdx !== null && selSetPieceBlock?.block.targetId === id);
+              }
+              return true;
+            }}
           />
         </div>
       </Pane>
@@ -1307,6 +1314,8 @@
             activeDoc.execute(new AddSetPieceBlockCommand(newBlock));
             selBlockIdx = (activeDoc.current.scene?.blocks?.length ?? 1) - 1;
             if (rightTab !== 'stage') rightTab = 'stage';
+            presenter?.selectSceneObject(targetId);
+            presenter?.handleSliderInput(endTime);
           }}
           onupdatesetpieceblock={(i, patch) => activeDoc?.execute(new UpdateSetPieceBlockCommand(i, patch))}
           onremovesetpieceblock={(i) => { activeDoc?.execute(new RemoveSetPieceBlockCommand(i)); if (selBlockIdx === i) selBlockIdx = null; }}

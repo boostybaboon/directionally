@@ -125,8 +125,8 @@ export function storedSceneToModel(storedScene: StoredScene, storedActors: Store
   for (const [targetId, blocks] of setPieceBlocksByTarget) {
     blocks.sort((a, b) => a.startTime - b.startTime);
     const pieceCfg = storedScene.set.find((p) => p.name === targetId);
-    let inferredPos: Vec3 | undefined = pieceCfg?.position;
-    let inferredRot: Vec3 | undefined = pieceCfg?.rotation;
+    let inferredPos: Vec3 = pieceCfg?.position ?? [0, 0, 0];
+    let inferredRot: Vec3 = pieceCfg?.rotation ?? [0, 0, 0];
     for (const block of blocks) {
       compiledBlockTracks.push(...setPieceBlockToTracks(block, inferredPos, inferredRot));
       inferredPos = block.endPosition ?? inferredPos;
