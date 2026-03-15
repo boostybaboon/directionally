@@ -46,6 +46,11 @@
   // Current gizmo mode — reactive so the mode-button toolbar re-renders.
   let tcMode = $state<'translate' | 'rotate'>('translate');
 
+  // When rotationEnabled is withdrawn mid-drag, snap back to translate.
+  $effect(() => {
+    if (!rotationEnabled && tcMode === 'rotate') setGizmoMode('translate');
+  });
+
   function setGizmoMode(mode: 'translate' | 'rotate') {
     tcMode = mode;
     transformControls?.setMode(mode);
@@ -83,6 +88,12 @@
     /** Contextual hint shown in the gizmo toolbar to communicate what the next drag will do. */
     dragHint?: string;
     /**
+     * When false, the rotate gizmo button is hidden and the mode is forced to translate.
+     * Use this when the selected object's rotation has no authored effect (e.g. actor blocks:
+     * endFacing is derived from direction-of-travel, not from a rotation drag).
+     */
+    rotationEnabled?: boolean;
+    /**
      * Optional guard called before committing a viewport click as a selection.
      * Return false to silently ignore the click (e.g. actors at t>0 with no block selected).
      * Set pieces should always return true. Defaults to always-allow.
@@ -115,6 +126,7 @@
     sliderValue = $bindable(0),
     isSliderDragging = $bindable(false),
     dragHint = '',
+    rotationEnabled = true,
     objectSelectable,
   }: PresenterProps = $props();
 
@@ -1013,6 +1025,7 @@
     flex: 1;
     min-height: 0; /* This is important for flex child to respect parent's height */
     position: relative;
+    touch-action: none;
   }
 
   #log-panel {
@@ -1123,7 +1136,7 @@
       class="mode-toggle"
       onclick={() => { designMode = !designMode; }}
       title={designMode ? 'Switch to playback view' : 'Switch to design view'}
-    >{designMode ? '▶ Playback' : '✏ Design'}</button>
+    >{designMode ? '▶ Switch to Playback view' : '✏ Switch to Design view'}</button>
     {#if designMode}
       <div class="gizmo-toolbar" role="toolbar" aria-label="Gizmo mode">
         {#if selectedObjectId}
@@ -1134,6 +1147,7 @@
             aria-label="Move"
             aria-pressed={tcMode === 'translate'}
           >⇔</button>
+          {#if rotationEnabled}
           <button
             class="gizmo-btn" class:active={tcMode === 'rotate'}
             onclick={() => setGizmoMode('rotate')}
@@ -1141,7 +1155,14 @@
             aria-label="Rotate"
             aria-pressed={tcMode === 'rotate'}
           >↻</button>
+          {/if}
         {/if}
+        <button
+          class="gizmo-btn"
+          onclick={() => snapDesignCameraToPlayback()}
+          title="Snap design camera to playback position (P)"
+          aria-label="Snap design camera to playback position"
+        >⊙</button>
         {#if dragHint}
           <span class="drag-hint">{dragHint}</span>
         {/if}

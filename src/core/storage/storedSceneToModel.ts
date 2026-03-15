@@ -47,10 +47,11 @@ export function storedSceneToModel(storedScene: StoredScene, storedActors: Store
     const entry     = getById(sa.catalogueId, CATALOGUE_ENTRIES);
     const character = entry?.kind === 'character' ? entry : undefined;
     return {
-      id:    sa.id,
-      name:  sa.role,
-      asset: { type: 'gltf', url: character?.gltfPath ?? FALLBACK_GLTF_URL },
-      voice: defaultVoice(i),
+      id:             sa.id,
+      name:           sa.role,
+      asset:          { type: 'gltf', url: character?.gltfPath ?? FALLBACK_GLTF_URL },
+      voice:          defaultVoice(i),
+      defaultRotation: character?.defaultRotation,
     };
   });
 
@@ -89,9 +90,10 @@ export function storedSceneToModel(storedScene: StoredScene, storedActors: Store
   for (const [, blocks] of blocksByActor) {
     blocks.sort((a, b) => a.startTime - b.startTime);
     const staged = storedScene.stagedActors.find((s) => s.actorId === blocks[0].actorId);
+    const actor  = actors.find((a) => a.id === blocks[0].actorId);
     let inferredStart: Vec3 | undefined = staged?.startPosition;
     for (const block of blocks) {
-      compiledBlockTracks.push(...actorBlockToTracks(block, inferredStart));
+      compiledBlockTracks.push(...actorBlockToTracks(block, inferredStart, actor?.defaultRotation));
       inferredStart = block.endPosition ?? inferredStart;
     }
   }

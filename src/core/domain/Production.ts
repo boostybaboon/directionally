@@ -1,4 +1,4 @@
-import type { ActorAsset, ActorVoice } from './types.js';
+import type { ActorAsset, ActorVoice, Vec3 } from './types.js';
 import { Group } from './Group.js';
 import type { Scene, SceneOptions } from './Scene.js';
 
@@ -8,6 +8,12 @@ export type Actor = {
   asset: ActorAsset;
   /** Default voice for all this actor's lines. Can be overridden per SpeakAction. */
   voice?: ActorVoice;
+  /**
+   * Euler XYZ rotation (radians) applied to the model when no authored startRotation
+   * exists. Corrects models whose forward axis differs from +Z. Also baked into every
+   * computed facing-track quaternion so direction-of-travel is accurate.
+   */
+  defaultRotation?: Vec3;
 };
 
 export class Production {

@@ -208,6 +208,10 @@
       : null
   );
 
+  // Re-computed after every command since docSnapshot changes when onChange fires.
+  const canUndo = $derived(docSnapshot !== null && (activeDoc?.canUndo ?? false));
+  const canRedo = $derived(docSnapshot !== null && (activeDoc?.canRedo ?? false));
+
   // If the user clicks a different actor in the viewport while an actor block is selected,
   // clear the block selection so the Stage panel doesn't show a stale block.
   // Non-actor block types (light/camera/setPiece) are not tied to viewport selection.
@@ -680,6 +684,12 @@
       <!-- Main pane: Presenter is always mounted here, never destroyed -->
       <Pane minSize={30}>
         <div class="main-pane">
+          {#if designMode && activeDoc}
+            <div class="undo-redo-overlay">
+              <button class="undo-redo-btn" disabled={!canUndo} onclick={() => activeDoc!.undo()} title="Undo (Ctrl+Z)" aria-label="Undo">↩</button>
+              <button class="undo-redo-btn" disabled={!canRedo} onclick={() => activeDoc!.redo()} title="Redo (Ctrl+Y)" aria-label="Redo">↪</button>
+            </div>
+          {/if}
           {#if !rightPanelOpen}
             <button
               class="right-panel-open-btn"
@@ -705,6 +715,7 @@
             oncataloguedrop={handleCatalogueDrop}
             ondiscoverclips={(clips) => { discoveredClips = clips; }}
             {dragHint}
+            rotationEnabled={!(selBlockIdx !== null && selBlock?.block.actorId === selectedObjectId)}
             objectSelectable={(id) => {
               const isActor = actors.some((a) => a.id === id);
               const isSetPiece = scenePieces.some((p) => p.name === id);
@@ -1760,6 +1771,44 @@
   .right-panel-open-btn:hover {
     color: #ccc;
     border-color: #555;
+  }
+
+  .undo-redo-overlay {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 10;
+    display: flex;
+    gap: 4px;
+  }
+
+  .undo-redo-btn {
+    width: 44px;
+    height: 44px;
+    background: rgba(28, 28, 32, 0.82);
+    color: #aaa;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+
+  .undo-redo-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+    pointer-events: none;
+  }
+
+  .undo-redo-btn:not(:disabled):hover {
+    background: rgba(55, 55, 65, 0.90);
+    color: #e0e0e0;
   }
 
   /* ── Right panel ───────────────────────────────── */

@@ -540,6 +540,7 @@
     flex: 1;
     position: relative;
     min-width: 0;
+    touch-action: none;
   }
 
   .tl-ruler-row .tl-track {

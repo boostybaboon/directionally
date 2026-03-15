@@ -22,6 +22,21 @@ function directionToYawQuat(dir: Vec3): [number, number, number, number] {
   return [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)];
 }
 
+/** Quaternion multiplication: result = a * b (b applied first, then a). */
+function multiplyQuat(
+  a: [number, number, number, number],
+  b: [number, number, number, number],
+): [number, number, number, number] {
+  const [ax, ay, az, aw] = a;
+  const [bx, by, bz, bw] = b;
+  return [
+    aw * bx + ax * bw + ay * bz - az * by,
+    aw * by - ax * bz + ay * bw + az * bx,
+    aw * bz + ax * by - ay * bx + az * bw,
+    aw * bw - ax * bx - ay * by - az * bz,
+  ];
+}
+
 function vec3Equal(a: Vec3, b: Vec3): boolean {
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 }
@@ -43,12 +58,21 @@ function vec3Equal(a: Vec3, b: Vec3): boolean {
  *   the path).
  * - If neither is provided and there is no movement: no facing track is emitted.
  *
+ * `modelDefaultRotation` (Euler XYZ, radians) corrects models whose forward axis
+ * differs from +Z (e.g. Soldier faces -Z; pass [0, π, 0]). It is post-multiplied
+ * onto every computed facing quaternion so that direction-of-travel is accurate.
+ *
  * The compiled tracks are not stored — they are merged with `scene.actions` at
  * load time by `storedSceneToModel`.
  */
-export function actorBlockToTracks(block: ActorBlock, inferredStartPos?: Vec3): SceneAction[] {
+export function actorBlockToTracks(block: ActorBlock, inferredStartPos?: Vec3, modelDefaultRotation?: Vec3): SceneAction[] {
   const result: SceneAction[] = [];
   const duration = block.endTime - block.startTime;
+
+  // Pre-compute the model-forward correction quaternion (identity if none provided).
+  const defaultQ: [number, number, number, number] = modelDefaultRotation
+    ? eulerXYZToQuat(modelDefaultRotation)
+    : [0, 0, 0, 1];
 
   // Clip track
   if (block.clip) {
@@ -104,11 +128,12 @@ export function actorBlockToTracks(block: ActorBlock, inferredStartPos?: Vec3): 
   }
 
   if (startFacing || endFacing) {
-    // If only one endpoint is specified, hold constant
+    // If only one endpoint is specified, hold constant.
+    // Post-multiply by defaultQ so models with a non-standard forward axis face correctly.
     const sf = startFacing ?? endFacing!;
     const ef = endFacing   ?? startFacing!;
-    const sq = directionToYawQuat(sf);
-    const eq = directionToYawQuat(ef);
+    const sq = multiplyQuat(directionToYawQuat(sf), defaultQ);
+    const eq = multiplyQuat(directionToYawQuat(ef), defaultQ);
     const facingTrack: TransformTrack = {
       type: 'move',
       targetId: block.actorId,

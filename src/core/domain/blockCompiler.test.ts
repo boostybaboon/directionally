@@ -211,6 +211,26 @@ describe('actorBlockToTracks', () => {
     const pos = result.find((a) => (a as TransformTrack).keyframes?.property === '.position');
     expect(pos).toBeUndefined();
   });
+
+  it('modelDefaultRotation is post-multiplied onto facing quaternions', () => {
+    // Without defaultRotation: facing +Z gives identity quaternion [0,0,0,1]
+    // With defaultRotation [0,π,0] (180° Y): facing +Z → [0,1,0,0] × [0,0,0,1] ≈ [0,1,0,0]
+    // i.e. the model is flipped 180° so its backward face now faces +Z
+    const defaultRot: [number, number, number] = [0, Math.PI, 0];
+    const result = actorBlockToTracks(
+      makeBlock({ startFacing: [0, 0, 1] }),
+      undefined,
+      defaultRot,
+    );
+    const facing = result.find((a) => (a as TransformTrack).keyframes?.property === '.quaternion') as TransformTrack;
+    expect(facing).toBeDefined();
+    // identity yaw * Q_Y180 = [0, sin(π/2), 0, cos(π/2)] = [0, 1, 0, 0]
+    const [qx, qy, qz, qw] = facing.keyframes.values;
+    expect(qx).toBeCloseTo(0);
+    expect(qy).toBeCloseTo(1);
+    expect(qz).toBeCloseTo(0);
+    expect(qw).toBeCloseTo(0);
+  });
 });
 
 // ── lightBlockToTracks ────────────────────────────────────────────────────────

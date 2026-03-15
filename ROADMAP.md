@@ -313,7 +313,7 @@ This is a small addition to Phase 8 step 1 (opening the scene header for editing
 
 ---
 
-### Phase 8.5 — Block-based character animation *(next)*
+### Phase 8.5 — Block-based character animation ✅ COMPLETE
 
 *Replace the separate clip-list + position-keyframe authoring with a unified `ActorBlock` type that expresses intent at the right level of abstraction: "walk from A to B", "idle here", "turn to face".*
 
@@ -377,32 +377,123 @@ Phase 8.6 upgrades this to a **visual horizontal track**: blocks are draggable c
 | `RemoveActorBlockCommand` | Removes by index |
 | `UpdateActorBlockCommand(index, patch)` | Patches any field of an `ActorBlock` |
 
-#### Implementation steps (Phase 8.5)
+#### Implementation steps (all complete ✅)
 
-1. Add `ActorBlock`, `LightBlock`, `Block` types to `src/core/domain/types.ts`; add `blocks?: Block[]` to `StoredScene`.
-2. Implement `actorBlockToTracks(block: ActorBlock): SceneAction[]` in a new `src/core/domain/blockCompiler.ts`; full test coverage.
-3. Wire compiler into `storedSceneToModel.ts` — merge compiled tracks with existing `scene.actions` before building the model.
-4. `AddActorBlockCommand`, `RemoveActorBlockCommand`, `UpdateActorBlockCommand` with tests.
-5. UI: per-actor block list rows in Stage tab (replaces/accompanies the Phase 8 clip sequencer; both surfaces remain).
+1. `ActorBlock`, `LightBlock`, `CameraBlock`, `SetPieceBlock`, `Block` types in `src/core/domain/types.ts`; `blocks?: Block[]` on `StoredScene`.
+2. `blockCompiler.ts` — compilers for all four block types; full test coverage.
+3. `storedSceneToModel.ts` wired — compiled tracks merged with `scene.actions`.
+4. `AddActorBlockCommand`, `RemoveActorBlockCommand`, `UpdateActorBlockCommand` (and equivalents for all block types) with tests.
+5. UI: per-actor block list rows in Stage tab.
 
 ---
 
-### Phase 8.6 — Visual timeline strip *(additive, after 8.5)*
+### Phase 8.6 — Visual timeline strip ✅ COMPLETE
 
-- Per-actor and per-light horizontal track strips below the transport bar (or in a resizable bottom panel).
-- Blocks rendered as coloured rectangles, draggable to reposition/resize (fires `UpdateActorBlockCommand`).
+- Per-actor, per-light, per-camera, per-set-piece horizontal track strips in a resizable bottom panel.
+- Blocks rendered as coloured rectangles; draw new blocks by click-drag on empty track space.
 - Gaps rendered in grey — implicit idle with no authored block.
-- Click block → popover with full block fields (clip, positions, facing).
+- Click block → selects block, Stage tab shows editor for that block's fields.
 - Playhead needle tracks transport position.
-- Phase 8 numeric surfaces remain accessible as a detail view.
+- `CameraBlock`, `SetPieceBlock` timeline rows added alongside `ActorBlock` and `LightBlock`.
 
 ---
 
-### Phase 8.7 — LightBlock + AudioBlock
+### Phase 8.7 — LightBlock + CameraBlock + SetPieceBlock ✅ COMPLETE
 
-- `LightBlock` type (designed in 8.5, implemented here): `startIntensity`, `endIntensity`, easing curve.
-- Replaces the Phase 8 Surface C scalar keyframe editor for lights.
-- `AudioBlock`: `audioUrl`, `volume`, `fadeIn`, `fadeOut` — initial sound/music authoring surface (merged with Phase 11 scope).
+- `LightBlock`: `startIntensity`, `endIntensity` — replaces Phase 8 Surface C scalar keyframe editor.
+- `CameraBlock`: position + lookAt interpolation across a time range; compiled to `TransformTrack`.
+- `SetPieceBlock`: position/rotation/scale over a time range for set pieces.
+- `AudioBlock` *(deferred)* — design captured, implementation deferred to Phase 11.
+
+---
+
+### Phase 8.8 — Catalogue asset defaults *(quick fix)*
+
+*The Soldier model was authored facing away from +Z (the default camera look direction), so "face direction of travel" makes him walk backward.*
+
+- Add `defaultRotation?: Vec3` (Euler XYZ, degrees) to `CharacterEntry` and `SetPieceEntry` in `src/core/catalogue/types.ts`.
+- Update `entries.ts`: set `defaultRotation: [0, 180, 0]` for Soldier so it faces +Z by default.
+- Apply in `storedSceneToModel.ts` and `SceneBridge.ts`: bake the default rotation into the actor's initial quaternion before any authored facing is applied.
+- `defaultScale` already exists as a per-actor override (Phase 8); document it as the companion to `defaultRotation` in the catalogue entry type.
+
+**Phase complete when:** Soldier faces the camera by default and "face direction of travel" produces correct forward motion.
+
+---
+
+### Phase 8.9 — UX quick wins *(complete)*
+
+Small focused fixes that eliminate confusion before the larger UX redesign in Phase UX1.
+
+- **Playback/Design button label** ✅ — Relabelled to "▶ Switch to Playback view" / "✏ Switch to Design view" to name the destination, not the current state.
+- **Rotation gizmo at block-end** ✅ — Added `rotationEnabled` prop to Presenter; when an actor block is selected the rotate button is hidden and the mode is forced to translate (block-end captures position only).
+---
+
+### Phase T — Tablet support *(complete)*
+
+*The authoring tool now works on a tablet browser (iPad/Android) without a keyboard or mouse for the core authoring workflow.*
+
+#### What was implemented
+
+1. **Timeline pointer events** — already used `pointerdown`/`pointermove`/`pointerup` + `setPointerCapture`; added `touch-action: none` on `.tl-track` to prevent iOS Safari scroll interference during block draw/drag
+2. **Three.js touch** — added `touch-action: none` on `#render-container`; Three.js OrbitControls and TransformControls handle pointer events natively (r162+)
+3. **On-screen undo/redo** — floating `↩`/`↪` button pair overlaid top-left of the canvas in design mode; 44×44 px touch targets; disabled state reflects `canUndo`/`canRedo`
+4. **On-screen G/R gizmo buttons** — already existed (44×44 px, `-webkit-tap-highlight-color: transparent`)
+5. **On-screen snap-to-playback button** — added ⊙ button to gizmo toolbar (replaces `P` keyboard shortcut)
+6. **Block delete on touch** — block remove button already exists in right panel when block selected
+7. **Catalogue add on touch** — `onadd` prop / "+ Add to scene" button already existed for touch-friendly placement at origin
+
+---
+
+### Phase UX1 — Minimal interaction model *(high priority)*
+
+*A design-first pass at reducing configuration clutter and surface area. Goal: a new user familiar with screenplay software can author a short play from scratch guided entirely by visual affordances — no documentation needed.*
+
+#### The core problem
+
+The tool currently surfaces too many ways to do the same thing, and too many places to look simultaneously. A user trying to "move this character across the stage" must know about: blocks, the timeline, the Stage tab, initial vs. end positions, clip assignment, and how they relate. The underlying data model is sound — the UX problem is exposure surface.
+
+#### Guiding principles
+
+1. **One canonical way**: where multiple surfaces do the same thing, remove or demote all but one.
+2. **Progressive disclosure**: show only what's needed for the next step. Configuration that's rarely changed lives behind an expander or a secondary tap.
+3. **Visual affordances over text**: a user should be able to see what is draggable, animatable, and selectable from visual state alone — no label-reading required.
+4. **Script-first entry point**: every author already knows how to write dialogue. That is the opening surface; the 3D world builds from the script.
+
+#### Redesign areas (for investigation — not final spec)
+
+**A — Script-first authoring**
+
+*"Why can't I just type a script like I normally would? Like Final Draft or StudioBinder."*
+
+The screenplay editor exists (Phase 6) but is buried in the right panel. Proposal: on a new production the primary view is a **screenplay canvas** — free-form text with intelligent autocomplete (character names from the cast, suggested stage directions). Characters mentioned in the script automatically join the cast. A "Generate scene" action converts dialogue lines to blocks, auto-places characters, and seeds the timeline — providing an instant first playback you can refine interactively. This matches how Final Draft / StudioBinder / Highland operate, extended with the 3D dimension.
+
+**B — Cast: production-level, not scene-level**
+
+*"Is cast per scene or per production? Shouldn't you add cast to the production and populate scenes from the production cast list?"*
+
+Cast is a production-level concept. Scenes draw from it. The current Stage tab conflates production-level casting with scene-level staging because both live in the same panel.
+
+Fix: cleanly separate **Cast** (production roster — who exists, their role, their voice) from **Staging** (where they stand in this scene). Cast belongs in the Productions tab. The Stage tab becomes purely scene-level — it shows which cast members are present in this scene and their positions, but cannot add new characters to the production.
+
+**C — Acts and scenes structure**
+
+*"How do I make acts and scenes?"*
+
+The data model (nestable Group/Scene tree) supports it; there is no authoring UI. Proposal: the productions list in the left panel becomes an inline expandable tree. "Add scene" adds a leaf; "Add act" adds a group node. Scenes can be dragged to reorder within acts.
+
+**D — Voice placement**
+
+*"Why is Voice in the Stage tab, but a voice label is in the timeline?"*
+
+Voice assignment is an actor property, not a scene property. Move voice assignment to the actor card in the production Cast section. The timeline label reflects that configuration; no editing in the timeline.
+
+**E — Reduce simultaneous surfaces**
+
+The current layout has four active regions: left panel (Productions / Catalogue), right panel (Stage / Script), timeline, and canvas. Proposal: as a first simplification step, merge Stage and Script into a single **Scene panel** showing script and staging side by side. Only show controls relevant to the currently selected block; hide everything else via progressive disclosure.
+
+**F — Camera Initial pos alignment**
+
+The camera "Initial pos" field plus capture button sits outside the block paradigm used for set pieces and characters. Align it: camera spawn position at t=0 follows the same "design camera drag → ⊕ Capture" paradigm as set-piece and actor positioning. Remove the special-case t=0 field; the CameraBlock default handles it. Clarify the capture-button affordance label.
 
 ---
 
@@ -482,9 +573,13 @@ Possible directions:
 | Camera tracks UI | ✅ Complete (Phase 7) |
 | Ground-zero animation authoring (clip sequencer, keyframe capture, per-actor settings) | ✅ Complete (Phase 8) |
 | `ClipTrack` / `TransformTrack` / `LightingTrack` type rename | ✅ Complete |
-| `ActorBlock` — unified clip+position+facing authoring primitive | Phase 8.5 (next) |
-| Visual timeline strip (draggable block rectangles) | Phase 8.6 |
-| `LightBlock` + `AudioBlock` | Phase 8.7 |
+| `ActorBlock` — unified clip+position+facing authoring primitive | ✅ Complete (Phase 8.5) |
+| Visual timeline strip (draggable block rectangles) | ✅ Complete (Phase 8.6) |
+| `LightBlock` + `CameraBlock` + `SetPieceBlock` | ✅ Complete (Phase 8.7) |
+| Catalogue asset defaults (`defaultRotation`, Soldier orientation fix) | Phase 8.8 |
+| UX quick wins (button labels, rotation gizmo, camera paradigm) | Phase 8.9 |
+| Tablet support (touch/pointer events, on-screen shortcuts) | Phase T |
+| Minimal interaction model (script-first, cast/staging split, one-way-of-doing-things) | Phase UX1 |
 | Asset properties editing | Phase 9 |
 | Lighting rig | Phase 10 |
 | Sound effects / music | Phase 11 (merged into 8.7) |

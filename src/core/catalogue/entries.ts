@@ -22,6 +22,8 @@ export const CATALOGUE_ENTRIES: CatalogueEntry[] = [
     // Clips present in the Three.js Soldier example asset (MIT licensed).
     defaultAnimation: 'idle',
     defaultScale: 2.7,
+    // Soldier was authored facing -Z; flip 180° around Y so it faces +Z (toward camera).
+    defaultRotation: [0, Math.PI, 0],
   },
 
   // ── Set pieces ────────────────────────────────────────────────────────────

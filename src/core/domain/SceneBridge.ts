@@ -156,7 +156,11 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
     if (asset.type === 'gltf') {
       const gltf = new GLTFAsset(actor.id, asset.url);
       if (staged.startPosition) gltf.position = new THREE.Vector3(...staged.startPosition);
-      if (staged.startRotation) gltf.rotation = new THREE.Euler(...staged.startRotation);
+      // Use authored startRotation when available (it already incorporates any default offset
+      // because it was captured from the live Three.js object). Fall back to the catalogue's
+      // defaultRotation so models with a non-standard forward axis face the camera by default.
+      const initRot = staged.startRotation ?? actor.defaultRotation;
+      if (initRot) gltf.rotation = new THREE.Euler(...initRot);
       if (staged.startScale)    gltf.scale    = new THREE.Vector3(...staged.startScale);
       gltfs.push(gltf);
     } else {
