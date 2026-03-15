@@ -1155,6 +1155,7 @@
                       <span class="stage-section-label">Camera</span>
                       {#if designMode}
                         <button class="new-btn" onclick={captureInitialCamera} title="Capture design camera as the scene's starting position">⊕ Initial pos</button>
+                        <button class="new-btn" onclick={() => presenter?.snapDesignCameraToPlayback()} title="Snap design view to match the playback camera (P)">⊙ Snap view</button>
                       {/if}
                     </div>
                     <div class="anim-row">

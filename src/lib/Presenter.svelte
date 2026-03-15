@@ -41,6 +41,8 @@
   let selectionBox: THREE.BoxHelper | null = null;
   // True while TransformControls is actively dragging — used to skip click-as-selection.
   let tcDragging = false;
+  // Shift key held — enables fine-mode: orbit at 1/10 speed, TC gizmo moves at 1/10 delta.
+  let shiftHeld = false;
   // Current gizmo mode — reactive so the mode-button toolbar re-renders.
   let tcMode = $state<'translate' | 'rotate'>('translate');
 
@@ -204,6 +206,26 @@
       }
     });
 
+    // Shift fine-mode: scale TC's computed delta to 10% each frame.
+    // TC recomputes from its own _positionStart/_quaternionStart every pointer-move, so
+    // we read those directly (as any) and scale back toward them — no separate snapshot needed.
+    transformControls.addEventListener('objectChange', () => {
+      if (!shiftHeld || !tcDragging || !transformControls.object) return;
+      const tc = transformControls as any;
+      const obj = transformControls.object;
+      const FINE = 0.1;
+      if (tc._positionStart) {
+        const ps = tc._positionStart as THREE.Vector3;
+        // obj.position = ps + fullDelta  →  scale to ps + fullDelta * FINE
+        obj.position.sub(ps).multiplyScalar(FINE).add(ps);
+      }
+      if (tc._quaternionStart) {
+        const qs = tc._quaternionStart as THREE.Quaternion;
+        // obj.quaternion = full rotation from qs  →  slerp to FINE fraction
+        obj.quaternion.slerpQuaternions(qs, obj.quaternion, FINE);
+      }
+    });
+
     orbitControls = new OrbitControls(editorCamera, editorOverlay);
     orbitControls.enabled = false; // only active in design mode
     orbitControls.enableDamping = true;
@@ -212,7 +234,8 @@
     // Record pointer-down position on the overlay for drag vs click discrimination.
     editorOverlay.addEventListener('pointerdown', (e) => {
       overlayPointerDownPos = { x: e.clientX, y: e.clientY };
-      tcDragging = false;
+      // Do NOT reset tcDragging here — TC's pointerdown handler fires first and sets
+      // tcDragging = true via dragging-changed; overwriting it here would kill fine-mode.
     });
 
     // ResizeObserver fires on any container size change: window resize, Splitpanes
@@ -231,14 +254,31 @@
         handlePlayPauseClick();
         return;
       }
+      if (e.key === 'Shift' && designMode && !shiftHeld) {
+        shiftHeld = true;
+        orbitControls.rotateSpeed = 0.1;
+        orbitControls.panSpeed = 0.1;
+        orbitControls.zoomSpeed = 0.1;
+      }
       if (!designMode || isTyping) return;
       if (e.key === 'Escape') { selectSceneObject(null); return; }
       if (e.key === 'g' || e.key === 'G') setGizmoMode('translate');
       if (e.key === 'r' || e.key === 'R') setGizmoMode('rotate');
+      if (e.key === 'p' || e.key === 'P') snapDesignCameraToPlayback();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') {
+        shiftHeld = false;
+        orbitControls.rotateSpeed = 1;
+        orbitControls.panSpeed = 1;
+        orbitControls.zoomSpeed = 1;
+      }
     };
     window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
       resizeObserver.disconnect();
       orbitControls.dispose();
       transformControls.dispose();
@@ -728,6 +768,20 @@
       position: [+p.x.toFixed(3), +p.y.toFixed(3), +p.z.toFixed(3)],
       lookAt:   [+t.x.toFixed(3), +t.y.toFixed(3), +t.z.toFixed(3)],
     };
+  }
+
+  /**
+   * Snap the design (editor) camera to the current playback camera position and orientation.
+   * The orbit target is set 5 units ahead along the playback camera's look direction,
+   * giving a sensible pivot for continued orbiting after snapping.
+   */
+  export function snapDesignCameraToPlayback() {
+    if (!camera || !orbitControls || !editorCamera) return;
+    editorCamera.position.copy(camera.position);
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    orbitControls.target.copy(camera.position).addScaledVector(forward, 5);
+    orbitControls.update();
+    updateRendererSize();
   }
 
   /**
