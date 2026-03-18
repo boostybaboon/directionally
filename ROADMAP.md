@@ -407,16 +407,18 @@ Phase 8.6 upgrades this to a **visual horizontal track**: blocks are draggable c
 
 ---
 
-### Phase 8.8 — Catalogue asset defaults *(quick fix)*
+### Phase 8.8 — Catalogue asset defaults *(complete)*
 
 *The Soldier model was authored facing away from +Z (the default camera look direction), so "face direction of travel" makes him walk backward.*
 
-- Add `defaultRotation?: Vec3` (Euler XYZ, degrees) to `CharacterEntry` and `SetPieceEntry` in `src/core/catalogue/types.ts`.
-- Update `entries.ts`: set `defaultRotation: [0, 180, 0]` for Soldier so it faces +Z by default.
-- Apply in `storedSceneToModel.ts` and `SceneBridge.ts`: bake the default rotation into the actor's initial quaternion before any authored facing is applied.
-- `defaultScale` already exists as a per-actor override (Phase 8); document it as the companion to `defaultRotation` in the catalogue entry type.
+- `defaultRotation?: Vec3` (Euler XYZ, radians) added to `CharacterEntry` in `src/core/catalogue/types.ts`.
+- `entries.ts`: `defaultRotation: [0, Math.PI, 0]` for Soldier so it faces +Z by default.
+- `storedSceneToModel.ts`: propagates `character.defaultRotation` to the domain `Actor` object.
+- `SceneBridge.ts`: `staged.startRotation ?? actor.defaultRotation` so the default is overridable by any authored rotation.
+- `blockCompiler.ts`: `actorBlockToTracks` accepts `modelDefaultRotation` and post-multiplies it onto facing quaternions.
+- `defaultScale` already existed as a per-actor override (Phase 8); `defaultRotation` is its companion.
 
-**Phase complete when:** Soldier faces the camera by default and "face direction of travel" produces correct forward motion.
+**Phase complete when:** Soldier faces the camera by default and "face direction of travel" produces correct forward motion. ✅
 
 ---
 
@@ -497,11 +499,76 @@ The camera "Initial pos" field plus capture button sits outside the block paradi
 
 ---
 
-### Phase 9 — Properties panel — asset editing
+### Phase 9 — Scene dressing: set building + character identification
 
-- Editable position / rotation / scale for the selected asset.
-- Material editor: colour, roughness, metalness, optional texture URL.
-- Character scale/tint if supported by the GLTF.
+*Goal: a user can rough in a recognisable venue (theatre stage, TV studio, news desk) from primitive pieces, and tell characters apart at a glance without relying on model labels.*
+
+#### The two use cases
+
+**Build a set** — The existing primitives (box, plane, sphere, cylinder) are architecturally correct, but their catalogue sizes are fixed (1×1×1 cube, 10×10 plane). Building a theatre flat (4m wide × 3m tall × 0.15m deep) or a news desk (1.5m × 0.75m × 0.5m) requires resizing after placement. Currently no command covers non-positional edits — color, scale, and geometry dimensions are immutable once a set piece is added.
+
+**Visual indication of different characters** — All Robot/Soldier instances look identical in the viewport. The timeline already assigns each actor a distinct color from a fixed palette (`actorColor(i)`). Projecting that same color as a ground disc beneath each staged actor creates a direct visual link between the timeline strip and the character's stage position — no GLTF traversal or shader work required.
+
+#### Phase 9.A — Set piece property inspector
+
+When a set piece is selected in design mode (`selectedObjectId` matches a set-piece name), the Staging tab shows an inspector section below the existing set-piece list:
+
+- **Color** — hex `<input type="color">` wired to `material.color`
+- **Scale** — three number fields (X/Y/Z); a lock-aspect toggle offers uniform scaling shorthand
+- **Geometry dimensions** — shown per type:
+  - `box`: Width / Height / Depth
+  - `plane`: Width / Height
+  - `sphere`: Radius
+  - `cylinder`: Radius / Height
+- All fields fire `UpdateSetPieceCommand` on `change`
+
+**`UpdateSetPieceCommand(name: string, patch: Partial<SetPiece>)`** — patches any fields on the named `SetPiece` in `scene.set`; the model reload triggered by `ProductionDocument.onChange` reflects the change. `MoveSetPieceCommand` (drag-to-reposition) is unchanged — the inspector handles non-positional edits only.
+
+The command uses a shallow merge for nested objects: `{ ...piece, ...patch, material: { ...piece.material, ...patch.material }, geometry: { ...piece.geometry, ...patch.geometry } }` so partial material/geometry patches don't clobber unrelated fields.
+
+#### Phase 9.B — Set piece catalogue expansion
+
+Add entries with set-building-appropriate default sizes so common environments need little or no resizing:
+
+| Entry | Geometry | Material | Intended use |
+|---|---|---|---|
+| Wall flat | box 4 × 3 × 0.15 m | `0xddd8c4` matte off-white | Theatre flat, room wall |
+| Stage deck | plane 8 × 8 m | `0x8b6914` matte wood | Stage / studio floor |
+| Studio backdrop | box 6 × 4 × 0.1 m | `0x1a2a4a` matte dark blue | Cyclorama / chroma-key |
+| Table | box 1.5 × 0.75 × 0.5 m | `0x4a3728` matte dark wood | Desk, news anchor table |
+| Step | box 1 × 0.2 × 0.6 m | `0x555555` matte grey | Stage step / riser |
+
+These are also the seeds for "snap a studio together in under a minute" — the canonical Phase 9 demo task.
+
+#### Phase 9.C — Character ground markers
+
+Each staged actor with a known `startPosition` gets a coloured disc rendered below them. The colour comes from the same `COLORS` palette as the actor's timeline track, so the disc is visually linked to the strip.
+
+**Implementation:**
+- In `storedSceneToModel.ts`, after resolving staged actors, synthesize one `SetPiece` mesh per staged actor: `{ type: 'cylinder', radiusTop, radiusBottom, height: 0.04 }` at `[x, 0.02, z]` with `material.color = ACTOR_COLORS[i % ACTOR_COLORS.length]` and a low `emissive` so it is visible in shadow.
+- The `ACTOR_COLORS` palette is extracted into `src/lib/actorColors.ts` (a plain constant) so it is importable by both `TimelinePanel.svelte` and `storedSceneToModel.ts` without a circular dependency through the UI layer.
+- Markers are toggled by `StoredScene.showMarkers?: boolean` (default `true`). A checkbox in the Scene section of the Staging tab drives `UpdateSceneMarkerCommand(flag)`.
+- Markers are synthetic — not stored in `scene.set`, not selectable, not animatable.
+
+#### New commands
+
+| Command | What it does |
+|---|---|
+| `UpdateSetPieceCommand(name, patch)` | Patches any `SetPiece` fields by name |
+| `UpdateSceneMarkerCommand(show)` | Sets `StoredScene.showMarkers` |
+
+#### Phase complete when
+
+- A user can place a wall flat, scale it to cover the back of the stage, and recolor it — all via UI
+- A scene with two Robot actors shows distinct-coloured ground discs that match their timeline strip colors
+- The "quick studio" demo (backdrop + stage deck + table + two characters) can be assembled in the browser in under 2 minutes
+
+#### Out of scope for Phase 9
+
+- Material texture URLs (CORS + asset management complexity; deferred to Phase 13)
+- Character skin/tint via GLTF mesh traversal (shader work; separate investigation)
+- `SetPiece.parent` hierarchical UI (deferred from Phase 8; still low priority)
+- Editable roughness/metalness (color covers 90% of set-dressing needs; PBR sliders deferred to a "materials" phase)
 
 ---
 
@@ -576,7 +643,7 @@ Possible directions:
 | `ActorBlock` — unified clip+position+facing authoring primitive | ✅ Complete (Phase 8.5) |
 | Visual timeline strip (draggable block rectangles) | ✅ Complete (Phase 8.6) |
 | `LightBlock` + `CameraBlock` + `SetPieceBlock` | ✅ Complete (Phase 8.7) |
-| Catalogue asset defaults (`defaultRotation`, Soldier orientation fix) | Phase 8.8 |
+| Catalogue asset defaults (`defaultRotation`, Soldier orientation fix) | ✅ Complete (Phase 8.8) |
 | UX quick wins (button labels, rotation gizmo, camera paradigm) | Phase 8.9 |
 | Tablet support (touch/pointer events, on-screen shortcuts) | Phase T |
 | Minimal interaction model (script-first, cast/staging split, one-way-of-doing-things) | Phase UX1 |

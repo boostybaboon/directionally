@@ -16,14 +16,14 @@
   import type { Model } from '$lib/Model';
   import ScriptEditor from '$lib/sandbox/ScriptEditor.svelte';
   import { storedSceneToModel } from '../core/storage/storedSceneToModel.js';
-  import { defaultSceneShell, estimateDuration } from '../core/storage/sceneBuilder.js';
+  import { defaultSceneShell, estimateDuration, getActiveScene } from '../core/storage/sceneBuilder.js';
   import type { ScriptLine } from '$lib/sandbox/types';
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import type { StoredProduction } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
-  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand } from '../core/document/commands.js';
+  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, SetActorVoiceCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand } from '../core/document/commands.js';
   import type { StoredActor } from '../core/storage/types.js';
-  import type { SpeakAction, TransformTrack, LightingTrack, ActorBlock, LightBlock, CameraBlock, SetPieceBlock } from '../core/domain/types.js';
+  import type { SpeakAction, TransformTrack, LightingTrack, ActorBlock, LightBlock, CameraBlock, SetPieceBlock, ActorVoice, KokoroVoice } from '../core/domain/types.js';
   import { getCharacters, getSetPieces } from '../core/catalogue/catalogue.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
   import type { SetPiece } from '../core/domain/types.js';
@@ -31,8 +31,53 @@
   const CATALOGUE_CHARACTERS = getCharacters(CATALOGUE_ENTRIES);
   const CATALOGUE_SET_PIECES = getSetPieces(CATALOGUE_ENTRIES);
 
+  // Preset voice configurations covering the four main persona styles.
+  const VOICE_PRESETS: { label: string; voice: ActorVoice }[] = [
+    {
+      label: 'Female (British)',
+      voice: {
+        persona: { gender: 'female', accent: 'british', pitch: 0.3, rate: 0 },
+        espeak:  { voice: 'en-gb-x-rp+f1', pitch: 60, pitchRange: 63, rate: 160 },
+        kokoro:  'af_heart',
+      },
+    },
+    {
+      label: 'Male (British)',
+      voice: {
+        persona: { gender: 'male', accent: 'british', pitch: -0.5, rate: -0.27 },
+        espeak:  { voice: 'en-gb-x-rp+m3', pitch: 40, pitchRange: 58, rate: 150 },
+        kokoro:  'am_echo',
+      },
+    },
+    {
+      label: 'Female (American)',
+      voice: {
+        persona: { gender: 'female', accent: 'american', pitch: 0.2, rate: 0 },
+        espeak:  { voice: 'en-us+f1', pitch: 58, pitchRange: 60, rate: 165 },
+        kokoro:  'af_sarah',
+      },
+    },
+    {
+      label: 'Male (American)',
+      voice: {
+        persona: { gender: 'male', accent: 'american', pitch: -0.3, rate: -0.2 },
+        espeak:  { voice: 'en-us+m3', pitch: 42, pitchRange: 55, rate: 155 },
+        kokoro:  'am_michael',
+      },
+    },
+  ];
+
+  const KOKORO_VOICES: KokoroVoice[] = [
+    'af_heart', 'af_alloy', 'af_aoede', 'af_bella', 'af_jessica',
+    'af_kore',  'af_nicole', 'af_nova', 'af_river', 'af_sarah', 'af_sky',
+    'am_adam',  'am_echo',  'am_eric',  'am_fenrir', 'am_liam',
+    'am_michael', 'am_onyx', 'am_puck', 'am_santa',
+    'bf_alice', 'bf_emma',  'bf_isabella', 'bf_lily',
+    'bm_daniel', 'bm_fable', 'bm_george', 'bm_lewis',
+  ];
+
   function modelFromProduction(prod: StoredProduction) {
-    return storedSceneToModel(prod.scene ?? defaultSceneShell(), prod.actors ?? []);
+    return storedSceneToModel(getActiveScene(prod) ?? defaultSceneShell(), prod.actors ?? []);
   }
 
   let presenter: Presenter | undefined = $state();
@@ -62,7 +107,7 @@
   const RIGHT_PANEL_KEY = 'directionally_right_panel_open';
   let rightPanelOpen = $state((localStorage.getItem(RIGHT_PANEL_KEY) ?? 'true') === 'true');
   $effect(() => { localStorage.setItem(RIGHT_PANEL_KEY, String(rightPanelOpen)); });
-  let rightTab = $state<'stage' | 'script'>('stage');
+  let rightTab = $state<'staging' | 'script'>('staging');
   let designMode = $state(false);
 
   // Productions
@@ -82,9 +127,12 @@
   /** Dialogue lines for the ScriptEditor — derived from doc.script so explicit startTimes round-trip. */
   const speakLines = $derived<ScriptLine[]>(docSnapshot?.script ?? []);
 
+  /** Active scene derived from the current snapshot. Updates whenever a command executes. */
+  const activeScene = $derived(docSnapshot ? getActiveScene(docSnapshot) : undefined);
+
   /** Speech segments derived from scheduled scene actions, used to display speech blocks on the timeline. */
   const speechSegments = $derived(
-    (docSnapshot?.scene?.actions ?? [])
+    (activeScene?.actions ?? [])
       .filter((a): a is SpeakAction => a.type === 'speak')
       .map((a, i) => ({
         index: i,
@@ -152,37 +200,59 @@
   let renameValue = $state('');
   let renamingActorId = $state<string | null>(null);
   let renameActorValue = $state('');
+  let renamingSceneId = $state<string | null>(null);
+  let renameSceneValue = $state('');
 
   // Set-piece management UI state
   let addingSetPiece = $state(false);
   let newSetPieceCatalogueId = $state(CATALOGUE_SET_PIECES[0]?.id ?? '');
-  const scenePieces = $derived(docSnapshot?.scene?.set ?? []);
-  const sceneLights = $derived(docSnapshot?.scene?.lights ?? []);
+  const scenePieces = $derived(activeScene?.set ?? []);
+  const sceneLights = $derived(activeScene?.lights ?? []);
 
   // Contextual label for the gizmo toolbar: communicates what a drag will do.
   // For actors: t≈0 sets the base start position; any other time captures a keyframe.
   // Set pieces always set position (no keyframe support yet).
   const lightingTracks = $derived(
-    (docSnapshot?.scene?.actions ?? []).flatMap((a, i) => a.type === 'lighting' ? [{ action: a as LightingTrack, index: i }] : [])
+    (activeScene?.actions ?? []).flatMap((a, i) => a.type === 'lighting' ? [{ action: a as LightingTrack, index: i }] : [])
   );
   const actorBlocks = $derived(
-    (docSnapshot?.scene?.blocks ?? []).flatMap((b, i) => b.type === 'actorBlock' ? [{ block: b as ActorBlock, index: i }] : [])
+    (activeScene?.blocks ?? []).flatMap((b, i) => b.type === 'actorBlock' ? [{ block: b as ActorBlock, index: i }] : [])
   );
   const lightBlocks = $derived(
-    (docSnapshot?.scene?.blocks ?? []).flatMap((b, i) => b.type === 'lightBlock' ? [{ block: b as LightBlock, index: i }] : [])
+    (activeScene?.blocks ?? []).flatMap((b, i) => b.type === 'lightBlock' ? [{ block: b as LightBlock, index: i }] : [])
   );
   const cameraBlocks = $derived(
-    (docSnapshot?.scene?.blocks ?? []).flatMap((b, i) => b.type === 'cameraBlock' ? [{ block: b as CameraBlock, index: i }] : [])
+    (activeScene?.blocks ?? []).flatMap((b, i) => b.type === 'cameraBlock' ? [{ block: b as CameraBlock, index: i }] : [])
   );
   const setPieceBlocks = $derived(
-    (docSnapshot?.scene?.blocks ?? []).flatMap((b, i) => b.type === 'setPieceBlock' ? [{ block: b as SetPieceBlock, index: i }] : [])
+    (activeScene?.blocks ?? []).flatMap((b, i) => b.type === 'setPieceBlock' ? [{ block: b as SetPieceBlock, index: i }] : [])
   );
+
+  // ── Positioning state machine ────────────────────────────────────────────────
+  type PositioningMode =
+    | { type: 'idle' }
+    | { type: 'spawn'; entityId: string; entityName: string; isCamera: boolean }
+    | { type: 'blockEnd'; blockIdx: number; entityName: string };
+  let positioningMode = $state<PositioningMode>({ type: 'idle' });
+
+  // Derived banner text shown over the viewport while positioning.
+  const positioningBanner = $derived((() => {
+    if (positioningMode.type === 'spawn') {
+      return positioningMode.isCamera
+        ? '\uD83D\uDCCD Camera \u2014 orbit to set scene opening view'
+        : `\uD83D\uDCCD ${positioningMode.entityName} \u2014 drag to set start position`;
+    }
+    if (positioningMode.type === 'blockEnd') {
+      return `\uD83C\uDFAC ${positioningMode.entityName} \u2014 drag to set end position`;
+    }
+    return undefined;
+  })());
 
   // Selected block (for Stage tab Block section)
   let selBlockIdx = $state<number | null>(null);
   // Generic: any block type at the selected index
   const selBlockEntry = $derived(
-    selBlockIdx !== null ? ((docSnapshot?.scene?.blocks ?? [])[selBlockIdx] ?? null) : null
+    selBlockIdx !== null ? ((activeScene?.blocks ?? [])[selBlockIdx] ?? null) : null
   );
   const selBlock = $derived(
     selBlockEntry?.type === 'actorBlock'
@@ -222,9 +292,24 @@
     }
   });
 
+  // When an entity is selected in the viewport at t≈0 with no block active, auto-enter spawn mode.
+  $effect(() => {
+    const id = selectedObjectId;
+    if (id !== null && currentPosition < 0.05 && selBlockIdx === null && positioningMode.type === 'idle' && activeDoc) {
+      const actor = actors.find((a) => a.id === id);
+      if (actor) {
+        positioningMode = { type: 'spawn', entityId: id, entityName: actor.role, isCamera: false };
+      } else if (scenePieces.some((p) => p.name === id)) {
+        positioningMode = { type: 'spawn', entityId: id, entityName: id, isCamera: false };
+      }
+    }
+  });
+
   // Per-actor and per-light expand state
   let expandedActorSettings = $state(new Set<string>());
   let expandedLightAnim = $state(new Set<string>());
+  // Per-production cast expand state (left sidebar)
+  let expandedProductionCast = $state(new Set<string>());
 
   // Per-light intensity input values (light.id → string)
   let lightIntensityValues = $state<Record<string, string>>({});
@@ -290,6 +375,12 @@
     activeExampleId = null;
     presenter?.loadModel(modelFromProduction(prod), 0);
     sidebarOpen = false;
+    positioningMode = { type: 'idle' };
+    // Switch to Script tab for brand-new productions so the author sees the script surface first.
+    const isEmpty = !prod.actors?.length && !prod.scene && !prod.scenes?.length;
+    if (isEmpty) rightTab = 'script';
+    // Auto-expand the loaded production's cast in the sidebar.
+    expandedProductionCast = new Set([prod.id]);
   }
 
   function reloadSandbox() {
@@ -310,7 +401,9 @@
     ProductionStore.save({
       ...copy,
       actors: prod.actors ? [...prod.actors] : undefined,
-      scene:  prod.scene,
+      scenes: prod.scenes ? prod.scenes.map((ns) => ({ ...ns, id: crypto.randomUUID() })) : undefined,
+      scene: prod.scenes ? undefined : prod.scene,
+      activeSceneId: undefined,
       script: prod.script ? [...prod.script] : undefined,
       modifiedAt: Date.now(),
     });
@@ -343,7 +436,7 @@
     if (!activeDoc || !newSetPieceCatalogueId) return;
     const entry = CATALOGUE_SET_PIECES.find((p) => p.id === newSetPieceCatalogueId);
     if (!entry) return;
-    const existing = activeDoc.current.scene?.set ?? [];
+    const existing = getActiveScene(activeDoc.current)?.set ?? [];
     const base = entry.id;
     const count = existing.filter((p) => p.name === base || p.name.startsWith(base + '-')).length;
     const name = count === 0 ? base : `${base}-${count + 1}`;
@@ -407,9 +500,41 @@
     if (!activeDoc || !designMode) return;
     const state = presenter?.getDesignCameraState();
     if (!state) return;
-    const current = activeDoc.current.scene?.camera;
+    const current = getActiveScene(activeDoc.current)?.camera;
     if (!current) return;
     activeDoc.execute(new UpdateCameraCommand({ ...current, position: state.position, lookAt: state.lookAt }));
+  }
+
+  function enterSpawnMode(entityId: string) {
+    if (!designMode) designMode = true;
+    if (entityId === '__camera__') {
+      positioningMode = { type: 'spawn', entityId: '__camera__', entityName: 'Camera', isCamera: true };
+      presenter?.selectSceneObject(null);
+    } else {
+      const actor = actors.find((a) => a.id === entityId);
+      positioningMode = { type: 'spawn', entityId, entityName: actor?.role ?? entityId, isCamera: false };
+      presenter?.selectSceneObject(entityId);
+    }
+    if (currentPosition >= 0.05) presenter?.handleSliderInput(0);
+  }
+
+  function acceptPositioning() {
+    if (positioningMode.type === 'spawn' && positioningMode.isCamera) {
+      captureInitialCamera();
+    }
+    positioningMode = { type: 'idle' };
+  }
+
+  function cancelPositioning() {
+    if (positioningMode.type === 'spawn' && !positioningMode.isCamera) {
+      selectedObjectId = null;
+      presenter?.selectSceneObject(null);
+    }
+    if (positioningMode.type === 'blockEnd') {
+      selBlockIdx = null;
+      presenter?.selectSceneObject(null);
+    }
+    positioningMode = { type: 'idle' };
   }
 
   /**
@@ -438,7 +563,7 @@
     } else {
       const entry = CATALOGUE_SET_PIECES.find((p) => p.id === id);
       if (!entry) return;
-      const existing = activeDoc.current.scene?.set ?? [];
+      const existing = getActiveScene(activeDoc.current)?.set ?? [];
       const base = entry.id;
       const count = existing.filter((p) => p.name === base || p.name.startsWith(base + '-')).length;
       const name = count === 0 ? base : `${base}-${count + 1}`;
@@ -522,6 +647,7 @@
     activeDoc = null;
     docSnapshot = null;
     sidebarOpen = false;
+    positioningMode = { type: 'idle' };
   }
 
   onMount(() => {
@@ -536,6 +662,10 @@
     mq.addEventListener('change', onChange);
 
     function handleKeyDown(e: KeyboardEvent) {
+      if (positioningMode.type !== 'idle') {
+        if (e.key === 'Enter') { e.preventDefault(); acceptPositioning(); return; }
+        if (e.key === 'Escape') { e.preventDefault(); cancelPositioning(); return; }
+      }
       if (!activeDoc) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key === 'z' && !e.shiftKey) { e.preventDefault(); activeDoc.undo(); }
@@ -637,16 +767,224 @@
                                 />
                               </form>
                             {:else}
-                              <button
-                                class="scene-btn"
-                                class:active={activeProductionId === prod.id}
-                                onclick={() => loadProduction(prod)}
-                              >{prod.name}</button>
-                              <div class="prod-actions">
-                                <button class="icon-btn" onclick={() => startRename(prod.id)} title="Rename">✎</button>
-                                <button class="icon-btn" onclick={() => duplicateProduction(prod)} title="Duplicate">⎘</button>
-                                <button class="icon-btn danger" onclick={() => deleteProduction(prod.id)} title="Delete">✕</button>
+                              <div class="prod-row-main">
+                                <button
+                                  class="prod-expand-btn"
+                                  onclick={() => {
+                                    const next = new Set(expandedProductionCast);
+                                    next.has(prod.id) ? next.delete(prod.id) : next.add(prod.id);
+                                    expandedProductionCast = next;
+                                  }}
+                                  title="Toggle cast"
+                                  aria-label="Toggle cast list"
+                                >{expandedProductionCast.has(prod.id) ? '▼' : '▶'}</button>
+                                <button
+                                  class="scene-btn"
+                                  class:active={activeProductionId === prod.id}
+                                  onclick={() => loadProduction(prod)}
+                                >{prod.name}</button>
+                                <div class="prod-actions">
+                                  <button class="icon-btn" onclick={() => startRename(prod.id)} title="Rename">✎</button>
+                                  <button class="icon-btn" onclick={() => duplicateProduction(prod)} title="Duplicate">⎘</button>
+                                  <button class="icon-btn danger" onclick={() => deleteProduction(prod.id)} title="Delete">✕</button>
+                                </div>
                               </div>
+                            {/if}
+                            {#if expandedProductionCast.has(prod.id)}
+                              {@const isActive = activeProductionId === prod.id}
+                              {@const prodActors = isActive ? actors : (prod.actors ?? [])}
+                              <div class="prod-cast">
+                                {#if isActive}
+                                  {#if prodActors.length === 0 && !addingActor}
+                                    <p class="stage-empty">No cast — using default robots.</p>
+                                  {:else}
+                                    <ul class="cast-list">
+                                      {#each prodActors as actor}
+                                        <li class="cast-row" class:selected={selectedObjectId === actor.id}>
+                                          {#if renamingActorId === actor.id}
+                                            <input
+                                              class="cast-role-input"
+                                              type="text"
+                                              bind:value={renameActorValue}
+                                              onblur={() => commitActorRename(actor.id)}
+                                              onkeydown={(e) => { if (e.key === 'Enter') commitActorRename(actor.id); if (e.key === 'Escape') renamingActorId = null; }}
+                                              use:focusAndSelect
+                                            />
+                                          {:else}
+                                            <button class="cast-role-btn" title="Click to rename" onclick={() => startActorRename(actor.id)}>{actor.role}</button>
+                                          {/if}
+                                          <span class="cast-char">{CATALOGUE_CHARACTERS.find(c => c.id === actor.catalogueId)?.label ?? actor.catalogueId}</span>
+                                          <button
+                                            class="icon-btn"
+                                            class:active={expandedActorSettings.has(actor.id)}
+                                            title="Actor settings (idle clip, scale)"
+                                            onclick={() => {
+                                              const next = new Set(expandedActorSettings);
+                                              next.has(actor.id) ? next.delete(actor.id) : next.add(actor.id);
+                                              expandedActorSettings = next;
+                                              if (!actorScaleValues[actor.id]) {
+                                                actorScaleValues = { ...actorScaleValues, [actor.id]: String(actor.scale ?? '') };
+                                              }
+                                            }}
+                                          >⚙</button>
+                                          <button class="icon-btn danger" onclick={() => removeActor(actor.id)} title="Remove actor">✕</button>
+                                        </li>
+                                        {#if expandedActorSettings.has(actor.id)}
+                                          {@const clips = discoveredClips[actor.id] ?? []}
+                                          <li class="anim-light-expand">
+                                            <div class="anim-subsection">
+                                              <div class="anim-row">
+                                                <label class="anim-label" for="idle-{actor.id}">Idle clip</label>
+                                                {#if clips.length > 0}
+                                                  <select
+                                                    id="idle-{actor.id}"
+                                                    class="actor-char-select"
+                                                    value={actor.idleAnimation ?? ''}
+                                                    onchange={(e) => activeDoc?.execute(new SetActorIdleAnimationCommand(actor.id, e.currentTarget.value || undefined))}
+                                                  >
+                                                    <option value="">(catalogue default)</option>
+                                                    {#each clips as clip}
+                                                      <option>{clip}</option>
+                                                    {/each}
+                                                  </select>
+                                                {:else}
+                                                  <input
+                                                    id="idle-{actor.id}"
+                                                    class="rename-input"
+                                                    type="text"
+                                                    placeholder="clip name (load scene first)"
+                                                    value={actor.idleAnimation ?? ''}
+                                                    onchange={(e) => activeDoc?.execute(new SetActorIdleAnimationCommand(actor.id, e.currentTarget.value.trim() || undefined))}
+                                                  />
+                                                {/if}
+                                              </div>
+                                              <div class="anim-row">
+                                                <label class="anim-label" for="scale-{actor.id}">Scale</label>
+                                                <input
+                                                  id="scale-{actor.id}"
+                                                  class="anim-number"
+                                                  type="number"
+                                                  step="0.1"
+                                                  min="0.01"
+                                                  placeholder="default"
+                                                  value={actorScaleValues[actor.id] ?? (actor.scale ?? '')}
+                                                  oninput={(e) => { actorScaleValues = { ...actorScaleValues, [actor.id]: e.currentTarget.value }; }}
+                                                  onchange={(e) => {
+                                                    const n = parseFloat(e.currentTarget.value);
+                                                    activeDoc?.execute(new SetActorScaleCommand(actor.id, isNaN(n) || e.currentTarget.value.trim() === '' ? undefined : n));
+                                                  }}
+                                                />
+                                              </div>
+                                              <div class="anim-row">
+                                                <label class="anim-label" for="voice-preset-{actor.id}">Voice</label>
+                                                <select
+                                                  id="voice-preset-{actor.id}"
+                                                  class="actor-char-select"
+                                                  value={VOICE_PRESETS.findIndex((p) => JSON.stringify(p.voice) === JSON.stringify(actor.voice ?? VOICE_PRESETS[0].voice))}
+                                                  onchange={(e) => {
+                                                    const idx = parseInt(e.currentTarget.value);
+                                                    if (idx >= 0 && idx < VOICE_PRESETS.length) {
+                                                      const preset = VOICE_PRESETS[idx];
+                                                      activeDoc?.execute(new SetActorVoiceCommand(actor.id, preset.voice));
+                                                    }
+                                                  }}
+                                                >
+                                                  {#each VOICE_PRESETS as preset, idx}
+                                                    <option value={idx}>{preset.label}</option>
+                                                  {/each}
+                                                </select>
+                                              </div>
+                                              {#if voiceMode === 'kokoro'}
+                                                <div class="anim-row">
+                                                  <label class="anim-label" for="kokoro-voice-{actor.id}">Kokoro</label>
+                                                  <select
+                                                    id="kokoro-voice-{actor.id}"
+                                                    class="actor-char-select"
+                                                    value={actor.voice?.kokoro ?? (VOICE_PRESETS[0].voice.kokoro ?? '')}
+                                                    onchange={(e) => {
+                                                      const current = actor.voice ?? VOICE_PRESETS[0].voice;
+                                                      activeDoc?.execute(new SetActorVoiceCommand(actor.id, { ...current, kokoro: e.currentTarget.value as KokoroVoice }));
+                                                    }}
+                                                  >
+                                                    {#each KOKORO_VOICES as v}
+                                                      <option value={v}>{v}</option>
+                                                    {/each}
+                                                  </select>
+                                                </div>
+                                              {/if}
+                                            </div>
+                                          </li>
+                                        {/if}
+                                      {/each}
+                                    </ul>
+                                  {/if}
+                                  {#if addingActor}
+                                    <form class="add-actor-form" onsubmit={(e) => { e.preventDefault(); addActor(); }}>
+                                      <input
+                                        class="rename-input"
+                                        placeholder="Role name"
+                                        bind:value={newActorRole}
+                                        aria-label="Role name"
+                                      />
+                                      <select class="actor-char-select" bind:value={newActorCatalogueId} aria-label="Character">
+                                        {#each CATALOGUE_CHARACTERS as char}
+                                          <option value={char.id}>{char.label}</option>
+                                        {/each}
+                                      </select>
+                                      <div class="add-actor-btns">
+                                        <button class="new-btn" type="submit">Add</button>
+                                        <button class="icon-btn" type="button" onclick={() => { addingActor = false; newActorRole = ''; }}>Cancel</button>
+                                      </div>
+                                    </form>
+                                  {/if}
+                                  <button class="new-btn prod-cast-add" onclick={() => { addingActor = !addingActor; }} title="Add character">+ Add</button>
+                                {:else}
+                                  {#if prodActors.length === 0}
+                                    <p class="stage-empty">No cast.</p>
+                                  {:else}
+                                    <ul class="cast-list">
+                                      {#each prodActors as actor}
+                                        <li class="cast-row">
+                                          <span class="cast-role">{actor.role}</span>
+                                          <span class="cast-char">{CATALOGUE_CHARACTERS.find(c => c.id === actor.catalogueId)?.label ?? actor.catalogueId}</span>
+                                        </li>
+                                      {/each}
+                                    </ul>
+                                  {/if}
+                                {/if}
+                              </div>
+                              {#if isActive && docSnapshot}
+                                {@const prodScenes = docSnapshot.scenes ?? []}
+                                {@const activeSceneId = docSnapshot.activeSceneId ?? prodScenes[0]?.id}
+                                <div class="prod-cast">
+                                  <span class="cast-section-label">Scenes</span>
+                                  {#if prodScenes.length > 0}
+                                    <ul class="cast-list">
+                                      {#each prodScenes as ns}
+                                        <li class="cast-row" class:selected={ns.id === activeSceneId}>
+                                          {#if renamingSceneId === ns.id}
+                                            <input
+                                              class="cast-role-input"
+                                              type="text"
+                                              bind:value={renameSceneValue}
+                                              onblur={() => { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; }}
+                                              onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; } if (e.key === 'Escape') renamingSceneId = null; }}
+                                              use:focusAndSelect
+                                            />
+                                          {:else}
+                                            <button class="cast-role-btn" onclick={() => activeDoc?.execute(new SwitchSceneCommand(ns.id))} title="Switch to scene">{ns.name}</button>
+                                            <button class="icon-btn" onclick={() => { renameSceneValue = ns.name; renamingSceneId = ns.id; }} title="Rename scene">✎</button>
+                                            {#if prodScenes.length > 1}
+                                              <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
+                                            {/if}
+                                          {/if}
+                                        </li>
+                                      {/each}
+                                    </ul>
+                                  {/if}
+                                  <button class="new-btn prod-cast-add" onclick={() => activeDoc?.execute(new AddSceneCommand())} title="Add scene">+ Scene</button>
+                                </div>
+                              {/if}
                             {/if}
                           </li>
                         {/each}
@@ -669,6 +1007,41 @@
                           </li>
                         {/each}
                       </ul>
+                    </details>
+                  </section>
+
+                  <!-- Audio settings (global) -->
+                  <section class="sidebar-section">
+                    <details>
+                      <summary class="section-heading">Audio</summary>
+                      <div class="audio-settings">
+                        <div class="anim-row">
+                          <label class="anim-label" for="voice-mode-left">Engine</label>
+                          <select
+                            id="voice-mode-left"
+                            class="actor-char-select"
+                            bind:value={voiceMode}
+                            disabled={!isToneSetup}
+                          >
+                            <option value="espeak">eSpeak (fast)</option>
+                            <option value="web-speech">Browser voices</option>
+                            <option value="kokoro">Kokoro (~92 MB)</option>
+                          </select>
+                        </div>
+                        <div class="anim-row">
+                          <label class="anim-label" for="bubble-scale-left">Bubble</label>
+                          <input
+                            id="bubble-scale-left"
+                            type="range"
+                            min="0.1"
+                            max="1.5"
+                            step="0.05"
+                            bind:value={bubbleScale}
+                            style="flex:1"
+                          />
+                          <span class="anim-label">{bubbleScale.toFixed(1)}</span>
+                        </div>
+                      </div>
                     </details>
                   </section>
 
@@ -727,6 +1100,9 @@
               }
               return true;
             }}
+            positioningBanner={positioningBanner}
+            onpositionaccept={acceptPositioning}
+            onpositioncancel={cancelPositioning}
           />
         </div>
       </Pane>
@@ -742,9 +1118,9 @@
             <div class="tab-bar right-panel-tab-bar">
               <button
                 class="tab-btn"
-                class:active={rightTab === 'stage'}
-                onclick={() => (rightTab = 'stage')}
-              >Stage</button>
+                class:active={rightTab === 'staging'}
+                onclick={() => (rightTab = 'staging')}
+              >Staging</button>
               <button
                 class="tab-btn"
                 class:active={rightTab === 'script'}
@@ -758,8 +1134,9 @@
               >›</button>
             </div>
             <div class="tab-content stage-tab-content">
-              {#if rightTab === 'stage'}
+              {#if rightTab === 'staging'}
                 {#if activeDoc}
+                  {#if activeScene}
                   <!-- Scene duration override -->
                   <div class="stage-section">
                     <div class="stage-section-header">
@@ -774,123 +1151,10 @@
                         min="0"
                         step="0.5"
                         placeholder="auto"
-                        value={docSnapshot?.scene?.duration ?? ''}
+                        value={activeScene?.duration ?? ''}
                         onchange={(e) => setSceneDuration(e.currentTarget.value)}
                       />
                     </div>
-                  </div>
-
-                  <!-- Cast -->
-                  <div class="stage-section">
-                    <div class="stage-section-header">
-                      <span class="stage-section-label">Cast</span>
-                      <button class="new-btn" onclick={() => { addingActor = !addingActor; }} title="Add character">+ Add</button>
-                    </div>
-                    {#if actors.length === 0 && !addingActor}
-                      <p class="stage-empty">No cast — using default robots.</p>
-                    {:else}
-                      <ul class="cast-list">
-                        {#each actors as actor}
-                          <li class="cast-row" class:selected={selectedObjectId === actor.id}>
-                            {#if renamingActorId === actor.id}
-                              <input
-                                class="cast-role-input"
-                                type="text"
-                                bind:value={renameActorValue}
-                                onblur={() => commitActorRename(actor.id)}
-                                onkeydown={(e) => { if (e.key === 'Enter') commitActorRename(actor.id); if (e.key === 'Escape') renamingActorId = null; }}
-                                use:focusAndSelect
-                              />
-                            {:else}
-                              <button class="cast-role-btn" title="Click to rename" onclick={() => startActorRename(actor.id)}>{actor.role}</button>
-                            {/if}
-                            <span class="cast-char">{CATALOGUE_CHARACTERS.find(c => c.id === actor.catalogueId)?.label ?? actor.catalogueId}</span>
-                            <button
-                              class="icon-btn"
-                              class:active={expandedActorSettings.has(actor.id)}
-                              title="Actor settings (idle clip, scale)"
-                              onclick={() => {
-                                const next = new Set(expandedActorSettings);
-                                next.has(actor.id) ? next.delete(actor.id) : next.add(actor.id);
-                                expandedActorSettings = next;
-                                if (!actorScaleValues[actor.id]) {
-                                  actorScaleValues = { ...actorScaleValues, [actor.id]: String(actor.scale ?? '') };
-                                }
-                              }}
-                            >⚙</button>
-                            <button class="icon-btn danger" onclick={() => removeActor(actor.id)} title="Remove actor">✕</button>
-                          </li>
-                          {#if expandedActorSettings.has(actor.id)}
-                            {@const clips = discoveredClips[actor.id] ?? []}
-                            <li class="anim-light-expand">
-                              <div class="anim-subsection">
-                                <div class="anim-row">
-                                  <label class="anim-label" for="idle-{actor.id}">Idle clip</label>
-                                  {#if clips.length > 0}
-                                    <select
-                                      id="idle-{actor.id}"
-                                      class="actor-char-select"
-                                      value={actor.idleAnimation ?? ''}
-                                      onchange={(e) => activeDoc?.execute(new SetActorIdleAnimationCommand(actor.id, e.currentTarget.value || undefined))}
-                                    >
-                                      <option value="">(catalogue default)</option>
-                                      {#each clips as clip}
-                                        <option>{clip}</option>
-                                      {/each}
-                                    </select>
-                                  {:else}
-                                    <input
-                                      id="idle-{actor.id}"
-                                      class="rename-input"
-                                      type="text"
-                                      placeholder="clip name (load scene first)"
-                                      value={actor.idleAnimation ?? ''}
-                                      onchange={(e) => activeDoc?.execute(new SetActorIdleAnimationCommand(actor.id, e.currentTarget.value.trim() || undefined))}
-                                    />
-                                  {/if}
-                                </div>
-                                <div class="anim-row">
-                                  <label class="anim-label" for="scale-{actor.id}">Scale</label>
-                                  <input
-                                    id="scale-{actor.id}"
-                                    class="anim-number"
-                                    type="number"
-                                    step="0.1"
-                                    min="0.01"
-                                    placeholder="default"
-                                    value={actorScaleValues[actor.id] ?? (actor.scale ?? '')}
-                                    oninput={(e) => { actorScaleValues = { ...actorScaleValues, [actor.id]: e.currentTarget.value }; }}
-                                    onchange={(e) => {
-                                      const n = parseFloat(e.currentTarget.value);
-                                      activeDoc?.execute(new SetActorScaleCommand(actor.id, isNaN(n) || e.currentTarget.value.trim() === '' ? undefined : n));
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            </li>
-                          {/if}
-                        {/each}
-                      </ul>
-                    {/if}
-                    {#if addingActor}
-                      <form class="add-actor-form" onsubmit={(e) => { e.preventDefault(); addActor(); }}>
-                        <input
-                          class="rename-input"
-                          placeholder="Role name"
-                          bind:value={newActorRole}
-                          aria-label="Role name"
-                        />
-                        <select class="actor-char-select" bind:value={newActorCatalogueId} aria-label="Character">
-                          {#each CATALOGUE_CHARACTERS as char}
-                            <option value={char.id}>{char.label}</option>
-                          {/each}
-                        </select>
-                        <div class="add-actor-btns">
-                          <button class="new-btn" type="submit">Add</button>
-                          <button class="icon-btn" type="button" onclick={() => { addingActor = false; newActorRole = ''; }}>Cancel</button>
-                        </div>
-                      </form>
-                    {/if}
                   </div>
 
                   <!-- Selected block properties -->
@@ -1165,51 +1429,21 @@
                     <div class="stage-section-header">
                       <span class="stage-section-label">Camera</span>
                       {#if designMode}
-                        <button class="new-btn" onclick={captureInitialCamera} title="Capture design camera as the scene's starting position">⊕ Initial pos</button>
-                        <button class="new-btn" onclick={() => presenter?.snapDesignCameraToPlayback()} title="Snap design view to match the playback camera (P)">⊙ Snap view</button>
+                        <button class="new-btn" onclick={() => presenter?.snapDesignCameraToPlayback()} title="Snap design view to match the playback camera (P)">⊙ Sync view</button>
                       {/if}
                     </div>
                     <div class="anim-row">
                       <span class="anim-label">Initial pos</span>
-                      <span class="anim-label blk-pos">{(docSnapshot?.scene?.camera.position ?? []).map((v: number) => v.toFixed(1)).join(', ')}</span>
+                      <span class="anim-label blk-pos">{(activeScene?.camera.position ?? []).map((v: number) => v.toFixed(1)).join(', ')}</span>
                     </div>
                     {#if !designMode}
                       <p class="stage-empty">Enable design mode to capture initial camera position.</p>
                     {/if}
                   </div>
 
-                  <!-- Voice -->
-                  <div class="stage-section">
-                    <div class="stage-section-header">
-                      <span class="stage-section-label">Voice</span>
-                    </div>
-                    <div class="anim-row">
-                      <label class="anim-label" for="voice-mode-stage">Mode</label>
-                      <select
-                        id="voice-mode-stage"
-                        class="actor-char-select"
-                        bind:value={voiceMode}
-                        disabled={!isToneSetup}
-                      >
-                        <option value="espeak">eSpeak (fast)</option>
-                        <option value="web-speech">Browser voices</option>
-                        <option value="kokoro">Kokoro (~92 MB)</option>
-                      </select>
-                    </div>
-                    <div class="anim-row">
-                      <label class="anim-label" for="bubble-scale-stage">Bubble</label>
-                      <input
-                        id="bubble-scale-stage"
-                        type="range"
-                        min="0.1"
-                        max="1.5"
-                        step="0.05"
-                        bind:value={bubbleScale}
-                        style="flex:1"
-                      />
-                      <span class="anim-label">{bubbleScale.toFixed(1)}</span>
-                    </div>
-                  </div>
+                {:else}
+                  <p class="panel-placeholder">Add a scene to start staging.</p>
+                {/if}
                 {:else}
                   <p class="panel-placeholder">Select or create a production.</p>
                 {/if}
@@ -1271,21 +1505,30 @@
           onspeechmove={handleSpeechMove}
           selectedBlockIndex={selBlockIdx}
           focusedActorId={selectedObjectId}
+          onspawnselect={enterSpawnMode}
           onblockselect={(i) => {
             selBlockIdx = i;
             if (i !== null) {
-              if (rightTab !== 'stage') rightTab = 'stage';
-              const raw = (docSnapshot?.scene?.blocks ?? [])[i];
+              if (rightTab !== 'staging') rightTab = 'staging';
+              const raw = (activeScene?.blocks ?? [])[i];
               if (raw) presenter?.handleSliderInput(raw.endTime);
               if (raw?.type === 'actorBlock') {
                 presenter?.selectSceneObject(raw.actorId);
+                const entityName = actors.find((a) => a.id === raw.actorId)?.role ?? raw.actorId;
+                positioningMode = { type: 'blockEnd', blockIdx: i, entityName };
               } else if (raw?.type === 'setPieceBlock') {
                 presenter?.selectSceneObject(raw.targetId);
+                positioningMode = { type: 'blockEnd', blockIdx: i, entityName: raw.targetId };
+              } else if (raw?.type === 'cameraBlock') {
+                presenter?.selectSceneObject(null);
+                positioningMode = { type: 'blockEnd', blockIdx: i, entityName: 'Camera' };
               } else {
                 presenter?.selectSceneObject(null);
+                positioningMode = { type: 'idle' };
               }
             } else {
               presenter?.selectSceneObject(null);
+              if (positioningMode.type === 'blockEnd') positioningMode = { type: 'idle' };
             }
           }}
           onaddblock={(actorId, startTime, endTime) => {
@@ -1293,12 +1536,14 @@
             if (!designMode) designMode = true;
             const newBlock: ActorBlock = { type: 'actorBlock', actorId, startTime, endTime };
             activeDoc.execute(new AddActorBlockCommand(newBlock));
-            const newIdx = (activeDoc.current.scene?.blocks?.length ?? 1) - 1;
+            const newIdx = (getActiveScene(activeDoc.current)?.blocks?.length ?? 1) - 1;
             selBlockIdx = newIdx;
-            if (rightTab !== 'stage') rightTab = 'stage';
+            if (rightTab !== 'staging') rightTab = 'staging';
             selectedObjectId = actorId;
             presenter?.selectSceneObject(actorId);
             presenter?.handleSliderInput(endTime);
+            const entityName = actors.find((a) => a.id === actorId)?.role ?? actorId;
+            positioningMode = { type: 'blockEnd', blockIdx: newIdx, entityName };
           }}
           onupdateblock={(i, patch) => activeDoc?.execute(new UpdateActorBlockCommand(i, patch))}
           onremoveblock={(i) => { activeDoc?.execute(new RemoveActorBlockCommand(i)); if (selBlockIdx === i) { selBlockIdx = null; presenter?.selectSceneObject(null); } }}
@@ -1306,8 +1551,8 @@
             if (!activeDoc) return;
             const newBlock: LightBlock = { type: 'lightBlock', lightId, startTime, endTime };
             activeDoc.execute(new AddLightBlockCommand(newBlock));
-            selBlockIdx = (activeDoc.current.scene?.blocks?.length ?? 1) - 1;
-            if (rightTab !== 'stage') rightTab = 'stage';
+            selBlockIdx = (getActiveScene(activeDoc.current)?.blocks?.length ?? 1) - 1;
+            if (rightTab !== 'staging') rightTab = 'staging';
           }}
           onupdatelightblock={(i, patch) => activeDoc?.execute(new UpdateLightBlockCommand(i, patch))}
           onremovelightblock={(i) => { activeDoc?.execute(new RemoveLightBlockCommand(i)); if (selBlockIdx === i) selBlockIdx = null; }}
@@ -1315,8 +1560,8 @@
             if (!activeDoc) return;
             const newBlock: CameraBlock = { type: 'cameraBlock', startTime, endTime };
             activeDoc.execute(new AddCameraBlockCommand(newBlock));
-            selBlockIdx = (activeDoc.current.scene?.blocks?.length ?? 1) - 1;
-            if (rightTab !== 'stage') rightTab = 'stage';
+            selBlockIdx = (getActiveScene(activeDoc.current)?.blocks?.length ?? 1) - 1;
+            if (rightTab !== 'staging') rightTab = 'staging';
           }}
           onupdatecamerablock={(i, patch) => activeDoc?.execute(new UpdateCameraBlockCommand(i, patch))}
           onremovecamerablock={(i) => { activeDoc?.execute(new RemoveCameraBlockCommand(i)); if (selBlockIdx === i) selBlockIdx = null; }}
@@ -1324,8 +1569,8 @@
             if (!activeDoc) return;
             const newBlock: SetPieceBlock = { type: 'setPieceBlock', targetId, startTime, endTime };
             activeDoc.execute(new AddSetPieceBlockCommand(newBlock));
-            selBlockIdx = (activeDoc.current.scene?.blocks?.length ?? 1) - 1;
-            if (rightTab !== 'stage') rightTab = 'stage';
+            selBlockIdx = (getActiveScene(activeDoc.current)?.blocks?.length ?? 1) - 1;
+            if (rightTab !== 'staging') rightTab = 'staging';
             presenter?.selectSceneObject(targetId);
             presenter?.handleSliderInput(endTime);
           }}
@@ -1479,15 +1724,61 @@
 
   .production-row {
     display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .prod-row-main {
+    display: flex;
     align-items: center;
   }
 
-  .production-row .scene-btn {
+  .prod-expand-btn {
+    background: none;
+    border: none;
+    color: #666;
+    padding: 2px 4px;
+    cursor: pointer;
+    font-size: 10px;
+    flex-shrink: 0;
+    min-width: 18px;
+    line-height: 1;
+  }
+
+  .prod-expand-btn:hover {
+    color: #bbb;
+  }
+
+  .prod-row-main .scene-btn {
     flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .prod-cast {
+    padding: 4px 4px 6px 20px;
+    border-left: 2px solid #2a2a2a;
+    margin: 2px 0 4px 10px;
+  }
+
+  .cast-section-label {
+    display: block;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #666;
+    margin-bottom: 2px;
+  }
+
+  .prod-cast-add {
+    margin-top: 6px;
+    width: 100%;
+  }
+
+  .audio-settings {
+    padding: 4px 8px 8px;
   }
 
   .prod-actions {
@@ -1497,8 +1788,8 @@
     flex-shrink: 0;
   }
 
-  .production-row:hover .prod-actions,
-  .production-row:focus-within .prod-actions {
+  .prod-row-main:hover .prod-actions,
+  .prod-row-main:focus-within .prod-actions {
     opacity: 1;
   }
 

@@ -1,8 +1,8 @@
 import type { Command } from './Command.js';
-import type { StoredProduction, StoredActor, StoredScene } from '../storage/types.js';
+import type { StoredProduction, StoredActor, StoredScene, NamedScene } from '../storage/types.js';
 import type { ScriptLine } from '../../lib/sandbox/types.js';
-import type { CameraConfig, Vec3, SetPiece, StagedActor, SpeakAction, CameraTrackAction, PathKeyframe, ClipTrack, TransformTrack, LightingTrack, LoopStyle, ActorBlock, LightBlock, CameraBlock, SetPieceBlock } from '../domain/types.js';
-import { restageCast, estimateDuration } from '../storage/sceneBuilder.js';
+import type { CameraConfig, Vec3, SetPiece, StagedActor, SpeakAction, CameraTrackAction, PathKeyframe, ClipTrack, TransformTrack, LightingTrack, LoopStyle, ActorBlock, LightBlock, CameraBlock, SetPieceBlock, ActorVoice } from '../domain/types.js';
+import { restageCast, estimateDuration, defaultSceneShell } from '../storage/sceneBuilder.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -649,6 +649,20 @@ export class SetActorScaleCommand implements Command {
   }
 }
 
+export class SetActorVoiceCommand implements Command {
+  readonly label: string;
+  constructor(private readonly actorId: string, private readonly voice: ActorVoice | undefined) {
+    this.label = voice ? `Set voice for actor` : `Reset voice for actor`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    const actors = doc.actors?.map((a) =>
+      a.id === this.actorId ? { ...a, voice: this.voice } : a,
+    );
+    if (!actors) return doc;
+    return touch({ ...doc, actors });
+  }
+}
+
 // ── ActorBlock commands (Phase 8.5 — high-level authored blocks) ──────────────────
 
 /**
@@ -846,5 +860,67 @@ export class UpdateSetPieceBlockCommand implements Command {
       ...blocks.slice(this.index + 1),
     ];
     return touch({ ...doc, scene: { ...doc.scene, blocks: newBlocks } });
+  }
+}
+
+// ── Scene management commands ─────────────────────────────────────────────────
+
+/**
+ * Add a new empty scene to the production's scene list.
+ * Migrates legacy `scene` field to `scenes[0]` on first call.
+ */
+export class AddSceneCommand implements Command {
+  readonly label: string;
+  constructor(private readonly sceneName: string = '') {
+    this.label = `Add scene "${sceneName || 'New Scene'}"`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    // Migrate legacy single-scene productions on first add.
+    const existingScenes: NamedScene[] = doc.scenes
+      ?? (doc.scene ? [{ id: crypto.randomUUID(), name: 'Scene 1', scene: doc.scene }] : []);
+    const newSceneId = crypto.randomUUID();
+    const name = this.sceneName || `Scene ${existingScenes.length + 1}`;
+    const newScene: NamedScene = { id: newSceneId, name, scene: defaultSceneShell() };
+    const { scene: _legacy, ...rest } = doc;
+    return touch({ ...rest, scenes: [...existingScenes, newScene], activeSceneId: doc.activeSceneId ?? existingScenes[0]?.id });
+  }
+}
+
+/** Rename the scene with the given id. */
+export class RenameSceneCommand implements Command {
+  readonly label: string;
+  constructor(private readonly sceneId: string, private readonly name: string) {
+    this.label = `Rename scene to "${name}"`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scenes) return doc;
+    const scenes = doc.scenes.map((ns) =>
+      ns.id === this.sceneId ? { ...ns, name: this.name } : ns,
+    );
+    return touch({ ...doc, scenes });
+  }
+}
+
+/** Remove a scene from the production. Cannot remove the last scene. */
+export class RemoveSceneCommand implements Command {
+  readonly label = 'Remove scene';
+  constructor(private readonly sceneId: string) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scenes || doc.scenes.length <= 1) return doc;
+    const scenes = doc.scenes.filter((ns) => ns.id !== this.sceneId);
+    const activeSceneId = doc.activeSceneId === this.sceneId
+      ? (scenes[0]?.id ?? undefined)
+      : doc.activeSceneId;
+    return touch({ ...doc, scenes, activeSceneId });
+  }
+}
+
+/** Switch the active scene to the one with the given id. */
+export class SwitchSceneCommand implements Command {
+  readonly label = 'Switch scene';
+  constructor(private readonly sceneId: string) {}
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.scenes?.find((ns) => ns.id === this.sceneId)) return doc;
+    return touch({ ...doc, activeSceneId: this.sceneId });
   }
 }

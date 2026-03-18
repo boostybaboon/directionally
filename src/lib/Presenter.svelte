@@ -108,6 +108,10 @@
     voiceBackend?: VoiceBackend;
     sliderValue?: number;
     isSliderDragging?: boolean;
+    /** When set, renders a banner with accept/cancel controls over the viewport. */
+    positioningBanner?: string;
+    onpositionaccept?: () => void;
+    onpositioncancel?: () => void;
   }
 
   let {
@@ -128,6 +132,9 @@
     dragHint = '',
     rotationEnabled = true,
     objectSelectable,
+    positioningBanner,
+    onpositionaccept,
+    onpositioncancel,
   }: PresenterProps = $props();
 
   // Tracks the most recently loaded model to support re-synthesis when voiceMode changes.
@@ -1068,6 +1075,44 @@
     background: rgba(55, 55, 65, 0.90);
   }
 
+  .positioning-banner {
+    position: absolute;
+    top: 46px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 11;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(20, 20, 28, 0.92);
+    border: 1px solid rgba(255, 200, 80, 0.35);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: #ffd080;
+    backdrop-filter: blur(4px);
+    white-space: nowrap;
+    user-select: none;
+  }
+
+  .positioning-banner-text {
+    flex: 1;
+  }
+
+  .positioning-accept,
+  .positioning-cancel {
+    padding: 2px 10px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    font-size: 11px;
+    cursor: pointer;
+    background: rgba(50, 50, 60, 0.9);
+    color: #e8e8e8;
+  }
+
+  .positioning-accept:hover { background: rgba(60, 130, 60, 0.85); border-color: rgba(100, 200, 100, 0.4); }
+  .positioning-cancel:hover { background: rgba(120, 50, 50, 0.85); border-color: rgba(200, 100, 100, 0.4); }
+
   .gizmo-toolbar {
     position: absolute;
     bottom: 12px;
@@ -1137,6 +1182,13 @@
       onclick={() => { designMode = !designMode; }}
       title={designMode ? 'Switch to playback view' : 'Switch to design view'}
     >{designMode ? '▶ Switch to Playback view' : '✏ Switch to Design view'}</button>
+    {#if positioningBanner}
+      <div class="positioning-banner">
+        <span class="positioning-banner-text">{positioningBanner}</span>
+        <button class="positioning-accept" onclick={onpositionaccept}>✓ Accept</button>
+        <button class="positioning-cancel" onclick={onpositioncancel}>✕ Cancel</button>
+      </div>
+    {/if}
     {#if designMode}
       <div class="gizmo-toolbar" role="toolbar" aria-label="Gizmo mode">
         {#if selectedObjectId}

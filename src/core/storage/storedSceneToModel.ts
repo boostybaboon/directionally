@@ -50,7 +50,7 @@ export function storedSceneToModel(storedScene: StoredScene, storedActors: Store
       id:             sa.id,
       name:           sa.role,
       asset:          { type: 'gltf', url: character?.gltfPath ?? FALLBACK_GLTF_URL },
-      voice:          defaultVoice(i),
+      voice:          sa.voice ?? defaultVoice(i),
       defaultRotation: character?.defaultRotation,
     };
   });

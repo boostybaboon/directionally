@@ -43,13 +43,15 @@ export const ProductionStore = {
   /** Create a new empty production, persist it, and return it. */
   create(name: string): StoredProduction {
     const now = Date.now();
+    const sceneId = crypto.randomUUID();
     const production: StoredProduction = {
       id: crypto.randomUUID(),
       name,
       createdAt: now,
       modifiedAt: now,
       actors: [],
-      scene: defaultSceneShell(),
+      scenes: [{ id: sceneId, name: 'Scene 1', scene: defaultSceneShell() }],
+      activeSceneId: sceneId,
       script: [],
     };
     this.save(production);

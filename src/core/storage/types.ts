@@ -1,5 +1,6 @@
 import type { ScriptLine } from '../../lib/sandbox/types.js';
 import type {
+  ActorVoice,
   CameraConfig,
   LightConfig,
   SetPiece,
@@ -22,6 +23,8 @@ export type StoredActor = {
   idleAnimation?: string;
   /** Uniform scale override. Overrides the catalogue defaultScale. */
   scale?: number;
+  /** Per-actor voice configuration. Falls back to cycling DEFAULT_VOICES when absent. */
+  voice?: ActorVoice;
 };
 
 /**
@@ -42,6 +45,15 @@ export type StoredScene = {
 };
 
 /**
+ * A named, individually addressable scene within a production.
+ */
+export type NamedScene = {
+  id: string;
+  name: string;
+  scene: StoredScene;
+};
+
+/**
  * A named production document stored persistently.
  */
 export type StoredProduction = {
@@ -52,7 +64,18 @@ export type StoredProduction = {
   modifiedAt: number; // unix ms
   /** Cast members. Absent on pre-5a productions — falls back to legacy alpha/beta pair. */
   actors?: StoredActor[];
-  /** Authored scene composition. When present, `storedSceneToModel` renders the production. */
+  /**
+   * Ordered list of named scenes. The active scene is identified by activeSceneId,
+   * defaulting to scenes[0] when absent.
+   */
+  scenes?: NamedScene[];
+  /** ID of the currently active scene within `scenes`. Defaults to scenes[0]. */
+  activeSceneId?: string;
+  /**
+   * Legacy singular scene field. Kept for backward compat.
+   * When `scenes` is present, commands operate on the active entry within `scenes`
+   * and this field is not used.
+   */
   scene?: StoredScene;
   /** Dialogue lines. Populated on legacy productions; cleared after migration to the scene path. */
   script?: ScriptLine[];

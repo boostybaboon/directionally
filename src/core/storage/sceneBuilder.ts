@@ -1,6 +1,6 @@
 import { getById } from '../catalogue/catalogue.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
-import type { StoredActor, StoredScene } from './types.js';
+import type { StoredActor, StoredScene, StoredProduction } from './types.js';
 import type { StagedActor, ClipTrack, Vec3 } from '../domain/types.js';
 
 const FALLBACK_IDLE_CLIP = 'Idle';
@@ -36,6 +36,19 @@ function defaultScaleFor(sa: StoredActor): number {
   const entry     = getById(sa.catalogueId, CATALOGUE_ENTRIES);
   const character = entry?.kind === 'character' ? entry : undefined;
   return character?.defaultScale ?? 1;
+}
+
+/**
+ * Returns the currently active `StoredScene` from a production.
+ * Prefers `scenes[activeSceneId]` when multiple named scenes exist;
+ * falls back to the legacy singular `scene` field for older documents.
+ */
+export function getActiveScene(doc: StoredProduction): StoredScene | undefined {
+  if (doc.scenes && doc.scenes.length > 0) {
+    const id = doc.activeSceneId ?? doc.scenes[0].id;
+    return doc.scenes.find((ns) => ns.id === id)?.scene ?? doc.scenes[0].scene;
+  }
+  return doc.scene;
 }
 
 /**

@@ -31,6 +31,7 @@
     onaddsetpieceblock?: (targetId: string, startTime: number, endTime: number) => void;
     onupdatesetpieceblock?: (index: number, patch: Partial<Omit<SetPieceBlock, 'type'>>) => void;
     onremovesetpieceblock?: (index: number) => void;
+    onspawnselect?: (entityId: string) => void;
   }
 
   let {
@@ -61,6 +62,7 @@
     onaddsetpieceblock,
     onupdatesetpieceblock,
     onremovesetpieceblock,
+    onspawnselect,
   }: Props = $props();
 
   const LABEL_W = 72;
@@ -277,6 +279,13 @@
       {@const c = actorColor(ai)}
       <div class="tl-row tl-actor-row" class:tl-row-focused={focusedActorId === actor.id}>
         <div class="tl-label" style:width="{LABEL_W}px">
+          <button
+            class="tl-spawn-pin"
+            style:color={c}
+            onpointerdown={(e) => e.stopPropagation()}
+            onclick={() => onspawnselect?.(actor.id)}
+            title="Set {actor.role}'s start position"
+          >⊕</button>
           <span class="tl-label-text">{actor.role}</span>
         </div>
         <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -362,6 +371,12 @@
     {@const hasCamBlocks = cameraBlocks.length > 0}
     <div class="tl-row tl-camera-row" class:tl-row-stub={!hasCamBlocks}>
       <div class="tl-label" style:width="{LABEL_W}px">
+        <button
+          class="tl-spawn-pin tl-spawn-pin-camera"
+          onpointerdown={(e) => e.stopPropagation()}
+          onclick={() => onspawnselect?.('__camera__')}
+          title="Set scene opening camera view"
+        >⊕</button>
         <span class="tl-label-text tl-camera-label">Camera</span>
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -520,12 +535,29 @@
   .tl-label {
     display: flex;
     align-items: center;
-    padding: 0 6px;
+    padding: 0 4px;
+    gap: 2px;
     border-right: 1px solid #2a2a2a;
     flex-shrink: 0;
     background: #1a1a1a;
     min-width: 0;
   }
+
+  .tl-spawn-pin {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    opacity: 0.45;
+    transition: opacity 0.15s;
+  }
+  .tl-spawn-pin:hover { opacity: 1; }
+  .tl-spawn-pin-camera { color: #8ab4f8; opacity: 0.45; }
 
   .tl-label-text {
     font-size: 11px;
