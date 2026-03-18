@@ -11,8 +11,3 @@ export type ScriptLine = {
   startTime?: number;
 };
 
-/** Fallback cast used when a production has no actors defined. */
-export const SANDBOX_ACTORS: { id: ActorId; label: string }[] = [
-  { id: 'alpha', label: 'Alpha' },
-  { id: 'beta',  label: 'Beta'  },
-];

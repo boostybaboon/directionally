@@ -1,4 +1,4 @@
-import type { ScriptLine } from '../../lib/sandbox/types.js';
+import type { ScriptLine } from '../../lib/script/types.js';
 import type {
   ActorVoice,
   CameraConfig,
@@ -62,7 +62,7 @@ export type StoredProduction = {
   name: string;
   createdAt: number;  // unix ms
   modifiedAt: number; // unix ms
-  /** Cast members. Absent on pre-5a productions — falls back to legacy alpha/beta pair. */
+  /** Cast members. */
   actors?: StoredActor[];
   /**
    * Ordered list of named scenes. The active scene is identified by activeSceneId,

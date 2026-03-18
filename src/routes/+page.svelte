@@ -14,10 +14,10 @@
   import { exampleProduction1Scene } from '$lib/exampleProduction1';
   import { twoRobotsScene } from '$lib/twoRobotsScene';
   import type { Model } from '$lib/Model';
-  import ScriptEditor from '$lib/sandbox/ScriptEditor.svelte';
+  import ScriptEditor from '$lib/script/ScriptEditor.svelte';
   import { storedSceneToModel } from '../core/storage/storedSceneToModel.js';
   import { defaultSceneShell, estimateDuration, getActiveScene } from '../core/storage/sceneBuilder.js';
-  import type { ScriptLine } from '$lib/sandbox/types';
+  import type { ScriptLine } from '$lib/script/types';
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import type { StoredProduction } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
@@ -381,11 +381,6 @@
     if (isEmpty) rightTab = 'script';
     // Auto-expand the loaded production's cast in the sidebar.
     expandedProductionCast = new Set([prod.id]);
-  }
-
-  function reloadSandbox() {
-    const current = activeDoc?.current;
-    if (current) presenter?.loadModel(modelFromProduction(current));
   }
 
   function deleteProduction(id: string) {
@@ -796,7 +791,7 @@
                               <div class="prod-cast">
                                 {#if isActive}
                                   {#if prodActors.length === 0 && !addingActor}
-                                    <p class="stage-empty">No cast — using default robots.</p>
+                                    <p class="stage-empty">No cast.</p>
                                   {:else}
                                     <ul class="cast-list">
                                       {#each prodActors as actor}

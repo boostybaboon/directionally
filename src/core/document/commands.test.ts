@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { AddActorCommand, RemoveActorCommand, SetSpeakLinesCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand } from './commands';
 import type { StoredActor, StoredProduction, StoredScene } from '../storage/types';
-import type { ScriptLine } from '../../lib/sandbox/types';
+import type { ScriptLine } from '../../lib/script/types';
 import type { ClipTrack, LightingTrack, TransformTrack, StagedActor } from '../domain/types';
 import { defaultSceneShell, estimateDuration } from '../storage/sceneBuilder';
 

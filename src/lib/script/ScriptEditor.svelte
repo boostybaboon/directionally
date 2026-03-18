@@ -1,19 +1,18 @@
 <script lang="ts">
   import type { ScriptLine } from './types.js';
-  import { SANDBOX_ACTORS } from './types.js';
 
   interface Props {
     script:   ScriptLine[];
     onchange: (script: ScriptLine[]) => void;
-    /** Cast to populate the actor dropdown. Falls back to SANDBOX_ACTORS when absent. */
+    /** Cast members to populate the actor dropdown. Empty when no actors have been added. */
     actors?:  { id: string; label: string }[];
-    /** Current playhead position, used for the “@ now” button. */
+    /** Current playhead position, used for the "@ now" button. */
     currentPosition?: number;
   }
 
   let { script, onchange, actors, currentPosition = 0 }: Props = $props();
 
-  const castActors = $derived(actors?.length ? actors : SANDBOX_ACTORS);
+  const castActors = $derived(actors ?? []);
 
   // Local copy for smooth in-progress editing. Synced from prop on undo/redo.
   let localScript = $state<ScriptLine[]>([...script]);
@@ -27,6 +26,7 @@
   }
 
   function addLine() {
+    if (castActors.length === 0) return;
     const lastActorId = localScript.at(-1)?.actorId ?? castActors[0].id;
     const lastIdx     = castActors.findIndex((a) => a.id === lastActorId);
     const nextActorId = castActors[(lastIdx + 1) % castActors.length].id;
@@ -65,7 +65,13 @@
   }}
 >
   {#if localScript.length === 0}
-    <p class="empty-hint">No dialogue yet — add a line to begin.</p>
+    <p class="empty-hint">
+      {#if castActors.length === 0}
+        Add actors to the cast first, then add dialogue lines.
+      {:else}
+        No dialogue yet — add a line to begin.
+      {/if}
+    </p>
   {:else}
     <ol class="beats">
       {#each localScript as line, i (i)}
@@ -174,7 +180,7 @@
   {/if}
 
   <div class="toolbar">
-    <button class="add-btn" onclick={(e) => { e.stopPropagation(); addLine(); }}>+ Add line</button>
+    <button class="add-btn" disabled={castActors.length === 0} onclick={(e) => { e.stopPropagation(); addLine(); }}>+ Add line</button>
     <button class="print-btn" onclick={(e) => { e.stopPropagation(); window.print(); }} title="Print screenplay">⎙ Print</button>
   </div>
 </div>

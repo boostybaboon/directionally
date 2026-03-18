@@ -1,6 +1,6 @@
 import type { Command } from './Command.js';
 import type { StoredProduction, StoredActor, StoredScene, NamedScene } from '../storage/types.js';
-import type { ScriptLine } from '../../lib/sandbox/types.js';
+import type { ScriptLine } from '../../lib/script/types.js';
 import type { CameraConfig, Vec3, SetPiece, StagedActor, SpeakAction, CameraTrackAction, PathKeyframe, ClipTrack, TransformTrack, LightingTrack, LoopStyle, ActorBlock, LightBlock, CameraBlock, SetPieceBlock, ActorVoice } from '../domain/types.js';
 import { restageCast, estimateDuration, defaultSceneShell } from '../storage/sceneBuilder.js';
 
