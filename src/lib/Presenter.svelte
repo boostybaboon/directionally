@@ -112,6 +112,10 @@
     positioningBanner?: string;
     onpositionaccept?: () => void;
     onpositioncancel?: () => void;
+    /** Called when the scene reaches its authored end time. Caller is responsible for transitioning; Presenter will NOT auto-pause when this is provided. */
+    onsceneend?: () => void;
+    /** Called after every loadModel completes (async GLTFs resolved, engine loaded, seek applied). */
+    ondidload?: () => void;
   }
 
   let {
@@ -135,6 +139,8 @@
     positioningBanner,
     onpositionaccept,
     onpositioncancel,
+    onsceneend,
+    ondidload,
   }: PresenterProps = $props();
 
   // Tracks the most recently loaded model to support re-synthesis when voiceMode changes.
@@ -519,15 +525,20 @@
       }
     }
 
-    // Halt at the authored end of the scene so Play is available to resume
+    // Halt at the authored end of the scene; if onsceneend is wired (presentation mode),
+    // delegate to the caller instead of pausing so it can load the next scene.
     const endTime = model.duration;
     if (endTime !== undefined) {
       Tone.getTransport().schedule((time) => {
         Tone.getDraw().schedule(() => {
-          engine.pause();
-          isPlaying = false;
-          currentPosition = endTime;
-          sliderValue = endTime;
+          if (onsceneend) {
+            onsceneend();
+          } else {
+            engine.pause();
+            isPlaying = false;
+            currentPosition = endTime;
+            sliderValue = endTime;
+          }
         }, time);
       }, endTime);
     }
@@ -542,6 +553,8 @@
 
     clock = new THREE.Clock();
     renderer.setAnimationLoop(animate);
+
+    ondidload?.();
   };
 
   const animate = () => {
@@ -737,6 +750,14 @@
       if (!(objectSelectable?.(obj.name) ?? true)) return;
       // Toggle: clicking the already-selected object deselects it.
       selectSceneObject(obj.name === selectedObjectId ? null : obj.name);
+    }
+  }
+
+  /** Unconditionally starts playback. Used by presentation mode after scene loads. */
+  export function play() {
+    if (!isPlaying) {
+      playSequence();
+      isPlaying = true;
     }
   }
 

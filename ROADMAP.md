@@ -587,7 +587,7 @@ The ⊕ spawn pin in the timeline is replaced by a **pre-timeline block** — a 
 - The pre-block does not correspond to a stored `ActorBlock`. `TimelinePanel.svelte` renders it as a synthetic element and emits `onspawnselect(actorId)` when clicked (the prop already exists; the visual is the change).
 - Width of the pre-block: a fixed visual width (e.g., 32px or 1 second equivalent) — it is not time-proportional since it has no real duration.
 
-#### UX2.8 — Production playback / presentation mode
+#### UX2.8 — Production playback / presentation mode *(complete)*
 
 A dedicated **Present** button plays all scenes in the production in depth-first order:
 
@@ -747,31 +747,26 @@ Possible directions:
 **Baseline:** 195 tests green, 0 svelte-check warnings.  
 **Complete through:** Phases 0–8.9, T, UX1, UX2.1–2.4, UX2.7, UX2.9.
 
-### Tier 1 — Complete the authoring loop
+### Tier 1 — Scene-building visibility
 
-1. **UX2.8 — Production playback / presentation mode** *(spec above)*  
-   Multi-scene productions cannot be played as a whole. `PlaybackEngine` needs a playlist mode; `onSceneEnd` callback on the page loads the next scene's model and calls `play()`.
-
-### Tier 2 — Scene-building visibility
-
-2. **Phase 9.A — Set piece property inspector** *(spec above)*  
+1. **Phase 9.A — Set piece property inspector** *(spec above)*  
    All placed primitives are currently 1×1×1 and white. `UpdateSetPieceCommand(name, patch)` + inspector UI for color, scale, geometry dimensions.
 
-3. **Phase 9.B — Set piece catalogue expansion** *(spec above)*  
+2. **Phase 9.B — Set piece catalogue expansion** *(spec above)*  
    Wall flat 4×3×0.15 m, stage deck 8×8 m, backdrop, table, step with set-ready default sizes.
 
-4. **Phase 9.C — Character ground disc markers** *(spec above)*  
+3. **Phase 9.C — Character ground disc markers** *(spec above)*  
    Coloured cylinder disc under each staged actor, matching the timeline palette colour.
 
-### Tier 3 — Workflow completeness
+### Tier 2 — Workflow completeness
 
-5. **UX2.6 — Full-production screenplay view** *(spec above)*  
+4. **UX2.6 — Full-production screenplay view** *(spec above)*  
    All scenes in one scrollable document with `INT.` headings and stage-direction lines.
 
-6. **UX2.5 — Reusable set templates** *(spec above)*  
+5. **UX2.5 — Reusable set templates** *(spec above)*  
    `SetTemplateStore`; save current set as named template → apply from Catalogue tab.
 
-7. **Phase 10 — Lighting rig** *(spec above)*  
+6. **Phase 10 — Lighting rig** *(spec above)*  
    Add lights from catalogue; fix skipped `point` light type.
 
 ### Deferred
@@ -825,7 +820,7 @@ Possible directions:
 | Reusable set templates | Phase UX2.5 |
 | Script editor — full-production view + stage directions (pull forward from 6.5) | Phase UX2.6 |
 | Spawn indicator as pre-t=0 block | ✅ Complete (Phase UX2.7) |
-| Production playback / presentation mode | Phase UX2.8 |
+| Production playback / presentation mode | ✅ Complete (Phase UX2.8) |
 | Speech and Audio panel + per-production speech settings | ✅ Complete (Phase UX2.9) |
 | Drag-and-drop cast management (catalogue→production, production→scene) | Phase UX3 |
 | Asset properties editing | Phase 9 |

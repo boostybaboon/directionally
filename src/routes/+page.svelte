@@ -110,6 +110,11 @@
   let rightTab = $state<'staging' | 'script'>('staging');
   let designMode = $state(false);
 
+  // Presentation mode — plays all scenes in depth-first order, canvas fills the window.
+  let presentationMode = $state(false);
+  let presentationQueue = $state<string[]>([]);      // remaining scene IDs to play
+  let prePresentationSceneId = $state<string | undefined>(undefined);
+
   // Productions
   let productions = $state<StoredProduction[]>(ProductionStore.list());
   let activeProductionId = $state<string | null>(null);
@@ -369,12 +374,15 @@
   }
 
   function loadProduction(prod: StoredProduction) {
+    let prevSceneId = prod.activeSceneId;
     activeDoc = new ProductionDocument(
       prod,
       (updated) => {
+        const sceneChanged = updated.activeSceneId !== prevSceneId;
+        prevSceneId = updated.activeSceneId;
         docSnapshot = updated;
         productions = ProductionStore.list();
-        presenter?.loadModel(modelFromProduction(updated));
+        presenter?.loadModel(modelFromProduction(updated), sceneChanged ? 0 : undefined);
       },
       (updated) => ProductionStore.save(updated),
     );
@@ -397,6 +405,39 @@
     if (activeProductionId === id) {
       activeProductionId = null;
     }
+  }
+
+  function startPresentation() {
+    if (!docSnapshot || !activeDoc) return;
+    const scenes = getScenes(docSnapshot.tree ?? []);
+    if (scenes.length === 0) return;
+    prePresentationSceneId = docSnapshot.activeSceneId;
+    presentationQueue = scenes.slice(1).map((s) => s.id);
+    activeDoc.execute(new SwitchSceneCommand(scenes[0].id));
+    // loadModel(model, 0) fires via onChange (sceneChanged=true); ondidload → presenter.play()
+    presentationMode = true;
+    designMode = false;
+  }
+
+  function onPresentationSceneEnd() {
+    if (presentationQueue.length === 0) {
+      exitPresentation();
+      return;
+    }
+    const nextId = presentationQueue[0];
+    presentationQueue = presentationQueue.slice(1);
+    activeDoc?.execute(new SwitchSceneCommand(nextId));
+    // loadModel(model, 0) fires via onChange; ondidload → presenter.play()
+  }
+
+  function exitPresentation() {
+    presentationMode = false;
+    if (isPlaying) presenter?.handlePlayPauseClick();
+    if (prePresentationSceneId) {
+      activeDoc?.execute(new SwitchSceneCommand(prePresentationSceneId));
+    }
+    prePresentationSceneId = undefined;
+    presentationQueue = [];
   }
 
   function deepCopyTree(tree: Array<StoredGroup | NamedScene>): Array<StoredGroup | NamedScene> {
@@ -678,6 +719,7 @@
     mq.addEventListener('change', onChange);
 
     function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && presentationMode) { e.preventDefault(); exitPresentation(); return; }
       if (positioningMode.type !== 'idle') {
         if (e.key === 'Enter') { e.preventDefault(); acceptPositioning(); return; }
         if (e.key === 'Escape') { e.preventDefault(); cancelPositioning(); return; }
@@ -735,9 +777,9 @@
     <Splitpanes theme="directionally">
       <!-- Left pane: collapsed to 0 on mobile, normal sidebar on desktop -->
       <Pane
-        size={isMobile ? 0 : 18}
-        minSize={isMobile ? 0 : 10}
-        maxSize={isMobile ? 0 : 40}
+        size={isMobile || presentationMode ? 0 : 18}
+        minSize={isMobile || presentationMode ? 0 : 10}
+        maxSize={isMobile || presentationMode ? 0 : 40}
       >
         {#if !isMobile}
           <div class="left-panel">
@@ -1203,15 +1245,25 @@
             positioningBanner={positioningBanner}
             onpositionaccept={acceptPositioning}
             onpositioncancel={cancelPositioning}
+            onsceneend={presentationMode ? onPresentationSceneEnd : undefined}
+            ondidload={presentationMode ? () => presenter?.play() : undefined}
           />
+          {#if presentationMode && docSnapshot}
+            {@const _hudScenes = getScenes(docSnapshot.tree ?? [])}
+            {@const _hudName = _hudScenes.find(ns => ns.id === docSnapshot!.activeSceneId)?.name ?? 'Scene'}
+            <div class="presentation-hud">
+              <span class="presentation-scene-name">{_hudName}</span>
+              <span class="presentation-esc">Esc to exit</span>
+            </div>
+          {/if}
         </div>
       </Pane>
 
       <!-- Right panel -->
       <Pane
-        size={rightPanelOpen ? 22 : 0}
-        minSize={rightPanelOpen ? 12 : 0}
-        maxSize={rightPanelOpen ? 40 : 0}
+        size={rightPanelOpen && !presentationMode ? 22 : 0}
+        minSize={rightPanelOpen && !presentationMode ? 12 : 0}
+        maxSize={rightPanelOpen && !presentationMode ? 40 : 0}
       >
         {#if rightPanelOpen}
           <div class="right-panel">
@@ -1565,9 +1617,17 @@
       </Pane>
     </Splitpanes>
   </div>
-  <div class="bottom-panel">
+  <div class="bottom-panel" class:hidden={presentationMode}>
     <div class="bottom-panel-header">
       <span class="bottom-panel-label">Timeline</span>
+      {#if docSnapshot && getScenes(docSnapshot.tree ?? []).length > 0}
+        <button
+          class="present-btn"
+          onclick={startPresentation}
+          title="Present all scenes in order"
+          aria-label="Present production"
+        >⏵⏵ Present</button>
+      {/if}
       <button
         class="panel-toggle"
         onclick={() => (bottomPanelOpen = !bottomPanelOpen)}
@@ -2361,6 +2421,58 @@
 
   .panel-toggle:hover {
     color: #ccc;
+  }
+
+  /* ── Present button ────────────────────────────── */
+
+  .present-btn {
+    background: #1a3a5c;
+    border: none;
+    border-radius: 3px;
+    color: #5aaeff;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 9px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .present-btn:hover {
+    background: #1e4a75;
+    color: #7bc0ff;
+  }
+
+  .bottom-panel.hidden {
+    display: none;
+  }
+
+  /* ── Presentation HUD overlay ──────────────────── */
+
+  .presentation-hud {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: rgba(0, 0, 0, 0.6);
+    border-radius: 6px;
+    padding: 6px 14px;
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  .presentation-scene-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #e0e0e0;
+    letter-spacing: 0.03em;
+  }
+
+  .presentation-esc {
+    font-size: 11px;
+    color: #666;
   }
 
   /* ── Block section position display ───────────── */
