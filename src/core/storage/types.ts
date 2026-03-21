@@ -54,6 +54,39 @@ export type NamedScene = {
 };
 
 /**
+ * A named group that contains scenes (and optionally nested groups).
+ * Acts as an "Act" container in the production hierarchy.
+ */
+export type StoredGroup = {
+  type: 'group';
+  id: string;
+  name: string;
+  children: Array<StoredGroup | NamedScene>;
+};
+
+/** Depth-first flat list of all leaf scenes in a tree. */
+export function getScenes(tree: Array<StoredGroup | NamedScene>): NamedScene[] {
+  const result: NamedScene[] = [];
+  for (const node of tree) {
+    if ((node as StoredGroup).type === 'group') {
+      result.push(...getScenes((node as StoredGroup).children));
+    } else {
+      result.push(node as NamedScene);
+    }
+  }
+  return result;
+}
+
+/**
+ * Per-production TTS engine and bubble scale override.
+ * Absent = use the global defaults stored in localStorage.
+ */
+export type ProductionSpeechSettings = {
+  engine: 'espeak' | 'web-speech' | 'kokoro';
+  bubbleScale: number;
+};
+
+/**
  * A named production document stored persistently.
  */
 export type StoredProduction = {
@@ -65,18 +98,14 @@ export type StoredProduction = {
   /** Cast members. */
   actors?: StoredActor[];
   /**
-   * Ordered list of named scenes. The active scene is identified by activeSceneId,
-   * defaulting to scenes[0] when absent.
+   * Ordered tree of acts (groups) and scenes. Depth-first traversal gives the playback order.
+   * Use `getScenes(tree)` for a flat list of leaf scenes.
    */
-  scenes?: NamedScene[];
-  /** ID of the currently active scene within `scenes`. Defaults to scenes[0]. */
+  tree?: Array<StoredGroup | NamedScene>;
+  /** ID of the currently active scene. Defaults to the first scene in DFS order. */
   activeSceneId?: string;
-  /**
-   * Legacy singular scene field. Kept for backward compat.
-   * When `scenes` is present, commands operate on the active entry within `scenes`
-   * and this field is not used.
-   */
-  scene?: StoredScene;
+  /** Per-production TTS engine and bubble scale override. Absent = use global defaults. */
+  speechSettings?: ProductionSpeechSettings;
   /** Dialogue lines. Populated on legacy productions; cleared after migration to the scene path. */
   script?: ScriptLine[];
 };

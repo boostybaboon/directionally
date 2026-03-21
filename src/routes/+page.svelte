@@ -19,10 +19,10 @@
   import { defaultSceneShell, estimateDuration, getActiveScene } from '../core/storage/sceneBuilder.js';
   import type { ScriptLine } from '$lib/script/types';
   import { ProductionStore } from '../core/storage/ProductionStore.js';
-  import type { StoredProduction } from '../core/storage/types.js';
+  import type { StoredProduction, StoredActor, StoredGroup, NamedScene, ProductionSpeechSettings } from '../core/storage/types.js';
+  import { getScenes } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
-  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, AddSetPieceCommand, RemoveSetPieceCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, SetActorVoiceCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand } from '../core/document/commands.js';
-  import type { StoredActor } from '../core/storage/types.js';
+  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, SetActorCatalogueIdCommand, AddSetPieceCommand, RemoveSetPieceCommand, StageActorCommand, UnstageActorCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, SetActorVoiceCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand } from '../core/document/commands.js';
   import type { SpeakAction, TransformTrack, LightingTrack, ActorBlock, LightBlock, CameraBlock, SetPieceBlock, ActorVoice, KokoroVoice } from '../core/domain/types.js';
   import { getCharacters, getSetPieces } from '../core/catalogue/catalogue.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
@@ -122,6 +122,13 @@
    * all $derived expressions stay in sync when commands execute.
    */
   let docSnapshot = $state<StoredProduction | null>(null);
+  // Effective TTS mode: active production override wins over global default.
+  const effectiveVoiceMode = $derived<VoiceMode>(
+    (docSnapshot?.speechSettings?.engine as VoiceMode | undefined) ?? voiceMode
+  );
+  const effectiveBubbleScale = $derived<number>(
+    docSnapshot?.speechSettings?.bubbleScale ?? bubbleScale
+  );
   /** Cast list from the active document; updates automatically on command execution. */
   const actors = $derived(docSnapshot?.actors ?? []);
   /** Dialogue lines for the ScriptEditor — derived from doc.script so explicit startTimes round-trip. */
@@ -193,15 +200,14 @@
   }
 
   // Cast management UI state
-  let addingActor = $state(false);
-  let newActorRole = $state('');
-  let newActorCatalogueId = $state(CATALOGUE_CHARACTERS[0]?.id ?? '');
   let renamingId = $state<string | null>(null);
   let renameValue = $state('');
   let renamingActorId = $state<string | null>(null);
   let renameActorValue = $state('');
   let renamingSceneId = $state<string | null>(null);
   let renameSceneValue = $state('');
+  let renamingGroupId = $state<string | null>(null);
+  let renameGroupValue = $state('');
 
   // Set-piece management UI state
   let addingSetPiece = $state(false);
@@ -355,18 +361,20 @@
   // Auto-save handled by ProductionDocument.execute() — no $effect needed.
 
   function newProduction() {
-    const prod = ProductionStore.create('Untitled Production');
+    const prod = ProductionStore.create();
     productions = ProductionStore.list();
     loadProduction(prod);
+    renamingId = prod.id;
+    renameValue = prod.name;
   }
 
   function loadProduction(prod: StoredProduction) {
     activeDoc = new ProductionDocument(
       prod,
       (updated) => {
+        docSnapshot = updated;
         productions = ProductionStore.list();
         presenter?.loadModel(modelFromProduction(updated));
-        docSnapshot = updated;
       },
       (updated) => ProductionStore.save(updated),
     );
@@ -377,7 +385,7 @@
     sidebarOpen = false;
     positioningMode = { type: 'idle' };
     // Switch to Script tab for brand-new productions so the author sees the script surface first.
-    const isEmpty = !prod.actors?.length && !prod.scene && !prod.scenes?.length;
+    const isEmpty = !prod.actors?.length && !getScenes(prod.tree ?? []).length;
     if (isEmpty) rightTab = 'script';
     // Auto-expand the loaded production's cast in the sidebar.
     expandedProductionCast = new Set([prod.id]);
@@ -391,13 +399,22 @@
     }
   }
 
+  function deepCopyTree(tree: Array<StoredGroup | NamedScene>): Array<StoredGroup | NamedScene> {
+    return tree.map((node) => {
+      if ((node as StoredGroup).type === 'group') {
+        const g = node as StoredGroup;
+        return { ...g, children: deepCopyTree(g.children) };
+      }
+      return { ...node, id: crypto.randomUUID() } as NamedScene;
+    });
+  }
+
   function duplicateProduction(prod: StoredProduction) {
     const copy = ProductionStore.create(`${prod.name} (copy)`);
     ProductionStore.save({
       ...copy,
       actors: prod.actors ? [...prod.actors] : undefined,
-      scenes: prod.scenes ? prod.scenes.map((ns) => ({ ...ns, id: crypto.randomUUID() })) : undefined,
-      scene: prod.scenes ? undefined : prod.scene,
+      tree: prod.tree ? deepCopyTree(prod.tree) : undefined,
       activeSceneId: undefined,
       script: prod.script ? [...prod.script] : undefined,
       modifiedAt: Date.now(),
@@ -411,16 +428,20 @@
   }
 
   function addActor() {
-    if (!activeDoc || !newActorRole.trim() || !newActorCatalogueId) return;
+    if (!activeDoc) return;
+    const allActors = activeDoc.current.actors ?? [];
+    const base = 'Character';
+    let num = allActors.length + 1;
+    let role = allActors.length === 0 ? base : `${base} ${num}`;
+    while (allActors.some((a) => a.role === role)) { num++; role = `${base} ${num}`; }
     const actor: StoredActor = {
       id: crypto.randomUUID(),
-      role: newActorRole.trim(),
-      catalogueId: newActorCatalogueId,
+      role,
+      catalogueId: CATALOGUE_CHARACTERS[0]?.id ?? '',
     };
     activeDoc.execute(new AddActorCommand(actor));
-    newActorRole = '';
-    newActorCatalogueId = CATALOGUE_CHARACTERS[0]?.id ?? '';
-    addingActor = false;
+    renamingActorId = actor.id;
+    renameActorValue = actor.role;
   }
 
   function removeActor(actorId: string) {
@@ -692,7 +713,7 @@
 
     <div class="drawer" class:open={sidebarOpen} aria-hidden={!sidebarOpen}>
       <aside class="sidebar">
-        {#each productions as prod}
+        {#each productions as prod (prod.id)}
           <button
             class="scene-btn"
             class:active={activeProductionId === prod.id}
@@ -745,7 +766,7 @@
                       <p class="empty-hint">No productions yet.</p>
                     {:else}
                       <ul class="scene-list">
-                        {#each productions as prod}
+                        {#each productions as prod (prod.id)}
                           <li class="production-row">
                             {#if renamingId === prod.id}
                               <form
@@ -790,12 +811,21 @@
                               {@const prodActors = isActive ? actors : (prod.actors ?? [])}
                               <div class="prod-cast">
                                 {#if isActive}
-                                  {#if prodActors.length === 0 && !addingActor}
+                                  {#if prodActors.length === 0}
                                     <p class="stage-empty">No cast.</p>
                                   {:else}
                                     <ul class="cast-list">
                                       {#each prodActors as actor}
+                                        {@const isStaged = (activeScene?.stagedActors ?? []).some(sa => sa.actorId === actor.id)}
                                         <li class="cast-row" class:selected={selectedObjectId === actor.id}>
+                                          <button
+                                            class="stage-badge"
+                                            class:staged={isStaged}
+                                            title={isStaged ? 'In scene — click to remove' : 'Add to scene'}
+                                            onclick={() => isStaged
+                                              ? activeDoc?.execute(new UnstageActorCommand(actor.id))
+                                              : activeDoc?.execute(new StageActorCommand({ actorId: actor.id, offstage: true }))}
+                                          >{isStaged ? '●' : '○'}</button>
                                           {#if renamingActorId === actor.id}
                                             <input
                                               class="cast-role-input"
@@ -808,7 +838,11 @@
                                           {:else}
                                             <button class="cast-role-btn" title="Click to rename" onclick={() => startActorRename(actor.id)}>{actor.role}</button>
                                           {/if}
-                                          <span class="cast-char">{CATALOGUE_CHARACTERS.find(c => c.id === actor.catalogueId)?.label ?? actor.catalogueId}</span>
+                                          <select class="actor-char-select cast-char-select" value={actor.catalogueId} onchange={(e) => activeDoc?.execute(new SetActorCatalogueIdCommand(actor.id, e.currentTarget.value))} aria-label="Character model">
+                                            {#each CATALOGUE_CHARACTERS as char}
+                                              <option value={char.id}>{char.label}</option>
+                                            {/each}
+                                          </select>
                                           <button
                                             class="icon-btn"
                                             class:active={expandedActorSettings.has(actor.id)}
@@ -913,26 +947,7 @@
                                       {/each}
                                     </ul>
                                   {/if}
-                                  {#if addingActor}
-                                    <form class="add-actor-form" onsubmit={(e) => { e.preventDefault(); addActor(); }}>
-                                      <input
-                                        class="rename-input"
-                                        placeholder="Role name"
-                                        bind:value={newActorRole}
-                                        aria-label="Role name"
-                                      />
-                                      <select class="actor-char-select" bind:value={newActorCatalogueId} aria-label="Character">
-                                        {#each CATALOGUE_CHARACTERS as char}
-                                          <option value={char.id}>{char.label}</option>
-                                        {/each}
-                                      </select>
-                                      <div class="add-actor-btns">
-                                        <button class="new-btn" type="submit">Add</button>
-                                        <button class="icon-btn" type="button" onclick={() => { addingActor = false; newActorRole = ''; }}>Cancel</button>
-                                      </div>
-                                    </form>
-                                  {/if}
-                                  <button class="new-btn prod-cast-add" onclick={() => { addingActor = !addingActor; }} title="Add character">+ Add</button>
+                                  <button class="new-btn prod-cast-add" onclick={() => addActor()} title="Add character">+ Add</button>
                                 {:else}
                                   {#if prodActors.length === 0}
                                     <p class="stage-empty">No cast.</p>
@@ -949,36 +964,126 @@
                                 {/if}
                               </div>
                               {#if isActive && docSnapshot}
-                                {@const prodScenes = docSnapshot.scenes ?? []}
+                                {@const prodTree = docSnapshot.tree ?? []}
+                                {@const prodScenes = getScenes(prodTree)}
                                 {@const activeSceneId = docSnapshot.activeSceneId ?? prodScenes[0]?.id}
                                 <div class="prod-cast">
                                   <span class="cast-section-label">Scenes</span>
-                                  {#if prodScenes.length > 0}
+                                  {#if prodTree.length > 0}
                                     <ul class="cast-list">
-                                      {#each prodScenes as ns}
-                                        <li class="cast-row" class:selected={ns.id === activeSceneId}>
-                                          {#if renamingSceneId === ns.id}
-                                            <input
-                                              class="cast-role-input"
-                                              type="text"
-                                              bind:value={renameSceneValue}
-                                              onblur={() => { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; }}
-                                              onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; } if (e.key === 'Escape') renamingSceneId = null; }}
-                                              use:focusAndSelect
-                                            />
-                                          {:else}
-                                            <button class="cast-role-btn" onclick={() => activeDoc?.execute(new SwitchSceneCommand(ns.id))} title="Switch to scene">{ns.name}</button>
-                                            <button class="icon-btn" onclick={() => { renameSceneValue = ns.name; renamingSceneId = ns.id; }} title="Rename scene">✎</button>
-                                            {#if prodScenes.length > 1}
-                                              <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
+                                      {#each prodTree as node}
+                                        {#if (node as StoredGroup).type === 'group'}
+                                          {@const group = node as StoredGroup}
+                                          <li class="act-header cast-row">
+                                            {#if renamingGroupId === group.id}
+                                              <input
+                                                class="cast-role-input"
+                                                type="text"
+                                                bind:value={renameGroupValue}
+                                                onblur={() => { activeDoc?.execute(new RenameGroupCommand(group.id, renameGroupValue)); renamingGroupId = null; }}
+                                                onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameGroupCommand(group.id, renameGroupValue)); renamingGroupId = null; } if (e.key === 'Escape') renamingGroupId = null; }}
+                                                use:focusAndSelect
+                                              />
+                                            {:else}
+                                              <span class="cast-role act-label">{group.name}</span>
+                                              <button class="icon-btn" onclick={() => { renameGroupValue = group.name; renamingGroupId = group.id; }} title="Rename act">✎</button>
+                                              <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveGroupCommand(group.id))} title="Remove act">✕</button>
                                             {/if}
-                                          {/if}
-                                        </li>
+                                          </li>
+                                          {#each group.children as child}
+                                            {#if !(child as StoredGroup).type}
+                                              {@const ns = child as NamedScene}
+                                              <li class="cast-row indent" class:selected={ns.id === activeSceneId}>
+                                                {#if renamingSceneId === ns.id}
+                                                  <input
+                                                    class="cast-role-input"
+                                                    type="text"
+                                                    bind:value={renameSceneValue}
+                                                    onblur={() => { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; }}
+                                                    onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; } if (e.key === 'Escape') renamingSceneId = null; }}
+                                                    use:focusAndSelect
+                                                  />
+                                                {:else}
+                                                  <button class="cast-role-btn" onclick={() => activeDoc?.execute(new SwitchSceneCommand(ns.id))} title="Switch to scene">{ns.name}</button>
+                                                  <button class="icon-btn" onclick={() => { renameSceneValue = ns.name; renamingSceneId = ns.id; }} title="Rename scene">✎</button>
+                                                  {#if prodScenes.length > 1}
+                                                    <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
+                                                  {/if}
+                                                {/if}
+                                              </li>
+                                            {/if}
+                                          {/each}
+                                        {:else}
+                                          {@const ns = node as NamedScene}
+                                          <li class="cast-row" class:selected={ns.id === activeSceneId}>
+                                            {#if renamingSceneId === ns.id}
+                                              <input
+                                                class="cast-role-input"
+                                                type="text"
+                                                bind:value={renameSceneValue}
+                                                onblur={() => { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; }}
+                                                onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; } if (e.key === 'Escape') renamingSceneId = null; }}
+                                                use:focusAndSelect
+                                              />
+                                            {:else}
+                                              <button class="cast-role-btn" onclick={() => activeDoc?.execute(new SwitchSceneCommand(ns.id))} title="Switch to scene">{ns.name}</button>
+                                              <button class="icon-btn" onclick={() => { renameSceneValue = ns.name; renamingSceneId = ns.id; }} title="Rename scene">✎</button>
+                                              {#if prodScenes.length > 1}
+                                                <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
+                                              {/if}
+                                            {/if}
+                                          </li>
+                                        {/if}
                                       {/each}
                                     </ul>
                                   {/if}
-                                  <button class="new-btn prod-cast-add" onclick={() => activeDoc?.execute(new AddSceneCommand())} title="Add scene">+ Scene</button>
+                                  <div class="cast-add-row">
+                                    <button class="new-btn prod-cast-add" onclick={() => activeDoc?.execute(new AddSceneCommand())} title="Add scene">+ Scene</button>
+                                    <button class="new-btn prod-cast-add" onclick={() => activeDoc?.execute(new AddGroupCommand())} title="Add act">+ Act</button>
+                                  </div>
                                 </div>
+                                {#if docSnapshot.speechSettings !== undefined}
+                                  {@const ss = docSnapshot.speechSettings}
+                                  <div class="prod-cast">
+                                    <span class="cast-section-label">Speech</span>
+                                    <div class="audio-settings">
+                                      <div class="anim-row">
+                                        <label class="anim-label" for="speech-engine-{prod.id}">Engine</label>
+                                        <select
+                                          id="speech-engine-{prod.id}"
+                                          class="actor-char-select"
+                                          value={ss.engine}
+                                          onchange={(e) => activeDoc?.execute(new SetProductionSpeechSettingsCommand({ engine: e.currentTarget.value as VoiceMode, bubbleScale: ss.bubbleScale }))}
+                                        >
+                                          <option value="espeak">eSpeak (fast)</option>
+                                          <option value="web-speech">Browser voices</option>
+                                          <option value="kokoro">Kokoro (~92 MB)</option>
+                                        </select>
+                                      </div>
+                                      <div class="anim-row">
+                                        <label class="anim-label" for="speech-bubble-{prod.id}">Bubble</label>
+                                        <input
+                                          id="speech-bubble-{prod.id}"
+                                          type="range"
+                                          min="0.1"
+                                          max="1.5"
+                                          step="0.05"
+                                          value={ss.bubbleScale}
+                                          oninput={(e) => activeDoc?.execute(new SetProductionSpeechSettingsCommand({ engine: ss.engine, bubbleScale: parseFloat(e.currentTarget.value) }))}
+                                          style="flex:1"
+                                        />
+                                        <span class="anim-label">{ss.bubbleScale.toFixed(1)}</span>
+                                      </div>
+                                      <button class="new-btn" style="margin-top:4px" onclick={() => activeDoc?.execute(new SetProductionSpeechSettingsCommand(undefined))}>← global</button>
+                                    </div>
+                                  </div>
+                                {:else}
+                                  <div class="prod-cast">
+                                    <span class="cast-section-label">Speech</span>
+                                    <p class="stage-empty">Using global defaults.</p>
+                                    <button class="new-btn prod-cast-add" onclick={() => activeDoc?.execute(new SetProductionSpeechSettingsCommand({ engine: voiceMode, bubbleScale }))}>+ Override</button>
+                                  </div>
+                                {/if}
                               {/if}
                             {/if}
                           </li>
@@ -1005,10 +1110,10 @@
                     </details>
                   </section>
 
-                  <!-- Audio settings (global) -->
+                  <!-- Audio settings (global defaults) -->
                   <section class="sidebar-section">
                     <details>
-                      <summary class="section-heading">Audio</summary>
+                      <summary class="section-heading">Speech and Audio</summary>
                       <div class="audio-settings">
                         <div class="anim-row">
                           <label class="anim-label" for="voice-mode-left">Engine</label>
@@ -1068,8 +1173,8 @@
           {/if}
           <Presenter
             bind:this={presenter}
-            bind:voiceMode={voiceMode}
-            bind:bubbleScale={bubbleScale}
+            voiceMode={effectiveVoiceMode}
+            bubbleScale={effectiveBubbleScale}
             bind:isPlaying={isPlaying}
             bind:isToneSetup={isToneSetup}
             bind:currentPosition={currentPosition}
@@ -1966,6 +2071,32 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .stage-badge {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    color: #666;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: color 0.15s;
+  }
+
+  .stage-badge.staged {
+    color: #7ec8e3;
+  }
+
+  .stage-badge:hover {
+    color: #fff;
   }
 
   .cast-role-btn {

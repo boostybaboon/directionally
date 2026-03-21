@@ -66,6 +66,7 @@
   }: Props = $props();
 
   const LABEL_W = 72;
+  const PRETRACK_W = 32;
 
   // Display time range: scene duration + 2s padding, minimum 12s
   const viewDuration = $derived(Math.max(sceneDuration > 0 ? sceneDuration + 2 : 12, 2));
@@ -264,6 +265,7 @@
     <!-- Ruler row -->
     <div class="tl-row tl-ruler-row">
       <div class="tl-label" style:width="{LABEL_W}px"></div>
+      <div class="tl-pretrack" style:width="{PRETRACK_W}px"></div>
       <div class="tl-track" bind:this={rulerTrackEl}>
         {#each ticks as t}
           <div class="tl-tick" style:left="{tx(t)}px">
@@ -279,14 +281,18 @@
       {@const c = actorColor(ai)}
       <div class="tl-row tl-actor-row" class:tl-row-focused={focusedActorId === actor.id}>
         <div class="tl-label" style:width="{LABEL_W}px">
+          <span class="tl-label-text">{actor.role}</span>
+        </div>
+        <div class="tl-pretrack" style:width="{PRETRACK_W}px">
+          <!-- svelte-ignore a11y_interactive_supports_focus -->
           <button
-            class="tl-spawn-pin"
-            style:color={c}
+            class="tl-spawn-block"
+            style="background-color: {c};"
             onpointerdown={(e) => e.stopPropagation()}
             onclick={() => onspawnselect?.(actor.id)}
             title="Set {actor.role}'s start position"
+            tabindex="0"
           >⊕</button>
-          <span class="tl-label-text">{actor.role}</span>
         </div>
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="tl-track" onpointerdown={(e) => startDraw(e, 'actor', actor.id)}>
@@ -342,6 +348,7 @@
           <div class="tl-label" style:width="{LABEL_W}px">
             <span class="tl-label-text tl-speech-label">speech</span>
           </div>
+          <div class="tl-pretrack" style:width="{PRETRACK_W}px"></div>
           <div class="tl-track tl-speech-track">
             {#each aSegs as seg}
               {@const effStart = (speechDrag?.segIndex === seg.index) ? speechDrag.previewStart : seg.startTime}
@@ -379,6 +386,7 @@
         >⊕</button>
         <span class="tl-label-text tl-camera-label">Camera</span>
       </div>
+      <div class="tl-pretrack" style:width="{PRETRACK_W}px"></div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="tl-track" onpointerdown={(e) => startDraw(e, 'camera', '')}>
         <div class="tl-playhead" style:left="{tx(currentPosition)}px"></div>
@@ -421,6 +429,7 @@
         <div class="tl-label" style:width="{LABEL_W}px">
           <span class="tl-label-text tl-light-label">{light.id}</span>
         </div>
+        <div class="tl-pretrack" style:width="{PRETRACK_W}px"></div>
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="tl-track" onpointerdown={(e) => startDraw(e, 'light', light.id)}>
           <div class="tl-playhead" style:left="{tx(currentPosition)}px"></div>
@@ -464,6 +473,7 @@
         <div class="tl-label" style:width="{LABEL_W}px">
           <span class="tl-label-text tl-setpiece-label">{piece.name}</span>
         </div>
+        <div class="tl-pretrack" style:width="{PRETRACK_W}px"></div>
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="tl-track" onpointerdown={(e) => startDraw(e, 'setPiece', piece.name)}>
           <div class="tl-playhead" style:left="{tx(currentPosition)}px"></div>
@@ -558,6 +568,37 @@
   }
   .tl-spawn-pin:hover { opacity: 1; }
   .tl-spawn-pin-camera { color: #8ab4f8; opacity: 0.45; }
+
+  /* ── Pre-track spawn block ───────────────────────── */
+
+  .tl-pretrack {
+    flex-shrink: 0;
+    position: relative;
+    background: #1a1a1a;
+    border-right: 1px solid #2a2a2a;
+    display: flex;
+    align-items: stretch;
+  }
+
+  .tl-spawn-block {
+    position: absolute;
+    inset: 3px 0 3px 4px;
+    border: none;
+    border-radius: 3px 0 0 3px;
+    cursor: pointer;
+    font-size: 12px;
+    color: rgba(0, 0, 0, 0.65);
+    opacity: 0.6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-image: repeating-linear-gradient(
+      -45deg, transparent, transparent 3px, rgba(0, 0, 0, 0.22) 3px, rgba(0, 0, 0, 0.22) 6px
+    );
+    transition: opacity 0.15s;
+  }
+
+  .tl-spawn-block:hover { opacity: 1; }
 
   .tl-label-text {
     font-size: 11px;

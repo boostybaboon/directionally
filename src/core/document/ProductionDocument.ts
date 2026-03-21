@@ -1,6 +1,5 @@
 import type { Command } from './Command.js';
 import type { StoredProduction } from '../storage/types.js';
-import { getActiveScene } from '../storage/sceneBuilder.js';
 
 type HistoryEntry = {
   snapshot: StoredProduction;
@@ -57,26 +56,7 @@ export class ProductionDocument {
   }
 
   execute(cmd: Command): void {
-    const current = this.current;
-    // Expose the active scene as doc.scene so all commands work unchanged
-    // regardless of whether the production uses the legacy singular `scene`
-    // field or the new `scenes` array format.
-    const withFlattened: StoredProduction = { ...current, scene: getActiveScene(current) };
-    const rawNext = cmd.execute(withFlattened);
-    // Write the (possibly modified) scene back into the scenes array when
-    // the production uses the new multi-scene format.
-    let next: StoredProduction;
-    if (current.scenes && current.scenes.length > 0) {
-      const id = current.activeSceneId ?? current.scenes[0].id;
-      const updatedScenes = current.scenes.map((ns) =>
-        ns.id === id ? { ...ns, scene: rawNext.scene! } : ns,
-      );
-      const { scene: _, ...rest } = rawNext;
-      next = { ...rest, scenes: updatedScenes };
-    } else {
-      // Legacy path: rawNext.scene is the correct singular scene.
-      next = rawNext;
-    }
+    const next = cmd.execute(this.current);
     // Discard any redo branch above the cursor.
     this.stack.splice(this.cursor + 1);
     this.stack.push({ snapshot: next, label: cmd.label });

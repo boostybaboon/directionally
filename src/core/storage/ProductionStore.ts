@@ -1,4 +1,4 @@
-import type { StoredProduction } from './types.js';
+import type { StoredProduction, NamedScene } from './types.js';
 import { defaultSceneShell } from './sceneBuilder.js';
 
 /**
@@ -9,9 +9,19 @@ import { defaultSceneShell } from './sceneBuilder.js';
 
 const STORE_KEY = 'directionally_productions';
 
+/** Migrate legacy flat `scenes[]` field to the `tree` field introduced in UX2.3. */
+function migrateProduction(p: StoredProduction & { scenes?: NamedScene[] }): StoredProduction {
+  if (p.scenes && !p.tree) {
+    const { scenes, ...rest } = p;
+    return { ...rest, tree: scenes };
+  }
+  return p;
+}
+
 function loadAll(): StoredProduction[] {
   try {
-    return JSON.parse(localStorage.getItem(STORE_KEY) ?? '[]');
+    const raw: Array<StoredProduction & { scenes?: NamedScene[] }> = JSON.parse(localStorage.getItem(STORE_KEY) ?? '[]');
+    return raw.map(migrateProduction);
   } catch {
     return [];
   }
@@ -41,7 +51,11 @@ export const ProductionStore = {
   },
 
   /** Create a new empty production, persist it, and return it. */
-  create(name: string): StoredProduction {
+  create(baseName: string = 'Untitled Production'): StoredProduction {
+    const existing = this.list().map((p) => p.name);
+    let name = baseName;
+    let n = 2;
+    while (existing.includes(name)) { name = `${baseName} ${n++}`; }
     const now = Date.now();
     const sceneId = crypto.randomUUID();
     const production: StoredProduction = {
@@ -50,7 +64,7 @@ export const ProductionStore = {
       createdAt: now,
       modifiedAt: now,
       actors: [],
-      scenes: [{ id: sceneId, name: 'Scene 1', scene: defaultSceneShell() }],
+      tree: [{ id: sceneId, name: 'Scene 1', scene: defaultSceneShell() }],
       activeSceneId: sceneId,
       script: [],
     };

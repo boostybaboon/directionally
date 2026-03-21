@@ -1,13 +1,78 @@
 import type { Command } from './Command.js';
-import type { StoredProduction, StoredActor, StoredScene, NamedScene } from '../storage/types.js';
+import type { StoredProduction, StoredActor, StoredScene, NamedScene, StoredGroup, ProductionSpeechSettings } from '../storage/types.js';
+import { getScenes } from '../storage/types.js';
 import type { ScriptLine } from '../../lib/script/types.js';
 import type { CameraConfig, Vec3, SetPiece, StagedActor, SpeakAction, CameraTrackAction, PathKeyframe, ClipTrack, TransformTrack, LightingTrack, LoopStyle, ActorBlock, LightBlock, CameraBlock, SetPieceBlock, ActorVoice } from '../domain/types.js';
-import { restageCast, estimateDuration, defaultSceneShell } from '../storage/sceneBuilder.js';
+import { restageCast, estimateDuration, defaultSceneShell, getActiveScene } from '../storage/sceneBuilder.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function touch(doc: StoredProduction): StoredProduction {
   return { ...doc, modifiedAt: Date.now() };
+}
+
+function isGroup(node: StoredGroup | NamedScene): node is StoredGroup {
+  return (node as StoredGroup).type === 'group';
+}
+
+/** Recursively apply `fn` to every `NamedScene` leaf in the tree. */
+function mapScenesInTree(
+  tree: Array<StoredGroup | NamedScene>,
+  fn: (ns: NamedScene) => NamedScene,
+): Array<StoredGroup | NamedScene> {
+  return tree.map((node) => {
+    if (isGroup(node)) return { ...node, children: mapScenesInTree(node.children, fn) };
+    return fn(node);
+  });
+}
+
+/** Recursively apply `fn` to a single `NamedScene` leaf identified by `targetId`. */
+function patchSceneInTree(
+  tree: Array<StoredGroup | NamedScene>,
+  targetId: string,
+  fn: (scene: StoredScene) => StoredScene,
+): Array<StoredGroup | NamedScene> {
+  return tree.map((node) => {
+    if (isGroup(node)) return { ...node, children: patchSceneInTree(node.children, targetId, fn) };
+    return node.id === targetId ? { ...node, scene: fn(node.scene) } : node;
+  });
+}
+
+/** Recursively keep only nodes satisfying `predicate`. Descends into groups. */
+function filterTreeNodes(
+  tree: Array<StoredGroup | NamedScene>,
+  predicate: (node: StoredGroup | NamedScene) => boolean,
+): Array<StoredGroup | NamedScene> {
+  return tree.flatMap<StoredGroup | NamedScene>((node) => {
+    if (!predicate(node)) return [];
+    if (isGroup(node)) return [{ ...node, children: filterTreeNodes(node.children, predicate) }];
+    return [node];
+  });
+}
+
+/** Add `scene` as a child of the group with `groupId`, at any depth. */
+function addSceneToGroup(
+  tree: Array<StoredGroup | NamedScene>,
+  groupId: string,
+  scene: NamedScene,
+): Array<StoredGroup | NamedScene> {
+  return tree.map((node) => {
+    if (!isGroup(node)) return node;
+    if (node.id === groupId) return { ...node, children: [...node.children, scene] };
+    return { ...node, children: addSceneToGroup(node.children, groupId, scene) };
+  });
+}
+
+/**
+ * Apply `fn` to the active scene and return the updated production.
+ * No-op when the production has no scenes.
+ */
+function updateActiveScene(doc: StoredProduction, fn: (scene: StoredScene) => StoredScene): StoredProduction {
+  const allScenes = getScenes(doc.tree ?? []);
+  if (allScenes.length === 0) return doc;
+  const activeId = doc.activeSceneId ?? allScenes[0].id;
+  const tree = patchSceneInTree(doc.tree ?? [], activeId, fn);
+  return { ...doc, tree };
 }
 
 // ── Production-level commands ─────────────────────────────────────────────────
@@ -31,11 +96,7 @@ export class AddActorCommand implements Command {
   }
   execute(doc: StoredProduction): StoredProduction {
     const newActors = [...(doc.actors ?? []), this.actor];
-    if (!doc.scene) {
-      return touch({ ...doc, actors: newActors });
-    }
-    const { stagedActors, actions } = restageCast(newActors, doc.scene);
-    return touch({ ...doc, actors: newActors, scene: { ...doc.scene, stagedActors, actions } });
+    return touch({ ...doc, actors: newActors });
   }
 }
 
@@ -54,25 +115,43 @@ export class RenameActorCommand implements Command {
   }
 }
 
+export class SetActorCatalogueIdCommand implements Command {
+  readonly label: string;
+  constructor(private readonly actorId: string, private readonly catalogueId: string) {
+    this.label = `Change actor model to "${catalogueId}"`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    return touch({
+      ...doc,
+      actors: (doc.actors ?? []).map((a) =>
+        a.id === this.actorId ? { ...a, catalogueId: this.catalogueId } : a
+      ),
+    });
+  }
+}
+
 export class RemoveActorCommand implements Command {
   readonly label: string;
   constructor(private readonly actorId: string) {
     this.label = 'Remove actor';
   }
   execute(doc: StoredProduction): StoredProduction {
+    const actorId = this.actorId;
+    const tree = mapScenesInTree(doc.tree ?? [], (ns) => ({
+      ...ns,
+      scene: {
+        ...ns.scene,
+        stagedActors: ns.scene.stagedActors.filter((s) => s.actorId !== actorId),
+        actions: ns.scene.actions.filter((a) =>
+          !('actorId' in a) || (a as { actorId: string }).actorId !== actorId
+        ),
+      },
+    }));
     return touch({
       ...doc,
       actors: (doc.actors ?? []).filter((a) => a.id !== this.actorId),
-      // Remove script lines that reference the deleted actor.
       script: (doc.script ?? []).filter((l) => l.actorId !== this.actorId),
-      // Remove the actor from the staged cast if a scene is present.
-      scene: doc.scene ? {
-        ...doc.scene,
-        stagedActors: doc.scene.stagedActors.filter((s) => s.actorId !== this.actorId),
-        actions:      doc.scene.actions.filter((a) =>
-          !('actorId' in a) || (a as { actorId: string }).actorId !== this.actorId
-        ),
-      } : doc.scene,
+      tree,
     });
   }
 }
@@ -132,10 +211,9 @@ export class SetSpeakLinesCommand implements Command {
   execute(doc: StoredProduction): StoredProduction {
     const newScript = [...this.lines];
 
-    if (!doc.scene) {
+    if (!getScenes(doc.tree ?? []).length) {
       return touch({ ...doc, script: newScript });
     }
-
     const active = this.lines.filter((l) => l.text.trim().length > 0);
     let t = 1.0;
     const speakActions: SpeakAction[] = active.map((line) => {
@@ -152,17 +230,16 @@ export class SetSpeakLinesCommand implements Command {
       };
     });
 
-    const duration = Math.max(doc.scene.duration ?? 6, t + 1);
-
-    // Preserve non-speak actions. Looping idle animate actions intentionally have
-    // no endTime (→ Infinity in GLTFAction) so no Tone hard-stop schedule fires and
-    // the actor holds its idle pose through scene end instead of snapping to T-pose.
-    const nonSpeak = doc.scene.actions.filter((a) => a.type !== 'speak');
-
     return touch({
-      ...doc,
+      ...updateActiveScene(doc, (scene) => {
+        const duration = Math.max(scene.duration ?? 6, t + 1);
+        // Preserve non-speak actions. Looping idle animate actions intentionally have
+        // no endTime (→ Infinity in GLTFAction) so no Tone hard-stop schedule fires and
+        // the actor holds its idle pose through scene end instead of snapping to T-pose.
+        const nonSpeak = scene.actions.filter((a) => a.type !== 'speak');
+        return { ...scene, duration, actions: [...nonSpeak, ...speakActions] };
+      }),
       script: newScript,
-      scene: { ...doc.scene, duration, actions: [...nonSpeak, ...speakActions] },
     });
   }
 }
@@ -177,8 +254,7 @@ export class UpdateCameraCommand implements Command {
   readonly label = 'Update camera';
   constructor(private readonly camera: CameraConfig) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    return touch({ ...doc, scene: { ...doc.scene, camera: this.camera } });
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, camera: this.camera })));
   }
 }
 
@@ -192,8 +268,7 @@ export class AddSetPieceCommand implements Command {
     this.label = `Add set piece "${piece.name}"`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    return touch({ ...doc, scene: { ...doc.scene, set: [...doc.scene.set, this.piece] } });
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, set: [...scene.set, this.piece] })));
   }
 }
 
@@ -207,8 +282,7 @@ export class RemoveSetPieceCommand implements Command {
     this.label = `Remove set piece "${name}"`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    return touch({ ...doc, scene: { ...doc.scene, set: doc.scene.set.filter((p) => p.name !== this.name) } });
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, set: scene.set.filter((p) => p.name !== this.name) })));
   }
 }
 
@@ -223,9 +297,10 @@ export class StageActorCommand implements Command {
     this.label = `Stage actor "${staged.actorId}"`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const others = doc.scene.stagedActors.filter((s) => s.actorId !== this.staged.actorId);
-    return touch({ ...doc, scene: { ...doc.scene, stagedActors: [...others, this.staged] } });
+    return touch(updateActiveScene(doc, (scene) => {
+      const others = scene.stagedActors.filter((s) => s.actorId !== this.staged.actorId);
+      return { ...scene, stagedActors: [...others, this.staged] };
+    }));
   }
 }
 
@@ -239,11 +314,10 @@ export class UnstageActorCommand implements Command {
     this.label = `Unstage actor "${actorId}"`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    return touch({ ...doc, scene: {
-      ...doc.scene,
-      stagedActors: doc.scene.stagedActors.filter((s) => s.actorId !== this.actorId),
-    } });
+    return touch(updateActiveScene(doc, (scene) => ({
+      ...scene,
+      stagedActors: scene.stagedActors.filter((s) => s.actorId !== this.actorId),
+    })));
   }
 }
 
@@ -261,13 +335,14 @@ export class MoveStagedActorCommand implements Command {
     this.label = `Move actor "${actorId}"`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const stagedActors = doc.scene.stagedActors.map((s) =>
-      s.actorId === this.actorId
-        ? { ...s, startPosition: this.position, ...(this.rotation !== undefined ? { startRotation: this.rotation } : {}) }
-        : s
-    );
-    return touch({ ...doc, scene: { ...doc.scene, stagedActors } });
+    return touch(updateActiveScene(doc, (scene) => {
+      const stagedActors = scene.stagedActors.map((s) =>
+        s.actorId === this.actorId
+          ? { ...s, startPosition: this.position, ...(this.rotation !== undefined ? { startRotation: this.rotation } : {}) }
+          : s
+      );
+      return { ...scene, stagedActors };
+    }));
   }
 }
 
@@ -285,13 +360,14 @@ export class MoveSetPieceCommand implements Command {
     this.label = `Move set piece "${name}"`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const set = doc.scene.set.map((p) =>
-      p.name === this.name
-        ? { ...p, position: this.position, ...(this.rotation !== undefined ? { rotation: this.rotation } : {}) }
-        : p
-    );
-    return touch({ ...doc, scene: { ...doc.scene, set } });
+    return touch(updateActiveScene(doc, (scene) => {
+      const set = scene.set.map((p) =>
+        p.name === this.name
+          ? { ...p, position: this.position, ...(this.rotation !== undefined ? { rotation: this.rotation } : {}) }
+          : p
+      );
+      return { ...scene, set };
+    }));
   }
 }
 
@@ -313,25 +389,26 @@ export class AddCameraKeyframeCommand implements Command {
     this.label = `Add camera keyframe at ${time.toFixed(1)}s`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const newKf: PathKeyframe = { time: this.time, position: this.position, lookAt: this.lookAt };
-    const trackIdx = doc.scene.actions.findIndex((a) => a.type === 'cameraTrack');
-    let newActions: typeof doc.scene.actions;
-    if (trackIdx >= 0) {
-      const existing = doc.scene.actions[trackIdx] as CameraTrackAction;
-      const filtered = existing.keyframes.filter((k) => Math.abs(k.time - this.time) > 0.05);
-      const sorted = [...filtered, newKf].sort((a, b) => a.time - b.time);
-      const updated: CameraTrackAction = { type: 'cameraTrack', keyframes: sorted };
-      newActions = [
-        ...doc.scene.actions.slice(0, trackIdx),
-        updated,
-        ...doc.scene.actions.slice(trackIdx + 1),
-      ];
-    } else {
-      const track: CameraTrackAction = { type: 'cameraTrack', keyframes: [newKf] };
-      newActions = [...doc.scene.actions, track];
-    }
-    return touch({ ...doc, scene: { ...doc.scene, actions: newActions } });
+    return touch(updateActiveScene(doc, (scene) => {
+      const newKf: PathKeyframe = { time: this.time, position: this.position, lookAt: this.lookAt };
+      const trackIdx = scene.actions.findIndex((a) => a.type === 'cameraTrack');
+      let newActions: typeof scene.actions;
+      if (trackIdx >= 0) {
+        const existing = scene.actions[trackIdx] as CameraTrackAction;
+        const filtered = existing.keyframes.filter((k) => Math.abs(k.time - this.time) > 0.05);
+        const sorted = [...filtered, newKf].sort((a, b) => a.time - b.time);
+        const updated: CameraTrackAction = { type: 'cameraTrack', keyframes: sorted };
+        newActions = [
+          ...scene.actions.slice(0, trackIdx),
+          updated,
+          ...scene.actions.slice(trackIdx + 1),
+        ];
+      } else {
+        const track: CameraTrackAction = { type: 'cameraTrack', keyframes: [newKf] };
+        newActions = [...scene.actions, track];
+      }
+      return { ...scene, actions: newActions };
+    }));
   }
 }
 
@@ -343,19 +420,20 @@ export class RemoveCameraKeyframeCommand implements Command {
   readonly label = 'Remove camera keyframe';
   constructor(private readonly index: number) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const trackIdx = doc.scene.actions.findIndex((a) => a.type === 'cameraTrack');
-    if (trackIdx < 0) return doc;
-    const track = doc.scene.actions[trackIdx] as CameraTrackAction;
-    const newKeyframes = track.keyframes.filter((_, i) => i !== this.index);
-    const newActions: typeof doc.scene.actions = newKeyframes.length === 0
-      ? doc.scene.actions.filter((_, i) => i !== trackIdx)
-      : [
-          ...doc.scene.actions.slice(0, trackIdx),
-          { type: 'cameraTrack' as const, keyframes: newKeyframes },
-          ...doc.scene.actions.slice(trackIdx + 1),
-        ];
-    return touch({ ...doc, scene: { ...doc.scene, actions: newActions } });
+    return touch(updateActiveScene(doc, (scene) => {
+      const trackIdx = scene.actions.findIndex((a) => a.type === 'cameraTrack');
+      if (trackIdx < 0) return scene;
+      const track = scene.actions[trackIdx] as CameraTrackAction;
+      const newKeyframes = track.keyframes.filter((_, i) => i !== this.index);
+      const newActions: typeof scene.actions = newKeyframes.length === 0
+        ? scene.actions.filter((_, i) => i !== trackIdx)
+        : [
+            ...scene.actions.slice(0, trackIdx),
+            { type: 'cameraTrack' as const, keyframes: newKeyframes },
+            ...scene.actions.slice(trackIdx + 1),
+          ];
+      return { ...scene, actions: newActions };
+    }));
   }
 }
 
@@ -371,10 +449,10 @@ export class SetSceneDurationCommand implements Command {
     this.label = duration === undefined ? 'Clear scene duration' : `Set scene duration to ${duration.toFixed(1)}s`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const { duration: _removed, ...rest } = doc.scene;
-    const newScene = this.duration !== undefined ? { ...rest, duration: this.duration } : rest;
-    return touch({ ...doc, scene: newScene as StoredScene });
+    return touch(updateActiveScene(doc, (scene) => {
+      const { duration: _removed, ...rest } = scene;
+      return this.duration !== undefined ? { ...rest, duration: this.duration } : rest as StoredScene;
+    }));
   }
 }
 
@@ -389,8 +467,7 @@ export class AddAnimateSegmentCommand implements Command {
     this.label = `Add clip "${segment.animationName}" for ${segment.actorId}`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    return touch({ ...doc, scene: { ...doc.scene, actions: [...doc.scene.actions, this.segment] } });
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, actions: [...scene.actions, this.segment] })));
   }
 }
 
@@ -401,8 +478,7 @@ export class RemoveAnimateSegmentCommand implements Command {
   readonly label = 'Remove clip segment';
   constructor(private readonly index: number) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    return touch({ ...doc, scene: { ...doc.scene, actions: doc.scene.actions.filter((_, i) => i !== this.index) } });
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, actions: scene.actions.filter((_, i) => i !== this.index) })));
   }
 }
 
@@ -417,16 +493,17 @@ export class UpdateAnimateSegmentCommand implements Command {
     private readonly patch: Partial<Pick<ClipTrack, 'animationName' | 'startTime' | 'endTime' | 'fadeIn' | 'fadeOut' | 'loop'>>,
   ) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const action = doc.scene.actions[this.index];
-    if (!action || action.type !== 'animate') return doc;
-    const updated: ClipTrack = { ...action, ...this.patch };
-    const newActions = [
-      ...doc.scene.actions.slice(0, this.index),
-      updated,
-      ...doc.scene.actions.slice(this.index + 1),
-    ];
-    return touch({ ...doc, scene: { ...doc.scene, actions: newActions } });
+    return touch(updateActiveScene(doc, (scene) => {
+      const action = scene.actions[this.index];
+      if (!action || action.type !== 'animate') return scene;
+      const updated: ClipTrack = { ...action, ...this.patch };
+      const newActions = [
+        ...scene.actions.slice(0, this.index),
+        updated,
+        ...scene.actions.slice(this.index + 1),
+      ];
+      return { ...scene, actions: newActions };
+    }));
   }
 }
 
@@ -454,33 +531,34 @@ export class CapturePositionKeyframeCommand implements Command {
     this.label = `Capture position keyframe for ${targetId} at ${time.toFixed(1)}s`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const SNAP = 0.05;
-    const property = '.position';
-    const moveIdx = doc.scene.actions.findIndex(
-      (a) => a.type === 'move' && (a as TransformTrack).targetId === this.targetId && (a as TransformTrack).keyframes.property === property,
-    );
-    if (moveIdx >= 0) {
-      const existing = doc.scene.actions[moveIdx] as TransformTrack;
-      const pairs: { time: number; vals: number[] }[] = [];
-      for (let i = 0; i < existing.keyframes.times.length; i++) {
-        if (Math.abs(existing.keyframes.times[i] - this.time) > SNAP) {
-          pairs.push({ time: existing.keyframes.times[i], vals: existing.keyframes.values.slice(i * 3, i * 3 + 3) });
+    return touch(updateActiveScene(doc, (scene) => {
+      const SNAP = 0.05;
+      const property = '.position';
+      const moveIdx = scene.actions.findIndex(
+        (a) => a.type === 'move' && (a as TransformTrack).targetId === this.targetId && (a as TransformTrack).keyframes.property === property,
+      );
+      if (moveIdx >= 0) {
+        const existing = scene.actions[moveIdx] as TransformTrack;
+        const pairs: { time: number; vals: number[] }[] = [];
+        for (let i = 0; i < existing.keyframes.times.length; i++) {
+          if (Math.abs(existing.keyframes.times[i] - this.time) > SNAP) {
+            pairs.push({ time: existing.keyframes.times[i], vals: existing.keyframes.values.slice(i * 3, i * 3 + 3) });
+          }
         }
+        pairs.push({ time: this.time, vals: [...this.position] });
+        pairs.sort((a, b) => a.time - b.time);
+        const updated: TransformTrack = {
+          ...existing,
+          keyframes: { ...existing.keyframes, times: pairs.map((p) => p.time), values: pairs.flatMap((p) => p.vals) },
+        };
+        return { ...scene, actions: [...scene.actions.slice(0, moveIdx), updated, ...scene.actions.slice(moveIdx + 1)] };
       }
-      pairs.push({ time: this.time, vals: [...this.position] });
-      pairs.sort((a, b) => a.time - b.time);
-      const updated: TransformTrack = {
-        ...existing,
-        keyframes: { ...existing.keyframes, times: pairs.map((p) => p.time), values: pairs.flatMap((p) => p.vals) },
+      const newAction: TransformTrack = {
+        type: 'move', targetId: this.targetId, startTime: 0,
+        keyframes: { property, times: [this.time], values: [...this.position], trackType: 'vector' },
       };
-      return touch({ ...doc, scene: { ...doc.scene, actions: [...doc.scene.actions.slice(0, moveIdx), updated, ...doc.scene.actions.slice(moveIdx + 1)] } });
-    }
-    const newAction: TransformTrack = {
-      type: 'move', targetId: this.targetId, startTime: 0,
-      keyframes: { property, times: [this.time], values: [...this.position], trackType: 'vector' },
-    };
-    return touch({ ...doc, scene: { ...doc.scene, actions: [...doc.scene.actions, newAction] } });
+      return { ...scene, actions: [...scene.actions, newAction] };
+    }));
   }
 }
 
@@ -496,23 +574,24 @@ export class RemoveTransformKeyframeCommand implements Command {
     private readonly kfIndex: number,
   ) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const moveIdx = doc.scene.actions.findIndex(
-      (a) => a.type === 'move' && (a as TransformTrack).targetId === this.targetId && (a as TransformTrack).keyframes.property === this.property,
-    );
-    if (moveIdx < 0) return doc;
-    const existing = doc.scene.actions[moveIdx] as TransformTrack;
-    const stride = trackStride(existing.keyframes.trackType);
-    const newTimes = existing.keyframes.times.filter((_, i) => i !== this.kfIndex);
-    const newValues = existing.keyframes.values.filter((_, i) => Math.floor(i / stride) !== this.kfIndex);
-    const newActions = newTimes.length === 0
-      ? doc.scene.actions.filter((_, i) => i !== moveIdx)
-      : [
-          ...doc.scene.actions.slice(0, moveIdx),
-          { ...existing, keyframes: { ...existing.keyframes, times: newTimes, values: newValues } } as TransformTrack,
-          ...doc.scene.actions.slice(moveIdx + 1),
-        ];
-    return touch({ ...doc, scene: { ...doc.scene, actions: newActions } });
+    return touch(updateActiveScene(doc, (scene) => {
+      const moveIdx = scene.actions.findIndex(
+        (a) => a.type === 'move' && (a as TransformTrack).targetId === this.targetId && (a as TransformTrack).keyframes.property === this.property,
+      );
+      if (moveIdx < 0) return scene;
+      const existing = scene.actions[moveIdx] as TransformTrack;
+      const stride = trackStride(existing.keyframes.trackType);
+      const newTimes = existing.keyframes.times.filter((_, i) => i !== this.kfIndex);
+      const newValues = existing.keyframes.values.filter((_, i) => Math.floor(i / stride) !== this.kfIndex);
+      const newActions = newTimes.length === 0
+        ? scene.actions.filter((_, i) => i !== moveIdx)
+        : [
+            ...scene.actions.slice(0, moveIdx),
+            { ...existing, keyframes: { ...existing.keyframes, times: newTimes, values: newValues } } as TransformTrack,
+            ...scene.actions.slice(moveIdx + 1),
+          ];
+      return { ...scene, actions: newActions };
+    }));
   }
 }
 
@@ -533,33 +612,34 @@ export class CaptureLightIntensityKeyframeCommand implements Command {
     this.label = `Capture light intensity keyframe for ${lightId} at ${time.toFixed(1)}s`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const SNAP = 0.05;
-    const property = '.intensity';
-    const lightIdx = doc.scene.actions.findIndex(
-      (a) => a.type === 'lighting' && (a as LightingTrack).lightId === this.lightId && (a as LightingTrack).keyframes.property === property,
-    );
-    if (lightIdx >= 0) {
-      const existing = doc.scene.actions[lightIdx] as LightingTrack;
-      const pairs: { time: number; val: number }[] = [];
-      for (let i = 0; i < existing.keyframes.times.length; i++) {
-        if (Math.abs(existing.keyframes.times[i] - this.time) > SNAP) {
-          pairs.push({ time: existing.keyframes.times[i], val: existing.keyframes.values[i] });
+    return touch(updateActiveScene(doc, (scene) => {
+      const SNAP = 0.05;
+      const property = '.intensity';
+      const lightIdx = scene.actions.findIndex(
+        (a) => a.type === 'lighting' && (a as LightingTrack).lightId === this.lightId && (a as LightingTrack).keyframes.property === property,
+      );
+      if (lightIdx >= 0) {
+        const existing = scene.actions[lightIdx] as LightingTrack;
+        const pairs: { time: number; val: number }[] = [];
+        for (let i = 0; i < existing.keyframes.times.length; i++) {
+          if (Math.abs(existing.keyframes.times[i] - this.time) > SNAP) {
+            pairs.push({ time: existing.keyframes.times[i], val: existing.keyframes.values[i] });
+          }
         }
+        pairs.push({ time: this.time, val: this.intensity });
+        pairs.sort((a, b) => a.time - b.time);
+        const updated: LightingTrack = {
+          ...existing,
+          keyframes: { ...existing.keyframes, times: pairs.map((p) => p.time), values: pairs.map((p) => p.val) },
+        };
+        return { ...scene, actions: [...scene.actions.slice(0, lightIdx), updated, ...scene.actions.slice(lightIdx + 1)] };
       }
-      pairs.push({ time: this.time, val: this.intensity });
-      pairs.sort((a, b) => a.time - b.time);
-      const updated: LightingTrack = {
-        ...existing,
-        keyframes: { ...existing.keyframes, times: pairs.map((p) => p.time), values: pairs.map((p) => p.val) },
+      const newAction: LightingTrack = {
+        type: 'lighting', lightId: this.lightId, startTime: 0,
+        keyframes: { property, times: [this.time], values: [this.intensity], trackType: 'number' },
       };
-      return touch({ ...doc, scene: { ...doc.scene, actions: [...doc.scene.actions.slice(0, lightIdx), updated, ...doc.scene.actions.slice(lightIdx + 1)] } });
-    }
-    const newAction: LightingTrack = {
-      type: 'lighting', lightId: this.lightId, startTime: 0,
-      keyframes: { property, times: [this.time], values: [this.intensity], trackType: 'number' },
-    };
-    return touch({ ...doc, scene: { ...doc.scene, actions: [...doc.scene.actions, newAction] } });
+      return { ...scene, actions: [...scene.actions, newAction] };
+    }));
   }
 }
 
@@ -575,22 +655,23 @@ export class RemoveLightKeyframeCommand implements Command {
     private readonly kfIndex: number,
   ) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const lightIdx = doc.scene.actions.findIndex(
-      (a) => a.type === 'lighting' && (a as LightingTrack).lightId === this.lightId && (a as LightingTrack).keyframes.property === this.property,
-    );
-    if (lightIdx < 0) return doc;
-    const existing = doc.scene.actions[lightIdx] as LightingTrack;
-    const newTimes = existing.keyframes.times.filter((_, i) => i !== this.kfIndex);
-    const newValues = existing.keyframes.values.filter((_, i) => i !== this.kfIndex);
-    const newActions = newTimes.length === 0
-      ? doc.scene.actions.filter((_, i) => i !== lightIdx)
-      : [
-          ...doc.scene.actions.slice(0, lightIdx),
-          { ...existing, keyframes: { ...existing.keyframes, times: newTimes, values: newValues } } as LightingTrack,
-          ...doc.scene.actions.slice(lightIdx + 1),
-        ];
-    return touch({ ...doc, scene: { ...doc.scene, actions: newActions } });
+    return touch(updateActiveScene(doc, (scene) => {
+      const lightIdx = scene.actions.findIndex(
+        (a) => a.type === 'lighting' && (a as LightingTrack).lightId === this.lightId && (a as LightingTrack).keyframes.property === this.property,
+      );
+      if (lightIdx < 0) return scene;
+      const existing = scene.actions[lightIdx] as LightingTrack;
+      const newTimes = existing.keyframes.times.filter((_, i) => i !== this.kfIndex);
+      const newValues = existing.keyframes.values.filter((_, i) => i !== this.kfIndex);
+      const newActions = newTimes.length === 0
+        ? scene.actions.filter((_, i) => i !== lightIdx)
+        : [
+            ...scene.actions.slice(0, lightIdx),
+            { ...existing, keyframes: { ...existing.keyframes, times: newTimes, values: newValues } } as LightingTrack,
+            ...scene.actions.slice(lightIdx + 1),
+          ];
+      return { ...scene, actions: newActions };
+    }));
   }
 }
 
@@ -613,9 +694,14 @@ export class SetActorIdleAnimationCommand implements Command {
       a.id === this.actorId ? { ...a, idleAnimation: this.idleAnimation } : a,
     );
     if (!actors) return doc;
-    if (!doc.scene) return touch({ ...doc, actors });
-    const { stagedActors, actions } = restageCast(actors, doc.scene);
-    return touch({ ...doc, actors, scene: { ...doc.scene, stagedActors, actions } });
+    if (!getScenes(doc.tree ?? []).length) return touch({ ...doc, actors });
+    return touch({
+      ...updateActiveScene(doc, (scene) => {
+        const { stagedActors, actions } = restageCast(actors, scene);
+        return { ...scene, stagedActors, actions };
+      }),
+      actors,
+    });
   }
 }
 
@@ -636,16 +722,19 @@ export class SetActorScaleCommand implements Command {
       a.id === this.actorId ? { ...a, scale: this.scale } : a,
     );
     if (!actors) return doc;
-    if (!doc.scene) return touch({ ...doc, actors });
     const scaleVec: Vec3 | undefined =
       this.scale !== undefined ? [this.scale, this.scale, this.scale] : undefined;
-    const stagedActors = doc.scene.stagedActors.map((sa) => {
-      if (sa.actorId !== this.actorId) return sa;
-      if (scaleVec) return { ...sa, startScale: scaleVec };
-      const { startScale: _removed, ...rest } = sa;
-      return rest;
+    const actorId = this.actorId;
+    const tree = mapScenesInTree(doc.tree ?? [], (ns) => {
+      const stagedActors = ns.scene.stagedActors.map((sa) => {
+        if (sa.actorId !== actorId) return sa;
+        if (scaleVec) return { ...sa, startScale: scaleVec };
+        const { startScale: _removed, ...rest } = sa;
+        return rest;
+      });
+      return { ...ns, scene: { ...ns.scene, stagedActors } };
     });
-    return touch({ ...doc, actors, scene: { ...doc.scene, stagedActors } });
+    return touch({ ...doc, actors, tree });
   }
 }
 
@@ -675,9 +764,7 @@ export class AddActorBlockCommand implements Command {
     this.label = `Add block for ${block.actorId} at ${block.startTime.toFixed(1)}s`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const blocks = [...(doc.scene.blocks ?? []), this.block];
-    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, blocks: [...(scene.blocks ?? []), this.block] })));
   }
 }
 
@@ -688,9 +775,7 @@ export class RemoveActorBlockCommand implements Command {
   readonly label = 'Remove actor block';
   constructor(private readonly index: number) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const blocks = (doc.scene.blocks ?? []).filter((_, i) => i !== this.index);
-    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, blocks: (scene.blocks ?? []).filter((_, i) => i !== this.index) })));
   }
 }
 
@@ -705,17 +790,18 @@ export class UpdateActorBlockCommand implements Command {
     private readonly patch: Partial<Omit<ActorBlock, 'type'>>,
   ) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const blocks = doc.scene.blocks ?? [];
-    const block = blocks[this.index];
-    if (!block || block.type !== 'actorBlock') return doc;
-    const updated: ActorBlock = { ...block, ...this.patch };
-    const newBlocks = [
-      ...blocks.slice(0, this.index),
-      updated,
-      ...blocks.slice(this.index + 1),
-    ];
-    return touch({ ...doc, scene: { ...doc.scene, blocks: newBlocks } });
+    return touch(updateActiveScene(doc, (scene) => {
+      const blocks = scene.blocks ?? [];
+      const block = blocks[this.index];
+      if (!block || block.type !== 'actorBlock') return scene;
+      const updated: ActorBlock = { ...block, ...this.patch };
+      const newBlocks = [
+        ...blocks.slice(0, this.index),
+        updated,
+        ...blocks.slice(this.index + 1),
+      ];
+      return { ...scene, blocks: newBlocks };
+    }));
   }
 }
 
@@ -728,9 +814,7 @@ export class AddLightBlockCommand implements Command {
     this.label = `Add light block for ${block.lightId} at ${block.startTime.toFixed(1)}s`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const blocks = [...(doc.scene.blocks ?? []), this.block];
-    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, blocks: [...(scene.blocks ?? []), this.block] })));
   }
 }
 
@@ -739,9 +823,7 @@ export class RemoveLightBlockCommand implements Command {
   readonly label = 'Remove light block';
   constructor(private readonly index: number) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const blocks = (doc.scene.blocks ?? []).filter((_, i) => i !== this.index);
-    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, blocks: (scene.blocks ?? []).filter((_, i) => i !== this.index) })));
   }
 }
 
@@ -753,17 +835,18 @@ export class UpdateLightBlockCommand implements Command {
     private readonly patch: Partial<Omit<LightBlock, 'type'>>,
   ) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const blocks = doc.scene.blocks ?? [];
-    const block = blocks[this.index];
-    if (!block || block.type !== 'lightBlock') return doc;
-    const updated: LightBlock = { ...block, ...this.patch };
-    const newBlocks = [
-      ...blocks.slice(0, this.index),
-      updated,
-      ...blocks.slice(this.index + 1),
-    ];
-    return touch({ ...doc, scene: { ...doc.scene, blocks: newBlocks } });
+    return touch(updateActiveScene(doc, (scene) => {
+      const blocks = scene.blocks ?? [];
+      const block = blocks[this.index];
+      if (!block || block.type !== 'lightBlock') return scene;
+      const updated: LightBlock = { ...block, ...this.patch };
+      const newBlocks = [
+        ...blocks.slice(0, this.index),
+        updated,
+        ...blocks.slice(this.index + 1),
+      ];
+      return { ...scene, blocks: newBlocks };
+    }));
   }
 }
 
@@ -776,9 +859,7 @@ export class AddCameraBlockCommand implements Command {
     this.label = `Add camera block at ${block.startTime.toFixed(1)}s`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const blocks = [...(doc.scene.blocks ?? []), this.block];
-    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, blocks: [...(scene.blocks ?? []), this.block] })));
   }
 }
 
@@ -787,9 +868,7 @@ export class RemoveCameraBlockCommand implements Command {
   readonly label = 'Remove camera block';
   constructor(private readonly index: number) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const blocks = (doc.scene.blocks ?? []).filter((_, i) => i !== this.index);
-    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, blocks: (scene.blocks ?? []).filter((_, i) => i !== this.index) })));
   }
 }
 
@@ -801,17 +880,18 @@ export class UpdateCameraBlockCommand implements Command {
     private readonly patch: Partial<Omit<CameraBlock, 'type'>>,
   ) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const blocks = doc.scene.blocks ?? [];
-    const block = blocks[this.index];
-    if (!block || block.type !== 'cameraBlock') return doc;
-    const updated: CameraBlock = { ...block, ...this.patch };
-    const newBlocks = [
-      ...blocks.slice(0, this.index),
-      updated,
-      ...blocks.slice(this.index + 1),
-    ];
-    return touch({ ...doc, scene: { ...doc.scene, blocks: newBlocks } });
+    return touch(updateActiveScene(doc, (scene) => {
+      const blocks = scene.blocks ?? [];
+      const block = blocks[this.index];
+      if (!block || block.type !== 'cameraBlock') return scene;
+      const updated: CameraBlock = { ...block, ...this.patch };
+      const newBlocks = [
+        ...blocks.slice(0, this.index),
+        updated,
+        ...blocks.slice(this.index + 1),
+      ];
+      return { ...scene, blocks: newBlocks };
+    }));
   }
 }
 
@@ -824,9 +904,7 @@ export class AddSetPieceBlockCommand implements Command {
     this.label = `Add set piece block for "${block.targetId}" at ${block.startTime.toFixed(1)}s`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const blocks = [...(doc.scene.blocks ?? []), this.block];
-    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, blocks: [...(scene.blocks ?? []), this.block] })));
   }
 }
 
@@ -835,9 +913,7 @@ export class RemoveSetPieceBlockCommand implements Command {
   readonly label = 'Remove set piece block';
   constructor(private readonly index: number) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const blocks = (doc.scene.blocks ?? []).filter((_, i) => i !== this.index);
-    return touch({ ...doc, scene: { ...doc.scene, blocks } });
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, blocks: (scene.blocks ?? []).filter((_, i) => i !== this.index) })));
   }
 }
 
@@ -849,40 +925,35 @@ export class UpdateSetPieceBlockCommand implements Command {
     private readonly patch: Partial<Omit<SetPieceBlock, 'type'>>,
   ) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scene) return doc;
-    const blocks = doc.scene.blocks ?? [];
-    const block = blocks[this.index];
-    if (!block || block.type !== 'setPieceBlock') return doc;
-    const updated: SetPieceBlock = { ...block, ...this.patch };
-    const newBlocks = [
-      ...blocks.slice(0, this.index),
-      updated,
-      ...blocks.slice(this.index + 1),
-    ];
-    return touch({ ...doc, scene: { ...doc.scene, blocks: newBlocks } });
+    return touch(updateActiveScene(doc, (scene) => {
+      const blocks = scene.blocks ?? [];
+      const block = blocks[this.index];
+      if (!block || block.type !== 'setPieceBlock') return scene;
+      const updated: SetPieceBlock = { ...block, ...this.patch };
+      return { ...scene, blocks: [...blocks.slice(0, this.index), updated, ...blocks.slice(this.index + 1)] };
+    }));
   }
 }
 
 // ── Scene management commands ─────────────────────────────────────────────────
 
 /**
- * Add a new empty scene to the production's scene list.
- * Migrates legacy `scene` field to `scenes[0]` on first call.
+ * Add a new empty scene to the production tree.
+ * When `parentGroupId` is supplied, the scene is appended inside that group.
  */
 export class AddSceneCommand implements Command {
   readonly label: string;
-  constructor(private readonly sceneName: string = '') {
+  constructor(private readonly sceneName: string = '', private readonly parentGroupId?: string) {
     this.label = `Add scene "${sceneName || 'New Scene'}"`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    // Migrate legacy single-scene productions on first add.
-    const existingScenes: NamedScene[] = doc.scenes
-      ?? (doc.scene ? [{ id: crypto.randomUUID(), name: 'Scene 1', scene: doc.scene }] : []);
-    const newSceneId = crypto.randomUUID();
-    const name = this.sceneName || `Scene ${existingScenes.length + 1}`;
-    const newScene: NamedScene = { id: newSceneId, name, scene: defaultSceneShell() };
-    const { scene: _legacy, ...rest } = doc;
-    return touch({ ...rest, scenes: [...existingScenes, newScene], activeSceneId: doc.activeSceneId ?? existingScenes[0]?.id });
+    const existing = getScenes(doc.tree ?? []);
+    const name = this.sceneName || `Scene ${existing.length + 1}`;
+    const newScene: NamedScene = { id: crypto.randomUUID(), name, scene: defaultSceneShell() };
+    const tree = this.parentGroupId
+      ? addSceneToGroup(doc.tree ?? [], this.parentGroupId, newScene)
+      : [...(doc.tree ?? []), newScene];
+    return touch({ ...doc, tree, activeSceneId: doc.activeSceneId ?? existing[0]?.id });
   }
 }
 
@@ -893,11 +964,11 @@ export class RenameSceneCommand implements Command {
     this.label = `Rename scene to "${name}"`;
   }
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scenes) return doc;
-    const scenes = doc.scenes.map((ns) =>
+    if (!doc.tree) return doc;
+    const tree = mapScenesInTree(doc.tree, (ns) =>
       ns.id === this.sceneId ? { ...ns, name: this.name } : ns,
     );
-    return touch({ ...doc, scenes });
+    return touch({ ...doc, tree });
   }
 }
 
@@ -906,12 +977,14 @@ export class RemoveSceneCommand implements Command {
   readonly label = 'Remove scene';
   constructor(private readonly sceneId: string) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scenes || doc.scenes.length <= 1) return doc;
-    const scenes = doc.scenes.filter((ns) => ns.id !== this.sceneId);
+    const all = getScenes(doc.tree ?? []);
+    if (all.length <= 1) return doc;
+    const tree = filterTreeNodes(doc.tree ?? [], (node) => isGroup(node) || node.id !== this.sceneId);
+    const remaining = getScenes(tree);
     const activeSceneId = doc.activeSceneId === this.sceneId
-      ? (scenes[0]?.id ?? undefined)
+      ? (remaining[0]?.id ?? undefined)
       : doc.activeSceneId;
-    return touch({ ...doc, scenes, activeSceneId });
+    return touch({ ...doc, tree, activeSceneId });
   }
 }
 
@@ -920,7 +993,62 @@ export class SwitchSceneCommand implements Command {
   readonly label = 'Switch scene';
   constructor(private readonly sceneId: string) {}
   execute(doc: StoredProduction): StoredProduction {
-    if (!doc.scenes?.find((ns) => ns.id === this.sceneId)) return doc;
+    if (!getScenes(doc.tree ?? []).find((ns) => ns.id === this.sceneId)) return doc;
     return touch({ ...doc, activeSceneId: this.sceneId });
+  }
+}
+
+// ── Group (Act) commands ─────────────────────────────────────────────────────
+
+/** Add a new named group (act) to the root of the production tree. */
+export class AddGroupCommand implements Command {
+  readonly label: string;
+  constructor(private readonly name: string = '') {
+    this.label = `Add act "${name || 'Act'}"`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    const groups = (doc.tree ?? []).filter(isGroup);
+    const name = this.name || `Act ${groups.length + 1}`;
+    const newGroup: StoredGroup = { type: 'group', id: crypto.randomUUID(), name, children: [] };
+    return touch({ ...doc, tree: [...(doc.tree ?? []), newGroup] });
+  }
+}
+
+/** Rename the group with the given id. */
+export class RenameGroupCommand implements Command {
+  readonly label: string;
+  constructor(private readonly groupId: string, private readonly name: string) {
+    this.label = `Rename act to "${name}"`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    if (!doc.tree) return doc;
+    const tree = doc.tree.map((node) =>
+      isGroup(node) && node.id === this.groupId ? { ...node, name: this.name } : node,
+    );
+    return touch({ ...doc, tree });
+  }
+}
+
+/** Remove a group from the production. Scenes inside the group are lost. */
+export class RemoveGroupCommand implements Command {
+  readonly label = 'Remove act';
+  constructor(private readonly groupId: string) {}
+  execute(doc: StoredProduction): StoredProduction {
+    const tree = filterTreeNodes(doc.tree ?? [], (node) => !isGroup(node) || node.id !== this.groupId);
+    return touch({ ...doc, tree });
+  }
+}
+
+/**
+ * Set or clear the per-production TTS engine and bubble scale override.
+ * Pass `undefined` to remove the override and revert to global defaults.
+ */
+export class SetProductionSpeechSettingsCommand implements Command {
+  readonly label: string;
+  constructor(private readonly settings: ProductionSpeechSettings | undefined) {
+    this.label = settings ? 'Set production speech settings' : 'Clear production speech settings';
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    return touch({ ...doc, speechSettings: this.settings });
   }
 }
