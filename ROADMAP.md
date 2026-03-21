@@ -446,7 +446,7 @@ Small focused fixes that eliminate confusion before the larger UX redesign in Ph
 
 ---
 
-### Phase UX1 — Minimal interaction model *(high priority)*
+### Phase UX1 — Minimal interaction model ✅ COMPLETE
 
 *A design-first pass at reducing configuration clutter and surface area. Goal: a new user familiar with screenplay software can author a short play from scratch guided entirely by visual affordances — no documentation needed.*
 
@@ -503,13 +503,13 @@ The camera "Initial pos" field plus capture button sits outside the block paradi
 
 *Targeted fixes to the core authoring loop identified through first-use testing. Each sub-item is self-contained and can be shipped independently.*
 
-#### UX2.1 — Production creation naming *(quick fix)*
+#### UX2.1 — Production creation naming *(complete)*
 
 - `ProductionStore.create()` generates names as "Untitled Production", "Untitled Production 2", "Untitled Production 3" — the first gets no suffix; subsequent ones find the next unused integer by scanning existing production names.
 - After creation, the production name field enters inline edit mode immediately (equivalent to clicking the ✎ rename button right away). The name is selected so the author can type over it without backspacing.
 - No command needed — this is purely a post-`create()` UI state change in the page.
 
-#### UX2.2 — Actor add UX overhaul + legacy single-scene expunge
+#### UX2.2 — Actor add UX overhaul + legacy single-scene expunge *(complete)*
 
 **Legacy expunge (prerequisite):** Remove all code paths that read or write `StoredProduction.scene` (the singular legacy field). Every production now uses `StoredProduction.scenes: NamedScene[]`. No migration needed — no real users yet. Simplifies `commands.ts`, `sceneBuilder.ts`, `storedSceneToModel.ts`, and the page considerably. Adding an actor will no longer need the `if (!doc.scene)` guard branches.
 
@@ -521,7 +521,7 @@ The camera "Initial pos" field plus capture button sits outside the block paradi
 
 **No auto-staging:** adding to the production cast does not stage the actor in any scene. Staging is a separate explicit step (UX2.4). This is intentional — scenes can have different subsets of the cast.
 
-#### UX2.3 — Scene and act tree
+#### UX2.3 — Scene and act tree *(complete)*
 
 **Bug fix:** "+ Scene" button fires `AddSceneCommand` correctly but the scenes list does not visually update. Root cause: the `onChange` callback refreshes `productions` from the store, causing the `{#each productions as prod}` block to remount, which re-evaluates `{@const prodScenes = docSnapshot.scenes ?? []}` before `docSnapshot` has been updated for the current render cycle. Fix: update `docSnapshot` before triggering `productions` list refresh in `onChange`, or key the production list on id so Svelte does not destroy/recreate the active item.
 
@@ -544,7 +544,7 @@ Left panel tree rendering: acts are expandable group headers; scenes are indente
 
 New commands: `AddGroupCommand`, `RenameGroupCommand`, `RemoveGroupCommand`. `AddSceneCommand` gains an optional `parentGroupId` argument.
 
-#### UX2.4 — Staging actors in a scene
+#### UX2.4 — Staging actors in a scene *(complete)*
 
 Currently there is no visible path from "I added this character to the cast" to "they appear in a specific scene". Address this:
 
@@ -577,7 +577,7 @@ Pulled forward because it directly enables the multi-scene authoring workflow fr
 
 Full Phase 6.5 spec (pagination, PDF export, title page) remains deferred; this sub-item delivers the 80% case.
 
-#### UX2.7 — Spawn indicator as pre-t=0 block
+#### UX2.7 — Spawn indicator as pre-t=0 block *(complete)*
 
 The ⊕ spawn pin in the timeline is replaced by a **pre-timeline block** — a coloured rectangle that ends exactly at t=0, rendered to the left of the zero-line in the actor's track.
 
@@ -599,7 +599,7 @@ A dedicated **Present** button plays all scenes in the production in depth-first
 
 `PlaybackEngine` needs a `playlist` mode: when `stopped` after the last frame of a scene, it calls `onSceneEnd()` which the page handles by loading the next scene's model and calling `play()`.
 
-#### UX2.9 — Speech and Audio panel
+#### UX2.9 — Speech and Audio panel *(complete)*
 
 - Rename the "AUDIO" collapsible section in the left panel to **"SPEECH AND AUDIO"**.
 - Move TTS engine selection (eSpeak / Kokoro) from global to per-production: `StoredProduction.speechSettings?: { engine: VoiceBackend; bubbleScale: number }`.
@@ -742,6 +742,48 @@ Possible directions:
 
 ---
 
+## What's Next — Priority queue
+
+**Baseline:** 195 tests green, 0 svelte-check warnings.  
+**Complete through:** Phases 0–8.9, T, UX1, UX2.1–2.4, UX2.7, UX2.9.
+
+### Tier 1 — Complete the authoring loop
+
+1. **UX2.8 — Production playback / presentation mode** *(spec above)*  
+   Multi-scene productions cannot be played as a whole. `PlaybackEngine` needs a playlist mode; `onSceneEnd` callback on the page loads the next scene's model and calls `play()`.
+
+### Tier 2 — Scene-building visibility
+
+2. **Phase 9.A — Set piece property inspector** *(spec above)*  
+   All placed primitives are currently 1×1×1 and white. `UpdateSetPieceCommand(name, patch)` + inspector UI for color, scale, geometry dimensions.
+
+3. **Phase 9.B — Set piece catalogue expansion** *(spec above)*  
+   Wall flat 4×3×0.15 m, stage deck 8×8 m, backdrop, table, step with set-ready default sizes.
+
+4. **Phase 9.C — Character ground disc markers** *(spec above)*  
+   Coloured cylinder disc under each staged actor, matching the timeline palette colour.
+
+### Tier 3 — Workflow completeness
+
+5. **UX2.6 — Full-production screenplay view** *(spec above)*  
+   All scenes in one scrollable document with `INT.` headings and stage-direction lines.
+
+6. **UX2.5 — Reusable set templates** *(spec above)*  
+   `SetTemplateStore`; save current set as named template → apply from Catalogue tab.
+
+7. **Phase 10 — Lighting rig** *(spec above)*  
+   Add lights from catalogue; fix skipped `point` light type.
+
+### Deferred
+
+- **UX3** — Drag-and-drop cast management (button flows functional; progressive enhancement)
+- **Phase 6.5** — Screenplay enrichment (PDF, pagination, title page)
+- **Phase 11** — Audio block timeline strip + waveform preview
+- **Phase 12** — Dance/MIDI choreography (needs spike)
+- **Phase 13** — Remote asset store
+
+---
+
 ## Codebase state
 
 | Area | Status |
@@ -773,18 +815,18 @@ Possible directions:
 | Visual timeline strip (draggable block rectangles) | ✅ Complete (Phase 8.6) |
 | `LightBlock` + `CameraBlock` + `SetPieceBlock` | ✅ Complete (Phase 8.7) |
 | Catalogue asset defaults (`defaultRotation`, Soldier orientation fix) | ✅ Complete (Phase 8.8) |
-| UX quick wins (button labels, rotation gizmo, camera paradigm) | Phase 8.9 |
-| Tablet support (touch/pointer events, on-screen shortcuts) | Phase T |
-| Minimal interaction model (script-first, cast/staging split, one-way-of-doing-things) | Phase UX1 |
-| Production naming on creation (auto-focus, no duplicates) | Phase UX2.1 |
-| Actor add UX overhaul + legacy single-scene expunge | Phase UX2.2 |
-| Scene and act tree (bug fix + group/act storage) | Phase UX2.3 |
-| Staging actors in a scene (drag from cast, ⊕ Stage button) | Phase UX2.4 |
+| UX quick wins (button labels, rotation gizmo, camera paradigm) | ✅ Complete (Phase 8.9) |
+| Tablet support (touch/pointer events, on-screen shortcuts) | ✅ Complete (Phase T) |
+| Minimal interaction model (script-first, cast/staging split, one-way-of-doing-things) | ✅ Complete (Phase UX1) |
+| Production naming on creation (auto-focus, no duplicates) | ✅ Complete (Phase UX2.1) |
+| Actor add UX overhaul + legacy single-scene expunge | ✅ Complete (Phase UX2.2) |
+| Scene and act tree (bug fix + group/act storage) | ✅ Complete (Phase UX2.3) |
+| Staging actors in a scene (drag from cast, ⊕ Stage button) | ✅ Complete (Phase UX2.4) |
 | Reusable set templates | Phase UX2.5 |
 | Script editor — full-production view + stage directions (pull forward from 6.5) | Phase UX2.6 |
-| Spawn indicator as pre-t=0 block | Phase UX2.7 |
+| Spawn indicator as pre-t=0 block | ✅ Complete (Phase UX2.7) |
 | Production playback / presentation mode | Phase UX2.8 |
-| Speech and Audio panel + per-production speech settings | Phase UX2.9 |
+| Speech and Audio panel + per-production speech settings | ✅ Complete (Phase UX2.9) |
 | Drag-and-drop cast management (catalogue→production, production→scene) | Phase UX3 |
 | Asset properties editing | Phase 9 |
 | Lighting rig | Phase 10 |
