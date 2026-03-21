@@ -667,6 +667,15 @@
     el.select();
   }
 
+  function addScene(parentGroupId?: string) {
+    if (!activeDoc) return;
+    const newId = crypto.randomUUID();
+    activeDoc.execute(new AddSceneCommand('', parentGroupId, newId));
+    const newScene = getScenes(activeDoc.current.tree ?? []).find((ns) => ns.id === newId);
+    renamingSceneId = newId;
+    renameSceneValue = newScene?.name ?? '';
+  }
+
   function startActorRename(id: string) {
     renameActorValue = actors.find((a) => a.id === id)?.role ?? '';
     renamingActorId = id;
@@ -1055,6 +1064,9 @@
                                               </li>
                                             {/if}
                                           {/each}
+                                          <li class="cast-row indent">
+                                            <button class="new-btn act-add-scene-btn" onclick={() => addScene(group.id)} title="Add scene to this act">+ Scene</button>
+                                          </li>
                                         {:else}
                                           {@const ns = node as NamedScene}
                                           <li class="cast-row" class:selected={ns.id === activeSceneId}>
@@ -1080,7 +1092,7 @@
                                     </ul>
                                   {/if}
                                   <div class="cast-add-row">
-                                    <button class="new-btn prod-cast-add" onclick={() => activeDoc?.execute(new AddSceneCommand())} title="Add scene">+ Scene</button>
+                                    <button class="new-btn prod-cast-add" onclick={() => addScene()} title="Add scene">+ Scene</button>
                                     <button class="new-btn prod-cast-add" onclick={() => activeDoc?.execute(new AddGroupCommand())} title="Add act">+ Act</button>
                                   </div>
                                 </div>
@@ -1935,6 +1947,15 @@
   .prod-cast-add {
     margin-top: 6px;
     width: 100%;
+  }
+
+  .act-add-scene-btn {
+    font-size: 10px;
+    padding: 1px 6px;
+    opacity: 0.7;
+  }
+  .act-add-scene-btn:hover {
+    opacity: 1;
   }
 
   .audio-settings {

@@ -806,6 +806,12 @@ describe('RemoveGroupCommand', () => {
     expect(group.children).toHaveLength(1);
     expect(group.children[0].name).toBe('Scene 1');
   });
+
+  it('uses the caller-supplied sceneId when provided', () => {
+    const doc = makeProduction({ tree: [makeNamedScene()], activeSceneId: 'sc1' });
+    const result = new AddSceneCommand('Act 1 Scene', undefined, 'pre-generated-id').execute(doc);
+    expect(getScenes(result.tree ?? []).find((ns) => ns.id === 'pre-generated-id')).toBeDefined();
+  });
 });
 
 

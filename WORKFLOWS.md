@@ -40,17 +40,16 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 ### Part C — Create the act and scene structure
 
 10. Scroll to the **Scenes** section in the production's expanded panel.
-11. Click **+ Scene**. A scene called "Scene 1" appears in inline rename mode.
-12. Type `"Prologue"` and press **Enter**.
-13. Click **+ Scene** three more times, renaming each:
-    - `"Act 1 — The Encounter"`
-    - `"Act 2 — The Confrontation"`
-    - `"Act 2 — Resolution"`
-14. Optionally, click **+ Act** to add named act containers. These appear in the tree as group headings, but note:
+11. Click **+ Act**. An act group appears in inline rename mode. Type `"Act 1"` and press **Enter**.
+12. Click **+ Act** again and name it `"Act 2"`.
+13. Under Act 1, click the **+ Scene** button that appears at the bottom of the act's children.
+    - A scene appears in inline rename mode. Type `"The Encounter"` and press **Enter**.
+    - Click **+ Scene** under Act 1 again; name it `"The Chase"`.
+14. Under Act 2, click **+ Scene**; name it `"The Confrontation"`.
+15. Click **+ Scene** under Act 2 again; name it `"Resolution"`.
+16. For a scene not belonging to any act, use the root **+ Scene** button at the bottom of the Scenes section; name it `"Prologue"`.
 
-> **Current limitation:** `+ Scene` always adds scenes at the root level. The `AddSceneCommand` supports a `parentGroupId` argument in the command layer, but the UI button does not yet expose it. Acts are visual grouping labels only — you cannot drag or assign a scene into an act group from the browser. This is tracked as Phase UX3. For this workflow, use descriptive scene names (e.g. "Act 1 — …") to convey structure.
-
-*Checkpoint: Scenes section shows 4 scenes: Prologue, Act 1 — The Encounter, Act 2 — The Confrontation, Act 2 — Resolution. Acts (if added) appear as headers but do not contain the scenes.*
+*Checkpoint: Scenes section shows 2 act groups each containing 2 scenes, plus a top-level Prologue — 5 scenes total. Clicking a scene name switches to it.*
 
 ---
 
@@ -87,9 +86,9 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 ---
 
-### Part E — Author Scene 2 (Act 1 — The Encounter)
+### Part E — Author Scene 2 (The Encounter)
 
-32. Click **Act 1 — The Encounter** in the Scenes list.
+32. Click **The Encounter** in the Scenes list (under Act 1).
 33. Stage both **Alpha** and **Beta** (click their **○** badges).
 34. In Design view, position Alpha at `[-2, 0, 2]` and Beta at `[2, 0, 2]` using the same drag-spawn workflow.
 35. In the Script tab, add two lines:
@@ -105,13 +104,14 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 ---
 
-### Part F — Author Scenes 3 and 4
+### Part F — Author Scenes 3, 4, and 5
 
-38. Click **Act 2 — The Confrontation**. Stage both actors and add 2–3 dialogue lines.
-39. Click **Act 2 — Resolution**. Stage both actors and add a final line each.
-40. For each scene, scrub the transport slider to verify the duration is non-zero.
+38. Click **The Confrontation** (under Act 2). Stage both actors and add 2–3 dialogue lines.
+39. Click **Resolution** (under Act 2). Stage both actors and add a final line each.
+40. Click **Prologue** (top-level). Stage both actors and add an opening line each.
+41. For each scene, scrub the transport slider to verify the duration is non-zero.
 
-*Checkpoint: all 4 scenes have staged actors and dialogue.*
+*Checkpoint: all 5 scenes have staged actors and dialogue.*
 
 ---
 
@@ -126,7 +126,7 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 44. Scenes continue depth-first until Act 2 — Resolution finishes.
 45. After the last scene ends, presentation mode exits and the tool returns to the last manually selected scene.
 
-*Checkpoint: all 4 scenes play in order without manual intervention; canvas fills the window throughout.*
+*Checkpoint: all 5 scenes play in order without manual intervention; canvas fills the window throughout.*
 
 ---
 
@@ -135,7 +135,7 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 46. Press **Esc** during any scene to exit presentation mode early. The tool returns to the scene that was active before presentation started.
 47. Reload the page (`Cmd/Ctrl+R`).
 48. Click **The Robot Play** in the productions list.
-49. Confirm the cast (Alpha, Beta) is intact and the scene tree (4 scenes) is intact.
+49. Confirm the cast (Alpha, Beta) is intact and the scene tree (5 scenes) is intact.
 50. Press ▶ on any scene to confirm dialogue still plays.
 
 *Checkpoint: production survives a page reload with all data intact.*
@@ -149,7 +149,7 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 | Resize / recolour placed set pieces | Not yet — Phase 9.A |
 | Preset-sized environment pieces (wall flat, stage deck) | Not yet — Phase 9.B |
 | Character ground disc markers (tell Alpha from Beta in viewport) | Not yet — Phase 9.C |
-| Adding scenes directly inside an act group via UI | Not yet — `AddSceneCommand(parentGroupId)` exists in the command layer but the `+ Scene` button always calls it without a group ID (Phase UX3) |
+| Drag scenes between acts to reorder | Not yet — Phase UX3 |
 | Full-production scrollable screenplay view | Not yet — Phase UX2.6 |
 | Scene transition fade | Not yet — deferred after UX2.8 |
 

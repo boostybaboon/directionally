@@ -943,13 +943,17 @@ export class UpdateSetPieceBlockCommand implements Command {
  */
 export class AddSceneCommand implements Command {
   readonly label: string;
-  constructor(private readonly sceneName: string = '', private readonly parentGroupId?: string) {
+  constructor(
+    private readonly sceneName: string = '',
+    private readonly parentGroupId?: string,
+    private readonly sceneId?: string,
+  ) {
     this.label = `Add scene "${sceneName || 'New Scene'}"`;
   }
   execute(doc: StoredProduction): StoredProduction {
     const existing = getScenes(doc.tree ?? []);
     const name = this.sceneName || `Scene ${existing.length + 1}`;
-    const newScene: NamedScene = { id: crypto.randomUUID(), name, scene: defaultSceneShell() };
+    const newScene: NamedScene = { id: this.sceneId ?? crypto.randomUUID(), name, scene: defaultSceneShell() };
     const tree = this.parentGroupId
       ? addSceneToGroup(doc.tree ?? [], this.parentGroupId, newScene)
       : [...(doc.tree ?? []), newScene];
