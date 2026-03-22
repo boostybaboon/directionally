@@ -109,6 +109,7 @@
   $effect(() => { localStorage.setItem(RIGHT_PANEL_KEY, String(rightPanelOpen)); });
   let rightTab = $state<'staging' | 'script'>('staging');
   let designMode = $state(false);
+  let seedWorkflow2Fn = $state<(() => void) | undefined>();
 
   // Presentation mode — plays all scenes in depth-first order, canvas fills the window.
   let presentationMode = $state(false);
@@ -772,14 +773,16 @@
           window.location.reload();
         };
       });
-      void import('../core/document/buildWorkflow2.js').then(({ seedWorkflow2 }) => {
-        (window as unknown as Record<string, unknown>).__seedWorkflow2 = () => {
-          const p = seedWorkflow2();
-          console.info('[dev] Seeded "' + p.name + '" (' + p.id + ') — reloading…');
-          window.location.reload();
-        };
-      });
     }
+    void import('../core/document/buildWorkflow2.js').then(({ seedWorkflow2 }) => {
+      seedWorkflow2Fn = () => {
+        seedWorkflow2();
+        window.location.reload();
+      };
+      if (import.meta.env.DEV) {
+        (window as unknown as Record<string, unknown>).__seedWorkflow2 = seedWorkflow2Fn;
+      }
+    });
 
     return () => {
       mq.removeEventListener('change', onChange);
@@ -1197,7 +1200,7 @@
                     {/if}
                   </section>
 
-                  <!-- Examples (collapsible, read-only) -->
+                  <!-- Examples (collapsible, read-only) — always at bottom -->
                   <section class="sidebar-section examples-section">
                     <details>
                       <summary class="section-heading">Examples</summary>
@@ -1212,11 +1215,19 @@
                           </li>
                         {/each}
                       </ul>
+                      {#if seedWorkflow2Fn}
+                        <p class="cast-section-label" style="margin-top:0.5rem">Workflows</p>
+                        <ul class="scene-list">
+                          <li>
+                            <button class="scene-btn" onclick={seedWorkflow2Fn} title="Create The Robot Play production">The Robot Play</button>
+                          </li>
+                        </ul>
+                      {/if}
                     </details>
                   </section>
 
-                  <!-- Audio settings (global defaults) -->
-                  <section class="sidebar-section">
+                  <!-- Audio settings (global defaults) — always at bottom -->
+                  <section class="sidebar-section speech-section">
                     <details>
                       <summary class="section-heading">Speech and Audio</summary>
                       <div class="audio-settings">
@@ -2073,16 +2084,19 @@
     margin: 0;
   }
 
-  .examples-section details > summary.section-heading {
+  .examples-section details > summary.section-heading,
+  .speech-section details > summary.section-heading {
     list-style: none;
     cursor: pointer;
   }
 
-  .examples-section details > summary.section-heading::-webkit-details-marker {
+  .examples-section details > summary.section-heading::-webkit-details-marker,
+  .speech-section details > summary.section-heading::-webkit-details-marker {
     display: none;
   }
 
-  .examples-section details > summary.section-heading::before {
+  .examples-section details > summary.section-heading::before,
+  .speech-section details > summary.section-heading::before {
     content: '▶';
     font-size: 8px;
     margin-right: 6px;
@@ -2090,7 +2104,8 @@
     transition: transform 0.15s;
   }
 
-  .examples-section details[open] > summary.section-heading::before {
+  .examples-section details[open] > summary.section-heading::before,
+  .speech-section details[open] > summary.section-heading::before {
     transform: rotate(90deg);
   }
 
@@ -2127,6 +2142,11 @@
   }
 
   .examples-section {
+    flex: 0 0 auto;
+    border-top: 1px solid #2a2a2a;
+  }
+
+  .speech-section {
     flex: 0 0 auto;
     border-top: 1px solid #2a2a2a;
   }
