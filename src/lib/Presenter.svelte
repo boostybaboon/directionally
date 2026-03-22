@@ -547,6 +547,13 @@
     engine.load({ animations: animationDict, mixers, duration: model.duration });
     sceneDuration = model.duration ?? 0;
 
+    // A fresh scene load (seekTo provided) resets the engine's own isPlaying flag.
+    // Mirror that here so ondidload callers (e.g. presentation mode auto-play) can
+    // reliably call presenter.play() regardless of whether a previous scene was playing.
+    // Without this, presenter.play() is a no-op when transitioning between scenes while
+    // isPlaying=true, leaving the engine paused on the new scene.
+    if (seekTo !== undefined) isPlaying = false;
+
     // Preserve playhead when reloading due to a command (seekTo omitted);
     // reset to 0 only for fresh production/example loads (seekTo === 0).
     setSequenceTo(seekTo ?? engine.getPosition());

@@ -136,11 +136,17 @@
   );
   /** Cast list from the active document; updates automatically on command execution. */
   const actors = $derived(docSnapshot?.actors ?? []);
-  /** Dialogue lines for the ScriptEditor — derived from doc.script so explicit startTimes round-trip. */
-  const speakLines = $derived<ScriptLine[]>(docSnapshot?.script ?? []);
 
   /** Active scene derived from the current snapshot. Updates whenever a command executes. */
   const activeScene = $derived(docSnapshot ? getActiveScene(docSnapshot) : undefined);
+
+  /** Dialogue lines for the ScriptEditor — derived from the active scene's speak actions so the
+   *  editor reflects the current scene when switching between scenes. */
+  const speakLines = $derived<ScriptLine[]>(
+    (activeScene?.actions ?? [])
+      .filter((a): a is SpeakAction => a.type === 'speak')
+      .map(a => ({ actorId: a.actorId, text: a.text, pauseAfter: a.pauseAfter ?? 0, startTime: a.startTime }))
+  );
 
   /** Speech segments derived from scheduled scene actions, used to display speech blocks on the timeline. */
   const speechSegments = $derived(
@@ -421,7 +427,10 @@
 
   function onPresentationSceneEnd() {
     if (presentationQueue.length === 0) {
-      exitPresentation();
+      // End of show — freeze on the last scene's final frame rather than exiting
+      // presentation mode. The transport has nothing scheduled past this point so
+      // animations naturally hold their last state; we just need to stop the engine.
+      if (isPlaying) presenter?.handlePlayPauseClick();
       return;
     }
     const nextId = presentationQueue[0];
@@ -739,6 +748,23 @@
       if (mod && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); activeDoc.redo(); }
     }
     window.addEventListener('keydown', handleKeyDown);
+
+    if (import.meta.env.DEV) {
+      void import('../core/document/buildWorkflow1.js').then(({ seedWorkflow1 }) => {
+        (window as unknown as Record<string, unknown>).__seedWorkflow1 = () => {
+          const p = seedWorkflow1();
+          console.info('[dev] Seeded "' + p.name + '" (' + p.id + ') — reloading…');
+          window.location.reload();
+        };
+      });
+      void import('../core/document/buildWorkflow2.js').then(({ seedWorkflow2 }) => {
+        (window as unknown as Record<string, unknown>).__seedWorkflow2 = () => {
+          const p = seedWorkflow2();
+          console.info('[dev] Seeded "' + p.name + '" (' + p.id + ') — reloading…');
+          window.location.reload();
+        };
+      });
+    }
 
     return () => {
       mq.removeEventListener('change', onChange);

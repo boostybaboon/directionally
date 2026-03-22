@@ -236,6 +236,9 @@ export type ActorBlock = {
   startFacing?: Vec3;
   /** Facing direction vector at endTime; omit → auto: face travel direction, or forward if stationary. */
   endFacing?: Vec3;
+  /** Loop behaviour for the clip: 'once' plays the animation once and holds the last frame;
+   *  'repeat' (default) loops indefinitely within the block window. */
+  clipLoop?: LoopStyle;
 };
 
 /**

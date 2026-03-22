@@ -82,6 +82,7 @@ export function actorBlockToTracks(block: ActorBlock, inferredStartPos?: Vec3, m
       startTime: block.startTime,
       endTime: block.endTime,
       animationName: block.clip,
+      loop: block.clipLoop,
     };
     result.push(clipTrack);
   }

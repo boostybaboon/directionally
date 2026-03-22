@@ -157,7 +157,8 @@ export class GLTFAction extends Action {
     private readonly animationName: string,
     private readonly endTime?: number,
     private readonly fadeIn: number = 0,
-    private readonly fadeOut: number = 0
+    private readonly fadeOut: number = 0,
+    private readonly loopOnce: boolean = false
   ) {
     super(name, target, startTime);
   }
@@ -187,8 +188,10 @@ export class GLTFAction extends Action {
       // can coexist as independent actions on the shared mixer (mixer caches by clip UUID).
       const segmentClip = new THREE.AnimationClip(this.name, clip.duration, clip.tracks);
       const action = mixer.clipAction(segmentClip);
-      action.loop = THREE.LoopRepeat;
-      action.clampWhenFinished = false;
+      action.loop = this.loopOnce ? THREE.LoopOnce : THREE.LoopRepeat;
+      // LoopOnce with clampWhenFinished keeps the actor frozen on the final frame after
+      // the clip completes, rather than snapping back to the bind/T-pose.
+      action.clampWhenFinished = this.loopOnce;
       // Start at weight 0; the Tone schedule at startTime will set the correct weight.
       // Do NOT set paused=true — the clip must remain active in the mixer for per-frame
       // weight updates (crossfades) and seek() time positioning to work correctly.
@@ -204,8 +207,8 @@ export class GLTFAction extends Action {
         start: this.startTime,
         end: this.endTime ?? Infinity,
         clipDuration: clip.duration,
-        loop: THREE.LoopRepeat,
-        repetitions: Infinity,
+        loop: this.loopOnce ? THREE.LoopOnce : THREE.LoopRepeat,
+        repetitions: this.loopOnce ? 1 : Infinity,
         fadeIn: this.fadeIn,
         fadeOut: this.fadeOut,
       });

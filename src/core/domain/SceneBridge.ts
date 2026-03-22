@@ -202,6 +202,7 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
             action.endTime,
             action.fadeIn ?? 0,
             action.fadeOut ?? 0,
+            action.loop === 'once',
           ),
         );
         break;

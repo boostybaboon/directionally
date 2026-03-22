@@ -167,7 +167,9 @@ export class PlaybackEngine {
           if (anim.loop === THREE.LoopRepeat) {
             anim.anim.time = elapsed % anim.clipDuration;
           } else {
-            anim.anim.time = elapsed;
+            // LoopOnce: clamp to clip duration so the actor holds the final pose
+            // after the clip completes rather than reverting to the bind pose.
+            anim.anim.time = Math.min(elapsed, anim.clipDuration);
           }
           break;
         }
