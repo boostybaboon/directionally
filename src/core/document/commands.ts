@@ -966,7 +966,7 @@ export class AddSceneCommand implements Command {
     const tree = this.parentGroupId
       ? addSceneToGroup(doc.tree ?? [], this.parentGroupId, newScene)
       : [...(doc.tree ?? []), newScene];
-    return touch({ ...doc, tree, activeSceneId: doc.activeSceneId ?? existing[0]?.id });
+    return touch({ ...doc, tree, activeSceneId: doc.activeSceneId ?? newScene.id });
   }
 }
 

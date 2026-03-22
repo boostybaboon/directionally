@@ -38,8 +38,10 @@ function isGroup(node: StoredGroup | NamedScene): node is StoredGroup {
 export function buildWorkflow2(initial: StoredProduction): StoredProduction {
   let doc = initial;
 
-  const prologueId = getScenes(doc.tree ?? [])[0]?.id;
-  if (!prologueId) throw new Error('buildWorkflow2: initial doc must have at least one scene');
+  const prologueId = getScenes(doc.tree ?? [])[0]?.id ?? crypto.randomUUID();
+  if (!getScenes(doc.tree ?? []).length) {
+    doc = new AddSceneCommand('Prologue', undefined, prologueId).execute(doc);
+  }
 
   const alphaId = crypto.randomUUID();
   const betaId = crypto.randomUUID();
@@ -281,7 +283,7 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
     material: { color: 0x1a1a2e, roughness: 1.0, metalness: 0.0 },
     rotation: [-Math.PI / 2, 0, 0],
   }));
-  exec(new UpdateCameraCommand({ fov: 45, near: 0.1, far: 120, position: [0, 3, 8], lookAt: [0, 1, 0] }));
+  exec(new UpdateCameraCommand({ fov: 45, near: 0.1, far: 120, position: [1, 15, 20], lookAt: [0, 1, 0] }));
   // Alpha is in the cast but not on stage
   exec(new StageActorCommand({ actorId: alphaId, startPosition: [-20, 0, 0], offstage: true }));
   exec(new StageActorCommand({ actorId: betaId,  startPosition: [0, 0, 0] }));
