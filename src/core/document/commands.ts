@@ -64,6 +64,62 @@ function addSceneToGroup(
 }
 
 /**
+ * Remove the node with `nodeId` from anywhere in the tree.
+ * Returns `[updatedTree, extractedNode]`; `extractedNode` is `undefined` if not found.
+ */
+function extractNode(
+  tree: Array<StoredGroup | NamedScene>,
+  nodeId: string,
+): [Array<StoredGroup | NamedScene>, StoredGroup | NamedScene | undefined] {
+  let found: StoredGroup | NamedScene | undefined;
+  function walk(nodes: Array<StoredGroup | NamedScene>): Array<StoredGroup | NamedScene> {
+    return nodes.flatMap((node): Array<StoredGroup | NamedScene> => {
+      if (node.id === nodeId) { found = node; return []; }
+      if (isGroup(node)) return [{ ...node, children: walk(node.children) }];
+      return [node];
+    });
+  }
+  const updated = walk(tree);
+  return [updated, found];
+}
+
+/**
+ * Insert `node` at position `index` inside the container identified by `parentId`
+ * (or at the root level when `parentId` is `undefined`). Index is clamped to valid range.
+ */
+function insertNodeAt(
+  tree: Array<StoredGroup | NamedScene>,
+  parentId: string | undefined,
+  index: number,
+  node: StoredGroup | NamedScene,
+): Array<StoredGroup | NamedScene> {
+  if (parentId === undefined) {
+    const i = Math.max(0, Math.min(index, tree.length));
+    return [...tree.slice(0, i), node, ...tree.slice(i)];
+  }
+  return tree.map((n) => {
+    if (!isGroup(n)) return n;
+    if (n.id === parentId) {
+      const i = Math.max(0, Math.min(index, n.children.length));
+      return { ...n, children: [...n.children.slice(0, i), node, ...n.children.slice(i)] };
+    }
+    return { ...n, children: insertNodeAt(n.children, parentId, index, node) };
+  });
+}
+
+/**
+ * Returns `true` when any descendant of `group` has id `targetId`.
+ * Used to prevent moving a group into its own subtree.
+ */
+function hasDescendant(group: StoredGroup, targetId: string): boolean {
+  for (const child of group.children) {
+    if (child.id === targetId) return true;
+    if (isGroup(child) && hasDescendant(child, targetId)) return true;
+  }
+  return false;
+}
+
+/**
  * Apply `fn` to the active scene and return the updated production.
  * No-op when the production has no scenes.
  */
@@ -956,6 +1012,7 @@ export class AddSceneCommand implements Command {
     private readonly sceneName: string = '',
     private readonly parentGroupId?: string,
     private readonly sceneId?: string,
+    private readonly prepend: boolean = false,
   ) {
     this.label = `Add scene "${sceneName || 'New Scene'}"`;
   }
@@ -965,7 +1022,9 @@ export class AddSceneCommand implements Command {
     const newScene: NamedScene = { id: this.sceneId ?? crypto.randomUUID(), name, scene: defaultSceneShell() };
     const tree = this.parentGroupId
       ? addSceneToGroup(doc.tree ?? [], this.parentGroupId, newScene)
-      : [...(doc.tree ?? []), newScene];
+      : this.prepend
+        ? [newScene, ...(doc.tree ?? [])]
+        : [...(doc.tree ?? []), newScene];
     return touch({ ...doc, tree, activeSceneId: doc.activeSceneId ?? newScene.id });
   }
 }
@@ -1046,6 +1105,76 @@ export class RemoveGroupCommand implements Command {
   constructor(private readonly groupId: string) {}
   execute(doc: StoredProduction): StoredProduction {
     const tree = filterTreeNodes(doc.tree ?? [], (node) => !isGroup(node) || node.id !== this.groupId);
+    return touch({ ...doc, tree });
+  }
+}
+
+// ── Positional insertion + move commands ─────────────────────────────────────
+
+/**
+ * Insert a new scene at an explicit position within a parent container.
+ * `parentGroupId` undefined → root level. `index` is clamped to valid range.
+ */
+export class InsertSceneAtCommand implements Command {
+  readonly label: string;
+  constructor(
+    private readonly sceneName: string = '',
+    private readonly parentGroupId: string | undefined,
+    private readonly index: number,
+    private readonly sceneId?: string,
+  ) {
+    this.label = `Insert scene "${sceneName || 'New Scene'}"`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    const existing = getScenes(doc.tree ?? []);
+    const name = this.sceneName || `Scene ${existing.length + 1}`;
+    const newScene: NamedScene = { id: this.sceneId ?? crypto.randomUUID(), name, scene: defaultSceneShell() };
+    const tree = insertNodeAt(doc.tree ?? [], this.parentGroupId, this.index, newScene);
+    return touch({ ...doc, tree, activeSceneId: doc.activeSceneId ?? newScene.id });
+  }
+}
+
+/**
+ * Insert a new group (act) at an explicit index in the root of the tree.
+ * `index` is clamped to valid range.
+ */
+export class InsertGroupAtCommand implements Command {
+  readonly label: string;
+  constructor(
+    private readonly name: string = '',
+    private readonly index: number,
+    private readonly id?: string,
+  ) {
+    this.label = `Insert act "${name || 'Act'}"`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    const groups = (doc.tree ?? []).filter(isGroup);
+    const name = this.name || `Act ${groups.length + 1}`;
+    const newGroup: StoredGroup = { type: 'group', id: this.id ?? crypto.randomUUID(), name, children: [] };
+    const tree = insertNodeAt(doc.tree ?? [], undefined, this.index, newGroup);
+    return touch({ ...doc, tree });
+  }
+}
+
+/**
+ * Move an existing node (scene or group) to a new position and optional new parent.
+ * `targetParentId` undefined → root level. `targetIndex` is clamped to valid range
+ * *after* the source node has been removed.
+ * No-op when `nodeId` is not found, or when a group would be moved into its own subtree.
+ */
+export class MoveNodeCommand implements Command {
+  readonly label = 'Move node';
+  constructor(
+    private readonly nodeId: string,
+    private readonly targetParentId: string | undefined,
+    private readonly targetIndex: number,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    const [treeWithout, node] = extractNode(doc.tree ?? [], this.nodeId);
+    if (!node) return doc;
+    if (isGroup(node) && this.targetParentId !== undefined &&
+        (this.targetParentId === node.id || hasDescendant(node, this.targetParentId))) return doc;
+    const tree = insertNodeAt(treeWithout, this.targetParentId, this.targetIndex, node);
     return touch({ ...doc, tree });
   }
 }

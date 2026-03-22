@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { AddActorCommand, RemoveActorCommand, SetSpeakLinesCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand } from './commands';
+import { AddActorCommand, RemoveActorCommand, SetSpeakLinesCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand } from './commands';
 import type { StoredActor, StoredProduction, StoredScene, NamedScene } from '../storage/types';
 import { getScenes } from '../storage/types';
 import type { ScriptLine } from '../../lib/script/types';
@@ -832,5 +832,136 @@ describe('SetProductionSpeechSettingsCommand', () => {
     const before = makeProduction();
     const after = new SetProductionSpeechSettingsCommand({ engine: 'espeak', bubbleScale: 1 }).execute(before);
     expect(after.modifiedAt).toBeGreaterThanOrEqual(before.modifiedAt);
+  });
+});
+
+// ── InsertSceneAtCommand ──────────────────────────────────────────────────────
+
+describe('InsertSceneAtCommand', () => {
+  function ns(id: string, name = id): NamedScene {
+    return { id, name, scene: makeScene() };
+  }
+
+  it('prepends at index 0 in root', () => {
+    const doc = makeProduction({ tree: [ns('sc1'), ns('sc2')] });
+    const result = new InsertSceneAtCommand('First', undefined, 0, 'sc0').execute(doc);
+    expect(getScenes(result.tree ?? []).map((s) => s.id)).toEqual(['sc0', 'sc1', 'sc2']);
+  });
+
+  it('inserts at a middle index in root', () => {
+    const doc = makeProduction({ tree: [ns('sc1'), ns('sc3')] });
+    const result = new InsertSceneAtCommand('Middle', undefined, 1, 'sc2').execute(doc);
+    expect(getScenes(result.tree ?? []).map((s) => s.id)).toEqual(['sc1', 'sc2', 'sc3']);
+  });
+
+  it('appends when index equals length', () => {
+    const doc = makeProduction({ tree: [ns('sc1')] });
+    const result = new InsertSceneAtCommand('Last', undefined, 1, 'sc2').execute(doc);
+    expect(getScenes(result.tree ?? []).map((s) => s.id)).toEqual(['sc1', 'sc2']);
+  });
+
+  it('clamps index beyond length', () => {
+    const doc = makeProduction({ tree: [ns('sc1')] });
+    const result = new InsertSceneAtCommand('Last', undefined, 99, 'sc2').execute(doc);
+    expect(getScenes(result.tree ?? []).map((s) => s.id)).toEqual(['sc1', 'sc2']);
+  });
+
+  it('inserts inside a group at a given index', () => {
+    const withGroup = new AddGroupCommand('Act 1', 'g1').execute(makeProduction());
+    const withScene = new InsertSceneAtCommand('S1', 'g1', 0, 'sc1').execute(withGroup);
+    const result = new InsertSceneAtCommand('S0', 'g1', 0, 'sc0').execute(withScene);
+    const group = result.tree![0] as import('../storage/types').StoredGroup;
+    expect(group.children.map((c) => c.id)).toEqual(['sc0', 'sc1']);
+  });
+
+  it('does not change activeSceneId when one is already set', () => {
+    const doc = makeProduction({ tree: [ns('sc1')], activeSceneId: 'sc1' });
+    const result = new InsertSceneAtCommand('New', undefined, 0, 'sc0').execute(doc);
+    expect(result.activeSceneId).toBe('sc1');
+  });
+
+  it('auto-names the scene when name is empty', () => {
+    const doc = makeProduction({ tree: [ns('sc1')] });
+    const result = new InsertSceneAtCommand('', undefined, 0).execute(doc);
+    expect(getScenes(result.tree ?? [])[0].name).toBe('Scene 2');
+  });
+});
+
+// ── InsertGroupAtCommand ──────────────────────────────────────────────────────
+
+describe('InsertGroupAtCommand', () => {
+  it('prepends at index 0', () => {
+    const doc = new AddGroupCommand('Act 2', 'g2').execute(makeProduction());
+    const result = new InsertGroupAtCommand('Act 1', 0, 'g1').execute(doc);
+    expect(result.tree!.map((n) => n.id)).toEqual(['g1', 'g2']);
+  });
+
+  it('inserts between existing groups', () => {
+    const d1 = new AddGroupCommand('Act 1', 'g1').execute(makeProduction());
+    const d2 = new AddGroupCommand('Act 3', 'g3').execute(d1);
+    const result = new InsertGroupAtCommand('Act 2', 1, 'g2').execute(d2);
+    expect(result.tree!.map((n) => n.id)).toEqual(['g1', 'g2', 'g3']);
+  });
+
+  it('auto-names when name is empty', () => {
+    const doc = makeProduction();
+    const result = new InsertGroupAtCommand('', 0).execute(doc);
+    expect((result.tree![0] as import('../storage/types').StoredGroup).name).toBe('Act 1');
+  });
+});
+
+// ── MoveNodeCommand ───────────────────────────────────────────────────────────
+
+describe('MoveNodeCommand', () => {
+  function ns(id: string): NamedScene { return { id, name: id, scene: makeScene() }; }
+
+  it('moves a scene forward within root', () => {
+    const doc = makeProduction({ tree: [ns('sc1'), ns('sc2'), ns('sc3')] });
+    // move sc1 to index 2 (after sc3)
+    const result = new MoveNodeCommand('sc1', undefined, 2).execute(doc);
+    expect(result.tree!.map((n) => n.id)).toEqual(['sc2', 'sc3', 'sc1']);
+  });
+
+  it('moves a scene backward within root', () => {
+    const doc = makeProduction({ tree: [ns('sc1'), ns('sc2'), ns('sc3')] });
+    const result = new MoveNodeCommand('sc3', undefined, 0).execute(doc);
+    expect(result.tree!.map((n) => n.id)).toEqual(['sc3', 'sc1', 'sc2']);
+  });
+
+  it('moves a scene into a group', () => {
+    const d1 = new AddGroupCommand('Act 1', 'g1').execute(makeProduction());
+    const doc = makeProduction({ tree: [ns('sc1'), ...(d1.tree ?? [])] });
+    const result = new MoveNodeCommand('sc1', 'g1', 0).execute(doc);
+    const group = result.tree!.find((n) => n.id === 'g1') as import('../storage/types').StoredGroup;
+    expect(group.children.map((c) => c.id)).toEqual(['sc1']);
+    expect(getScenes(result.tree ?? []).map((s) => s.id)).toEqual(['sc1']);
+  });
+
+  it('moves a scene out of a group to root', () => {
+    const d1 = new AddGroupCommand('Act 1', 'g1').execute(makeProduction());
+    const d2 = new InsertSceneAtCommand('S1', 'g1', 0, 'sc1').execute(d1);
+    const result = new MoveNodeCommand('sc1', undefined, 0).execute(d2);
+    expect(result.tree!.map((n) => n.id)).toEqual(['sc1', 'g1']);
+  });
+
+  it('reorders groups (moving acts)', () => {
+    const d1 = new AddGroupCommand('Act 1', 'g1').execute(makeProduction());
+    const d2 = new AddGroupCommand('Act 2', 'g2').execute(d1);
+    const result = new MoveNodeCommand('g2', undefined, 0).execute(d2);
+    expect(result.tree!.map((n) => n.id)).toEqual(['g2', 'g1']);
+  });
+
+  it('is a no-op when nodeId is not found', () => {
+    const doc = makeProduction({ tree: [ns('sc1')] });
+    const result = new MoveNodeCommand('nonexistent', undefined, 0).execute(doc);
+    expect(result.tree!.map((n) => n.id)).toEqual(['sc1']);
+  });
+
+  it('is a no-op when moving a group into its own descendant', () => {
+    const d1 = new AddGroupCommand('Outer', 'g1').execute(makeProduction());
+    const d2 = new InsertSceneAtCommand('S1', 'g1', 0, 'sc1').execute(d1);
+    // try to move g1 into itself (g1 as target parent)
+    const result = new MoveNodeCommand('g1', 'g1', 0).execute(d2);
+    expect(result.tree!.map((n) => n.id)).toEqual(['g1']);
   });
 });

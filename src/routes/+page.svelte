@@ -22,7 +22,7 @@
   import type { StoredProduction, StoredActor, StoredGroup, NamedScene, ProductionSpeechSettings } from '../core/storage/types.js';
   import { getScenes } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
-  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, SetActorCatalogueIdCommand, AddSetPieceCommand, RemoveSetPieceCommand, StageActorCommand, UnstageActorCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, SetActorVoiceCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand } from '../core/document/commands.js';
+  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, SetActorCatalogueIdCommand, AddSetPieceCommand, RemoveSetPieceCommand, StageActorCommand, UnstageActorCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, SetActorVoiceCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand } from '../core/document/commands.js';
   import type { SpeakAction, TransformTrack, LightingTrack, ActorBlock, LightBlock, CameraBlock, SetPieceBlock, ActorVoice, KokoroVoice } from '../core/domain/types.js';
   import { getCharacters, getSetPieces } from '../core/catalogue/catalogue.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
@@ -489,6 +489,25 @@
     renameGroupValue = name;
   }
 
+  function insertSceneAt(parentGroupId: string | undefined, index: number) {
+    if (!activeDoc) return;
+    const newId = crypto.randomUUID();
+    activeDoc.execute(new InsertSceneAtCommand('', parentGroupId, index, newId));
+    const newScene = getScenes(activeDoc.current.tree ?? []).find((ns) => ns.id === newId);
+    renamingSceneId = newId;
+    renameSceneValue = newScene?.name ?? '';
+  }
+
+  function insertGroupAt(index: number) {
+    if (!activeDoc) return;
+    const groupCount = (activeDoc.current.tree ?? []).filter((n) => 'type' in n).length;
+    const name = `Act ${groupCount + 1}`;
+    const id = crypto.randomUUID();
+    activeDoc.execute(new InsertGroupAtCommand(name, index, id));
+    renamingGroupId = id;
+    renameGroupValue = name;
+  }
+
   function addActor() {
     if (!activeDoc) return;
     const allActors = activeDoc.current.actors ?? [];
@@ -692,10 +711,10 @@
     el.select();
   }
 
-  function addScene(parentGroupId?: string) {
+  function addScene(parentGroupId?: string, prepend = false) {
     if (!activeDoc) return;
     const newId = crypto.randomUUID();
-    activeDoc.execute(new AddSceneCommand('', parentGroupId, newId));
+    activeDoc.execute(new AddSceneCommand('', parentGroupId, newId, prepend));
     const newScene = getScenes(activeDoc.current.tree ?? []).find((ns) => ns.id === newId);
     renamingSceneId = newId;
     renameSceneValue = newScene?.name ?? '';
@@ -1078,73 +1097,88 @@
                                 {@const activeSceneId = docSnapshot.activeSceneId ?? prodScenes[0]?.id}
                                 <div class="prod-cast">
                                   <span class="cast-section-label">Scenes</span>
-                                  {#if prodTree.length > 0}
-                                    <ul class="cast-list">
-                                      {#each prodTree as node (node.id)}
-                                        {#if (node as StoredGroup).type === 'group'}
-                                          {@const group = node as StoredGroup}
-                                          <li class="act-header cast-row">
-                                            {#if renamingGroupId === group.id}
-                                              <input
-                                                class="cast-role-input"
-                                                type="text"
-                                                bind:value={renameGroupValue}
-                                                onblur={() => { activeDoc?.execute(new RenameGroupCommand(group.id, renameGroupValue)); renamingGroupId = null; }}
-                                                onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameGroupCommand(group.id, renameGroupValue)); renamingGroupId = null; } if (e.key === 'Escape') renamingGroupId = null; }}
-                                                use:focusAndSelect
-                                              />
-                                            {:else}
-                                              <span class="cast-role act-label">{group.name}</span>
-                                              <button class="icon-btn" onclick={() => { renameGroupValue = group.name; renamingGroupId = group.id; }} title="Rename act">✎</button>
-                                              <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveGroupCommand(group.id))} title="Remove act">✕</button>
-                                            {/if}
-                                          </li>
-                                          {#each group.children as child (child.id)}
-                                            {#if !(child as StoredGroup).type}
-                                              {@const ns = child as NamedScene}
-                                              <li class="cast-row indent" class:selected={ns.id === activeSceneId}>
-                                                {#if renamingSceneId === ns.id}
-                                                  <input
-                                                    class="cast-role-input"
-                                                    type="text"
-                                                    bind:value={renameSceneValue}
-                                                    onblur={() => { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; }}
-                                                    onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; } if (e.key === 'Escape') renamingSceneId = null; }}
-                                                    use:focusAndSelect
-                                                  />
-                                                {:else}
-                                                  <button class="cast-role-btn" onclick={() => activeDoc?.execute(new SwitchSceneCommand(ns.id))} title="Switch to scene">{ns.name}</button>
-                                                  <button class="icon-btn" onclick={() => { renameSceneValue = ns.name; renamingSceneId = ns.id; }} title="Rename scene">✎</button>
-                                                  <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
-                                                {/if}
-                                              </li>
-                                            {/if}
-                                          {/each}
-                                          <li class="cast-row indent">
-                                            <button class="new-btn act-add-scene-btn" onclick={() => addScene(group.id)} title="Add scene to this act">+ Scene</button>
-                                          </li>
-                                        {:else}
-                                          {@const ns = node as NamedScene}
-                                          <li class="cast-row" class:selected={ns.id === activeSceneId}>
-                                            {#if renamingSceneId === ns.id}
-                                              <input
-                                                class="cast-role-input"
-                                                type="text"
-                                                bind:value={renameSceneValue}
-                                                onblur={() => { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; }}
-                                                onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; } if (e.key === 'Escape') renamingSceneId = null; }}
-                                                use:focusAndSelect
-                                              />
-                                            {:else}
-                                              <button class="cast-role-btn" onclick={() => activeDoc?.execute(new SwitchSceneCommand(ns.id))} title="Switch to scene">{ns.name}</button>
-                                              <button class="icon-btn" onclick={() => { renameSceneValue = ns.name; renamingSceneId = ns.id; }} title="Rename scene">✎</button>
-                                              <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
-                                            {/if}
-                                          </li>
-                                        {/if}
-                                      {/each}
-                                    </ul>
-                                  {/if}
+                                  <ul class="cast-list">
+                                    {#each prodTree as node, i (node.id)}
+                                      <li class="insert-gap">
+                                        <button class="insert-btn" onclick={() => insertSceneAt(undefined, i)} title="Insert scene here">+ Scene</button>
+                                        <button class="insert-btn" onclick={() => insertGroupAt(i)} title="Insert act here">+ Act</button>
+                                      </li>
+                                      {#if (node as StoredGroup).type === 'group'}
+                                        {@const group = node as StoredGroup}
+                                        <li class="act-header cast-row">
+                                          {#if renamingGroupId === group.id}
+                                            <input
+                                              class="cast-role-input"
+                                              type="text"
+                                              bind:value={renameGroupValue}
+                                              onblur={() => { activeDoc?.execute(new RenameGroupCommand(group.id, renameGroupValue)); renamingGroupId = null; }}
+                                              onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameGroupCommand(group.id, renameGroupValue)); renamingGroupId = null; } if (e.key === 'Escape') renamingGroupId = null; }}
+                                              use:focusAndSelect
+                                            />
+                                          {:else}
+                                            <span class="cast-role act-label">{group.name}</span>
+                                            <button class="icon-btn" onclick={() => activeDoc?.execute(new MoveNodeCommand(group.id, undefined, i - 1))} disabled={i === 0} title="Move up">↑</button>
+                                            <button class="icon-btn" onclick={() => activeDoc?.execute(new MoveNodeCommand(group.id, undefined, i + 1))} disabled={i === prodTree.length - 1} title="Move down">↓</button>
+                                            <button class="icon-btn" onclick={() => { renameGroupValue = group.name; renamingGroupId = group.id; }} title="Rename act">✎</button>
+                                            <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveGroupCommand(group.id))} title="Remove act">✕</button>
+                                          {/if}
+                                        </li>
+                                        {#each group.children as child, ci (child.id)}
+                                          {#if !(child as StoredGroup).type}
+                                            {@const ns = child as NamedScene}
+                                            <li class="insert-gap indent">
+                                              <button class="insert-btn" onclick={() => insertSceneAt(group.id, ci)} title="Insert scene here">+ Scene</button>
+                                            </li>
+                                            <li class="cast-row indent" class:selected={ns.id === activeSceneId}>
+                                              {#if renamingSceneId === ns.id}
+                                                <input
+                                                  class="cast-role-input"
+                                                  type="text"
+                                                  bind:value={renameSceneValue}
+                                                  onblur={() => { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; }}
+                                                  onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; } if (e.key === 'Escape') renamingSceneId = null; }}
+                                                  use:focusAndSelect
+                                                />
+                                              {:else}
+                                                <button class="cast-role-btn" onclick={() => activeDoc?.execute(new SwitchSceneCommand(ns.id))} title="Switch to scene">{ns.name}</button>
+                                                <button class="icon-btn" onclick={() => activeDoc?.execute(new MoveNodeCommand(ns.id, group.id, ci - 1))} disabled={ci === 0} title="Move up">↑</button>
+                                                <button class="icon-btn" onclick={() => activeDoc?.execute(new MoveNodeCommand(ns.id, group.id, ci + 1))} disabled={ci === group.children.length - 1} title="Move down">↓</button>
+                                                <button class="icon-btn" onclick={() => { renameSceneValue = ns.name; renamingSceneId = ns.id; }} title="Rename scene">✎</button>
+                                                <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
+                                              {/if}
+                                            </li>
+                                          {/if}
+                                        {/each}
+                                        <li class="insert-gap indent">
+                                          <button class="insert-btn" onclick={() => insertSceneAt(group.id, group.children.length)} title="Insert scene here">+ Scene</button>
+                                        </li>
+                                      {:else}
+                                        {@const ns = node as NamedScene}
+                                        <li class="cast-row" class:selected={ns.id === activeSceneId}>
+                                          {#if renamingSceneId === ns.id}
+                                            <input
+                                              class="cast-role-input"
+                                              type="text"
+                                              bind:value={renameSceneValue}
+                                              onblur={() => { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; }}
+                                              onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; } if (e.key === 'Escape') renamingSceneId = null; }}
+                                              use:focusAndSelect
+                                            />
+                                          {:else}
+                                            <button class="cast-role-btn" onclick={() => activeDoc?.execute(new SwitchSceneCommand(ns.id))} title="Switch to scene">{ns.name}</button>
+                                            <button class="icon-btn" onclick={() => activeDoc?.execute(new MoveNodeCommand(ns.id, undefined, i - 1))} disabled={i === 0} title="Move up">↑</button>
+                                            <button class="icon-btn" onclick={() => activeDoc?.execute(new MoveNodeCommand(ns.id, undefined, i + 1))} disabled={i === prodTree.length - 1} title="Move down">↓</button>
+                                            <button class="icon-btn" onclick={() => { renameSceneValue = ns.name; renamingSceneId = ns.id; }} title="Rename scene">✎</button>
+                                            <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
+                                          {/if}
+                                        </li>
+                                      {/if}
+                                    {/each}
+                                    <li class="insert-gap">
+                                      <button class="insert-btn" onclick={() => insertSceneAt(undefined, prodTree.length)} title="Insert scene here">+ Scene</button>
+                                      <button class="insert-btn" onclick={() => insertGroupAt(prodTree.length)} title="Insert act here">+ Act</button>
+                                    </li>
+                                  </ul>
                                   <div class="cast-add-row">
                                     <button class="new-btn prod-cast-add" onclick={() => addGroup()} title="Add act">+ Act</button>
                                     <button class="new-btn prod-cast-add" onclick={() => addScene()} title="Add scene">+ Scene</button>
@@ -1192,6 +1226,33 @@
                                     <button class="new-btn prod-cast-add" onclick={() => activeDoc?.execute(new SetProductionSpeechSettingsCommand({ engine: voiceMode, bubbleScale }))}>+ Override</button>
                                   </div>
                                 {/if}
+                              {:else if prod.tree?.length}
+                                <div class="prod-cast">
+                                  <span class="cast-section-label">Scenes</span>
+                                  <ul class="cast-list">
+                                    {#each prod.tree as node (node.id)}
+                                      {#if (node as StoredGroup).type === 'group'}
+                                        {@const group = node as StoredGroup}
+                                        <li class="act-header cast-row">
+                                          <span class="cast-role act-label">{group.name}</span>
+                                        </li>
+                                        {#each group.children as child (child.id)}
+                                          {#if !(child as StoredGroup).type}
+                                            {@const ns = child as NamedScene}
+                                            <li class="cast-row indent">
+                                              <button class="cast-role-btn" onclick={() => loadProduction(prod)}>{ns.name}</button>
+                                            </li>
+                                          {/if}
+                                        {/each}
+                                      {:else}
+                                        {@const ns = node as NamedScene}
+                                        <li class="cast-row">
+                                          <button class="cast-role-btn" onclick={() => loadProduction(prod)}>{ns.name}</button>
+                                        </li>
+                                      {/if}
+                                    {/each}
+                                  </ul>
+                                </div>
                               {/if}
                             {/if}
                           </li>
@@ -1726,7 +1787,7 @@
           onsliderpointerup={() => presenter?.handleSliderPointerUp()}
         />
         <TimelinePanel
-          {actors}
+          actors={actors.filter(a => activeScene?.stagedActors.some(sa => sa.actorId === a.id) ?? false)}
           {actorBlocks}
           lightBlocks={lightBlocks}
           cameraBlocks={cameraBlocks}
@@ -2012,15 +2073,6 @@
     width: 100%;
   }
 
-  .act-add-scene-btn {
-    font-size: 10px;
-    padding: 1px 6px;
-    opacity: 0.7;
-  }
-  .act-add-scene-btn:hover {
-    opacity: 1;
-  }
-
   .audio-settings {
     padding: 4px 8px 8px;
   }
@@ -2057,6 +2109,11 @@
   .icon-btn.danger:hover {
     color: #e06c75;
     background: #2a1a1a;
+  }
+
+  .icon-btn:disabled {
+    opacity: 0.2;
+    cursor: default;
   }
 
   .rename-form {
@@ -2200,6 +2257,56 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+
+  .act-header {
+    background: #1e1e1e;
+    border-left: 2px solid #4a9eff44;
+    margin-top: 4px;
+  }
+
+  .act-label {
+    color: #7ec8e3;
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    flex: 1;
+  }
+
+  .cast-row.indent {
+    padding-left: 18px;
+    background: #1d1d1d;
+  }
+
+  .insert-gap {
+    list-style: none;
+    height: 4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 4px;
+  }
+  .insert-gap.indent {
+    padding-left: 22px;
+  }
+  .insert-btn {
+    opacity: 0;
+    background: #1a2a3a;
+    border: 1px solid #4a9eff44;
+    color: #4a9eff;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: opacity 0.1s;
+    white-space: nowrap;
+  }
+  .insert-gap:hover {
+    height: 10px;
+  }
+  .insert-gap:hover .insert-btn {
+    opacity: 1;
   }
 
   .cast-row {

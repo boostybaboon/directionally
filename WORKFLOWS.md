@@ -27,8 +27,8 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 General section snags:
 
-When reloading the productions view, clicking on the expander arrow only shows the cast list. Only after clicking the production name do we see the scenes. Thereafter clicking the expander shows cast plus acts/scenes.
-Am expecting when clicking on the production name for it to expand/collapse the section also
+~~When reloading the productions view, clicking on the expander arrow only shows the cast list. Only after clicking the production name do we see the scenes. Thereafter clicking the expander shows cast plus acts/scenes.
+Am expecting when clicking on the production name for it to expand/collapse the section also~~ Fixed
 
 ---
 
@@ -60,11 +60,11 @@ Am expecting when clicking on the production name for it to expand/collapse the 
 
 General section snags:
 
-Can't add a top level scene before Act 1 after Act 1 is created. i.e. can't post-facto add the Prologue if I forget. Can add epilogue 
-No visual indication of scene grouping. Maybe indenting, or implement collapsible tree structure to collapse acts?
-If I delete all acts and am left with just the Epilogue for example, I can't delete the Epilogue scene. Lack X on top level scenes after I delete a scene or act. Maybe not limited to top level items, seems an issue with X being available on items after a deletion
+~~Can't add a top level scene before Act 1 after Act 1 is created. i.e. can't post-facto add the Prologue if I forget. Can add epilogue~~ Fixed 
+~~No visual indication of scene grouping. Maybe indenting, or implement collapsible tree structure to collapse acts?~~ Fixed
+~~If I delete all acts and am left with just the Epilogue for example, I can't delete the Epilogue scene. Lack X on top level scenes after I delete a scene or act. Maybe not limited to top level items, seems an issue with X being available on items after a deletion~~ Fixed
 Can't rearrange scenes in the tree-like view (known future work?)
-Scenes should fill the remaining area in the left hand tab, if examples and Speech and Audio are collapsed then I'd expect these to collapse at the bottom leaving maximum space for an overview of acts/scenes
+~~Scenes should fill the remaining area in the left hand tab, if examples and Speech and Audio are collapsed then I'd expect these to collapse at the bottom leaving maximum space for an overview of acts/scenes~~ Fixed
 
 ---
 
@@ -100,13 +100,13 @@ Not clear an actor is in a scene. Indicator is the dot next to the name in the c
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 32 | Click **The Encounter** in the Scenes list (under Act 1) | — | |
-| 33 | Stage both **Alpha** and **Beta** (click their **○** badges) | — | |
-| 34 | In Design view, drag-spawn Alpha to `[-2, 0, 2]` and Beta to `[2, 0, 2]` | — | |
-| 35 | Script tab: add Alpha `"We have come far."` and Beta `"The journey is not over."` | — | |
-| 36 | In the timeline, drag from t=0 to t=2 on Alpha's track row to draw a walking block; set Clip to **Walking**; set end position by dragging Alpha to `[0, 0, 2]` or clicking **⊕ Capture end position** | — | |
-| 37 | Play the scene; confirm Alpha walks while dialogue plays | — | |
-| ✓ | Alpha walks across stage during the second scene | — | |
+| 32 | Click **The Encounter** in the Scenes list (under Act 1) | Ok | |
+| 33 | Stage both **Alpha** and **Beta** (click their **○** badges) | Ok | |
+| 34 | In Design view, drag-spawn Alpha to `[-2, 0, 2]` and Beta to `[2, 0, 2]` | Ok | |
+| 35 | Script tab: add Alpha `"We have come far."` and Beta `"The journey is not over."` | Ok | |
+| 36 | In the timeline, drag from t=0 to t=2 on Alpha's track row to draw a walking block; set Clip to **Walking**; set end position by dragging Alpha to `[0, 0, 2]` or clicking **⊕ Capture end position** | Ok | |
+| 37 | Play the scene; confirm Alpha walks while dialogue plays | Ok | |
+| ✓ | Alpha walks across stage during the second scene | Ok | |
 
 ---
 
@@ -119,6 +119,12 @@ Not clear an actor is in a scene. Indicator is the dot next to the name in the c
 | 40 | Click **The Chase** (under Act 1); stage both actors; add 1–2 dialogue lines | — | |
 | 41 | For each scene, scrub the transport slider; verify duration is non-zero | — | |
 | ✓ | All 5 scenes have staged actors and dialogue | — | |
+
+Snags for these scenes:
+
+Given a light created through the API, if I load this scene in the UI how can I see what initial value a light has? And how can I set the initial value of a light? I'm expecting a pre t=0 block for a light which when I click on it I can see and set initial properties
+
+Ditto for a Camera, ditto for any scene item. I'm expecting pre-t=0 pseudo-blocks for all items in the timeline, to query and set their initial conditions. For the light I think that's just moving the cross-hair into a pre-t=0 block. Scene items should get one that works much like the actor ones. Lights - we're gonna have to have a panel enlivening in RHS to set settable properties. The current Set Pieces and Lights sections on the RHS, I really don't understand. Probably what we need is a Properties panel in the Staging tab, which adapts to what is selected to be edited. This is common in these kinds of packages I think. A Properties panel which adapts itself to show properties pertinent to the selected item. This may be a large item to implement
 
 ---
 
