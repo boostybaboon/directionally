@@ -352,6 +352,7 @@
       return 'orbit camera → end look-at auto-captured on drag end';
     }
     if (currentPosition < 0.05) {
+      if (positioningMode.type === 'spawn') return ''; // banner already covers spawn guidance
       return selectedObjectId ? 'drag → sets spawn position' : 'click an item, then drag to set its start position';
     }
     return '';
@@ -477,6 +478,16 @@
     renamingId = id;
   }
 
+  function addGroup() {
+    if (!activeDoc) return;
+    const groupCount = (activeDoc.current.tree ?? []).filter((n) => 'type' in n).length;
+    const name = `Act ${groupCount + 1}`;
+    const id = crypto.randomUUID();
+    activeDoc.execute(new AddGroupCommand(name, id));
+    renamingGroupId = id;
+    renameGroupValue = name;
+  }
+
   function addActor() {
     if (!activeDoc) return;
     const allActors = activeDoc.current.actors ?? [];
@@ -587,6 +598,10 @@
   function acceptPositioning() {
     if (positioningMode.type === 'spawn' && positioningMode.isCamera) {
       captureInitialCamera();
+    }
+    if (positioningMode.type === 'spawn' && !positioningMode.isCamera) {
+      selectedObjectId = null;
+      presenter?.selectSceneObject(null);
     }
     positioningMode = { type: 'idle' };
   }
@@ -874,7 +889,15 @@
                                 <button
                                   class="scene-btn"
                                   class:active={activeProductionId === prod.id}
-                                  onclick={() => loadProduction(prod)}
+                                  onclick={() => {
+                                    if (activeProductionId === prod.id) {
+                                      const next = new Set(expandedProductionCast);
+                                      next.has(prod.id) ? next.delete(prod.id) : next.add(prod.id);
+                                      expandedProductionCast = next;
+                                    } else {
+                                      loadProduction(prod);
+                                    }
+                                  }}
                                 >{prod.name}</button>
                                 <div class="prod-actions">
                                   <button class="icon-btn" onclick={() => startRename(prod.id)} title="Rename">✎</button>
@@ -899,9 +922,15 @@
                                             class="stage-badge"
                                             class:staged={isStaged}
                                             title={isStaged ? 'In scene — click to remove' : 'Add to scene'}
-                                            onclick={() => isStaged
-                                              ? activeDoc?.execute(new UnstageActorCommand(actor.id))
-                                              : activeDoc?.execute(new StageActorCommand({ actorId: actor.id, offstage: true }))}
+                                            onclick={() => {
+                                              if (isStaged) {
+                                                activeDoc?.execute(new UnstageActorCommand(actor.id));
+                                              } else {
+                                                const n = (activeScene?.stagedActors ?? []).length;
+                                                const x = (n % 2 === 0 ? 1 : -1) * Math.ceil(n / 2) * 3;
+                                                activeDoc?.execute(new StageActorCommand({ actorId: actor.id, startPosition: [x, 0, 0] }));
+                                              }
+                                            }}
                                           >{isStaged ? '●' : '○'}</button>
                                           {#if renamingActorId === actor.id}
                                             <input
@@ -1048,7 +1077,7 @@
                                   <span class="cast-section-label">Scenes</span>
                                   {#if prodTree.length > 0}
                                     <ul class="cast-list">
-                                      {#each prodTree as node}
+                                      {#each prodTree as node (node.id)}
                                         {#if (node as StoredGroup).type === 'group'}
                                           {@const group = node as StoredGroup}
                                           <li class="act-header cast-row">
@@ -1067,7 +1096,7 @@
                                               <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveGroupCommand(group.id))} title="Remove act">✕</button>
                                             {/if}
                                           </li>
-                                          {#each group.children as child}
+                                          {#each group.children as child (child.id)}
                                             {#if !(child as StoredGroup).type}
                                               {@const ns = child as NamedScene}
                                               <li class="cast-row indent" class:selected={ns.id === activeSceneId}>
@@ -1083,9 +1112,7 @@
                                                 {:else}
                                                   <button class="cast-role-btn" onclick={() => activeDoc?.execute(new SwitchSceneCommand(ns.id))} title="Switch to scene">{ns.name}</button>
                                                   <button class="icon-btn" onclick={() => { renameSceneValue = ns.name; renamingSceneId = ns.id; }} title="Rename scene">✎</button>
-                                                  {#if prodScenes.length > 1}
-                                                    <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
-                                                  {/if}
+                                                  <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
                                                 {/if}
                                               </li>
                                             {/if}
@@ -1108,9 +1135,7 @@
                                             {:else}
                                               <button class="cast-role-btn" onclick={() => activeDoc?.execute(new SwitchSceneCommand(ns.id))} title="Switch to scene">{ns.name}</button>
                                               <button class="icon-btn" onclick={() => { renameSceneValue = ns.name; renamingSceneId = ns.id; }} title="Rename scene">✎</button>
-                                              {#if prodScenes.length > 1}
-                                                <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
-                                              {/if}
+                                              <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
                                             {/if}
                                           </li>
                                         {/if}
@@ -1118,8 +1143,8 @@
                                     </ul>
                                   {/if}
                                   <div class="cast-add-row">
+                                    <button class="new-btn prod-cast-add" onclick={() => addGroup()} title="Add act">+ Act</button>
                                     <button class="new-btn prod-cast-add" onclick={() => addScene()} title="Add scene">+ Scene</button>
-                                    <button class="new-btn prod-cast-add" onclick={() => activeDoc?.execute(new AddGroupCommand())} title="Add act">+ Act</button>
                                   </div>
                                 </div>
                                 {#if docSnapshot.speechSettings !== undefined}
@@ -1281,6 +1306,7 @@
               return true;
             }}
             positioningBanner={positioningBanner}
+            positioningIsCamera={positioningMode.type === 'spawn' && positioningMode.isCamera}
             onpositionaccept={acceptPositioning}
             onpositioncancel={cancelPositioning}
             onsceneend={presentationMode ? onPresentationSceneEnd : undefined}
@@ -2263,6 +2289,13 @@
     font-size: 12px;
     padding: 3px 6px;
     width: 100%;
+  }
+
+  /* In a cast row, the character selector should auto-size so the role name input gets flex space. */
+  .cast-char-select {
+    width: auto;
+    flex-shrink: 0;
+    max-width: 50%;
   }
 
   .add-actor-btns {

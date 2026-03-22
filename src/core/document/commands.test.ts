@@ -729,10 +729,11 @@ describe('RemoveSceneCommand', () => {
     expect(getScenes(result.tree ?? [])[0].id).toBe('sc2');
   });
 
-  it('is a no-op when only one scene remains', () => {
+  it('removes the last scene, leaving an empty tree', () => {
     const doc = makeProduction({ tree: [makeNamedScene()], activeSceneId: 'sc1' });
     const result = new RemoveSceneCommand('sc1').execute(doc);
-    expect(getScenes(result.tree ?? [])).toHaveLength(1);
+    expect(getScenes(result.tree ?? [])).toHaveLength(0);
+    expect(result.activeSceneId).toBeUndefined();
   });
 
   it('updates activeSceneId when the active scene is removed', () => {

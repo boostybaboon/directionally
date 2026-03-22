@@ -742,6 +742,42 @@ Possible directions:
 
 ---
 
+### Phase 14 — Video render export *(deferred — large)*
+
+*Export a production as a video file at a chosen resolution, with audio.*
+
+Playback in the browser is real-time and resolution-bound by the display. Render export breaks both constraints: the engine advances frame-by-frame at a fixed timestep (decoupled from wall clock), an off-screen canvas renders at the target resolution, and the resulting frames are encoded into a video file with a mixed audio track.
+
+#### Scope
+
+- **Export dialog** — resolution presets (1080p, 4K; custom width×height), frame rate (24 / 30 / 60 fps), format (MP4 / WebM), audio toggle.
+- **Off-screen render pass** — a second `THREE.WebGLRenderer` targeting a hidden canvas at the export resolution. Playback camera renders to it using the same scene graph as the display; no geometry duplication.
+- **Frame-by-frame transport** — during export, the Tone.js transport is driven programmatically: `transport.seconds` is advanced by `1/fps` per frame and `PlaybackEngine.update()` is called at each step. The display render loop is suspended; only the off-screen pass runs.
+- **Video encoding pipeline** — three candidate approaches in ascending implementation cost:
+  1. **`MediaRecorder` + `canvas.captureStream(fps)`** — browser-native, zero dependencies, output WebM/VP9. Lowest quality control; encoding runs at real-time speed, not frame-rate speed.
+  2. **WebCodecs `VideoEncoder`** — hardware-accelerated, frame-accurate, supports MP4/H.264. Requires browser support check (Chrome 94+, no Safari as of 2026). Each `ImageBitmap` frame passed to the encoder; `MP4Muxer` or `webm-muxer` assembles the container.
+  3. **FFmpeg.wasm** — maximum codec coverage; ~30 MB WASM download. Frames exported as PNG data URLs, piped to `ffmpeg -i frame%04d.png`. Memory pressure at 4K.
+  Recommended starting point: WebCodecs + `webm-muxer` with a `MediaRecorder` fallback for unsupported browsers.
+- **Audio capture** — TTS audio (Web Speech API or Kokoro/eSpeak) must either be pre-synthesised and exported as a WAV buffer, or the WebAudio graph must be routed through a `MediaStreamDestination` node and recorded alongside the video. Pre-synthesis is more reliable for sync; requires all TTS calls to complete before the frame loop begins.
+- **Progress UI** — a modal overlay (or transport-bar status) shows "Frame N of M — EEss remaining"; a cancel button stops and discards. On completion, `URL.createObjectURL(blob)` triggers a browser download.
+
+#### Known risks
+
+- **WebCodecs + audio sync**: the video encoder and the audio recorder are separate streams; they must share a common start timestamp. Off-by-one-frame desync between them is a known footgun — needs an explicit test with lip-sync dialogue.
+- **TTS timing during headless render**: eSpeak/Kokoro synthesis happens asynchronously; the frame loop must block until all speech audio for the scene is pre-rendered before starting the encode pass.
+- **Memory at 4K / 60 fps**: a 60-second 4K sequence at 60 fps = 3 600 `ImageBitmap` objects. Frames must be released as soon as the encoder consumes them.
+- **Safari**: WebCodecs `VideoEncoder` has no Safari support. `MediaRecorder` covers Safari but produces WebM, which QuickTime does not open. A server-side Puppeteer fallback is the long-stop option.
+
+#### Implementation stages (not yet scheduled)
+
+1. Off-screen renderer + frame-by-frame transport loop (no encoding yet — just prove 1 080p frame capture at 60fps without dropped frames).
+2. WebCodecs encoding pipeline + `webm-muxer` container.
+3. Audio pre-synthesis + mux into output.
+4. Export dialog UI + progress + download.
+5. `MediaRecorder` fallback for unsupported browsers.
+
+---
+
 ## What's Next — Priority queue
 
 **Baseline:** 195 tests green, 0 svelte-check warnings.  
@@ -776,6 +812,7 @@ Possible directions:
 - **Phase 11** — Audio block timeline strip + waveform preview
 - **Phase 12** — Dance/MIDI choreography (needs spike)
 - **Phase 13** — Remote asset store
+- **Phase 14** — Video render export (large; WebCodecs pipeline + audio pre-synthesis)
 
 ---
 
@@ -826,4 +863,5 @@ Possible directions:
 | Asset properties editing | Phase 9 |
 | Lighting rig | Phase 10 |
 | Sound effects / music | Phase 11 (merged into 8.7) |
+| Video render export (off-screen canvas, WebCodecs, audio mux) | Phase 14 (deferred — large) |
 

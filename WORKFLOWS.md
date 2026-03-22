@@ -19,11 +19,16 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 1 | Open the app; left panel shows the **Productions** tab | — | |
-| 2 | Click **+ New**; a production row appears with the name field already selected | — | |
-| 3 | Type `"The Robot Play"` and press **Enter**; production is created and loaded | — | |
-| 4 | Right panel switches to the **Script** tab automatically (production is empty) | — | |
-| ✓ | Left panel shows "The Robot Play" as the active production | — | |
+| 1 | Open the app; left panel shows the **Productions** tab | OK | |
+| 2 | Click **+ New**; a production row appears with the name field already selected | OK | |
+| 3 | Type `"The Robot Play"` and press **Enter**; production is created and loaded | OK | |
+| 4 | Right panel switches to the **Staging** tab automatically (production is empty) | OK | |
+| ✓ | Left panel shows "The Robot Play" as the active production | OK | |
+
+General section snags:
+
+When reloading the productions view, clicking on the expander arrow only shows the cast list. Only after clicking the production name do we see the scenes. Thereafter clicking the expander shows cast plus acts/scenes.
+Am expecting when clicking on the production name for it to expand/collapse the section also
 
 ---
 
@@ -31,12 +36,12 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 5 | Expand the production row (click the **▶** toggle if collapsed) | — | |
-| 6 | Click **+ Add** in the Cast section; a new actor row appears in inline rename mode, pre-named "Character 1" | — | |
-| 7 | Type `"Alpha"` and press **Enter** | — | |
-| 8 | In the model selector on the same row, choose **Robot Expressive** (should be default) | — | |
-| 9 | Repeat steps 6–8 to add a second actor named `"Beta"`, also Robot Expressive | — | |
-| ✓ | Cast shows Alpha and Beta, both as Robot Expressive | — | |
+| 5 | Expand the production row (click the **▶** toggle if collapsed) | OK | |
+| 6 | Click **+ Add** in the Cast section; a new actor row appears in inline rename mode, pre-named "Character 1" | Ok | |
+| 7 | Type `"Alpha"` and press **Enter** | Ok | |
+| 8 | In the model selector on the same row, choose **Robot Expressive** (should be default) | OK | |
+| 9 | Repeat steps 6–8 to add a second actor named `"Beta"`, also Robot Expressive | OK | |
+| ✓ | Cast shows Alpha and Beta, both as Robot Expressive | OK | |
 
 ---
 
@@ -44,14 +49,22 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 10 | Scroll to the **Scenes** section in the production's expanded panel | — | |
-| 11 | Click **+ Act**; an act group appears in rename mode — type `"Act 1"` and press **Enter** | — | |
-| 12 | Click **+ Act** again; name it `"Act 2"` | — | |
-| 13 | Under Act 1, click **+ Scene**; name it `"The Encounter"`. Click **+ Scene** again; name it `"The Chase"` | — | |
-| 14 | Under Act 2, click **+ Scene**; name it `"The Confrontation"` | — | |
-| 15 | Under Act 2, click **+ Scene**; name it `"Resolution"` | — | |
-| 16 | Use the root **+ Scene** button at the bottom of the Scenes section; name it `"Prologue"` | — | |
-| ✓ | Scenes section shows 2 act groups × 2 scenes + 1 top-level Prologue = 5 scenes; clicking a scene name switches to it | — | |
+| 10 | Scroll to the **Scenes** section in the production's expanded panel | OK | |
+| 11 | Click **+ Act**; an act group appears in rename mode — type `"Act 1"` and press **Enter** | Ok | |
+| 12 | Click **+ Act** again; name it `"Act 2"` | Ok | |
+| 13 | Under Act 1, click **+ Scene**; name it `"The Encounter"`. Click **+ Scene** again; name it `"The Chase"` | Ok | |
+| 14 | Under Act 2, click **+ Scene**; name it `"The Confrontation"` | Ok | |
+| 15 | Under Act 2, click **+ Scene**; name it `"Resolution"` | Ok | |
+| 16 | Use the root **+ Scene** button at the bottom of the Scenes section; name it `"Prologue"` | Ok | |
+| ✓ | Scenes section shows 2 act groups × 2 scenes + 1 top-level Prologue = 5 scenes; clicking a scene name switches to it | Ok | |
+
+General section snags:
+
+Can't add a top level scene before Act 1 after Act 1 is created. i.e. can't post-facto add the Prologue if I forget. Can add epilogue 
+No visual indication of scene grouping. Maybe indenting, or implement collapsible tree structure to collapse acts?
+If I delete all acts and am left with just the Epilogue for example, I can't delete the Epilogue scene. Lack X on top level scenes after I delete a scene or act. Maybe not limited to top level items, seems an issue with X being available on items after a deletion
+Can't rearrange scenes in the tree-like view (known future work?)
+Scenes should fill the remaining area in the left hand tab, if examples and Speech and Audio are collapsed then I'd expect these to collapse at the bottom leaving maximum space for an overview of acts/scenes
 
 ---
 
@@ -59,22 +72,27 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 17 | Click **Prologue** in the Scenes list; canvas loads the scene | — | |
-| 18 | Switch to **Design view** (click `✏ Switch to Design view` or the toggle in the bottom panel header) | — | |
-| 19 | In the Cast section, click the **○** badge next to **Alpha**; it becomes **●** (staged offstage) | — | |
-| 20 | Click the **○** badge next to **Beta**; Beta is staged | — | |
-| 21 | Click Alpha's pre-t=0 block in the timeline (coloured block left of the zero line); the Staging tab highlights Alpha's spawn position fields | — | |
-| 22 | In the 3D canvas, click Alpha's model and drag to `[-3, 0, 0]` | — | |
-| 23 | Spawn position updates automatically on drag end | — | |
-| 24 | Repeat for Beta: click Beta's pre-block, then drag Beta's model to `[3, 0, 0]` | — | |
-| 25 | Open the **Script** tab in the right panel | — | |
-| 26 | Click **+ Add line** | — | |
-| 27 | Set actor to **Alpha**; type `"Beta, we meet at last."` | — | |
-| 28 | Click **+ Add line** again | — | |
-| 29 | Set actor to **Beta**; type `"Indeed, Alpha. I have been waiting."` | — | |
-| 30 | Click **▶ Switch to Playback view** and press **▶**; Alpha and Beta speak with speech bubbles | — | |
-| 31 | Press **■** (rewind) to return to t=0 | — | |
-| ✓ | Two characters on stage; two spoken lines play correctly | — | |
+| 17 | Click **Prologue** in the Scenes list; canvas loads the scene | OK | |
+| 18 | Switch to **Design view** (click `✏ Switch to Design view` or the toggle in the bottom panel header) | OK | |
+| 19 | In the Cast section, click the **○** badge next to **Alpha**; it becomes **●** (staged offstage) | OK | |
+| 20 | Click the **○** badge next to **Beta**; Beta is staged | OK | |
+| 21 | Click Alpha's pre-t=0 block in the timeline (coloured block left of the zero line); the Staging tab highlights Alpha's spawn position fields | Ok |  |
+| 22 | In the 3D canvas, click Alpha's model and drag to `[-3, 0, 0]` | Ok | |
+| 23 | Spawn position updates automatically on drag end | Ok | |
+| 24 | Repeat for Beta: click Beta's pre-block, then drag Beta's model to `[3, 0, 0]` | Ok | |
+| 25 | Open the **Script** tab in the right panel | Ok | |
+| 26 | Click **+ Add line** | Ok | |
+| 27 | Set actor to **Alpha**; type `"Beta, we meet at last."` | Ok | |
+| 28 | Click **+ Add line** again | Ok | |
+| 29 | Set actor to **Beta**; type `"Indeed, Alpha. I have been waiting."` | Ok | |
+| 30 | Click **▶ Switch to Playback view** and press **▶**; Alpha and Beta speak with speech bubbles | Ok | |
+| 31 | Press **■** (rewind) to return to t=0 | Ok | |
+| ✓ | Two characters on stage; two spoken lines play correctly | Ok | |
+
+General section snags:
+
+Not clear an actor is in a scene. Indicator is the dot next to the name in the cast. But all actors are always present in the scene timeline. Suggest only scene participants are in the timeline
+
 
 ---
 

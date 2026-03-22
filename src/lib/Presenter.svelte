@@ -108,8 +108,10 @@
     voiceBackend?: VoiceBackend;
     sliderValue?: number;
     isSliderDragging?: boolean;
-    /** When set, renders a banner with accept/cancel controls over the viewport. */
+    /** When set, renders a banner over the viewport with positioning guidance. */
     positioningBanner?: string;
+    /** True only for camera spawn mode, where Accept actually captures the camera state. */
+    positioningIsCamera?: boolean;
     onpositionaccept?: () => void;
     onpositioncancel?: () => void;
     /** Called when the scene reaches its authored end time. Caller is responsible for transitioning; Presenter will NOT auto-pause when this is provided. */
@@ -137,6 +139,7 @@
     rotationEnabled = true,
     objectSelectable,
     positioningBanner,
+    positioningIsCamera,
     onpositionaccept,
     onpositioncancel,
     onsceneend,
@@ -1213,8 +1216,12 @@
     {#if positioningBanner}
       <div class="positioning-banner">
         <span class="positioning-banner-text">{positioningBanner}</span>
-        <button class="positioning-accept" onclick={onpositionaccept}>✓ Accept</button>
-        <button class="positioning-cancel" onclick={onpositioncancel}>✕ Cancel</button>
+        {#if positioningIsCamera}
+          <button class="positioning-accept" onclick={onpositionaccept}>✓ Accept</button>
+          <button class="positioning-cancel" onclick={onpositioncancel}>✕ Cancel</button>
+        {:else}
+          <button class="positioning-cancel" onclick={onpositionaccept}>✓ Done</button>
+        {/if}
       </div>
     {/if}
     {#if designMode}

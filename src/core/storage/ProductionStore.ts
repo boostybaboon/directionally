@@ -57,15 +57,14 @@ export const ProductionStore = {
     let n = 2;
     while (existing.includes(name)) { name = `${baseName} ${n++}`; }
     const now = Date.now();
-    const sceneId = crypto.randomUUID();
     const production: StoredProduction = {
       id: crypto.randomUUID(),
       name,
       createdAt: now,
       modifiedAt: now,
       actors: [],
-      tree: [{ id: sceneId, name: 'Scene 1', scene: defaultSceneShell() }],
-      activeSceneId: sceneId,
+      tree: [],
+      activeSceneId: undefined,
       script: [],
     };
     this.save(production);

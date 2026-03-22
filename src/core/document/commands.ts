@@ -2,7 +2,7 @@ import type { Command } from './Command.js';
 import type { StoredProduction, StoredActor, StoredScene, NamedScene, StoredGroup, ProductionSpeechSettings } from '../storage/types.js';
 import { getScenes } from '../storage/types.js';
 import type { ScriptLine } from '../../lib/script/types.js';
-import type { CameraConfig, Vec3, SetPiece, StagedActor, SpeakAction, CameraTrackAction, PathKeyframe, ClipTrack, TransformTrack, LightingTrack, LoopStyle, ActorBlock, LightBlock, CameraBlock, SetPieceBlock, ActorVoice } from '../domain/types.js';
+import type { CameraConfig, LightConfig, Vec3, SetPiece, StagedActor, SpeakAction, CameraTrackAction, PathKeyframe, ClipTrack, TransformTrack, LightingTrack, LoopStyle, ActorBlock, LightBlock, CameraBlock, SetPieceBlock, ActorVoice } from '../domain/types.js';
 import { restageCast, estimateDuration, defaultSceneShell, getActiveScene } from '../storage/sceneBuilder.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -255,6 +255,15 @@ export class UpdateCameraCommand implements Command {
   constructor(private readonly camera: CameraConfig) {}
   execute(doc: StoredProduction): StoredProduction {
     return touch(updateActiveScene(doc, (scene) => ({ ...scene, camera: this.camera })));
+  }
+}
+
+/** Replace all static lights in the active scene. */
+export class SetSceneLightsCommand implements Command {
+  readonly label = 'Set scene lights';
+  constructor(private readonly lights: LightConfig[]) {}
+  execute(doc: StoredProduction): StoredProduction {
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, lights: this.lights })));
   }
 }
 
@@ -976,13 +985,11 @@ export class RenameSceneCommand implements Command {
   }
 }
 
-/** Remove a scene from the production. Cannot remove the last scene. */
+/** Remove a scene from the production. */
 export class RemoveSceneCommand implements Command {
   readonly label = 'Remove scene';
   constructor(private readonly sceneId: string) {}
   execute(doc: StoredProduction): StoredProduction {
-    const all = getScenes(doc.tree ?? []);
-    if (all.length <= 1) return doc;
     const tree = filterTreeNodes(doc.tree ?? [], (node) => isGroup(node) || node.id !== this.sceneId);
     const remaining = getScenes(tree);
     const activeSceneId = doc.activeSceneId === this.sceneId
@@ -1007,13 +1014,13 @@ export class SwitchSceneCommand implements Command {
 /** Add a new named group (act) to the root of the production tree. */
 export class AddGroupCommand implements Command {
   readonly label: string;
-  constructor(private readonly name: string = '') {
+  constructor(private readonly name: string = '', private readonly id?: string) {
     this.label = `Add act "${name || 'Act'}"`;
   }
   execute(doc: StoredProduction): StoredProduction {
     const groups = (doc.tree ?? []).filter(isGroup);
     const name = this.name || `Act ${groups.length + 1}`;
-    const newGroup: StoredGroup = { type: 'group', id: crypto.randomUUID(), name, children: [] };
+    const newGroup: StoredGroup = { type: 'group', id: this.id ?? crypto.randomUUID(), name, children: [] };
     return touch({ ...doc, tree: [...(doc.tree ?? []), newGroup] });
   }
 }
