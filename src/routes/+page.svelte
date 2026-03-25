@@ -1081,10 +1081,10 @@
                                     }
                                   }}
                                 >{prod.name}</button>
+                                {#if activeProductionId === prod.id && docSnapshot && getScenes(docSnapshot.tree ?? []).length > 0}
+                                  <button class="present-btn" onclick={startPresentation} title="Present all scenes in order" aria-label="Present production">⏵⏵ Present</button>
+                                {/if}
                                 <div class="prod-actions">
-                                  {#if activeProductionId === prod.id && docSnapshot && getScenes(docSnapshot.tree ?? []).length > 0}
-                                    <button class="present-btn" onclick={startPresentation} title="Present all scenes in order" aria-label="Present production">⏵⏵ Present</button>
-                                  {/if}
                                   <button class="icon-btn" onclick={() => startRename(prod.id)} title="Rename">✎</button>
                                   <button class="icon-btn" onclick={() => duplicateProduction(prod)} title="Duplicate">⎘</button>
                                   <button class="icon-btn danger" onclick={() => deleteProduction(prod.id)} title="Delete">✕</button>
@@ -1099,24 +1099,14 @@
                                   {#if prodActors.length === 0}
                                     <p class="stage-empty">No cast.</p>
                                   {:else}
+                                    <div class="cast-col-header">
+                                      <span class="cast-col-label-name">Cast member</span>
+                                      <span class="cast-col-label-badge">In scene</span>
+                                    </div>
                                     <ul class="cast-list">
                                       {#each prodActors as actor}
                                         {@const isStaged = (activeScene?.stagedActors ?? []).some(sa => sa.actorId === actor.id)}
-                                        <li class="cast-row" class:selected={selectedObjectId === actor.id}>
-                                          <button
-                                            class="stage-badge"
-                                            class:staged={isStaged}
-                                            title={isStaged ? 'In scene — click to remove' : 'Add to scene'}
-                                            onclick={() => {
-                                              if (isStaged) {
-                                                activeDoc?.execute(new UnstageActorCommand(actor.id));
-                                              } else {
-                                                const n = (activeScene?.stagedActors ?? []).length;
-                                                const x = (n % 2 === 0 ? 1 : -1) * Math.ceil(n / 2) * 3;
-                                                activeDoc?.execute(new StageActorCommand({ actorId: actor.id, startPosition: [x, 0, 0] }));
-                                              }
-                                            }}
-                                          >{isStaged ? '●' : '○'}</button>
+                                        <li class="cast-row" class:selected={selectedObjectId === actor.id} class:in-scene={isStaged}>
                                           {#if renamingActorId === actor.id}
                                             <input
                                               class="cast-role-input"
@@ -1148,6 +1138,20 @@
                                             }}
                                           >⚙</button>
                                           <button class="icon-btn danger" onclick={() => removeActor(actor.id)} title="Remove actor">✕</button>
+                                          <button
+                                            class="stage-badge"
+                                            class:staged={isStaged}
+                                            title={isStaged ? 'In scene — click to remove' : 'Add to scene'}
+                                            onclick={() => {
+                                              if (isStaged) {
+                                                activeDoc?.execute(new UnstageActorCommand(actor.id));
+                                              } else {
+                                                const n = (activeScene?.stagedActors ?? []).length;
+                                                const x = (n % 2 === 0 ? 1 : -1) * Math.ceil(n / 2) * 3;
+                                                activeDoc?.execute(new StageActorCommand({ actorId: actor.id, startPosition: [x, 0, 0] }));
+                                              }
+                                            }}
+                                          >{isStaged ? '●' : '○'}</button>
                                         </li>
                                         {#if expandedActorSettings.has(actor.id)}
                                           {@const clips = discoveredClips[actor.id] ?? []}
@@ -1990,6 +1994,33 @@
     margin-bottom: 2px;
   }
 
+  .cast-col-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 6px 4px;
+    margin-bottom: 2px;
+    border-bottom: 1px solid #2e2e2e;
+  }
+
+  .cast-col-label-badge {
+    flex-shrink: 0;
+    width: 44px;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #555;
+    text-align: center;
+    margin-left: auto;
+  }
+
+  .cast-col-label-name {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #555;
+  }
+
   .prod-cast-add {
     margin-top: 6px;
     width: 100%;
@@ -2369,28 +2400,33 @@
 
   .stage-badge {
     flex-shrink: 0;
-    width: 18px;
-    height: 18px;
+    margin-left: auto;
+    width: 44px;
+    height: 24px;
     background: none;
     border: none;
     padding: 0;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 14px;
     line-height: 1;
-    color: #666;
+    color: #c8864a;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 50%;
+    border-radius: 3px;
     transition: color 0.15s;
   }
 
   .stage-badge.staged {
-    color: #7ec8e3;
+    color: #4a9eff;
   }
 
   .stage-badge:hover {
     color: #fff;
+  }
+
+  .cast-row.in-scene {
+    background: #1a2535;
   }
 
   .cast-role-btn {

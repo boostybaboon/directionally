@@ -383,6 +383,15 @@
     transformControls?.detach();
 
     Tone.getTransport().cancel();
+    // For fresh scene loads (seekTo provided) stop and reset the transport before
+    // awaiting buildSceneGraph. This is the firebreak: the transport clock no longer
+    // advances during the async GLTF load, so t=0 animation schedules added after
+    // the await are never registered against a non-zero transport position.
+    // Omitted for in-place reloads (seekTo undefined) which must preserve an active
+    // playback position (e.g. editing while playing, or voice-mode reload).
+    if (seekTo !== undefined) {
+      Tone.getTransport().stop();
+    }
 
     const graphResult = await buildSceneGraph(model);
     ({ scene, camera, authoredFov, animationDict, mixers } = graphResult);
@@ -1027,7 +1036,27 @@
       const worldTopY = box.max.y + gap;
       const actorWorld = new THREE.Vector3();
       actor.getWorldPosition(actorWorld);
-      const localPos = actor.worldToLocal(new THREE.Vector3(actorWorld.x, worldTopY, actorWorld.z));
+
+      // Project the intended bubble centre to clip space, clamp to a safe viewport
+      // inset so the bubble stays fully visible on narrow/mobile screens, then
+      // unproject back to world space before converting to actor-local coordinates.
+      // The tail will no longer point perfectly at the actor when clamping kicks in,
+      // but a slightly misaligned tail is far better than the bubble being off-screen.
+      const intendedWorld = new THREE.Vector3(actorWorld.x, worldTopY, actorWorld.z);
+      const ndc = intendedWorld.clone().project(activeCam);
+
+      const domW = renderer.domElement.width;
+      const domH = renderer.domElement.height;
+      const spriteScreenH = 130 * bubbleScale;
+      const spriteScreenW = spriteScreenH * (canvasW / canvasH);
+      const safeMargin = 8;
+      const halfNdcW = (spriteScreenW / 2 + safeMargin) / (domW / 2);
+      const halfNdcH = (spriteScreenH / 2 + safeMargin) / (domH / 2);
+      ndc.x = Math.max(-1 + halfNdcW, Math.min(1 - halfNdcW, ndc.x));
+      ndc.y = Math.max(-1 + halfNdcH, Math.min(1 - halfNdcH, ndc.y));
+
+      const clampedWorld = ndc.clone().unproject(activeCam);
+      const localPos = actor.worldToLocal(clampedWorld);
       sprite.position.copy(localPos);
 
       actor.add(sprite);

@@ -468,4 +468,44 @@ describe('PlaybackEngine - Shuttle Invariants', () => {
     expect(move2.anim.enabled).toBe(true);
     expect(move2.anim.time).toBeCloseTo(3, 5);  // final frame
   });
+
+  it('play() re-asserts enabled=true protecting against a stale disable between seek and play', () => {
+    // Regression guard for the S5 presentation-mode race: a getDraw callback from the
+    // outgoing scene could theoretically set enabled=false on a shared action after
+    // seek(0) has set it to true. play() must re-assert enabled so the first update()
+    // tick finds the animation in the correct state.
+    const anim = createAnimationEntry(0, Infinity, THREE.LoopRepeat, 1.5);
+    const animations: AnimationDict = { 'alpha_Idle_0': [anim] };
+    const { engine } = setupEngine(animations);
+
+    engine.seek(0);
+    expect(anim.anim.enabled).toBe(true);
+
+    // Simulate an external disable happening between seek and play
+    (anim.anim as unknown as { enabled: boolean }).enabled = false;
+
+    engine.play();
+    // play() must restore enabled for in-window animations
+    expect(anim.anim.enabled).toBe(true);
+    expect(anim.anim.paused).toBe(false);
+  });
+
+  it('play() after a slow first tick: t=0 animation is enabled and unpaused regardless of transport advance', () => {
+    // Simulates high machine load: seekTo(0) is called, then the transport advances
+    // slightly before play() is called (e.g. due to async GLTF load completing late).
+    // play() must still correctly activate the t=0 animation.
+    const idle = createAnimationEntry(0, Infinity, THREE.LoopRepeat, 1.5);
+    const animations: AnimationDict = { 'alpha_Idle_0': [idle] };
+    const { engine, transport } = setupEngine(animations);
+
+    engine.seek(0);
+    // Simulate the transport having advanced slightly (async load delay scenario)
+    transport.seconds = 0.05;
+
+    engine.play();
+
+    // idle.start (0) <= 0.05 < idle.end (Infinity): should be activated
+    expect(idle.anim.enabled).toBe(true);
+    expect(idle.anim.paused).toBe(false);
+  });
 });

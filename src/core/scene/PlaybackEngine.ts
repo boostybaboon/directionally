@@ -75,6 +75,7 @@ export class PlaybackEngine {
           } else if (anim.fadeOut > 0 && anim.end !== Infinity && currentTime > anim.end - anim.fadeOut) {
             weight = (anim.end - currentTime) / anim.fadeOut;
           }
+          anim.anim.enabled = true;
           anim.anim.setEffectiveWeight(weight);
           anim.anim.paused = false;
         }
