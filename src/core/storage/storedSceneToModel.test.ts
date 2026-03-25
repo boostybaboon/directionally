@@ -168,11 +168,14 @@ describe('storedSceneToModel – actions', () => {
     const scene = baseScene({
       stagedActors: [{ actorId: 'actor-r' }],
       actions: [
-        { type: 'animate', actorId: 'actor-r', animationName: 'Idle', startTime: 0, endTime: 10, loop: 'repeat' },
+        { type: 'animate', actorId: 'actor-r', animationName: 'Walk', startTime: 2, endTime: 8, loop: 'once' },
       ],
     });
     const model = storedSceneToModel(scene, [robotActor]);
-    expect(model.actions).toHaveLength(1);
+    // Explicit animate action + auto-generated idle track for actor with defaultAnimation.
+    expect(model.actions).toHaveLength(2);
+    const walkAction = model.actions.find((a) => a.name.includes('Walk'));
+    expect(walkAction).toBeDefined();
   });
 
   it('converts speak actions into speechEntries (not model actions)', () => {
@@ -183,7 +186,10 @@ describe('storedSceneToModel – actions', () => {
       ],
     });
     const model = storedSceneToModel(scene, [robotActor]);
-    expect(model.actions).toHaveLength(0);
+    // Speak action → speechEntry, not a model action.
+    // Auto-idle track is generated for actor-r (robot-expressive has defaultAnimation).
+    const animateActions = model.actions.filter((a) => a.target === 'actor-r');
+    expect(animateActions).toHaveLength(1); // auto-idle only
     expect(model.speechEntries).toHaveLength(1);
     expect(model.speechEntries[0].text).toBe('Hello.');
     expect(model.speechEntries[0].actorId).toBe('actor-r');

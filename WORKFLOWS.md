@@ -85,13 +85,15 @@ Can't rearrange scenes in the tree-like view (known future work?)
 | 27 | Set actor to **Alpha**; type `"Beta, we meet at last."` | Ok | |
 | 28 | Click **+ Add line** again | Ok | |
 | 29 | Set actor to **Beta**; type `"Indeed, Alpha. I have been waiting."` | Ok | |
-| 30 | Click **▶ Switch to Playback view** and press **▶**; Alpha and Beta speak with speech bubbles | Ok | |
+| 30 | Click **▶ Switch to Playback view** and press **▶**; Alpha and Beta speak with speech bubbles | Partial | characters don't do their idle animation |
 | 31 | Press **■** (rewind) to return to t=0 | Ok | |
 | ✓ | Two characters on stage; two spoken lines play correctly | Ok | |
 
 General section snags:
 
-Not clear an actor is in a scene. Indicator is the dot next to the name in the cast. But all actors are always present in the scene timeline. Suggest only scene participants are in the timeline
+- Find a better 'add actor from cast to scene' visual paradigm
+
+- Plan a better interaction with the scene tree for arbitrarily adding acts and scenes (too many randomly popping up buttons currently, and can't rearrange the tree conveniently)
 
 
 ---

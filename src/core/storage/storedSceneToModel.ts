@@ -4,7 +4,7 @@ import { getById } from '../catalogue/catalogue.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
 import { actorBlockToTracks, lightBlockToTracks, setPieceBlockToTracks, cameraBlockToTracks } from '../domain/blockCompiler.js';
 import type { Actor } from '../domain/Production.js';
-import type { ActorVoice, ActorBlock, LightBlock, SetPieceBlock, CameraBlock, Vec3 } from '../domain/types.js';
+import type { ActorVoice, ActorBlock, LightBlock, SetPieceBlock, CameraBlock, Vec3, SceneAction } from '../domain/types.js';
 import type { Model } from '../../lib/Model.js';
 import type { StoredScene, StoredActor } from './types.js';
 
@@ -43,9 +43,11 @@ export function storedSceneToModel(storedScene: StoredScene, storedActors: Store
   // Resolve stored actors into domain Actor objects.
   // The domain Actor's id must equal StoredActor.id so that all scene
   // references (stagedActors, actions) continue to resolve correctly.
+  const characterEntries = new Map<string, { defaultAnimation?: string }>();
   const actors: Actor[] = storedActors.map((sa, i) => {
     const entry     = getById(sa.catalogueId, CATALOGUE_ENTRIES);
     const character = entry?.kind === 'character' ? entry : undefined;
+    if (character?.defaultAnimation) characterEntries.set(sa.id, { defaultAnimation: character.defaultAnimation });
     return {
       id:             sa.id,
       name:           sa.role,
@@ -149,7 +151,26 @@ export function storedSceneToModel(storedScene: StoredScene, storedActors: Store
     }
   }
 
-  for (const action of [...storedScene.actions, ...compiledBlockTracks]) {
+  // Default idle animations: play the catalogue's defaultAnimation looping for the full
+  // scene duration for each staged actor that has one. These run at lowest priority —
+  // any authored per-actor animation blocks that fade in/out will blend over them.
+  const defaultIdleTracks: SceneAction[] = [];
+  const sceneDuration = storedScene.duration ?? 10;
+  for (const staged of storedScene.stagedActors) {
+    const idleClip = characterEntries.get(staged.actorId)?.defaultAnimation;
+    if (idleClip) {
+      defaultIdleTracks.push({
+        type: 'animate',
+        actorId: staged.actorId,
+        animationName: idleClip,
+        startTime: 0,
+        endTime: sceneDuration,
+        loop: 'repeat',
+      });
+    }
+  }
+
+  for (const action of [...storedScene.actions, ...defaultIdleTracks, ...compiledBlockTracks]) {
     scene.addAction(action);
   }
 

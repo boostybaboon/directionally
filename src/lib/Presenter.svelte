@@ -45,6 +45,17 @@
   let shiftHeld = false;
   // Current gizmo mode — reactive so the mode-button toolbar re-renders.
   let tcMode = $state<'translate' | 'rotate'>('translate');
+  // Incremented after each loadModel completes — triggers the selection effect to
+  // re-attach TC and selection box to the freshly built scene graph.
+  let sceneLoadCount = $state(0);
+
+  // Reactively apply TC gizmo + selection box whenever the selected object or the
+  // scene graph changes (model reloaded after a command).
+  $effect(() => {
+    void selectedObjectId;
+    void sceneLoadCount;
+    if (scene) applySelectionVisuals(selectedObjectId ?? null);
+  });
 
   // When rotationEnabled is withdrawn mid-drag, snap back to translate.
   $effect(() => {
@@ -77,16 +88,20 @@
   interface PresenterProps {
     /** When true: split-screen design/playback view. When false: full-canvas playback. */
     designMode?: boolean;
-    /** Name of the currently selected scene object (actor ID or set-piece name). Cleared on scene reload. */
+    /** Name of the currently selected scene object (actor ID or set-piece name). Drives TC gizmo and selection highlight. */
     selectedObjectId?: string | null;
+    /** Fired when the user clicks an object (or misses) in the design viewport. Caller updates selection state. */
+    onviewportselect?: (id: string | null) => void;
     /** Fired when TransformControls drag ends; carries the object's new position and rotation. */
     ontransformend?: (id: string, position: [number, number, number], rotation: [number, number, number]) => void;
     /** Fired when a catalogue item from the left panel is dropped onto the design viewport. */
     oncataloguedrop?: (kind: 'character' | 'setpiece', id: string, position: [number, number, number]) => void;
     /** Fired after a model finishes loading; maps each GLTF object name (actor ID) to its discovered clip names. */
     ondiscoverclips?: (clips: Record<string, string[]>) => void;
-    /** Contextual hint shown in the gizmo toolbar to communicate what the next drag will do. */
+    /** Contextual hint shown in the design HUD to communicate what the next interaction will do. */
     dragHint?: string;
+    /** Macro-mode label shown bottom-left in the design HUD (e.g. "Scene Start", "Block End"). */
+    hudMode?: string;
     /**
      * When false, the rotate gizmo button is hidden and the mode is forced to translate.
      * Use this when the selected object's rotation has no authored effect (e.g. actor blocks:
@@ -108,12 +123,6 @@
     voiceBackend?: VoiceBackend;
     sliderValue?: number;
     isSliderDragging?: boolean;
-    /** When set, renders a banner over the viewport with positioning guidance. */
-    positioningBanner?: string;
-    /** True only for camera spawn mode, where Accept actually captures the camera state. */
-    positioningIsCamera?: boolean;
-    onpositionaccept?: () => void;
-    onpositioncancel?: () => void;
     /** Called when the scene reaches its authored end time. Caller is responsible for transitioning; Presenter will NOT auto-pause when this is provided. */
     onsceneend?: () => void;
     /** Called after every loadModel completes (async GLTFs resolved, engine loaded, seek applied). */
@@ -122,7 +131,8 @@
 
   let {
     designMode = $bindable(false),
-    selectedObjectId = $bindable<string | null>(null),
+    selectedObjectId,
+    onviewportselect,
     ontransformend,
     oncataloguedrop,
     ondiscoverclips,
@@ -136,12 +146,9 @@
     sliderValue = $bindable(0),
     isSliderDragging = $bindable(false),
     dragHint = '',
+    hudMode = '',
     rotationEnabled = true,
     objectSelectable,
-    positioningBanner,
-    positioningIsCamera,
-    onpositionaccept,
-    onpositioncancel,
     onsceneend,
     ondidload,
   }: PresenterProps = $props();
@@ -256,8 +263,6 @@
 
     orbitControls = new OrbitControls(editorCamera, editorOverlay);
     orbitControls.enabled = false; // only active in design mode
-    orbitControls.enableDamping = true;
-    orbitControls.dampingFactor = 0.08;
     orbitControls.target.set(0, 1, 0); // orbit around roughly actor-eye-height
     // Record pointer-down position on the overlay for drag vs click discrimination.
     editorOverlay.addEventListener('pointerdown', (e) => {
@@ -289,7 +294,7 @@
         orbitControls.zoomSpeed = 0.1;
       }
       if (!designMode || isTyping) return;
-      if (e.key === 'Escape') { selectSceneObject(null); return; }
+      if (e.key === 'Escape') { onviewportselect?.(null); return; }
       if (e.key === 'g' || e.key === 'G') setGizmoMode('translate');
       if (e.key === 'r' || e.key === 'R') setGizmoMode('rotate');
       if (e.key === 'p' || e.key === 'P') snapDesignCameraToPlayback();
@@ -366,17 +371,13 @@
       await setupTone();
     }
 
-    // Save selection to restore after the scene is rebuilt.
-    const prevSelectedId = selectedObjectId;
-
-    // Clear existing selection overlays.
+    // Clear existing selection overlays before rebuilding the scene graph.
     if (selectionBox) {
       scene?.remove(selectionBox);
       selectionBox.dispose();
       selectionBox = null;
     }
     transformControls?.detach();
-    selectedObjectId = null;
 
     Tone.getTransport().cancel();
 
@@ -390,15 +391,9 @@
     cameraHelper.layers.set(1);
     scene.add(cameraHelper);
 
-    // Re-add the TC helper to the new scene; restore selection if still valid.
-    // Only restore if nothing else has set a selection since we cleared it — the
-    // add-block handlers call selectSceneObject() synchronously while buildSceneGraph
-    // is awaited, and we must not clobber that with the stale prevSelectedId.
+    // Re-add the TC helper to the new scene.
     if (tcHelper) {
       scene.add(tcHelper);
-      if (selectedObjectId === null && prevSelectedId && scene.getObjectByName(prevSelectedId)) {
-        selectSceneObject(prevSelectedId);
-      }
     }
 
     Object.values(animationDict).forEach((animGroup) => {
@@ -564,6 +559,9 @@
     clock = new THREE.Clock();
     renderer.setAnimationLoop(animate);
 
+    // Re-apply selection visuals to the freshly built scene graph.
+    sceneLoadCount++;
+
     ondidload?.();
   };
 
@@ -674,17 +672,15 @@
   };
 
   /**
-   * Select a scene object by name (actor ID or set-piece name), replacing any
-   * existing bounding-box highlight. Pass null to deselect.
-   * Only valid after a scene has been loaded.
+   * Apply TC gizmo + selection-box highlight to the given scene object.
+   * Called reactively via a $effect whenever selectedObjectId or sceneLoadCount changes.
    */
-  export function selectSceneObject(name: string | null) {
+  function applySelectionVisuals(name: string | null) {
     if (selectionBox) {
       scene?.remove(selectionBox);
       selectionBox.dispose();
       selectionBox = null;
     }
-    selectedObjectId = name;
     if (name && scene) {
       const obj = scene.getObjectByName(name);
       if (obj) {
@@ -748,7 +744,7 @@
       ? allHits.filter((h) => !tcHelper.getObjectById(h.object.id))
       : allHits;
     if (hits.length === 0) {
-      selectSceneObject(null);
+      onviewportselect?.(null);
       return;
     }
     // Walk up to the immediate child of the scene to get the root object name.
@@ -759,7 +755,7 @@
     if (obj && obj.name) {
       if (!(objectSelectable?.(obj.name) ?? true)) return;
       // Toggle: clicking the already-selected object deselects it.
-      selectSceneObject(obj.name === selectedObjectId ? null : obj.name);
+      onviewportselect?.(obj.name === selectedObjectId ? null : obj.name);
     }
   }
 
@@ -1106,44 +1102,6 @@
     background: rgba(55, 55, 65, 0.90);
   }
 
-  .positioning-banner {
-    position: absolute;
-    top: 46px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 11;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(20, 20, 28, 0.92);
-    border: 1px solid rgba(255, 200, 80, 0.35);
-    border-radius: 8px;
-    padding: 6px 10px;
-    font-size: 11px;
-    color: #ffd080;
-    backdrop-filter: blur(4px);
-    white-space: nowrap;
-    user-select: none;
-  }
-
-  .positioning-banner-text {
-    flex: 1;
-  }
-
-  .positioning-accept,
-  .positioning-cancel {
-    padding: 2px 10px;
-    border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    font-size: 11px;
-    cursor: pointer;
-    background: rgba(50, 50, 60, 0.9);
-    color: #e8e8e8;
-  }
-
-  .positioning-accept:hover { background: rgba(60, 130, 60, 0.85); border-color: rgba(100, 200, 100, 0.4); }
-  .positioning-cancel:hover { background: rgba(120, 50, 50, 0.85); border-color: rgba(200, 100, 100, 0.4); }
-
   .gizmo-toolbar {
     position: absolute;
     bottom: 12px;
@@ -1183,13 +1141,40 @@
     border-color: rgba(74, 158, 255, 0.45);
   }
 
-  .drag-hint {
-    font-size: 11px;
-    color: rgba(200, 200, 210, 0.75);
-    white-space: nowrap;
-    padding: 0 4px;
+  .hud-status {
+    position: absolute;
+    bottom: 12px;
+    left: calc(50% + 12px);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
     pointer-events: none;
     user-select: none;
+  }
+
+  .hud-mode-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.70);
+    background: rgba(28, 28, 32, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 4px;
+    padding: 2px 7px;
+    backdrop-filter: blur(4px);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    align-self: flex-start;
+  }
+
+  .hud-hint {
+    font-size: 11px;
+    color: rgba(200, 200, 210, 0.70);
+    background: rgba(28, 28, 32, 0.60);
+    border-radius: 4px;
+    padding: 2px 7px;
+    backdrop-filter: blur(3px);
+    white-space: nowrap;
   }
 </style>
   
@@ -1213,17 +1198,6 @@
       onclick={() => { designMode = !designMode; }}
       title={designMode ? 'Switch to playback view' : 'Switch to design view'}
     >{designMode ? '▶ Switch to Playback view' : '✏ Switch to Design view'}</button>
-    {#if positioningBanner}
-      <div class="positioning-banner">
-        <span class="positioning-banner-text">{positioningBanner}</span>
-        {#if positioningIsCamera}
-          <button class="positioning-accept" onclick={onpositionaccept}>✓ Accept</button>
-          <button class="positioning-cancel" onclick={onpositioncancel}>✕ Cancel</button>
-        {:else}
-          <button class="positioning-cancel" onclick={onpositionaccept}>✓ Done</button>
-        {/if}
-      </div>
-    {/if}
     {#if designMode}
       <div class="gizmo-toolbar" role="toolbar" aria-label="Gizmo mode">
         {#if selectedObjectId}
@@ -1244,16 +1218,13 @@
           >↻</button>
           {/if}
         {/if}
-        <button
-          class="gizmo-btn"
-          onclick={() => snapDesignCameraToPlayback()}
-          title="Snap design camera to playback position (P)"
-          aria-label="Snap design camera to playback position"
-        >⊙</button>
-        {#if dragHint}
-          <span class="drag-hint">{dragHint}</span>
-        {/if}
       </div>
+      {#if hudMode || dragHint}
+        <div class="hud-status">
+          {#if hudMode}<span class="hud-mode-label">{hudMode}</span>{/if}
+          {#if dragHint}<span class="hud-hint">{dragHint}</span>{/if}
+        </div>
+      {/if}
     {/if}
   </div>
   <div id="log-panel"></div>

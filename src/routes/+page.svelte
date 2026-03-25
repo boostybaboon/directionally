@@ -248,28 +248,24 @@
     (activeScene?.blocks ?? []).flatMap((b, i) => b.type === 'setPieceBlock' ? [{ block: b as SetPieceBlock, index: i }] : [])
   );
 
-  // ── Positioning state machine ────────────────────────────────────────────────
-  type PositioningMode =
-    | { type: 'idle' }
-    | { type: 'spawn'; entityId: string; entityName: string; isCamera: boolean }
-    | { type: 'blockEnd'; blockIdx: number; entityName: string };
-  let positioningMode = $state<PositioningMode>({ type: 'idle' });
+  // ── Selection state ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-  // Derived banner text shown over the viewport while positioning.
-  const positioningBanner = $derived((() => {
-    if (positioningMode.type === 'spawn') {
-      return positioningMode.isCamera
-        ? '\uD83D\uDCCD Camera \u2014 orbit to set scene opening view'
-        : `\uD83D\uDCCD ${positioningMode.entityName} \u2014 drag to set start position`;
-    }
-    if (positioningMode.type === 'blockEnd') {
-      return `\uD83C\uDFAC ${positioningMode.entityName} \u2014 drag to set end position`;
-    }
-    return undefined;
-  })());
+  // Primary selection state — single source of truth for what the user is currently editing.
+  // All selection events (viewport clicks, block clicks, spawn buttons) produce a new value here.
+  let selectionState = $state<SelectedEntity>(null);
 
-  // Selected block (for Stage tab Block section)
-  let selBlockIdx = $state<number | null>(null);
+  // Derived shortcuts used by timeline, right panel, and Presenter prop:
+  const selBlockIdx = $derived(
+    selectionState && 'blockIndex' in selectionState ? selectionState.blockIndex : null
+  );
+  const selectedObjectId = $derived(
+    selectionState?.kind === 'actor-initial' ? selectionState.actorId :
+    selectionState?.kind === 'actor-block' ? selectionState.actorId :
+    selectionState?.kind === 'setpiece-initial' ? selectionState.setPieceId :
+    selectionState?.kind === 'setpiece-block' ? selectionState.setPieceId :
+    null
+  );
+
   // Generic: any block type at the selected index
   const selBlockEntry = $derived(
     selBlockIdx !== null ? ((activeScene?.blocks ?? [])[selBlockIdx] ?? null) : null
@@ -298,61 +294,17 @@
       : null
   );
 
-  let selectedLightInitialId = $state<string | null>(null);
-
-  const selectedEntity = $derived((): SelectedEntity => {
-    if (positioningMode.type === 'spawn') {
-      if (positioningMode.isCamera) return { kind: 'camera-initial' };
-      const entityId = positioningMode.entityId;
-      if (actors.some((a) => a.id === entityId)) return { kind: 'actor-initial', actorId: entityId };
-      return { kind: 'setpiece-initial', setPieceId: entityId };
-    }
-    if (selBlock) return { kind: 'actor-block', actorId: selBlock.block.actorId, blockIndex: selBlock.index };
-    if (selLightBlock) return { kind: 'light-block', lightId: selLightBlock.block.lightId, blockIndex: selLightBlock.index };
-    if (selCameraBlock) return { kind: 'camera-block', blockIndex: selCameraBlock.index };
-    if (selSetPieceBlock) return { kind: 'setpiece-block', setPieceId: selSetPieceBlock.block.targetId, blockIndex: selSetPieceBlock.index };
-    if (selectedLightInitialId) return { kind: 'light-initial', lightId: selectedLightInitialId };
-    return null;
-  });
+  // selectedEntity is selectionState — used as prop to PropertiesPanel
+  const selectedEntity = $derived(selectionState);
 
   // Re-computed after every command since docSnapshot changes when onChange fires.
   const canUndo = $derived(docSnapshot !== null && (activeDoc?.canUndo ?? false));
   const canRedo = $derived(docSnapshot !== null && (activeDoc?.canRedo ?? false));
 
-  // If the user clicks a different actor in the viewport while an actor block is selected,
-  // clear the block selection so the Stage panel doesn't show a stale block.
-  // Non-actor block types (light/camera/setPiece) are not tied to viewport selection.
-  $effect(() => {
-    if (selectedObjectId !== null && selBlock !== null && selBlock.block.actorId !== selectedObjectId) {
-      selBlockIdx = null;
-      presenter?.selectSceneObject(null);
-    }
-  });
-
-  // Reset all positioning and selection state when the active scene changes.
-  // Without this, HUD banners from one scene persist when the user switches to another.
+  // Reset selection when the active scene changes.
   $effect(() => {
     void activeSceneId; // string primitive — only changes value when user switches scene
-    positioningMode = { type: 'idle' };
-    selBlockIdx = null;
-    selectedLightInitialId = null;
-  });
-
-  // When an entity is selected in the viewport at t≈0 with no block active, auto-enter spawn mode.
-  // If already in spawn mode for a different entity, switch to the newly clicked one.
-  $effect(() => {
-    const id = selectedObjectId;
-    if (id !== null && currentPosition < 0.05 && selBlockIdx === null && activeDoc) {
-      const inDifferentSpawn = positioningMode.type === 'spawn' && positioningMode.entityId !== id;
-      if (positioningMode.type === 'idle' || inDifferentSpawn) {
-        const actor = actors.find((a) => a.id === id);
-        if (actor) {
-          positioningMode = { type: 'spawn', entityId: id, entityName: actor.role, isCamera: false };
-        } else if (scenePieces.some((p) => p.name === id)) {
-          positioningMode = { type: 'spawn', entityId: id, entityName: id, isCamera: false };
-        }
-      }
-    }
+    selectionState = null;
   });
 
   // Per-actor and per-light expand state
@@ -365,29 +317,26 @@
   let lightIntensityValues = $state<Record<string, string>>({});
 
   // Clip names discovered from loaded GLTFs at runtime, keyed by actor ID.
-  let discoveredClips = $state<Record<string, string[]>>({});
-
+  let discoveredClips = $state<Record<string, string[]>>({}); 
   // Per-actor scale input values (actor.id → string) for the settings panel.
-  let actorScaleValues = $state<Record<string, string>>({}); 
-
-  // Selected scene object (actor ID or set-piece name); driven by Presenter raycasting.
-  let selectedObjectId = $state<string | null>(null);
+  let actorScaleValues = $state<Record<string, string>>({});
 
   const dragHint = $derived((() => {
+    if (!designMode || !selectionState) return '';
+    const k = selectionState.kind;
+    if (k === 'actor-initial' || k === 'actor-block' || k === 'setpiece-initial' || k === 'setpiece-block')
+      return 'drag → set position';
+    if (k === 'camera-initial' || k === 'camera-block')
+      return 'orbit camera → capture to set playback camera position';
+    if (k === 'light-initial' || k === 'light-block')
+      return 'edit properties to set values';
+    return '';
+  })());
+
+  const hudMode = $derived((() => {
     if (!designMode) return '';
-    if (selectedObjectId && selBlockIdx !== null && selBlock?.block.actorId === selectedObjectId) {
-      return 'drag actor → end position auto-captured';
-    }
-    if (selSetPieceBlock && selectedObjectId === selSetPieceBlock.block.targetId) {
-      return 'drag set piece → end position auto-captured';
-    }
-    if (selCameraBlock && !selectedObjectId) {
-      return 'orbit camera → end look-at auto-captured on drag end';
-    }
-    if (currentPosition < 0.05) {
-      if (positioningMode.type === 'spawn') return ''; // banner already covers spawn guidance
-      return selectedObjectId ? 'drag → sets spawn position' : 'click an item, then drag to set its start position';
-    }
+    if (selectionState?.kind.endsWith('-block')) return 'Block End';
+    if (currentPosition < 0.05) return 'Scene Start';
     return '';
   })());
 
@@ -431,7 +380,6 @@
     activeExampleId = null;
     presenter?.loadModel(modelFromProduction(prod), 0);
     sidebarOpen = false;
-    positioningMode = { type: 'idle' };
     // Switch to Script tab for brand-new productions so the author sees the script surface first.
     const isEmpty = !prod.actors?.length && !getScenes(prod.tree ?? []).length;
     if (isEmpty) rightTab = 'script';
@@ -622,38 +570,18 @@
 
   function enterSpawnMode(entityId: string) {
     if (!designMode) designMode = true;
-    if (entityId === '__camera__') {
-      positioningMode = { type: 'spawn', entityId: '__camera__', entityName: 'Camera', isCamera: true };
-      presenter?.selectSceneObject(null);
-    } else {
-      const actor = actors.find((a) => a.id === entityId);
-      positioningMode = { type: 'spawn', entityId, entityName: actor?.role ?? entityId, isCamera: false };
-      presenter?.selectSceneObject(entityId);
-    }
+    selectionState = entityId === '__camera__'
+      ? { kind: 'camera-initial' }
+      : { kind: 'actor-initial', actorId: entityId };
     if (currentPosition >= 0.05) presenter?.handleSliderInput(0);
   }
 
-  function acceptPositioning() {
-    if (positioningMode.type === 'spawn' && positioningMode.isCamera) {
-      captureInitialCamera();
+  function handleViewportSelect(id: string | null) {
+    if (id === null) { selectionState = null; return; }
+    if (currentPosition < 0.05) {
+      if (actors.some((a) => a.id === id)) { selectionState = { kind: 'actor-initial', actorId: id }; return; }
+      if (scenePieces.some((p) => p.name === id)) { selectionState = { kind: 'setpiece-initial', setPieceId: id }; return; }
     }
-    if (positioningMode.type === 'spawn' && !positioningMode.isCamera) {
-      selectedObjectId = null;
-      presenter?.selectSceneObject(null);
-    }
-    positioningMode = { type: 'idle' };
-  }
-
-  function cancelPositioning() {
-    if (positioningMode.type === 'spawn' && !positioningMode.isCamera) {
-      selectedObjectId = null;
-      presenter?.selectSceneObject(null);
-    }
-    if (positioningMode.type === 'blockEnd') {
-      selBlockIdx = null;
-      presenter?.selectSceneObject(null);
-    }
-    positioningMode = { type: 'idle' };
   }
 
   /**
@@ -676,9 +604,9 @@
       const role = sameLabel.length === 0 ? base : `${base} ${sameLabel.length + 1}`;
       const actor: StoredActor = { id: crypto.randomUUID(), role, catalogueId: id };
       activeDoc.execute(new AddActorCommand(actor));
-      // Set selectedObjectId now so the next loadModel (triggered by MoveStagedActorCommand)
-      // finds it in prevSelectedId and auto-selects the newly placed actor.
-      selectedObjectId = actor.id;
+      // Set selectionState now so the sceneLoadCount $effect in Presenter re-applies
+      // selection visuals after the next loadModel triggered by MoveStagedActorCommand.
+      selectionState = { kind: 'actor-initial', actorId: actor.id };
       activeDoc.execute(new MoveStagedActorCommand(actor.id, position));
     } else if (kind === 'setpiece') {
       const entry = CATALOGUE_SET_PIECES.find((p) => p.id === id);
@@ -689,7 +617,7 @@
       const name = count === 0 ? base : `${base}-${count + 1}`;
       const piece: SetPiece = { name, geometry: entry.geometry, material: entry.material };
       activeDoc.execute(new AddSetPieceCommand(piece));
-      selectedObjectId = name;
+      selectionState = { kind: 'setpiece-initial', setPieceId: name };
       activeDoc.execute(new MoveSetPieceCommand(name, position));
     } else {
       const entry = CATALOGUE_LIGHTS.find((l) => l.id === id);
@@ -784,7 +712,6 @@
     activeDoc = null;
     docSnapshot = null;
     sidebarOpen = false;
-    positioningMode = { type: 'idle' };
   }
 
   onMount(() => {
@@ -800,10 +727,6 @@
 
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape' && presentationMode) { e.preventDefault(); exitPresentation(); return; }
-      if (positioningMode.type !== 'idle') {
-        if (e.key === 'Enter') { e.preventDefault(); acceptPositioning(); return; }
-        if (e.key === 'Escape') { e.preventDefault(); cancelPositioning(); return; }
-      }
       if (!activeDoc) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key === 'z' && !e.shiftKey) { e.preventDefault(); activeDoc.undo(); }
@@ -1390,27 +1313,25 @@
             bind:sliderValue={sliderValue}
             bind:isSliderDragging={isSliderDragging}
             bind:designMode={designMode}
-            bind:selectedObjectId={selectedObjectId}
+            selectedObjectId={selectedObjectId}
+            onviewportselect={handleViewportSelect}
             ontransformend={handleTransformEnd}
             oncataloguedrop={handleCatalogueDrop}
             ondiscoverclips={(clips) => { discoveredClips = clips; }}
             {dragHint}
-            rotationEnabled={!(selBlockIdx !== null && selBlock?.block.actorId === selectedObjectId)}
+            {hudMode}
+            rotationEnabled={selectionState?.kind !== 'actor-block'}
             objectSelectable={(id) => {
               const isActor = actors.some((a) => a.id === id);
               const isSetPiece = scenePieces.some((p) => p.name === id);
               if (isActor) {
-                return currentPosition < 0.05 || (selBlockIdx !== null && selBlock?.block.actorId === id);
+                return currentPosition < 0.05 || (selectionState?.kind === 'actor-block' && selectionState.actorId === id);
               }
               if (isSetPiece) {
-                return currentPosition < 0.05 || (selBlockIdx !== null && selSetPieceBlock?.block.targetId === id);
+                return currentPosition < 0.05 || (selectionState?.kind === 'setpiece-block' && selectionState.setPieceId === id);
               }
               return true;
             }}
-            positioningBanner={positioningBanner}
-            positioningIsCamera={positioningMode.type === 'spawn' && positioningMode.isCamera}
-            onpositionaccept={acceptPositioning}
-            onpositioncancel={cancelPositioning}
             onsceneend={presentationMode ? onPresentationSceneEnd : undefined}
             ondidload={presentationMode ? () => presenter?.play() : undefined}
           />
@@ -1487,9 +1408,6 @@
                     <ul class="cast-list">
                       <li class="cast-row">
                         <span class="cast-role">Camera</span>
-                        {#if designMode}
-                          <button class="icon-btn" onclick={() => presenter?.snapDesignCameraToPlayback()} title="Snap design view to match the playback camera (P)">⊙</button>
-                        {/if}
                       </li>
                     </ul>
 
@@ -1522,13 +1440,23 @@
                     </div>
                   </div>
 
+                  <!-- Design camera -->
+                  {#if designMode}
+                    <div class="stage-section stage-section-design-camera">
+                      <div class="stage-section-header">
+                        <span class="stage-section-label">🎥 Design camera</span>
+                      </div>
+                      <button class="sync-design-camera-btn" onclick={() => presenter?.snapDesignCameraToPlayback()} title="Snap design view to match the playback camera's current position (P)">Sync design view to current playback view</button>
+                    </div>
+                  {/if}
+
                   <!-- Properties -->
                   <div class="stage-section stage-section-properties">
                     <div class="stage-section-header">
                       <span class="stage-section-label">Properties</span>
                     </div>
                     <PropertiesPanel
-                      selectedEntity={selectedEntity()}
+                      selectedEntity={selectedEntity}
                       {actors}
                       {actorBlocks}
                       {lightBlocks}
@@ -1548,8 +1476,7 @@
                         else if (blkType === 'lightBlock') activeDoc?.execute(new RemoveLightBlockCommand(idx));
                         else if (blkType === 'cameraBlock') activeDoc?.execute(new RemoveCameraBlockCommand(idx));
                         else if (blkType === 'setPieceBlock') activeDoc?.execute(new RemoveSetPieceBlockCommand(idx));
-                        selBlockIdx = null;
-                        presenter?.selectSceneObject(null);
+                        selectionState = null;
                       }}
                     />
                   </div>
@@ -1598,8 +1525,8 @@
           bind:sliderValue={sliderValue}
           bind:isSliderDragging={isSliderDragging}
           onplaypause={() => presenter?.handlePlayPauseClick()}
-          onrewind={() => { selBlockIdx = null; presenter?.selectSceneObject(null); presenter?.handleRewindClick(); }}
-          onsliderinput={(t) => { selBlockIdx = null; presenter?.selectSceneObject(null); presenter?.handleSliderInput(t); }}
+          onrewind={() => { selectionState = null; presenter?.handleRewindClick(); }}
+          onsliderinput={(t) => { selectionState = null; presenter?.handleSliderInput(t); }}
           onsliderpointerdown={() => presenter?.handleSliderPointerDown()}
           onsliderpointerup={() => presenter?.handleSliderPointerUp()}
           onupdateduration={activeDoc ? setSceneDuration : undefined}
@@ -1622,35 +1549,22 @@
           focusedActorId={selectedObjectId}
           onspawnselect={enterSpawnMode}
           onlightinitialselect={(id) => {
-            selectedLightInitialId = id;
-            selBlockIdx = null;
-            presenter?.selectSceneObject(null);
+            selectionState = { kind: 'light-initial', lightId: id };
             if (rightTab !== 'staging') rightTab = 'staging';
           }}
           onupdateduration={setSceneDuration}
           onblockselect={(i) => {
-            selBlockIdx = i;
             if (i !== null) {
               if (rightTab !== 'staging') rightTab = 'staging';
               const raw = (activeScene?.blocks ?? [])[i];
               if (raw) presenter?.handleSliderInput(raw.endTime);
-              if (raw?.type === 'actorBlock') {
-                presenter?.selectSceneObject(raw.actorId);
-                const entityName = actors.find((a) => a.id === raw.actorId)?.role ?? raw.actorId;
-                positioningMode = { type: 'blockEnd', blockIdx: i, entityName };
-              } else if (raw?.type === 'setPieceBlock') {
-                presenter?.selectSceneObject(raw.targetId);
-                positioningMode = { type: 'blockEnd', blockIdx: i, entityName: raw.targetId };
-              } else if (raw?.type === 'cameraBlock') {
-                presenter?.selectSceneObject(null);
-                positioningMode = { type: 'blockEnd', blockIdx: i, entityName: 'Camera' };
-              } else {
-                presenter?.selectSceneObject(null);
-                positioningMode = { type: 'idle' };
-              }
+              if (raw?.type === 'actorBlock') selectionState = { kind: 'actor-block', actorId: raw.actorId, blockIndex: i };
+              else if (raw?.type === 'setPieceBlock') selectionState = { kind: 'setpiece-block', setPieceId: raw.targetId, blockIndex: i };
+              else if (raw?.type === 'cameraBlock') selectionState = { kind: 'camera-block', blockIndex: i };
+              else if (raw?.type === 'lightBlock') selectionState = { kind: 'light-block', lightId: raw.lightId, blockIndex: i };
+              else selectionState = null;
             } else {
-              presenter?.selectSceneObject(null);
-              if (positioningMode.type === 'blockEnd') positioningMode = { type: 'idle' };
+              selectionState = null;
             }
           }}
           onaddblock={(actorId, startTime, endTime) => {
@@ -1659,45 +1573,43 @@
             const newBlock: ActorBlock = { type: 'actorBlock', actorId, startTime, endTime };
             activeDoc.execute(new AddActorBlockCommand(newBlock));
             const newIdx = (getActiveScene(activeDoc.current)?.blocks?.length ?? 1) - 1;
-            selBlockIdx = newIdx;
+            selectionState = { kind: 'actor-block', actorId, blockIndex: newIdx };
             if (rightTab !== 'staging') rightTab = 'staging';
-            selectedObjectId = actorId;
-            presenter?.selectSceneObject(actorId);
             presenter?.handleSliderInput(endTime);
-            const entityName = actors.find((a) => a.id === actorId)?.role ?? actorId;
-            positioningMode = { type: 'blockEnd', blockIdx: newIdx, entityName };
           }}
           onupdateblock={(i, patch) => activeDoc?.execute(new UpdateActorBlockCommand(i, patch))}
-          onremoveblock={(i) => { activeDoc?.execute(new RemoveActorBlockCommand(i)); if (selBlockIdx === i) { selBlockIdx = null; presenter?.selectSceneObject(null); } }}
+          onremoveblock={(i) => { activeDoc?.execute(new RemoveActorBlockCommand(i)); if (selectionState && 'blockIndex' in selectionState && selectionState.blockIndex === i) selectionState = null; }}
           onaddlightblock={(lightId, startTime, endTime) => {
             if (!activeDoc) return;
             const newBlock: LightBlock = { type: 'lightBlock', lightId, startTime, endTime };
             activeDoc.execute(new AddLightBlockCommand(newBlock));
-            selBlockIdx = (getActiveScene(activeDoc.current)?.blocks?.length ?? 1) - 1;
+            const newIdx = (getActiveScene(activeDoc.current)?.blocks?.length ?? 1) - 1;
+            selectionState = { kind: 'light-block', lightId, blockIndex: newIdx };
             if (rightTab !== 'staging') rightTab = 'staging';
           }}
           onupdatelightblock={(i, patch) => activeDoc?.execute(new UpdateLightBlockCommand(i, patch))}
-          onremovelightblock={(i) => { activeDoc?.execute(new RemoveLightBlockCommand(i)); if (selBlockIdx === i) selBlockIdx = null; }}
+          onremovelightblock={(i) => { activeDoc?.execute(new RemoveLightBlockCommand(i)); if (selectionState && 'blockIndex' in selectionState && selectionState.blockIndex === i) selectionState = null; }}
           onaddcamerablock={(startTime, endTime) => {
             if (!activeDoc) return;
             const newBlock: CameraBlock = { type: 'cameraBlock', startTime, endTime };
             activeDoc.execute(new AddCameraBlockCommand(newBlock));
-            selBlockIdx = (getActiveScene(activeDoc.current)?.blocks?.length ?? 1) - 1;
+            const newIdx = (getActiveScene(activeDoc.current)?.blocks?.length ?? 1) - 1;
+            selectionState = { kind: 'camera-block', blockIndex: newIdx };
             if (rightTab !== 'staging') rightTab = 'staging';
           }}
           onupdatecamerablock={(i, patch) => activeDoc?.execute(new UpdateCameraBlockCommand(i, patch))}
-          onremovecamerablock={(i) => { activeDoc?.execute(new RemoveCameraBlockCommand(i)); if (selBlockIdx === i) selBlockIdx = null; }}
+          onremovecamerablock={(i) => { activeDoc?.execute(new RemoveCameraBlockCommand(i)); if (selectionState && 'blockIndex' in selectionState && selectionState.blockIndex === i) selectionState = null; }}
           onaddsetpieceblock={(targetId, startTime, endTime) => {
             if (!activeDoc) return;
             const newBlock: SetPieceBlock = { type: 'setPieceBlock', targetId, startTime, endTime };
             activeDoc.execute(new AddSetPieceBlockCommand(newBlock));
-            selBlockIdx = (getActiveScene(activeDoc.current)?.blocks?.length ?? 1) - 1;
+            const newIdx = (getActiveScene(activeDoc.current)?.blocks?.length ?? 1) - 1;
+            selectionState = { kind: 'setpiece-block', setPieceId: targetId, blockIndex: newIdx };
             if (rightTab !== 'staging') rightTab = 'staging';
-            presenter?.selectSceneObject(targetId);
             presenter?.handleSliderInput(endTime);
           }}
           onupdatesetpieceblock={(i, patch) => activeDoc?.execute(new UpdateSetPieceBlockCommand(i, patch))}
-          onremovesetpieceblock={(i) => { activeDoc?.execute(new RemoveSetPieceBlockCommand(i)); if (selBlockIdx === i) selBlockIdx = null; }}
+          onremovesetpieceblock={(i) => { activeDoc?.execute(new RemoveSetPieceBlockCommand(i)); if (selectionState && 'blockIndex' in selectionState && selectionState.blockIndex === i) selectionState = null; }}
         />
         {:else}
           <div class="timeline-no-scene">No scene selected</div>
@@ -2087,6 +1999,26 @@
 
   .roster-setpieces {
     margin-top: 4px;
+  }
+
+  .stage-section-design-camera {
+    border-bottom: 1px solid #2a2a2a;
+    margin-bottom: 6px;
+  }
+
+  .sync-design-camera-btn {
+    background: #1e1e1e;
+    color: #ccc;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .sync-design-camera-btn:hover {
+    background: #2a2a2a;
+    color: #fff;
   }
 
   .stage-section-header {
