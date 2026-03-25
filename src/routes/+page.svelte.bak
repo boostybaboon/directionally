@@ -766,8 +766,48 @@
 
 <!-- Single layout: Splitpanes always present; left pane collapses to 0 on mobile.
      Presenter lives only in the right pane so it is never destroyed at the breakpoint. -->
+<div class="app">
+  {#if isMobile}
+    <button
+      class="hamburger"
+      onclick={() => (sidebarOpen = !sidebarOpen)}
+      aria-label="Toggle scenes panel"
+      aria-expanded={sidebarOpen}
+    >☰</button>
 
-{#snippet leftPanelContent()}
+    {#if sidebarOpen}
+      <button class="drawer-backdrop" onclick={() => (sidebarOpen = false)} aria-label="Close scenes panel" tabindex="-1"></button>
+    {/if}
+
+    <div class="drawer" class:open={sidebarOpen} aria-hidden={!sidebarOpen}>
+      <aside class="sidebar">
+        {#each productions as prod (prod.id)}
+          <button
+            class="scene-btn"
+            class:active={activeProductionId === prod.id}
+            onclick={() => loadProduction(prod)}
+          >{prod.name}</button>
+        {/each}
+        {#each examples as ex}
+          <button
+            class="scene-btn"
+            class:active={activeExampleId === ex.id}
+            onclick={() => loadExample(ex.id, ex.model)}
+          >{ex.label}</button>
+        {/each}
+      </aside>
+    </div>
+  {/if}
+
+  <div class="workspace">
+    <Splitpanes theme="directionally">
+      <!-- Left pane: collapsed to 0 on mobile, normal sidebar on desktop -->
+      <Pane
+        size={isMobile || presentationMode ? 0 : 18}
+        minSize={isMobile || presentationMode ? 0 : 10}
+        maxSize={isMobile || presentationMode ? 0 : 40}
+      >
+        {#if !isMobile}
           <div class="left-panel">
             <div class="tab-bar">
               <button
@@ -1245,36 +1285,6 @@
               {/if}
             </div>
           </div>
-{/snippet}
-
-<div class="app">
-  {#if isMobile}
-    <button
-      class="hamburger"
-      onclick={() => (sidebarOpen = !sidebarOpen)}
-      aria-label="Toggle scenes panel"
-      aria-expanded={sidebarOpen}
-    >☰</button>
-
-    {#if sidebarOpen}
-      <button class="drawer-backdrop" onclick={() => (sidebarOpen = false)} aria-label="Close scenes panel" tabindex="-1"></button>
-    {/if}
-
-    <div class="drawer" class:open={sidebarOpen} aria-hidden={!sidebarOpen}>
-      {@render leftPanelContent()}
-    </div>
-  {/if}
-
-  <div class="workspace">
-    <Splitpanes theme="directionally">
-      <!-- Left pane: collapsed to 0 on mobile, normal sidebar on desktop -->
-      <Pane
-        size={isMobile || presentationMode ? 0 : 18}
-        minSize={isMobile || presentationMode ? 0 : 10}
-        maxSize={isMobile || presentationMode ? 0 : 40}
-      >
-        {#if !isMobile}
-          {@render leftPanelContent()}
         {/if}
       </Pane>
 
@@ -1706,7 +1716,7 @@
     display: flex;
     flex-direction: column;
     background: #1a1a1a;
-    overflow-y: auto;
+    overflow: hidden;
   }
 
   .sidebar-section {
