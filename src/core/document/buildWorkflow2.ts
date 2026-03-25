@@ -144,7 +144,6 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
     actorId: alphaId,
     startTime: 0, endTime: 3,
     clip: 'Walking',
-    startPosition: [-2, 0, -6],
     endPosition:   [-2, 0,  2],
   }));
   exec(new AddActorBlockCommand({
@@ -152,7 +151,6 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
     actorId: betaId,
     startTime: 0, endTime: 3,
     clip: 'Walking',
-    startPosition: [2, 0, -6],
     endPosition:   [2, 0,  2],
   }));
   // Dialogue begins once both have arrived
@@ -206,7 +204,6 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
     actorId: betaId,
     startTime: 0, endTime: 4,
     clip: 'Running',
-    startPosition: [0.8, 0,  5],
     endPosition:   [0.8, 0, -9],
   }));
   exec(new AddActorBlockCommand({
@@ -214,7 +211,6 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
     actorId: alphaId,
     startTime: 1, endTime: 5,
     clip: 'Running',
-    startPosition: [-0.8, 0,  6],
     endPosition:   [-0.8, 0, -5],
   }));
   exec(new SetSceneDurationCommand(7));
@@ -260,7 +256,6 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
     actorId: alphaId,
     startTime: 11, endTime: 15,
     clip: 'Walking',
-    startPosition: [-2,  0, 0],
     endPosition:   [-13, 0, 0],
   }));
   exec(new SetSceneDurationCommand(16));
@@ -274,7 +269,7 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
   exec(new SwitchSceneCommand(resolutionId));
   exec(new SetSceneLightsCommand([
     { type: 'hemisphere', id: 'sky', skyColor: 0x111122, groundColor: 0x050505, intensity: 0.6 },
-    { type: 'directional', id: 'sun', color: 0x7777aa, intensity: 0.5, position: [0, 8, 4] },
+    { type: 'directional', id: 'sun', color: 0x7777aa, intensity: 2.5, position: [0, 8, 4] },
   ]));
   exec(new RemoveSetPieceCommand('ground'));
   exec(new AddSetPieceCommand({
@@ -285,7 +280,6 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
   }));
   exec(new UpdateCameraCommand({ fov: 45, near: 0.1, far: 120, position: [1, 15, 20], lookAt: [0, 1, 0] }));
   // Alpha is in the cast but not on stage
-  exec(new StageActorCommand({ actorId: alphaId, startPosition: [-20, 0, 0], offstage: true }));
   exec(new StageActorCommand({ actorId: betaId,  startPosition: [0, 0, 0] }));
   exec(new SetSpeakLinesCommand([
     { actorId: betaId, text: 'Not quite over. Never quite over.', pauseAfter: 2.0 },
@@ -296,13 +290,12 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
     actorId: betaId,
     startTime: 6, endTime: 12,
     clip: 'Death',
-    clipLoop: 'once',
-    startPosition: [0, 0, 0],
+    clipLoop: 'once'
   }));
   exec(new SetSceneDurationCommand(14));
   // Slow push-in on Beta as he falls; light nearly extinguishes
   exec(new AddCameraBlockCommand({ type: 'cameraBlock', startTime: 6, endTime: 12, endPosition: [0, 2.5, 5], endLookAt: [0, 0.3, 0] }));
-  exec(new AddLightBlockCommand({ type: 'lightBlock', lightId: 'sun', startTime: 6, endTime: 12, startIntensity: 0.5, endIntensity: 0.04 }));
+  exec(new AddLightBlockCommand({ type: 'lightBlock', lightId: 'sun', startTime: 6, endTime: 12, endIntensity: 0.04 }));
 
   return doc;
 }

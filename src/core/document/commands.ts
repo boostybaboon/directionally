@@ -323,6 +323,48 @@ export class SetSceneLightsCommand implements Command {
   }
 }
 
+/** Add a single light to the active scene. */
+export class AddSceneLightCommand implements Command {
+  readonly label: string;
+  constructor(private readonly light: LightConfig) {
+    this.label = `Add light "${light.id}"`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    return touch(updateActiveScene(doc, (scene) => ({ ...scene, lights: [...scene.lights, this.light] })));
+  }
+}
+
+/** Remove a light from the active scene by id. */
+export class RemoveSceneLightCommand implements Command {
+  readonly label: string;
+  constructor(private readonly lightId: string) {
+    this.label = `Remove light "${lightId}"`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    return touch(updateActiveScene(doc, (scene) => ({
+      ...scene,
+      lights: scene.lights.filter((l) => l.id !== this.lightId),
+    })));
+  }
+}
+
+/** Patch a single light's properties (e.g. intensity) without replacing the full array. */
+export class UpdateSceneLightCommand implements Command {
+  readonly label: string;
+  constructor(
+    private readonly lightId: string,
+    private readonly patch: { intensity?: number },
+  ) {
+    this.label = `Update light "${lightId}"`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    return touch(updateActiveScene(doc, (scene) => ({
+      ...scene,
+      lights: scene.lights.map((l) => l.id === this.lightId ? { ...l, ...this.patch } : l),
+    })));
+  }
+}
+
 /**
  * Add a set piece to the scene.
  * No-op when no scene is present.

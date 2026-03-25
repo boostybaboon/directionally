@@ -1,17 +1,18 @@
 <script lang="ts">
-  import { getCharacters, getSetPieces } from '../core/catalogue/catalogue.js';
+  import { getCharacters, getLights, getSetPieces } from '../core/catalogue/catalogue.js';
   import PreviewRenderer from './PreviewRenderer.svelte';
 
   interface Props {
     /** Called when the user taps / clicks "Add to scene". Provides a touch-friendly
      *  alternative to drag-and-drop (which is unsupported on mobile). */
-    onadd?: (kind: 'character' | 'setpiece', id: string) => void;
+    onadd?: (kind: 'character' | 'setpiece' | 'light', id: string) => void;
   }
 
   let { onadd }: Props = $props();
 
   const characters = getCharacters();
   const setPieces = getSetPieces();
+  const lights = getLights();
 
   let selectedCharacterId = $state<string | null>(null);
 
@@ -102,6 +103,31 @@
       </ul>
     {/if}
   </section>
+
+  <section class="catalogue-section">
+    <h3 class="catalogue-section-heading">Lights</h3>
+    {#if lights.length === 0}
+      <p class="empty-hint">No lights in catalogue.</p>
+    {:else}
+      <ul class="catalogue-list">
+        {#each lights as entry (entry.id)}
+          <li class="setpiece-row">
+            <button
+              type="button"
+              class="catalogue-item catalogue-item--light"
+              title={entry.label}
+            >
+              <span class="item-icon" aria-hidden="true">{entry.config.type === 'hemisphere' ? '☀' : '💡'}</span>
+              <span class="item-label">{entry.label}</span>
+            </button>
+            {#if onadd}
+              <button class="add-inline-btn" onclick={() => onadd('light', entry.id)} title="Add {entry.label} to scene" aria-label="Add {entry.label} to scene">+</button>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
 </div>
 
 <style>
@@ -186,6 +212,16 @@
     border-bottom: none;
     text-align: left;
     color: #888;
+  }
+
+  .catalogue-item--light {
+    border-left: 2px solid transparent;
+    background: none;
+    border-right: none;
+    border-top: none;
+    border-bottom: none;
+    text-align: left;
+    color: #c8a840;
   }
 
   .item-icon {

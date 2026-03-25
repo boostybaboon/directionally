@@ -1,6 +1,6 @@
-import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
+import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 
-export type CatalogueKind = 'character' | 'set-piece';
+export type CatalogueKind = 'character' | 'set-piece' | 'light';
 
 export interface CharacterEntry {
   kind: 'character';
@@ -27,4 +27,16 @@ export interface SetPieceEntry {
   material: MaterialConfig;
 }
 
-export type CatalogueEntry = CharacterEntry | SetPieceEntry;
+/** Distributive Omit: correctly removes a key from each member of a union type. */
+type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
+
+export interface LightEntry {
+  kind: 'light';
+  /** Catalogue template id, e.g. 'hemisphere-light'. */
+  id: string;
+  label: string;
+  /** Default configuration — the `id` field is assigned at add-time. */
+  config: DistributiveOmit<LightConfig, 'id'>;
+}
+
+export type CatalogueEntry = CharacterEntry | SetPieceEntry | LightEntry;

@@ -32,6 +32,8 @@
     onupdatesetpieceblock?: (index: number, patch: Partial<Omit<SetPieceBlock, 'type'>>) => void;
     onremovesetpieceblock?: (index: number) => void;
     onspawnselect?: (entityId: string) => void;
+    onlightinitialselect?: (lightId: string) => void;
+    onupdateduration?: (value: string) => void;
   }
 
   let {
@@ -63,6 +65,8 @@
     onupdatesetpieceblock,
     onremovesetpieceblock,
     onspawnselect,
+    onlightinitialselect,
+    onupdateduration,
   }: Props = $props();
 
   const LABEL_W = 72;
@@ -259,9 +263,6 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="tl-root" {onpointermove} {onpointerup}>
-  {#if actors.length === 0}
-    <p class="tl-empty">No cast. Add actors in the Stage tab to use the timeline.</p>
-  {:else}
     <!-- Ruler row -->
     <div class="tl-row tl-ruler-row">
       <div class="tl-label" style:width="{LABEL_W}px"></div>
@@ -375,18 +376,20 @@
     {/each}
 
     <!-- Camera row (always present) -->
-    {@const hasCamBlocks = cameraBlocks.length > 0}
-    <div class="tl-row tl-camera-row" class:tl-row-stub={!hasCamBlocks}>
+    <div class="tl-row tl-camera-row" class:tl-row-stub={cameraBlocks.length === 0}>
       <div class="tl-label" style:width="{LABEL_W}px">
+        <span class="tl-label-text tl-camera-label">Camera</span>
+      </div>
+      <div class="tl-pretrack" style:width="{PRETRACK_W}px">
+        <!-- svelte-ignore a11y_interactive_supports_focus -->
         <button
-          class="tl-spawn-pin tl-spawn-pin-camera"
+          class="tl-spawn-block tl-spawn-block-camera"
           onpointerdown={(e) => e.stopPropagation()}
           onclick={() => onspawnselect?.('__camera__')}
           title="Set scene opening camera view"
+          tabindex="0"
         >⊕</button>
-        <span class="tl-label-text tl-camera-label">Camera</span>
       </div>
-      <div class="tl-pretrack" style:width="{PRETRACK_W}px"></div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="tl-track" onpointerdown={(e) => startDraw(e, 'camera', '')}>
         <div class="tl-playhead" style:left="{tx(currentPosition)}px"></div>
@@ -429,7 +432,16 @@
         <div class="tl-label" style:width="{LABEL_W}px">
           <span class="tl-label-text tl-light-label">{light.id}</span>
         </div>
-        <div class="tl-pretrack" style:width="{PRETRACK_W}px"></div>
+        <div class="tl-pretrack" style:width="{PRETRACK_W}px">
+          <!-- svelte-ignore a11y_interactive_supports_focus -->
+          <button
+            class="tl-spawn-block tl-spawn-block-light"
+            onpointerdown={(e) => e.stopPropagation()}
+            onclick={() => onlightinitialselect?.(light.id)}
+            title="Edit {light.id} initial properties"
+            tabindex="0"
+          >⊕</button>
+        </div>
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="tl-track" onpointerdown={(e) => startDraw(e, 'light', light.id)}>
           <div class="tl-playhead" style:left="{tx(currentPosition)}px"></div>
@@ -473,7 +485,16 @@
         <div class="tl-label" style:width="{LABEL_W}px">
           <span class="tl-label-text tl-setpiece-label">{piece.name}</span>
         </div>
-        <div class="tl-pretrack" style:width="{PRETRACK_W}px"></div>
+        <div class="tl-pretrack" style:width="{PRETRACK_W}px">
+          <!-- svelte-ignore a11y_interactive_supports_focus -->
+          <button
+            class="tl-spawn-block tl-spawn-block-setpiece"
+            onpointerdown={(e) => e.stopPropagation()}
+            onclick={() => onspawnselect?.(piece.name)}
+            title="Set {piece.name}'s start position"
+            tabindex="0"
+          >⊕</button>
+        </div>
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="tl-track" onpointerdown={(e) => startDraw(e, 'setPiece', piece.name)}>
           <div class="tl-playhead" style:left="{tx(currentPosition)}px"></div>
@@ -510,7 +531,6 @@
         </div>
       </div>
     {/each}
-  {/if}
 </div>
 
 <style>
@@ -523,14 +543,6 @@
     overflow-y: auto;
     max-height: 210px;
     flex-shrink: 0;
-  }
-
-  .tl-empty {
-    padding: 8px 12px;
-    font-size: 11px;
-    color: #555;
-    font-style: italic;
-    margin: 0;
   }
 
   /* ── Rows ─────────────────────────────────────────── */
@@ -552,22 +564,6 @@
     background: #1a1a1a;
     min-width: 0;
   }
-
-  .tl-spawn-pin {
-    flex-shrink: 0;
-    width: 16px;
-    height: 16px;
-    padding: 0;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    font-size: 14px;
-    line-height: 1;
-    opacity: 0.45;
-    transition: opacity 0.15s;
-  }
-  .tl-spawn-pin:hover { opacity: 1; }
-  .tl-spawn-pin-camera { color: #8ab4f8; opacity: 0.45; }
 
   /* ── Pre-track spawn block ───────────────────────── */
 
@@ -770,6 +766,10 @@
   .tl-block-camera   { background: #c9900e !important; }
   .tl-block-light    { background: #c07030 !important; }
   .tl-block-setpiece { background: #267a88 !important; }
+
+  .tl-spawn-block-camera   { background-color: #3a6ea8 !important; }
+  .tl-spawn-block-light    { background-color: #c07030 !important; }
+  .tl-spawn-block-setpiece { background-color: #267a88 !important; }
 
   /* ── Speech rows ──────────────────────────────────── */
 

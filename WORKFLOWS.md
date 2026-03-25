@@ -121,10 +121,14 @@ Not clear an actor is in a scene. Indicator is the dot next to the name in the c
 | ✓ | All 5 scenes have staged actors and dialogue | — | |
 
 Snags for these scenes:
+- Add and item from catalogue: Can add supported lights to this (Hemispherical, Directional)
 
-Given a light created through the API, if I load this scene in the UI how can I see what initial value a light has? And how can I set the initial value of a light? I'm expecting a pre t=0 block for a light which when I click on it I can see and set initial properties
-
-Ditto for a Camera, ditto for any scene item. I'm expecting pre-t=0 pseudo-blocks for all items in the timeline, to query and set their initial conditions. For the light I think that's just moving the cross-hair into a pre-t=0 block. Scene items should get one that works much like the actor ones. Lights - we're gonna have to have a panel enlivening in RHS to set settable properties. The current Set Pieces and Lights sections on the RHS, I really don't understand. Probably what we need is a Properties panel in the Staging tab, which adapts to what is selected to be edited. This is common in these kinds of packages I think. A Properties panel which adapts itself to show properties pertinent to the selected item. This may be a large item to implement
+Edit mode paradigm
+- Confusing paradigm currently. Unclear when an edit to a spawn parameter or a block end target parameter is committed to the system
+- Overlays which are attempting to help you actually confuse, and don't follow the mode you're actually in, i.e. don't always change when you select different scene items
+- Unclear when you're in t=0 mode
+- The upper HUD for edit things appears in the middle of the whole view, should be on the design half of the view, if we keep it
+- Still unclear when we are applying the current design view camera position to the scene camera position (either spawn or block end), and when we are syncing the design view camera position with the current presentation view position
 
 ---
 
@@ -132,12 +136,12 @@ Ditto for a Camera, ditto for any scene item. I'm expecting pre-t=0 pseudo-block
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 42 | In the bottom panel header, click **⏵⏵ Present**; left/right panels and timeline collapse; canvas fills the window; HUD shows current scene name and "Esc to exit" | — | |
-| 43 | First scene (Prologue) begins playing automatically | — | |
-| 44 | When Prologue ends, the tool cuts to Act 1 — The Encounter and plays it | — | |
-| 45 | Scenes continue depth-first through Act 2 — Resolution | — | |
-| 46 | After the last scene ends, presentation mode exits and the tool returns to the last manually selected scene | — | |
-| ✓ | All 5 scenes play in order without manual intervention; canvas fills the window throughout | — | |
+| 42 | Next to the production title, click **⏵⏵ Present**; left/right panels and timeline collapse; canvas fills the window; HUD shows current scene name and "Esc to exit" | Partial | Switch to Design View is still present, which shouldn't be. Can't 'Esc to exit' on a touch device |
+| 43 | First scene (Prologue) begins playing automatically | Ok | |
+| 44 | When Prologue ends, the tool cuts to Act 1 — The Encounter and plays it | Ok | |
+| 45 | Scenes continue depth-first through Act 2 — Resolution | Ok | |
+| 46 | After the last scene ends, presentation mode pauses on final scene | Ok | |
+| ✓ | All 5 scenes play in order without manual intervention; canvas fills the window throughout | Ok | |
 
 ---
 
@@ -145,12 +149,12 @@ Ditto for a Camera, ditto for any scene item. I'm expecting pre-t=0 pseudo-block
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 47 | Press **Esc** during any scene to exit presentation mode early; tool returns to the scene active before presentation started | — | |
-| 48 | Reload the page (`Cmd/Ctrl+R`) | — | |
-| 49 | Click **The Robot Play** in the productions list | — | |
-| 50 | Confirm the cast (Alpha, Beta) is intact and the scene tree (5 scenes) is intact | — | |
-| 51 | Press **▶** on any scene; confirm dialogue still plays | — | |
-| ✓ | Production survives a page reload with all data intact | — | |
+| 47 | Press **Esc** during any scene to exit presentation mode early; tool returns to the scene active before presentation started | Ok | |
+| 48 | Reload the page (`Cmd/Ctrl+R`) | Ok | |
+| 49 | Click **The Robot Play** in the productions list | Ok | |
+| 50 | Confirm the cast (Alpha, Beta) is intact and the scene tree (5 scenes) is intact | Ok | |
+| 51 | Press **▶** on any scene; confirm dialogue still plays | Ok | |
+| ✓ | Production survives a page reload with all data intact | Ok | |
 
 ---
 

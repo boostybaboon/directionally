@@ -14,6 +14,7 @@
     onsliderinput: (time: number) => void;
     onsliderpointerdown: () => void;
     onsliderpointerup: () => void;
+    onupdateduration?: (value: string) => void;
   }
 
   let {
@@ -29,12 +30,28 @@
     onsliderinput,
     onsliderpointerdown,
     onsliderpointerup,
+    onupdateduration,
   }: Props = $props();
 
   function formatTime(s: number): string {
     const m = Math.floor(s / 60);
     const sec = s % 60;
     return `${m}:${sec.toFixed(1).padStart(4, '0')}`;
+  }
+
+  /** Parse "M:SS.S" or a plain number string → seconds, or null on failure. */
+  function parseFormattedTime(s: string): number | null {
+    const trimmed = s.trim();
+    if (trimmed === '') return null;
+    if (!trimmed.includes(':')) {
+      const n = parseFloat(trimmed);
+      return isNaN(n) ? null : n;
+    }
+    const colon = trimmed.indexOf(':');
+    const m = parseFloat(trimmed.slice(0, colon));
+    const sec = parseFloat(trimmed.slice(colon + 1));
+    if (isNaN(m) || isNaN(sec)) return null;
+    return m * 60 + sec;
   }
 </script>
 
@@ -43,7 +60,33 @@
   <button class="transport-btn" onclick={onplaypause} disabled={!isToneSetup} title={isPlaying ? 'Pause' : 'Play'}>
     {isPlaying ? '⏸' : '▶'}
   </button>
-  <span id="timecode">{formatTime(currentPosition)} / {formatTime(sceneDuration || 16)}</span>
+  <span id="timecode">
+    {formatTime(currentPosition)} /
+    {#if onupdateduration}
+      <input
+        class="timecode-dur-input"
+        type="text"
+        size={Math.max(6, formatTime(sceneDuration || 16).length)}
+        value={formatTime(sceneDuration || 16)}
+        onchange={(e) => {
+          const secs = parseFormattedTime(e.currentTarget.value);
+          if (secs !== null) {
+            onupdateduration(String(secs));
+          } else {
+            e.currentTarget.value = formatTime(sceneDuration || 16);
+          }
+        }}
+        onkeydown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') { e.currentTarget.value = formatTime(sceneDuration || 16); e.currentTarget.blur(); }
+        }}
+        aria-label="Scene duration"
+        title="Click to edit scene duration"
+      />
+    {:else}
+      {formatTime(sceneDuration || 16)}
+    {/if}
+  </span>
   {#if voiceBackend !== 'idle'}
     <span
       id="voices-status"
@@ -107,6 +150,27 @@
     color: #aaa;
     white-space: nowrap;
     min-width: 12ch;
+  }
+
+  .timecode-dur-input {
+    font-family: monospace;
+    font-size: 13px;
+    color: #ccc;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid #444;
+    outline: none;
+    padding: 0;
+    cursor: text;
+  }
+
+  .timecode-dur-input:hover {
+    border-bottom-color: #888;
+  }
+
+  .timecode-dur-input:focus {
+    color: #fff;
+    border-bottom-color: #4a9eff;
   }
 
   #transport-slider {

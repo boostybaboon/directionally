@@ -55,4 +55,18 @@ export const CATALOGUE_ENTRIES: CatalogueEntry[] = [
     geometry: { type: 'cylinder', radiusTop: 0.5, radiusBottom: 0.5, height: 1 },
     material: { color: 0xaa6644, roughness: 0.5, metalness: 0.2 },
   },
+
+  // ── Lights ────────────────────────────────────────────────────────────────
+  {
+    kind: 'light',
+    id: 'hemisphere-light',
+    label: 'Hemisphere Light',
+    config: { type: 'hemisphere', skyColor: 0xfff4cc, groundColor: 0x224422, intensity: 1.0 },
+  },
+  {
+    kind: 'light',
+    id: 'directional-light',
+    label: 'Directional Light',
+    config: { type: 'directional', color: 0xffffff, intensity: 1.0, position: [0, 10, 5] },
+  },
 ];
