@@ -117,6 +117,7 @@
   let presentationMode = $state(false);
   let presentationQueue = $state<string[]>([]);      // remaining scene IDs to play
   let prePresentationSceneId = $state<string | undefined>(undefined);
+  let wakeLock = $state<WakeLockSentinel | null>(null);
 
   // Productions
   let productions = $state<StoredProduction[]>(ProductionStore.list());
@@ -139,6 +140,11 @@
   );
   /** Cast list from the active document; updates automatically on command execution. */
   const actors = $derived(docSnapshot?.actors ?? []);
+
+  /** Active scene ID for the tree — falls back to first scene when none explicitly set. */
+  const treeActiveSceneId = $derived(
+    docSnapshot?.activeSceneId ?? (docSnapshot ? getScenes(docSnapshot.tree ?? [])[0]?.id : undefined)
+  );
 
   /** Active scene derived from the current snapshot. Updates whenever a command executes. */
   const activeScene = $derived(docSnapshot ? getActiveScene(docSnapshot) : undefined);
@@ -225,6 +231,14 @@
   let renameSceneValue = $state('');
   let renamingGroupId = $state<string | null>(null);
   let renameGroupValue = $state('');
+  // Tree selection state (for contextual + Act / + Scene footer buttons)
+  let treeSelectedId = $state<string | null>(null);
+  // Context menu open state for the ⋯ per-row menu
+  let openContextMenuId = $state<string | null>(null);
+  // Drag-and-drop state
+  let dragNodeId = $state<string | null>(null);
+  let dragOverId = $state<string | null>(null);
+  let dragOverHalf = $state<'before' | 'inside'>('before');
 
   const scenePieces = $derived(activeScene?.set ?? []);
   const sceneLights = $derived(activeScene?.lights ?? []);
@@ -409,6 +423,10 @@
     // loadModel(model, 0) fires via onChange (sceneChanged=true); ondidload → presenter.play()
     presentationMode = true;
     designMode = false;
+    void document.documentElement.requestFullscreen?.();
+    if ('wakeLock' in navigator) {
+      void navigator.wakeLock.request('screen').then((s) => { wakeLock = s; }).catch(() => {});
+    }
   }
 
   function onPresentationSceneEnd() {
@@ -433,6 +451,9 @@
     }
     prePresentationSceneId = undefined;
     presentationQueue = [];
+    if (document.fullscreenElement) void document.exitFullscreen();
+    void wakeLock?.release();
+    wakeLock = null;
   }
 
   function deepCopyTree(tree: Array<StoredGroup | NamedScene>): Array<StoredGroup | NamedScene> {
@@ -482,12 +503,12 @@
     renameSceneValue = newScene?.name ?? '';
   }
 
-  function insertGroupAt(index: number) {
+  function insertGroupAt(parentGroupId: string | undefined, index: number) {
     if (!activeDoc) return;
     const groupCount = (activeDoc.current.tree ?? []).filter((n) => 'type' in n).length;
     const name = `Act ${groupCount + 1}`;
     const id = crypto.randomUUID();
-    activeDoc.execute(new InsertGroupAtCommand(name, index, id));
+    activeDoc.execute(new InsertGroupAtCommand(name, index, id, parentGroupId));
     renamingGroupId = id;
     renameGroupValue = name;
   }
@@ -679,6 +700,105 @@
     renameSceneValue = newScene?.name ?? '';
   }
 
+  // ── Tree helpers ───────────────────────────────────────────────────────────
+
+  type NodeCtx = { parentId: string | undefined; index: number; isGroup: boolean };
+
+  function locateNode(
+    tree: Array<StoredGroup | NamedScene>,
+    id: string,
+    parentId: string | undefined = undefined,
+  ): NodeCtx | null {
+    for (let i = 0; i < tree.length; i++) {
+      const n = tree[i];
+      if (n.id === id) return { parentId, index: i, isGroup: (n as StoredGroup).type === 'group' };
+      if ((n as StoredGroup).type === 'group') {
+        const found = locateNode((n as StoredGroup).children, id, n.id);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  function treeNodeById(
+    tree: Array<StoredGroup | NamedScene>,
+    id: string,
+  ): StoredGroup | NamedScene | null {
+    for (const n of tree) {
+      if (n.id === id) return n;
+      if ((n as StoredGroup).type === 'group') {
+        const found = treeNodeById((n as StoredGroup).children, id);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  function contextualAddScene() {
+    if (!activeDoc || !docSnapshot) return;
+    const tree = docSnapshot.tree ?? [];
+    if (!treeSelectedId) { insertSceneAt(undefined, tree.length); return; }
+    const ctx = locateNode(tree, treeSelectedId);
+    if (!ctx) { insertSceneAt(undefined, tree.length); return; }
+    if (ctx.isGroup) {
+      const grp = treeNodeById(tree, treeSelectedId) as StoredGroup;
+      insertSceneAt(treeSelectedId, grp.children.length);
+    } else {
+      insertSceneAt(ctx.parentId, ctx.index + 1);
+    }
+  }
+
+  function contextualAddGroup() {
+    if (!activeDoc || !docSnapshot) return;
+    const tree = docSnapshot.tree ?? [];
+    if (!treeSelectedId) { insertGroupAt(undefined, tree.length); return; }
+    const ctx = locateNode(tree, treeSelectedId);
+    if (!ctx) { insertGroupAt(undefined, tree.length); return; }
+    if (ctx.isGroup) {
+      const grp = treeNodeById(tree, treeSelectedId) as StoredGroup;
+      insertGroupAt(treeSelectedId, grp.children.length);
+    } else {
+      insertGroupAt(ctx.parentId, ctx.index + 1);
+    }
+  }
+
+  function getDropHalf(e: DragEvent, el: HTMLElement): 'before' | 'inside' {
+    const rect = el.getBoundingClientRect();
+    return e.clientY - rect.top < rect.height / 2 ? 'before' : 'inside';
+  }
+
+  function handleTreeDrop(e: DragEvent, targetId: string) {
+    e.preventDefault();
+    if (!dragNodeId || !activeDoc || !docSnapshot || dragNodeId === targetId) {
+      dragNodeId = null; dragOverId = null; return;
+    }
+    const tree = docSnapshot.tree ?? [];
+    // Sentinel drop zone at the very end of the root list
+    if (targetId === '__tree-end__') {
+      activeDoc.execute(new MoveNodeCommand(dragNodeId, undefined, tree.length));
+      dragNodeId = null; dragOverId = null; return;
+    }
+    const targetNode = treeNodeById(tree, targetId);
+    const targetCtx = locateNode(tree, targetId);
+    if (!targetCtx) { dragNodeId = null; dragOverId = null; return; }
+
+    let newParentId: string | undefined;
+    let newIndex: number;
+    if ((targetNode as StoredGroup)?.type === 'group' && dragOverHalf === 'inside') {
+      newParentId = targetId;
+      newIndex = (targetNode as StoredGroup).children.length;
+    } else if (dragOverHalf === 'before') {
+      newParentId = targetCtx.parentId;
+      newIndex = targetCtx.index;
+    } else {
+      newParentId = targetCtx.parentId;
+      newIndex = targetCtx.index + 1;
+    }
+    activeDoc.execute(new MoveNodeCommand(dragNodeId, newParentId, newIndex));
+    dragNodeId = null;
+    dragOverId = null;
+  }
+
   function startActorRename(id: string) {
     renameActorValue = actors.find((a) => a.id === id)?.role ?? '';
     renamingActorId = id;
@@ -729,14 +849,31 @@
     };
     mq.addEventListener('change', onChange);
 
+    // Re-acquire wake lock if the page becomes visible again during presentation
+    // (the sentinel is automatically released when the page is hidden).
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible' && presentationMode && 'wakeLock' in navigator) {
+        void navigator.wakeLock.request('screen').then((s) => { wakeLock = s; }).catch(() => {});
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape' && presentationMode) { e.preventDefault(); exitPresentation(); return; }
+      if (e.key === 'Escape' && openContextMenuId !== null) { openContextMenuId = null; return; }
       if (!activeDoc) return;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.key === 'z' && !e.shiftKey) { e.preventDefault(); activeDoc.undo(); }
       if (mod && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); activeDoc.redo(); }
     }
     window.addEventListener('keydown', handleKeyDown);
+
+    function handleWindowPointerdown(e: PointerEvent) {
+      if (openContextMenuId !== null && !(e.target as Element)?.closest?.('.tree-ctx-menu, .tree-ctx-btn')) {
+        openContextMenuId = null;
+      }
+    }
+    window.addEventListener('pointerdown', handleWindowPointerdown);
 
     if (import.meta.env.DEV) {
       void import('../core/document/buildWorkflow1.js').then(({ seedWorkflow1 }) => {
@@ -759,13 +896,122 @@
 
     return () => {
       mq.removeEventListener('change', onChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('pointerdown', handleWindowPointerdown);
     };
   });
 </script>
 
 <!-- Single layout: Splitpanes always present; left pane collapses to 0 on mobile.
      Presenter lives only in the right pane so it is never destroyed at the breakpoint. -->
+
+{#snippet treeNodeRow(node: StoredGroup | NamedScene, parentId: string | undefined, depth: number)}
+  {#if (node as StoredGroup).type === 'group'}
+    {@const grp = node as StoredGroup}
+    <li
+      class="cast-row act-header"
+      class:tree-selected={treeSelectedId === grp.id}
+      class:drag-over-before={dragOverId === grp.id && dragOverHalf === 'before'}
+      class:drag-over-inside={dragOverId === grp.id && dragOverHalf === 'inside'}
+      draggable="true"
+      style="padding-left: {6 + depth * 12}px"
+      role="treeitem"
+      aria-selected={treeSelectedId === grp.id}
+      onclick={(e) => { e.stopPropagation(); treeSelectedId = grp.id; }}
+      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); treeSelectedId = grp.id; } }}
+      ondragstart={(e) => { dragNodeId = grp.id; e.dataTransfer?.setData('text/plain', grp.id); }}
+      ondragover={(e) => { e.preventDefault(); dragOverId = grp.id; dragOverHalf = getDropHalf(e, e.currentTarget as HTMLElement); }}
+      ondragleave={(e) => { if (dragOverId === grp.id && !e.currentTarget.contains(e.relatedTarget as Node)) dragOverId = null; }}
+      ondrop={(e) => handleTreeDrop(e, grp.id)}
+      ondragend={() => { dragNodeId = null; dragOverId = null; }}
+    >
+      <span class="drag-handle" aria-hidden="true">⠿</span>
+      {#if renamingGroupId === grp.id}
+        <input
+          class="cast-role-input"
+          type="text"
+          bind:value={renameGroupValue}
+          onblur={() => { activeDoc?.execute(new RenameGroupCommand(grp.id, renameGroupValue)); renamingGroupId = null; }}
+          onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameGroupCommand(grp.id, renameGroupValue)); renamingGroupId = null; } if (e.key === 'Escape') renamingGroupId = null; }}
+          use:focusAndSelect
+        />
+      {:else}
+        <span class="cast-role act-label">{grp.name}</span>
+        <span class="tree-spacer"></span>
+        <div class="tree-ctx-wrap">
+          <button
+            class="icon-btn tree-ctx-btn"
+            onclick={(e) => { e.stopPropagation(); openContextMenuId = openContextMenuId === grp.id ? null : grp.id; }}
+            title="More options"
+          >⋯</button>
+          {#if openContextMenuId === grp.id}
+            <div class="tree-ctx-menu">
+              <button class="tree-ctx-item" onclick={(e) => { e.stopPropagation(); renameGroupValue = grp.name; renamingGroupId = grp.id; openContextMenuId = null; }}>Rename</button>
+              <button class="tree-ctx-item danger" onclick={(e) => { e.stopPropagation(); activeDoc?.execute(new RemoveGroupCommand(grp.id)); openContextMenuId = null; }}>Delete</button>
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </li>
+    {#each grp.children as child (child.id)}
+      {@render treeNodeRow(child, grp.id, depth + 1)}
+    {/each}
+  {:else}
+    {@const ns = node as NamedScene}
+    <li
+      class="cast-row"
+      class:indent={depth > 0}
+      class:selected={ns.id === treeActiveSceneId}
+      class:tree-selected={treeSelectedId === ns.id}
+      class:drag-over-before={dragOverId === ns.id && dragOverHalf === 'before'}
+      class:drag-over-inside={dragOverId === ns.id && dragOverHalf === 'inside'}
+      draggable="true"
+      style="padding-left: {6 + depth * 12}px"
+      role="treeitem"
+      aria-selected={treeSelectedId === ns.id}
+      onclick={(e) => { e.stopPropagation(); treeSelectedId = ns.id; }}
+      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); treeSelectedId = ns.id; } }}
+      ondragstart={(e) => { dragNodeId = ns.id; e.dataTransfer?.setData('text/plain', ns.id); }}
+      ondragover={(e) => { e.preventDefault(); dragOverId = ns.id; dragOverHalf = getDropHalf(e, e.currentTarget as HTMLElement); }}
+      ondragleave={(e) => { if (dragOverId === ns.id && !e.currentTarget.contains(e.relatedTarget as Node)) dragOverId = null; }}
+      ondrop={(e) => handleTreeDrop(e, ns.id)}
+      ondragend={() => { dragNodeId = null; dragOverId = null; }}
+    >
+      <span class="drag-handle" aria-hidden="true">⠿</span>
+      {#if renamingSceneId === ns.id}
+        <input
+          class="cast-role-input"
+          type="text"
+          bind:value={renameSceneValue}
+          onblur={() => { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; }}
+          onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; } if (e.key === 'Escape') renamingSceneId = null; }}
+          use:focusAndSelect
+        />
+      {:else}
+        <button
+          class="cast-role-btn"
+          onclick={(e) => { e.stopPropagation(); treeSelectedId = ns.id; activeDoc?.execute(new SwitchSceneCommand(ns.id)); }}
+          title="Switch to scene"
+        >{ns.name}</button>
+        <span class="tree-spacer"></span>
+        <div class="tree-ctx-wrap">
+          <button
+            class="icon-btn tree-ctx-btn"
+            onclick={(e) => { e.stopPropagation(); openContextMenuId = openContextMenuId === ns.id ? null : ns.id; }}
+            title="More options"
+          >⋯</button>
+          {#if openContextMenuId === ns.id}
+            <div class="tree-ctx-menu">
+              <button class="tree-ctx-item" onclick={(e) => { e.stopPropagation(); renameSceneValue = ns.name; renamingSceneId = ns.id; openContextMenuId = null; }}>Rename</button>
+              <button class="tree-ctx-item danger" onclick={(e) => { e.stopPropagation(); activeDoc?.execute(new RemoveSceneCommand(ns.id)); openContextMenuId = null; }}>Delete</button>
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </li>
+  {/if}
+{/snippet}
 
 {#snippet leftPanelContent()}
           <div class="left-panel">
@@ -1010,95 +1256,25 @@
                               </div>
                               {#if isActive && docSnapshot}
                                 {@const prodTree = docSnapshot.tree ?? []}
-                                {@const prodScenes = getScenes(prodTree)}
-                                {@const activeSceneId = docSnapshot.activeSceneId ?? prodScenes[0]?.id}
                                 <div class="prod-cast">
                                   <span class="cast-section-label">Scenes</span>
-                                  <ul class="cast-list">
-                                    {#each prodTree as node, i (node.id)}
-                                      <li class="insert-gap">
-                                        <button class="insert-btn" onclick={() => insertSceneAt(undefined, i)} title="Insert scene here">+ Scene</button>
-                                        <button class="insert-btn" onclick={() => insertGroupAt(i)} title="Insert act here">+ Act</button>
-                                      </li>
-                                      {#if (node as StoredGroup).type === 'group'}
-                                        {@const group = node as StoredGroup}
-                                        <li class="act-header cast-row">
-                                          {#if renamingGroupId === group.id}
-                                            <input
-                                              class="cast-role-input"
-                                              type="text"
-                                              bind:value={renameGroupValue}
-                                              onblur={() => { activeDoc?.execute(new RenameGroupCommand(group.id, renameGroupValue)); renamingGroupId = null; }}
-                                              onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameGroupCommand(group.id, renameGroupValue)); renamingGroupId = null; } if (e.key === 'Escape') renamingGroupId = null; }}
-                                              use:focusAndSelect
-                                            />
-                                          {:else}
-                                            <span class="cast-role act-label">{group.name}</span>
-                                            <button class="icon-btn" onclick={() => activeDoc?.execute(new MoveNodeCommand(group.id, undefined, i - 1))} disabled={i === 0} title="Move up">↑</button>
-                                            <button class="icon-btn" onclick={() => activeDoc?.execute(new MoveNodeCommand(group.id, undefined, i + 1))} disabled={i === prodTree.length - 1} title="Move down">↓</button>
-                                            <button class="icon-btn" onclick={() => { renameGroupValue = group.name; renamingGroupId = group.id; }} title="Rename act">✎</button>
-                                            <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveGroupCommand(group.id))} title="Remove act">✕</button>
-                                          {/if}
-                                        </li>
-                                        {#each group.children as child, ci (child.id)}
-                                          {#if !(child as StoredGroup).type}
-                                            {@const ns = child as NamedScene}
-                                            <li class="insert-gap indent">
-                                              <button class="insert-btn" onclick={() => insertSceneAt(group.id, ci)} title="Insert scene here">+ Scene</button>
-                                            </li>
-                                            <li class="cast-row indent" class:selected={ns.id === activeSceneId}>
-                                              {#if renamingSceneId === ns.id}
-                                                <input
-                                                  class="cast-role-input"
-                                                  type="text"
-                                                  bind:value={renameSceneValue}
-                                                  onblur={() => { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; }}
-                                                  onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; } if (e.key === 'Escape') renamingSceneId = null; }}
-                                                  use:focusAndSelect
-                                                />
-                                              {:else}
-                                                <button class="cast-role-btn" onclick={() => activeDoc?.execute(new SwitchSceneCommand(ns.id))} title="Switch to scene">{ns.name}</button>
-                                                <button class="icon-btn" onclick={() => activeDoc?.execute(new MoveNodeCommand(ns.id, group.id, ci - 1))} disabled={ci === 0} title="Move up">↑</button>
-                                                <button class="icon-btn" onclick={() => activeDoc?.execute(new MoveNodeCommand(ns.id, group.id, ci + 1))} disabled={ci === group.children.length - 1} title="Move down">↓</button>
-                                                <button class="icon-btn" onclick={() => { renameSceneValue = ns.name; renamingSceneId = ns.id; }} title="Rename scene">✎</button>
-                                                <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
-                                              {/if}
-                                            </li>
-                                          {/if}
-                                        {/each}
-                                        <li class="insert-gap indent">
-                                          <button class="insert-btn" onclick={() => insertSceneAt(group.id, group.children.length)} title="Insert scene here">+ Scene</button>
-                                        </li>
-                                      {:else}
-                                        {@const ns = node as NamedScene}
-                                        <li class="cast-row" class:selected={ns.id === activeSceneId}>
-                                          {#if renamingSceneId === ns.id}
-                                            <input
-                                              class="cast-role-input"
-                                              type="text"
-                                              bind:value={renameSceneValue}
-                                              onblur={() => { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; }}
-                                              onkeydown={(e) => { if (e.key === 'Enter') { activeDoc?.execute(new RenameSceneCommand(ns.id, renameSceneValue)); renamingSceneId = null; } if (e.key === 'Escape') renamingSceneId = null; }}
-                                              use:focusAndSelect
-                                            />
-                                          {:else}
-                                            <button class="cast-role-btn" onclick={() => activeDoc?.execute(new SwitchSceneCommand(ns.id))} title="Switch to scene">{ns.name}</button>
-                                            <button class="icon-btn" onclick={() => activeDoc?.execute(new MoveNodeCommand(ns.id, undefined, i - 1))} disabled={i === 0} title="Move up">↑</button>
-                                            <button class="icon-btn" onclick={() => activeDoc?.execute(new MoveNodeCommand(ns.id, undefined, i + 1))} disabled={i === prodTree.length - 1} title="Move down">↓</button>
-                                            <button class="icon-btn" onclick={() => { renameSceneValue = ns.name; renamingSceneId = ns.id; }} title="Rename scene">✎</button>
-                                            <button class="icon-btn danger" onclick={() => activeDoc?.execute(new RemoveSceneCommand(ns.id))} title="Remove scene">✕</button>
-                                          {/if}
-                                        </li>
-                                      {/if}
+                                  <ul class="cast-list tree-list" role="tree" onclick={(e) => { if (e.target === e.currentTarget) treeSelectedId = null; }} onkeydown={(e) => { if (e.key === 'Escape') treeSelectedId = null; }}>
+                                    {#each prodTree as node (node.id)}
+                                      {@render treeNodeRow(node, undefined, 0)}
                                     {/each}
-                                    <li class="insert-gap">
-                                      <button class="insert-btn" onclick={() => insertSceneAt(undefined, prodTree.length)} title="Insert scene here">+ Scene</button>
-                                      <button class="insert-btn" onclick={() => insertGroupAt(prodTree.length)} title="Insert act here">+ Act</button>
-                                    </li>
+                                    {#if dragNodeId}
+                                      <li
+                                        class="tree-end-drop"
+                                        class:drag-over-before={dragOverId === '__tree-end__'}
+                                        ondragover={(e) => { e.preventDefault(); dragOverId = '__tree-end__'; dragOverHalf = 'before'; }}
+                                        ondragleave={() => { if (dragOverId === '__tree-end__') dragOverId = null; }}
+                                        ondrop={(e) => handleTreeDrop(e, '__tree-end__')}
+                                      ></li>
+                                    {/if}
                                   </ul>
                                   <div class="cast-add-row">
-                                    <button class="new-btn prod-cast-add" onclick={() => addGroup()} title="Add act">+ Act</button>
-                                    <button class="new-btn prod-cast-add" onclick={() => addScene()} title="Add scene">+ Scene</button>
+                                    <button class="new-btn prod-cast-add" onclick={() => contextualAddGroup()} title="Add act">+ Act</button>
+                                    <button class="new-btn prod-cast-add" onclick={() => contextualAddScene()} title="Add scene">+ Scene</button>
                                   </div>
                                 </div>
                                 {#if docSnapshot.speechSettings !== undefined}
@@ -2066,34 +2242,105 @@
     background: #1d1d1d;
   }
 
-  .insert-gap {
+  .drag-handle {
+    cursor: grab;
+    color: #444;
+    font-size: 13px;
+    flex-shrink: 0;
+    user-select: none;
+    transition: color 0.1s;
+  }
+
+  .cast-row:hover .drag-handle,
+  .cast-row:focus-within .drag-handle {
+    color: #777;
+  }
+
+  .cast-row.tree-selected {
+    outline: 1px solid #4a9eff66;
+  }
+
+  .cast-row.drag-over-before {
+    border-top: 2px solid #4a9eff;
+    margin-top: -1px;
+  }
+
+  .tree-end-drop {
+    height: 8px;
     list-style: none;
-    height: 4px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 0 4px;
   }
-  .insert-gap.indent {
-    padding-left: 22px;
+
+  .tree-end-drop.drag-over-before {
+    border-top: 2px solid #4a9eff;
+    height: 8px;
   }
-  .insert-btn {
+
+  .cast-row.drag-over-inside {
+    background: #1a2a1a;
+    outline: 1px dashed #4a9eff66;
+  }
+
+  .tree-spacer {
+    flex: 1;
+  }
+
+  .tree-ctx-wrap {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .tree-ctx-btn {
     opacity: 0;
-    background: #1a2a3a;
-    border: 1px solid #4a9eff44;
-    color: #4a9eff;
-    font-size: 10px;
-    padding: 1px 6px;
-    border-radius: 3px;
-    cursor: pointer;
     transition: opacity 0.1s;
-    white-space: nowrap;
+    font-size: 14px;
+    letter-spacing: 1px;
   }
-  .insert-gap:hover {
-    height: 10px;
-  }
-  .insert-gap:hover .insert-btn {
+
+  .cast-row:hover .tree-ctx-btn,
+  .cast-row:focus-within .tree-ctx-btn {
     opacity: 1;
+  }
+
+  .tree-ctx-menu {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    z-index: 100;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    min-width: 100px;
+    padding: 2px 0;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
+
+  .tree-ctx-item {
+    display: block;
+    width: 100%;
+    background: none;
+    border: none;
+    color: #ccc;
+    font-size: 12px;
+    text-align: left;
+    padding: 5px 10px;
+    cursor: pointer;
+  }
+
+  .tree-ctx-item:hover {
+    background: #3a3a3a;
+    color: #fff;
+  }
+
+  .tree-ctx-item.danger {
+    color: #e06c75;
+  }
+
+  .tree-ctx-item.danger:hover {
+    background: #3a1a1a;
+  }
+
+  .tree-list {
+    user-select: none;
   }
 
   .cast-row {

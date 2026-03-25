@@ -870,9 +870,9 @@ These are the two highest-friction mobile gaps after the presentation exit butto
 - **Note:** any new UI added from this point forward must have a touch-accessible primary path; hover is enhancement only.
 - **Blocking:** Present button is effectively broken for mobile users right now.
 
-### S5 — t=0 animations missed by sequencer under load *(PlaybackEngine)*
+### S5 — t=0 animations missed by sequencer during Presentation under high machine load *(PlaybackEngine)*
 
-Animations scheduled to start at `t=0` are occasionally skipped on playback — observed on lower-powered hardware under high load. The first frame of the Tone.js transport may fire slightly late, causing the `t=0` window to be missed before the engine has set up animation state.
+Animations scheduled to start at `t=0` are occasionally skipped in some scenes during Presentation mode — observed on lower-powered hardware under high load. The first frame of the Tone.js transport may fire slightly late, causing the `t=0` window to be missed before the engine has set up animation state. Only happens on Presentation, never observed on scene preview via transport play button
 
 - **Direction:** investigate whether `PlaybackEngine.play()` should trigger an immediate `seek(0)` / enable pass before handing off to the transport tick, so that `t=0` animations are guaranteed to be enabled before the first `update()` call. Also check whether `Transport.start()` fires a synchronous or asynchronous first event — if async, an explicit initialisation frame is needed. Add a targeted test that simulates a slow first tick.
 - **Blocking:** nothing currently blocked; workaround is to schedule the first animation at `t=0.01` or later.

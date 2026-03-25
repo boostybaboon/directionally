@@ -1177,8 +1177,8 @@ export class InsertSceneAtCommand implements Command {
 }
 
 /**
- * Insert a new group (act) at an explicit index in the root of the tree.
- * `index` is clamped to valid range.
+ * Insert a new group (act) at an explicit index, optionally nested inside a parent group.
+ * `parentGroupId` undefined → root level. `index` is clamped to valid range.
  */
 export class InsertGroupAtCommand implements Command {
   readonly label: string;
@@ -1186,6 +1186,7 @@ export class InsertGroupAtCommand implements Command {
     private readonly name: string = '',
     private readonly index: number,
     private readonly id?: string,
+    private readonly parentGroupId?: string,
   ) {
     this.label = `Insert act "${name || 'Act'}"`;
   }
@@ -1193,7 +1194,7 @@ export class InsertGroupAtCommand implements Command {
     const groups = (doc.tree ?? []).filter(isGroup);
     const name = this.name || `Act ${groups.length + 1}`;
     const newGroup: StoredGroup = { type: 'group', id: this.id ?? crypto.randomUUID(), name, children: [] };
-    const tree = insertNodeAt(doc.tree ?? [], undefined, this.index, newGroup);
+    const tree = insertNodeAt(doc.tree ?? [], this.parentGroupId, this.index, newGroup);
     return touch({ ...doc, tree });
   }
 }
