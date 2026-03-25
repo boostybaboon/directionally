@@ -9,7 +9,6 @@ import {
   AddLightBlockCommand,
   AddSceneCommand,
   AddSetPieceCommand,
-  RemoveSetPieceCommand,
   RenameSceneCommand,
   SetSceneDurationCommand,
   SetSceneLightsCommand,
@@ -76,7 +75,6 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
     { type: 'hemisphere', id: 'sky', skyColor: 0xfff4cc, groundColor: 0x553300, intensity: 1.5 },
     { type: 'directional', id: 'sun', color: 0xffcc88, intensity: 1.2, position: [5, 10, 5] },
   ]));
-  exec(new RemoveSetPieceCommand('ground'));
   exec(new AddSetPieceCommand({
     name: 'ground',
     geometry: { type: 'plane', width: 30, height: 20 },
@@ -104,7 +102,6 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
     { type: 'hemisphere', id: 'sky', skyColor: 0x88cc77, groundColor: 0x332211, intensity: 1.2 },
     { type: 'directional', id: 'sun', color: 0xddeebb, intensity: 0.7, position: [3, 10, 3] },
   ]));
-  exec(new RemoveSetPieceCommand('ground'));
   exec(new AddSetPieceCommand({
     name: 'ground',
     geometry: { type: 'plane', width: 30, height: 20 },
@@ -167,7 +164,6 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
     { type: 'hemisphere', id: 'sky', skyColor: 0xaabbcc, groundColor: 0x222233, intensity: 1.6 },
     { type: 'directional', id: 'sun', color: 0xddeeff, intensity: 1.8, position: [0, 10, 0] },
   ]));
-  exec(new RemoveSetPieceCommand('ground'));
   // Wider floor to cover the full run length
   exec(new AddSetPieceCommand({
     name: 'ground',
@@ -222,7 +218,6 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
     { type: 'hemisphere', id: 'sky', skyColor: 0x442222, groundColor: 0x110000, intensity: 0.8 },
     { type: 'directional', id: 'sun', color: 0xff9966, intensity: 1.0, position: [2, 8, 6] },
   ]));
-  exec(new RemoveSetPieceCommand('ground'));
   exec(new AddSetPieceCommand({
     name: 'ground',
     geometry: { type: 'plane', width: 30, height: 20 },
@@ -271,7 +266,6 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
     { type: 'hemisphere', id: 'sky', skyColor: 0x111122, groundColor: 0x050505, intensity: 0.6 },
     { type: 'directional', id: 'sun', color: 0x7777aa, intensity: 2.5, position: [0, 8, 4] },
   ]));
-  exec(new RemoveSetPieceCommand('ground'));
   exec(new AddSetPieceCommand({
     name: 'ground',
     geometry: { type: 'plane', width: 30, height: 20 },

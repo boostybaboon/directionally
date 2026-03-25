@@ -51,10 +51,27 @@ export function getActiveScene(doc: StoredProduction): StoredScene | undefined {
 }
 
 /**
- * Default scene shell: camera, lights, and a ground plane.
- * Cast and actions are empty — call `restageCast` to populate actors.
+ * Blank scene shell: camera only, no lights and no ground.
+ * Used by AddSceneCommand so programmatic workflows start from a clean slate.
+ * For a UX-ready scene with starter lighting and ground, see starterSceneShell().
  */
 export function defaultSceneShell(): StoredScene {
+  return {
+    camera: { fov: 50, near: 0.1, far: 120, position: [0, 5, 12], lookAt: [0, 1, 0] },
+    lights: [],
+    set: [],
+    stagedActors: [],
+    actions: [],
+    duration: 6,
+  };
+}
+
+/**
+ * Starter scene shell with default lighting and a neutral ground plane.
+ * Used when creating a new production from the UX so the viewport is immediately
+ * usable without any additional setup steps.
+ */
+export function starterSceneShell(): StoredScene {
   return {
     camera: { fov: 50, near: 0.1, far: 120, position: [0, 5, 12], lookAt: [0, 1, 0] },
     lights: [

@@ -17,7 +17,7 @@
   import ScriptEditor from '$lib/script/ScriptEditor.svelte';
   import PropertiesPanel from '$lib/PropertiesPanel.svelte';
   import { storedSceneToModel } from '../core/storage/storedSceneToModel.js';
-  import { defaultSceneShell, estimateDuration, getActiveScene } from '../core/storage/sceneBuilder.js';
+  import { starterSceneShell, estimateDuration, getActiveScene } from '../core/storage/sceneBuilder.js';
   import type { ScriptLine } from '$lib/script/types';
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import type { StoredProduction, StoredActor, StoredGroup, NamedScene, ProductionSpeechSettings } from '../core/storage/types.js';
@@ -79,7 +79,7 @@
   ];
 
   function modelFromProduction(prod: StoredProduction) {
-    return storedSceneToModel(getActiveScene(prod) ?? defaultSceneShell(), prod.actors ?? []);
+    return storedSceneToModel(getActiveScene(prod) ?? starterSceneShell(), prod.actors ?? []);
   }
 
   let presenter: Presenter | undefined = $state();
@@ -355,7 +355,11 @@
   // Auto-save handled by ProductionDocument.execute() — no $effect needed.
 
   function newProduction() {
-    const prod = ProductionStore.create();
+    const sceneId = crypto.randomUUID();
+    const starter: NamedScene = { id: sceneId, name: 'Scene 1', scene: starterSceneShell() };
+    let prod = ProductionStore.create();
+    prod = { ...prod, tree: [starter], activeSceneId: sceneId };
+    ProductionStore.save(prod);
     productions = ProductionStore.list();
     loadProduction(prod);
     renamingId = prod.id;
@@ -1334,13 +1338,14 @@
             }}
             onsceneend={presentationMode ? onPresentationSceneEnd : undefined}
             ondidload={presentationMode ? () => presenter?.play() : undefined}
+            {presentationMode}
           />
           {#if presentationMode && docSnapshot}
             {@const _hudScenes = getScenes(docSnapshot.tree ?? [])}
             {@const _hudName = _hudScenes.find(ns => ns.id === docSnapshot!.activeSceneId)?.name ?? 'Scene'}
             <div class="presentation-hud">
               <span class="presentation-scene-name">{_hudName}</span>
-              <span class="presentation-esc">Esc to exit</span>
+              <button class="presentation-exit-btn" onclick={exitPresentation} title="Exit presentation (Esc)">✕ Exit</button>
             </div>
           {:else if !activeScene}
             <div class="viewport-no-scene">
@@ -2450,7 +2455,6 @@
     background: rgba(0, 0, 0, 0.6);
     border-radius: 6px;
     padding: 6px 14px;
-    pointer-events: none;
     z-index: 100;
   }
 
@@ -2461,9 +2465,20 @@
     letter-spacing: 0.03em;
   }
 
-  .presentation-esc {
+  .presentation-exit-btn {
     font-size: 11px;
-    color: #666;
+    color: #999;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    line-height: 1;
+  }
+
+  .presentation-exit-btn:hover {
+    color: #e0e0e0;
+    background: rgba(255, 255, 255, 0.1);
   }
 
   /* ── Shared animation/block authoring layout ───── */

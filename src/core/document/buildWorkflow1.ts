@@ -6,7 +6,9 @@ import {
   AddActorCommand,
   AddGroupCommand,
   AddSceneCommand,
+  AddSetPieceCommand,
   RenameSceneCommand,
+  SetSceneLightsCommand,
   StageActorCommand,
   SetSpeakLinesCommand,
   SwitchSceneCommand,
@@ -20,9 +22,10 @@ function isGroup(node: StoredGroup | NamedScene): node is StoredGroup {
  * Applies the full Workflow 1 command sequence to `initial` and returns the
  * resulting StoredProduction. Pure — no I/O.
  *
- * `initial` must have at least one scene in its tree (the default from
- * ProductionStore.create). The first scene is renamed to "Prologue" and
- * kept at the root; two act groups with two scenes each are added beneath it.
+ * `initial` may be a blank production with an empty tree; a 'Prologue' scene is
+ * created automatically if none exists. Standard lighting and a grey ground are
+ * added to every scene. Two act groups with two scenes each are added beneath
+ * the root prologue.
  *
  * Shared by the integration test (workflow1.integration.test.ts) and the
  * dev seed (seedWorkflow1).
@@ -30,8 +33,10 @@ function isGroup(node: StoredGroup | NamedScene): node is StoredGroup {
 export function buildWorkflow1(initial: StoredProduction): StoredProduction {
   let doc = initial;
 
-  const prologueId = getScenes(doc.tree ?? [])[0]?.id;
-  if (!prologueId) throw new Error('buildWorkflow1: initial doc must have at least one scene');
+  const prologueId = getScenes(doc.tree ?? [])[0]?.id ?? crypto.randomUUID();
+  if (!getScenes(doc.tree ?? []).length) {
+    doc = new AddSceneCommand('Prologue', undefined, prologueId).execute(doc);
+  }
 
   const alphaId = crypto.randomUUID();
   const betaId = crypto.randomUUID();
@@ -61,6 +66,11 @@ export function buildWorkflow1(initial: StoredProduction): StoredProduction {
 
   // Part D — Prologue
   exec(new SwitchSceneCommand(prologueId));
+  exec(new SetSceneLightsCommand([
+    { type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 2, position: [0, 20, 0] },
+    { type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] },
+  ]));
+  exec(new AddSetPieceCommand({ name: 'ground', geometry: { type: 'plane', width: 30, height: 20 }, material: { color: 0x888888 }, rotation: [-Math.PI / 2, 0, 0] }));
   exec(new StageActorCommand({ actorId: alphaId, startPosition: [-3, 0, 0] }));
   exec(new StageActorCommand({ actorId: betaId, startPosition: [3, 0, 0] }));
   exec(new SetSpeakLinesCommand([
@@ -70,6 +80,11 @@ export function buildWorkflow1(initial: StoredProduction): StoredProduction {
 
   // Part E — The Encounter
   exec(new SwitchSceneCommand(encounterId));
+  exec(new SetSceneLightsCommand([
+    { type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 2, position: [0, 20, 0] },
+    { type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] },
+  ]));
+  exec(new AddSetPieceCommand({ name: 'ground', geometry: { type: 'plane', width: 30, height: 20 }, material: { color: 0x888888 }, rotation: [-Math.PI / 2, 0, 0] }));
   exec(new StageActorCommand({ actorId: alphaId, startPosition: [-2, 0, 2] }));
   exec(new StageActorCommand({ actorId: betaId, startPosition: [2, 0, 2] }));
   // Step 36: Alpha walks across stage during t=0–2
@@ -89,6 +104,11 @@ export function buildWorkflow1(initial: StoredProduction): StoredProduction {
 
   // Part F — The Chase
   exec(new SwitchSceneCommand(chaseId));
+  exec(new SetSceneLightsCommand([
+    { type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 2, position: [0, 20, 0] },
+    { type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] },
+  ]));
+  exec(new AddSetPieceCommand({ name: 'ground', geometry: { type: 'plane', width: 30, height: 20 }, material: { color: 0x888888 }, rotation: [-Math.PI / 2, 0, 0] }));
   exec(new StageActorCommand({ actorId: alphaId, startPosition: [-1, 0, 0] }));
   exec(new StageActorCommand({ actorId: betaId, startPosition: [1, 0, 0] }));
   exec(new SetSpeakLinesCommand([
@@ -98,6 +118,11 @@ export function buildWorkflow1(initial: StoredProduction): StoredProduction {
 
   // Part F — The Confrontation
   exec(new SwitchSceneCommand(confrontationId));
+  exec(new SetSceneLightsCommand([
+    { type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 2, position: [0, 20, 0] },
+    { type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] },
+  ]));
+  exec(new AddSetPieceCommand({ name: 'ground', geometry: { type: 'plane', width: 30, height: 20 }, material: { color: 0x888888 }, rotation: [-Math.PI / 2, 0, 0] }));
   exec(new StageActorCommand({ actorId: alphaId, startPosition: [-2, 0, 0] }));
   exec(new StageActorCommand({ actorId: betaId, startPosition: [2, 0, 0] }));
   exec(new SetSpeakLinesCommand([
@@ -108,6 +133,11 @@ export function buildWorkflow1(initial: StoredProduction): StoredProduction {
 
   // Part F — Resolution
   exec(new SwitchSceneCommand(resolutionId));
+  exec(new SetSceneLightsCommand([
+    { type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 2, position: [0, 20, 0] },
+    { type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] },
+  ]));
+  exec(new AddSetPieceCommand({ name: 'ground', geometry: { type: 'plane', width: 30, height: 20 }, material: { color: 0x888888 }, rotation: [-Math.PI / 2, 0, 0] }));
   exec(new StageActorCommand({ actorId: alphaId, startPosition: [-1, 0, 0] }));
   exec(new StageActorCommand({ actorId: betaId, startPosition: [1, 0, 0] }));
   exec(new SetSpeakLinesCommand([

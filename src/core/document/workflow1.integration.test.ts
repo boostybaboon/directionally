@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { buildWorkflow1 } from './buildWorkflow1';
 import { getScenes } from '../storage/types';
 import type { StoredProduction, StoredGroup, NamedScene } from '../storage/types';
-import { defaultSceneShell } from '../storage/sceneBuilder';
 import type { ActorBlock, SpeakAction } from '../domain/types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -11,7 +10,7 @@ function isGroup(node: StoredGroup | NamedScene): node is StoredGroup {
   return (node as StoredGroup).type === 'group';
 }
 
-/** Minimal production matching what ProductionStore.create() produces. */
+/** Minimal blank production matching what ProductionStore.create() produces. */
 function freshProduction(): StoredProduction {
   return {
     id: 'test',
@@ -19,8 +18,8 @@ function freshProduction(): StoredProduction {
     createdAt: 1000,
     modifiedAt: 1000,
     actors: [],
-    tree: [{ id: 'init-scene', name: 'Scene 1', scene: defaultSceneShell() }],
-    activeSceneId: 'init-scene',
+    tree: [],
+    activeSceneId: undefined,
     script: [],
   };
 }

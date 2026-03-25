@@ -780,7 +780,7 @@ Playback in the browser is real-time and resolution-bound by the display. Render
 
 ## What's Next — Priority queue
 
-**Baseline:** 195 tests green, 0 svelte-check warnings.  
+**Baseline:** 225 tests green, 0 svelte-check warnings.  
 **Complete through:** Phases 0–8.9, T, UX1, UX2.1–2.4, UX2.7, UX2.9.
 
 ### Tier 1 — Scene-building visibility
@@ -813,6 +813,132 @@ Playback in the browser is real-time and resolution-bound by the display. Render
 - **Phase 12** — Dance/MIDI choreography (needs spike)
 - **Phase 13** — Remote asset store
 - **Phase 14** — Video render export (large; WebCodecs pipeline + audio pre-synthesis)
+- **I1–I5** — Infrastructure (Azure deploy, user management, staged builds, GitHub project management, CI/CD workflows)
+
+---
+
+## Open Snags
+
+*Post-completion observations from first-use testing. Each snag is filed against a completed phase whose implementation still needs refinement.*
+
+### S1 — Add actor to scene: visual paradigm *(UX2.4 post-completion)*
+
+UX2.4 delivered the ⊕ Stage button in the cast section and drag-from-cast-to-canvas. The snag: the first-use discovery path — "I added a character, now how do I get them into this scene?" — is not obvious. The ⊕ Stage button is easy to miss, and dragging from a panel to a canvas is a non-obvious gesture on both touch and pointer devices.
+
+- **Direction:** a more explicit visual affordance that communicates per-scene presence directly on the actor card — e.g. a toggle / per-scene indicator that is impossible to overlook. Input scope for UX3. The ⊕ Stage button remains as-is until the replacement is designed.
+- **Blocking:** nothing currently blocked; existing flows work correctly.
+
+### S2 — Scene tree: button clutter and no reorder *(UX2.3 post-completion)*
+
+UX2.3 delivered + Scene / + Act / ✎ rename / 🗑 delete buttons per tree row, with drag-to-reorder explicitly deferred. The snag: at typical cast and scene counts, every row carries four visible action buttons simultaneously, which creates significant visual noise and crowds the production name. The inability to reorder scenes — now that users are building multi-scene productions — is a confirmed gap.
+
+- **Direction:** collapse row actions behind a `⋯` context menu (or long-press / hover reveal); make drag-to-reorder the primary reorder affordance. Pre-UX3 scope — addressable independently of the full drag-and-drop cast work.
+- **Blocking:** nothing currently blocked.
+
+---
+
+### Phase I1 — Azure deployment + database serialisation *(not yet started)*
+
+*Deploy the app publicly and migrate production storage from browser localStorage to a server-side database.*
+
+- **Frontend host:** Azure Static Web App. `swa-cli.config.json` already exists in the repo — the deployment target is scaffolded.
+- **API layer:** SvelteKit `+server.ts` route handlers provide the persistence API. The SWA managed functions runtime proxies `/api/*` routes from the static front end to the SvelteKit server bundle automatically.
+- **Database:** Azure Cosmos DB NoSQL API. `StoredProduction` is already a self-contained JSON document; it maps directly to a Cosmos DB item with no schema translation. Partition key = `userId` (prerequisite: Phase I2 supplies the identity; for Phase I1 alone a hardcoded single-tenant key is acceptable as a stepping stone).
+- **`ProductionStore` interface unchanged:** the existing service interface (`list`, `get`, `save`, `delete`, `create`) is already injected — swapping the implementation from `localStorage` to a `fetch`-backed server store touches zero callers.
+- **Secrets:** Cosmos DB connection string injected via Azure Static Web App application settings (never committed to source). Key Vault reference optional for production hardening.
+- **Migration:** existing localStorage productions are exported as JSON and re-imported via the server store on first sign-in. No automatic migration — the user initiates it.
+
+---
+
+### Phase I2 — User management *(not yet started)*
+
+*Individual users sign in and see only their own productions.*
+
+- **Identity provider:** Microsoft Entra External ID (consumer-facing, supports GitHub, Google, and email/password as bring-your-own-identity providers). Entra External ID issues a standard JWT — SvelteKit middleware validates it per request.
+- **Per-user data scoping:** Cosmos DB partition key = `userId` extracted from the token. The server-side `ProductionStore` implementation appends a `WHERE userId = :uid` equivalent to every query. No cross-user data leakage is possible at the database layer.
+- **Session management:** SvelteKit `cookies` API. The JWT is stored in an HttpOnly, SameSite=Strict cookie; never exposed to client JavaScript.
+- **Guest mode preserved:** unauthenticated users continue to use localStorage (Phase I1 fallback path). The app never forces sign-in — a persistent "Sign in to save to the cloud" prompt replaces the localStorage production list when no session exists.
+- **`StoredProduction` schema addition:** `userId: string` field added. The server-side store filters by it; the client never sets it (set server-side from the token).
+
+---
+
+### Phase I3 — Staged builds *(not yet started)*
+
+*Three promotion environments: local development → staging → production.*
+
+- **Environments:** `local` (Vite dev server + local emulators), `staging` (Azure SWA staging slot), `production` (Azure SWA production slot). Each has its own Cosmos DB database instance (or separate containers within one account).
+- **Promotion flow:** feature branches → PR → CI green → merge to `main` → auto-deploy to staging → manual approval gate in GitHub Actions → promote to production.
+- **Secrets:** each environment's connection strings and Entra app registration credentials are stored as GitHub Actions secrets, never in source. SWA application settings are set via `az staticwebapp appsettings set --environment staging` (no values in `swa-cli.config.json`).
+- **SWA deployment slots:** staging slot is a free feature of the Standard plan. The production slot is promoted from staging without a rebuild (`az staticwebapp environment promote`).
+- **Local emulators:** Cosmos DB emulator (Docker) + Azurite for storage. `local.settings.json` (already in `build/server/`) holds local-only values; `.gitignore` covers it.
+
+---
+
+### Phase I4 — GitHub project management *(not yet started)*
+
+*Structured issue tracking that mirrors the ROADMAP so work is visible and discoverable.*
+
+- **GitHub Projects board:** one board per major phase group (e.g. "Phase 9", "Phase UX2", "Infrastructure I1–I5"). Roadmap phases are milestones; individual tasks are issues linked to a milestone.
+- **Issue templates** (`.github/ISSUE_TEMPLATE/`):
+  - `bug.yml` — steps to reproduce, expected vs. actual behaviour, environment.
+  - `feature.yml` — user story, acceptance criteria, ROADMAP phase reference.
+  - `snag.yml` — lightweight: one-liner description, which phase's UX it affects.
+  - `spike.yml` — question to answer, timebox, deliverable (decision or prototype).
+- **Roadmap linkage:** ROADMAP items marked *(not yet started)* or *(deferred)* get companion GitHub issues at the start of each phase's work. The ROADMAP remains the canonical planning document; issues are the executable work items.
+- **Auto-close:** `Closes #N` in commit messages; `fix:` conventional commits trigger the label bot.
+- **Labels:** `phase:N`, `type:bug`, `type:snag`, `type:feature`, `type:spike`, `status:blocked`, `status:in-progress`.
+
+---
+
+### Phase I5 — GitHub build and test workflows *(not yet started)*
+
+*Automated quality gates on every PR and deployment pipeline from merge to production.*
+
+#### PR gate (`.github/workflows/ci.yml`)
+
+```
+trigger: pull_request → main, staging
+jobs:
+  ci:
+    - yarn install --frozen-lockfile
+    - yarn check          # svelte-check: 0 errors required
+    - yarn test           # all 225+ tests must pass
+    fail-fast: true
+```
+
+PR cannot be merged until the gate is green. Branch protection rules enforce this.
+
+#### Staging deploy (`.github/workflows/deploy-staging.yml`)
+
+```
+trigger: push → main
+jobs:
+  build-and-deploy:
+    - yarn install --frozen-lockfile
+    - yarn build
+    - SWA CLI deploy to staging slot
+```
+
+#### Production release (`.github/workflows/deploy-production.yml`)
+
+```
+trigger: workflow_dispatch (manual) OR push → tags/v*.*.*
+jobs:
+  promote:
+    - Manual approval gate (GitHub environment protection rule)
+    - az staticwebapp environment promote → production slot
+```
+
+#### Dependency management
+
+- Dependabot configured for `npm` in `package.json` and `build/server/package.json`.
+- Dependabot PRs for patch versions are auto-merged if CI is green; minor/major require manual review.
+
+#### README badge
+
+```md
+![CI](https://github.com/ORG/directionally/actions/workflows/ci.yml/badge.svg)
+```
 
 ---
 
@@ -864,4 +990,9 @@ Playback in the browser is real-time and resolution-bound by the display. Render
 | Lighting rig | Phase 10 |
 | Sound effects / music | Phase 11 (merged into 8.7) |
 | Video render export (off-screen canvas, WebCodecs, audio mux) | Phase 14 (deferred — large) |
+| Azure SWA deployment + Cosmos DB production store | Phase I1 |
+| User management (Entra sign-in, per-user data scoping) | Phase I2 |
+| Staged builds (dev / staging / production environments) | Phase I3 |
+| GitHub project management (Projects board, issue templates, milestones) | Phase I4 |
+| GitHub CI/CD (PR gate, staging deploy, production release) | Phase I5 |
 

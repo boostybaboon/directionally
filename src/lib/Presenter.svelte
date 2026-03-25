@@ -127,6 +127,8 @@
     onsceneend?: () => void;
     /** Called after every loadModel completes (async GLTFs resolved, engine loaded, seek applied). */
     ondidload?: () => void;
+    /** When true, the mode-toggle button is hidden (presentation mode has its own exit affordance). */
+    presentationMode?: boolean;
   }
 
   let {
@@ -151,6 +153,7 @@
     objectSelectable,
     onsceneend,
     ondidload,
+    presentationMode = false,
   }: PresenterProps = $props();
 
   // Tracks the most recently loaded model to support re-synthesis when voiceMode changes.
@@ -1193,11 +1196,13 @@
       ondrop={handleCatalogueDrop}
       onkeydown={() => {}}
     ></div>
-    <button
-      class="mode-toggle"
-      onclick={() => { designMode = !designMode; }}
-      title={designMode ? 'Switch to playback view' : 'Switch to design view'}
-    >{designMode ? '▶ Switch to Playback view' : '✏ Switch to Design view'}</button>
+    {#if !presentationMode}
+      <button
+        class="mode-toggle"
+        onclick={() => { designMode = !designMode; }}
+        title={designMode ? 'Switch to playback view' : 'Switch to design view'}
+      >{designMode ? '▶ Switch to Playback view' : '✏ Switch to Design view'}</button>
+    {/if}
     {#if designMode}
       <div class="gizmo-toolbar" role="toolbar" aria-label="Gizmo mode">
         {#if selectedObjectId}

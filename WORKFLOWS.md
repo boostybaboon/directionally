@@ -25,11 +25,6 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 | 4 | Right panel switches to the **Staging** tab automatically (production is empty) | OK | |
 | ✓ | Left panel shows "The Robot Play" as the active production | OK | |
 
-General section snags:
-
-~~When reloading the productions view, clicking on the expander arrow only shows the cast list. Only after clicking the production name do we see the scenes. Thereafter clicking the expander shows cast plus acts/scenes.
-Am expecting when clicking on the production name for it to expand/collapse the section also~~ Fixed
-
 ---
 
 ### Part B — Build the cast
@@ -58,14 +53,6 @@ Am expecting when clicking on the production name for it to expand/collapse the 
 | 16 | Use the root **+ Scene** button at the bottom of the Scenes section; name it `"Prologue"` | Ok | |
 | ✓ | Scenes section shows 2 act groups × 2 scenes + 1 top-level Prologue = 5 scenes; clicking a scene name switches to it | Ok | |
 
-General section snags:
-
-~~Can't add a top level scene before Act 1 after Act 1 is created. i.e. can't post-facto add the Prologue if I forget. Can add epilogue~~ Fixed 
-~~No visual indication of scene grouping. Maybe indenting, or implement collapsible tree structure to collapse acts?~~ Fixed
-~~If I delete all acts and am left with just the Epilogue for example, I can't delete the Epilogue scene. Lack X on top level scenes after I delete a scene or act. Maybe not limited to top level items, seems an issue with X being available on items after a deletion~~ Fixed
-Can't rearrange scenes in the tree-like view (known future work?)
-~~Scenes should fill the remaining area in the left hand tab, if examples and Speech and Audio are collapsed then I'd expect these to collapse at the bottom leaving maximum space for an overview of acts/scenes~~ Fixed
-
 ---
 
 ### Part D — Author Scene 1 (Prologue)
@@ -88,13 +75,6 @@ Can't rearrange scenes in the tree-like view (known future work?)
 | 30 | Click **▶ Switch to Playback view** and press **▶**; Alpha and Beta speak with speech bubbles | Partial | characters don't do their idle animation |
 | 31 | Press **■** (rewind) to return to t=0 | Ok | |
 | ✓ | Two characters on stage; two spoken lines play correctly | Ok | |
-
-General section snags:
-
-- Find a better 'add actor from cast to scene' visual paradigm
-
-- Plan a better interaction with the scene tree for arbitrarily adding acts and scenes (too many randomly popping up buttons currently, and can't rearrange the tree conveniently)
-
 
 ---
 
@@ -121,16 +101,6 @@ General section snags:
 | 40 | Click **The Chase** (under Act 1); stage both actors; add 1–2 dialogue lines | — | |
 | 41 | For each scene, scrub the transport slider; verify duration is non-zero | — | |
 | ✓ | All 5 scenes have staged actors and dialogue | — | |
-
-Snags for these scenes:
-- Add and item from catalogue: Can add supported lights to this (Hemispherical, Directional)
-
-Edit mode paradigm
-- Confusing paradigm currently. Unclear when an edit to a spawn parameter or a block end target parameter is committed to the system
-- Overlays which are attempting to help you actually confuse, and don't follow the mode you're actually in, i.e. don't always change when you select different scene items
-- Unclear when you're in t=0 mode
-- The upper HUD for edit things appears in the middle of the whole view, should be on the design half of the view, if we keep it
-- Still unclear when we are applying the current design view camera position to the scene camera position (either spawn or block end), and when we are syncing the design view camera position with the current presentation view position
 
 ---
 
