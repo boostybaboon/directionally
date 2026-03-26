@@ -54,6 +54,7 @@ export function storedSceneToModel(storedScene: StoredScene, storedActors: Store
       asset:          { type: 'gltf', url: character?.gltfPath ?? FALLBACK_GLTF_URL },
       voice:          sa.voice ?? defaultVoice(i),
       defaultRotation: character?.defaultRotation,
+      tint:           sa.tint,
     };
   });
 

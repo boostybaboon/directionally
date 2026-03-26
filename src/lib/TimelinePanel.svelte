@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { StoredActor } from '../core/storage/types.js';
+  import { ACTOR_COLORS, numToHex } from './actorColors.js';
   import type { ActorBlock, LightBlock, CameraBlock, SetPieceBlock } from '../core/domain/types.js';
   import type { LightConfig, SetPiece } from '../core/domain/types.js';
 
@@ -99,9 +100,11 @@
   }
   const ticks = $derived(computeTicks(viewDuration));
 
-  // Per-actor block colours
-  const COLORS = ['#4a9eff', '#ff7a5c', '#56b87a', '#c07fff', '#ffd060', '#60d0ff'];
-  function actorColor(ai: number) { return COLORS[ai % COLORS.length]; }
+  // Per-actor block colours — use actor.tint when present, otherwise cycle the palette
+  function actorColor(ai: number) {
+    const actor = actors[ai];
+    return actor?.tint !== undefined ? numToHex(actor.tint) : ACTOR_COLORS[ai % ACTOR_COLORS.length];
+  }
 
   // ── Drag ────────────────────────────────────────────────────────────────────
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { getCharacters, getSetPieces, getById } from './catalogue';
+import { CATALOGUE_ENTRIES } from './entries';
 import type { CatalogueEntry, CharacterEntry, SetPieceEntry } from './types';
 
 // Controlled fixture — tests must not depend on real seed data so they
@@ -79,5 +80,25 @@ describe('getById', () => {
 
   it('is case-sensitive', () => {
     expect(getById('Robot-A', fixture)).toBeUndefined();
+  });
+});
+
+describe('CATALOGUE_ENTRIES seed data — Phase 9.B set pieces', () => {
+  const pieces = getSetPieces(CATALOGUE_ENTRIES);
+  const ids = pieces.map((p) => p.id);
+
+  it.each(['wall-flat', 'stage-deck', 'studio-backdrop', 'table', 'step'])(
+    'includes %s',
+    (id) => expect(ids).toContain(id),
+  );
+
+  it('wall-flat is a box with correct proportions', () => {
+    const p = getById('wall-flat', CATALOGUE_ENTRIES);
+    expect(p?.geometry).toMatchObject({ type: 'box', width: 4, height: 3, depth: 0.15 });
+  });
+
+  it('stage-deck is a plane', () => {
+    const p = getById('stage-deck', CATALOGUE_ENTRIES);
+    expect(p?.geometry.type).toBe('plane');
   });
 });

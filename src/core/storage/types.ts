@@ -25,6 +25,8 @@ export type StoredActor = {
   scale?: number;
   /** Per-actor voice configuration. Falls back to cycling DEFAULT_VOICES when absent. */
   voice?: ActorVoice;
+  /** Emissive tint as a 24-bit RGB integer (e.g. 0x4a9eff). Auto-assigned from the ACTOR_COLORS palette at AddActorCommand time. */
+  tint?: number;
 };
 
 /**

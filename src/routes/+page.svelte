@@ -17,13 +17,14 @@
   import ScriptEditor from '$lib/script/ScriptEditor.svelte';
   import PropertiesPanel from '$lib/PropertiesPanel.svelte';
   import { storedSceneToModel } from '../core/storage/storedSceneToModel.js';
-  import { starterSceneShell, estimateDuration, getActiveScene } from '../core/storage/sceneBuilder.js';
+  import { starterSceneShell, defaultSceneShell, estimateDuration, getActiveScene } from '../core/storage/sceneBuilder.js';
   import type { ScriptLine } from '$lib/script/types';
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import type { StoredProduction, StoredActor, StoredGroup, NamedScene, ProductionSpeechSettings } from '../core/storage/types.js';
   import { getScenes } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
-  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, SetActorCatalogueIdCommand, AddSetPieceCommand, RemoveSetPieceCommand, StageActorCommand, UnstageActorCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, SetActorVoiceCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand, UpdateSceneLightCommand, AddSceneLightCommand, RemoveSceneLightCommand } from '../core/document/commands.js';
+  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, SetActorCatalogueIdCommand, AddSetPieceCommand, RemoveSetPieceCommand, StageActorCommand, UnstageActorCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, SetActorVoiceCommand, SetActorTintCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand, UpdateSceneLightCommand, AddSceneLightCommand, RemoveSceneLightCommand } from '../core/document/commands.js';
+  import { ACTOR_COLORS, hexToNum, numToHex } from '$lib/actorColors.js';
   import type { SpeakAction, TransformTrack, LightingTrack, ActorBlock, LightBlock, CameraBlock, SetPieceBlock, ActorVoice, KokoroVoice, LightConfig } from '../core/domain/types.js';
   import { getCharacters, getLights, getSetPieces } from '../core/catalogue/catalogue.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
@@ -122,6 +123,8 @@
   // Productions
   let productions = $state<StoredProduction[]>(ProductionStore.list());
   let activeProductionId = $state<string | null>(null);
+  /** True after the currently-active scene is deleted — blanks 3D + all views until user selects another scene. */
+  let sceneDeletedBlank = $state(false);
   /** Active document — owns undo/redo history and command execution. */
   let activeDoc = $state<ProductionDocument | null>(null);
   /**
@@ -143,11 +146,11 @@
 
   /** Active scene ID for the tree — falls back to first scene when none explicitly set. */
   const treeActiveSceneId = $derived(
-    docSnapshot?.activeSceneId ?? (docSnapshot ? getScenes(docSnapshot.tree ?? [])[0]?.id : undefined)
+    sceneDeletedBlank ? undefined : (docSnapshot?.activeSceneId ?? (docSnapshot ? getScenes(docSnapshot.tree ?? [])[0]?.id : undefined))
   );
 
   /** Active scene derived from the current snapshot. Updates whenever a command executes. */
-  const activeScene = $derived(docSnapshot ? getActiveScene(docSnapshot) : undefined);
+  const activeScene = $derived(sceneDeletedBlank ? undefined : (docSnapshot ? getActiveScene(docSnapshot) : undefined));
 
   /** Stable string ID of the active scene — reads from the document primitive so $effects only fire on actual scene switches, not on every command. */
   const activeSceneId = $derived(docSnapshot?.activeSceneId);
@@ -381,15 +384,28 @@
   }
 
   function loadProduction(prod: StoredProduction) {
+    sceneDeletedBlank = false;
     let prevSceneId = prod.activeSceneId;
     activeDoc = new ProductionDocument(
       prod,
       (updated) => {
-        const sceneChanged = updated.activeSceneId !== prevSceneId;
+        const prevId = prevSceneId;
         prevSceneId = updated.activeSceneId;
+        const sceneChanged = updated.activeSceneId !== prevId;
+        // Detect deletion of the active scene: the previous active scene ID no longer
+        // exists in the updated tree (RemoveSceneCommand auto-switched activeSceneId).
+        const activeSceneWasDeleted = sceneChanged && prevId !== undefined
+          && !getScenes(updated.tree ?? []).some(ns => ns.id === prevId);
         docSnapshot = updated;
         productions = ProductionStore.list();
-        presenter?.loadModel(modelFromProduction(updated), sceneChanged ? 0 : undefined);
+        if (activeSceneWasDeleted) {
+          sceneDeletedBlank = true;
+          presenter?.loadModel(storedSceneToModel(defaultSceneShell(), []), 0);
+        } else {
+          const wasBlank = sceneDeletedBlank;
+          if (wasBlank) sceneDeletedBlank = false;
+          presenter?.loadModel(modelFromProduction(updated), (sceneChanged || wasBlank) ? 0 : undefined);
+        }
       },
       (updated) => ProductionStore.save(updated),
     );
@@ -410,6 +426,10 @@
     productions = ProductionStore.list();
     if (activeProductionId === id) {
       activeProductionId = null;
+      activeDoc = null;
+      docSnapshot = null;
+      sceneDeletedBlank = false;
+      presenter?.loadModel(storedSceneToModel(defaultSceneShell(), []), 0);
     }
   }
 
@@ -524,6 +544,7 @@
       id: crypto.randomUUID(),
       role,
       catalogueId: CATALOGUE_CHARACTERS[0]?.id ?? '',
+      tint: hexToNum(ACTOR_COLORS[allActors.length % ACTOR_COLORS.length]),
     };
     activeDoc.execute(new AddActorCommand(actor));
     renamingActorId = actor.id;
@@ -595,9 +616,13 @@
 
   function enterSpawnMode(entityId: string) {
     if (!designMode) designMode = true;
-    selectionState = entityId === '__camera__'
-      ? { kind: 'camera-initial' }
-      : { kind: 'actor-initial', actorId: entityId };
+    if (entityId === '__camera__') {
+      selectionState = { kind: 'camera-initial' };
+    } else if (scenePieces.some((p) => p.name === entityId)) {
+      selectionState = { kind: 'setpiece-initial', setPieceId: entityId };
+    } else {
+      selectionState = { kind: 'actor-initial', actorId: entityId };
+    }
     if (currentPosition >= 0.05) presenter?.handleSliderInput(0);
   }
 
@@ -627,7 +652,8 @@
       const base = entry.label;
       const sameLabel = actors.filter((a) => a.role === base || a.role.startsWith(base + ' '));
       const role = sameLabel.length === 0 ? base : `${base} ${sameLabel.length + 1}`;
-      const actor: StoredActor = { id: crypto.randomUUID(), role, catalogueId: id };
+      const castIndex = (activeDoc.current.actors ?? []).length;
+      const actor: StoredActor = { id: crypto.randomUUID(), role, catalogueId: id, tint: hexToNum(ACTOR_COLORS[castIndex % ACTOR_COLORS.length]) };
       activeDoc.execute(new AddActorCommand(actor));
       // Set selectionState now so the sceneLoadCount $effect in Presenter re-applies
       // selection visuals after the next loadModel triggered by MoveStagedActorCommand.
@@ -640,7 +666,12 @@
       const base = entry.id;
       const count = existing.filter((p) => p.name === base || p.name.startsWith(base + '-')).length;
       const name = count === 0 ? base : `${base}-${count + 1}`;
-      const piece: SetPiece = { name, geometry: entry.geometry, material: entry.material };
+      const piece: SetPiece = {
+        name,
+        geometry: entry.geometry,
+        material: entry.material,
+        ...(entry.defaultRotation ? { rotation: entry.defaultRotation } : {}),
+      };
       activeDoc.execute(new AddSetPieceCommand(piece));
       selectionState = { kind: 'setpiece-initial', setPieceId: name };
       activeDoc.execute(new MoveSetPieceCommand(name, position));
@@ -1119,6 +1150,14 @@
                                           {:else}
                                             <button class="cast-role-btn" title="Click to rename" onclick={() => startActorRename(actor.id)}>{actor.role}</button>
                                           {/if}
+                                          <input
+                                            type="color"
+                                            class="actor-tint-swatch"
+                                            value={actor.tint !== undefined ? numToHex(actor.tint) : ACTOR_COLORS[(actors.indexOf(actor)) % ACTOR_COLORS.length]}
+                                            title="Actor tint colour"
+                                            oninput={(e) => activeDoc?.execute(new SetActorTintCommand(actor.id, hexToNum(e.currentTarget.value)))}
+                                            aria-label="Actor tint"
+                                          />
                                           <select class="actor-char-select cast-char-select" value={actor.catalogueId} onchange={(e) => activeDoc?.execute(new SetActorCatalogueIdCommand(actor.id, e.currentTarget.value))} aria-label="Character model">
                                             {#each CATALOGUE_CHARACTERS as char}
                                               <option value={char.id}>{char.label}</option>
@@ -2427,6 +2466,17 @@
 
   .cast-row.in-scene {
     background: #1a2535;
+  }
+
+  .actor-tint-swatch {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 1px solid #444;
+    border-radius: 3px;
+    cursor: pointer;
+    flex-shrink: 0;
+    background: none;
   }
 
   .cast-role-btn {

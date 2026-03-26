@@ -617,7 +617,7 @@ A dedicated **Present** button plays all scenes in the production in depth-first
 
 **Build a set** — The existing primitives (box, plane, sphere, cylinder) are architecturally correct, but their catalogue sizes are fixed (1×1×1 cube, 10×10 plane). Building a theatre flat (4m wide × 3m tall × 0.15m deep) or a news desk (1.5m × 0.75m × 0.5m) requires resizing after placement. Currently no command covers non-positional edits — color, scale, and geometry dimensions are immutable once a set piece is added.
 
-**Visual indication of different characters** — All Robot/Soldier instances look identical in the viewport. The timeline already assigns each actor a distinct color from a fixed palette (`actorColor(i)`). Projecting that same color as a ground disc beneath each staged actor creates a direct visual link between the timeline strip and the character's stage position — no GLTF traversal or shader work required.
+**Visual indication of different characters** — All Robot/Soldier instances look identical in the viewport. The timeline already assigns each actor a distinct color from a fixed palette (`actorColor(i)`). Applying that same colour as an emissive tint on the actor's GLTF materials creates a direct visual link between the timeline strip and the character — visible from any camera angle, no additional geometry required.
 
 #### Phase 9.A — Set piece property inspector
 
@@ -650,33 +650,36 @@ Add entries with set-building-appropriate default sizes so common environments n
 
 These are also the seeds for "snap a studio together in under a minute" — the canonical Phase 9 demo task.
 
-#### Phase 9.C — Character ground markers
+#### Phase 9.C — Actor tint
 
-Each staged actor with a known `startPosition` gets a coloured disc rendered below them. The colour comes from the same `COLORS` palette as the actor's timeline track, so the disc is visually linked to the strip.
+Each staged actor is assigned a distinct emissive tint drawn from the `COLORS` palette, matching the colour of its timeline strip. This makes multi-actor scenes immediately readable without any additional set dressing.
 
 **Implementation:**
-- In `storedSceneToModel.ts`, after resolving staged actors, synthesize one `SetPiece` mesh per staged actor: `{ type: 'cylinder', radiusTop, radiusBottom, height: 0.04 }` at `[x, 0.02, z]` with `material.color = ACTOR_COLORS[i % ACTOR_COLORS.length]` and a low `emissive` so it is visible in shadow.
-- The `ACTOR_COLORS` palette is extracted into `src/lib/actorColors.ts` (a plain constant) so it is importable by both `TimelinePanel.svelte` and `storedSceneToModel.ts` without a circular dependency through the UI layer.
-- Markers are toggled by `StoredScene.showMarkers?: boolean` (default `true`). A checkbox in the Scene section of the Staging tab drives `UpdateSceneMarkerCommand(flag)`.
-- Markers are synthetic — not stored in `scene.set`, not selectable, not animatable.
+- `StoredActor.tint?: number` — hex colour stored on the actor. Auto-assigned from `COLORS[castIndex % COLORS.length]` at `AddActorCommand` time; user-overridable via colour picker in Cast UI.
+- `ACTOR_COLORS` palette extracted into `src/lib/actorColors.ts` so it is importable by both `TimelinePanel.svelte` and `commands.ts` without circular UI dependencies.
+- `GLTFAsset` constructor gains an optional `emissiveTint?: number` arg. After `loader.loadAsync()`, if set, the loaded scene is traversed: every `MeshStandardMaterial` is **cloned** (preventing cross-actor contamination when the same GLTF URL is shared) and `emissive` + `emissiveIntensity = 0.25` are applied.
+- `SceneBridge.ts` and `storedSceneToModel.ts` thread `actor.tint` through to the `GLTFAsset` constructor.
+- `SetActorTintCommand(actorId, tint)` patches `StoredActor.tint` for explicit user overrides (full undo/redo).
+
+**Future path (Phase 13.A):** For bundled assets where mesh names are known, a `meshRoles` manifest in `CharacterEntry` (`shirt`, `trousers`, `shoes`, `hair`, `skin`) enables per-region colouring without shader authoring. User-uploaded GLTFs require an in-app mesh inspector (out of scope).
 
 #### New commands
 
 | Command | What it does |
 |---|---|
 | `UpdateSetPieceCommand(name, patch)` | Patches any `SetPiece` fields by name |
-| `UpdateSceneMarkerCommand(show)` | Sets `StoredScene.showMarkers` |
+| `SetActorTintCommand(actorId, tint)` | Sets or clears `StoredActor.tint` |
 
 #### Phase complete when
 
 - A user can place a wall flat, scale it to cover the back of the stage, and recolor it — all via UI
-- A scene with two Robot actors shows distinct-coloured ground discs that match their timeline strip colors
+- A scene with two Robot actors shows distinct emissive tints that match their timeline strip colours
 - The "quick studio" demo (backdrop + stage deck + table + two characters) can be assembled in the browser in under 2 minutes
 
 #### Out of scope for Phase 9
 
 - Material texture URLs (CORS + asset management complexity; deferred to Phase 13)
-- Character skin/tint via GLTF mesh traversal (shader work; separate investigation)
+- Per-mesh costume colours (requires knowing GLTF internal mesh names; deferred to Phase 13.A — mesh-role manifest in `CharacterEntry`)
 - `SetPiece.parent` hierarchical UI (deferred from Phase 8; still low priority)
 - Editable roughness/metalness (color covers 90% of set-dressing needs; PBR sliders deferred to a "materials" phase)
 
@@ -791,8 +794,8 @@ Playback in the browser is real-time and resolution-bound by the display. Render
 2. **Phase 9.B — Set piece catalogue expansion** *(spec above)*  
    Wall flat 4×3×0.15 m, stage deck 8×8 m, backdrop, table, step with set-ready default sizes.
 
-3. **Phase 9.C — Character ground disc markers** *(spec above)*  
-   Coloured cylinder disc under each staged actor, matching the timeline palette colour.
+3. **Phase 9.C — Actor tint** *(spec above)*  
+   Emissive tint on each staged GLTF actor, auto-assigned from the timeline palette.
 
 ### Tier 2 — Workflow completeness
 

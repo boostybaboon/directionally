@@ -156,6 +156,19 @@ export class AddActorCommand implements Command {
   }
 }
 
+export class SetActorTintCommand implements Command {
+  readonly label = 'Set actor tint';
+  constructor(private readonly actorId: string, private readonly tint: number | undefined) {}
+  execute(doc: StoredProduction): StoredProduction {
+    return touch({
+      ...doc,
+      actors: (doc.actors ?? []).map((a) =>
+        a.id === this.actorId ? { ...a, tint: this.tint } : a
+      ),
+    });
+  }
+}
+
 export class RenameActorCommand implements Command {
   readonly label: string;
   constructor(private readonly actorId: string, private readonly name: string) {
@@ -390,6 +403,35 @@ export class RemoveSetPieceCommand implements Command {
   }
   execute(doc: StoredProduction): StoredProduction {
     return touch(updateActiveScene(doc, (scene) => ({ ...scene, set: scene.set.filter((p) => p.name !== this.name) })));
+  }
+}
+
+/**
+ * Patch non-positional fields on the named SetPiece (color, scale, geometry dimensions).
+ * Uses shallow merge for the `material` and `geometry` sub-objects so partial patches
+ * (e.g. changing only color) do not clobber unrelated fields.
+ * No-op when the piece is not found or no scene is present.
+ */
+export class UpdateSetPieceCommand implements Command {
+  readonly label: string;
+  constructor(
+    private readonly name: string,
+    private readonly patch: Partial<SetPiece>,
+  ) {
+    this.label = `Update set piece "${name}"`;
+  }
+  execute(doc: StoredProduction): StoredProduction {
+    return touch(updateActiveScene(doc, (scene) => ({
+      ...scene,
+      set: scene.set.map((p) =>
+        p.name !== this.name ? p : {
+          ...p,
+          ...this.patch,
+          ...(this.patch.material ? { material: { ...p.material, ...this.patch.material } } : {}),
+          ...(this.patch.geometry ? { geometry: { ...p.geometry, ...this.patch.geometry } } : {}),
+        }
+      ),
+    })));
   }
 }
 

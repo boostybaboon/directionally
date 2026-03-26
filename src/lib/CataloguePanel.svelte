@@ -61,7 +61,7 @@
               </div>
               {#if onadd}
                 <button class="add-to-scene-btn" onclick={() => { onadd('character', entry.id); toggleCharacter(entry.id); }}>
-                  + Add to scene
+                  + Add to production cast list
                 </button>
               {/if}
             {/if}

@@ -54,8 +54,8 @@ export function buildWorkflow2(initial: StoredProduction): StoredProduction {
   };
 
   // ── Cast ──────────────────────────────────────────────────────────────────
-  exec(new AddActorCommand({ id: alphaId, role: 'Alpha', catalogueId: 'robot-expressive' }));
-  exec(new AddActorCommand({ id: betaId,  role: 'Beta',  catalogueId: 'robot-expressive' }));
+  exec(new AddActorCommand({ id: alphaId, role: 'Alpha', catalogueId: 'robot-expressive', tint: 0x4a9eff }));
+  exec(new AddActorCommand({ id: betaId,  role: 'Beta',  catalogueId: 'robot-expressive', tint: 0xff7a5c }));
 
   // ── Structure ─────────────────────────────────────────────────────────────
   exec(new RenameSceneCommand(prologueId, 'Prologue'));

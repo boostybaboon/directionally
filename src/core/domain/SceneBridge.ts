@@ -154,7 +154,7 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
 
     const asset = actor.asset;
     if (asset.type === 'gltf') {
-      const gltf = new GLTFAsset(actor.id, asset.url);
+      const gltf = new GLTFAsset(actor.id, asset.url, actor.tint);
       if (staged.startPosition) gltf.position = new THREE.Vector3(...staged.startPosition);
       // Use authored startRotation when available (it already incorporates any default offset
       // because it was captured from the live Three.js object). Fall back to the catalogue's

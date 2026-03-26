@@ -25,6 +25,13 @@ export interface SetPieceEntry {
   label: string;
   geometry: GeometryConfig;
   material: MaterialConfig;
+  /**
+   * Euler XYZ rotation (radians) applied to the SetPiece on first placement.
+   * Use this to correct geometry whose default orientation differs from the scene
+   * convention, e.g. THREE.PlaneGeometry is in the XY plane and needs [-π/2, 0, 0]
+   * to lie flat on the XZ ground plane.
+   */
+  defaultRotation?: Vec3;
 }
 
 /** Distributive Omit: correctly removes a key from each member of a union type. */

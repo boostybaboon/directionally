@@ -4,7 +4,7 @@
   import type { ActorBlock, LightBlock, CameraBlock, SetPieceBlock, LightConfig, SetPiece } from '../core/domain/types.js';
   import type { StoredScene } from '../core/storage/types.js';
   import type { Command } from '../core/document/Command.js';
-  import { UpdateActorBlockCommand, RemoveActorBlockCommand, UpdateLightBlockCommand, RemoveLightBlockCommand, UpdateCameraBlockCommand, RemoveCameraBlockCommand, UpdateSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSceneLightCommand } from '../core/document/commands.js';
+  import { UpdateActorBlockCommand, RemoveActorBlockCommand, UpdateLightBlockCommand, RemoveLightBlockCommand, UpdateCameraBlockCommand, RemoveCameraBlockCommand, UpdateSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSceneLightCommand, UpdateSetPieceCommand } from '../core/document/commands.js';
 
   interface Props {
     selectedEntity: SelectedEntity;
@@ -71,6 +71,20 @@
       ? (lights.find((l) => l.id === entity.lightId) ?? null)
       : null
   );
+
+  const selSetPiece = $derived(
+    entity?.kind === 'setpiece-initial'
+      ? (setPieces.find((p) => p.name === entity.setPieceId) ?? null)
+      : null
+  );
+
+  function numToHex(n: number): string {
+    return '#' + n.toString(16).padStart(6, '0');
+  }
+
+  function hexToNum(s: string): number {
+    return parseInt(s.slice(1), 16);
+  }
 
   const selActor = $derived(
     entity?.kind === 'actor-initial' || entity?.kind === 'actor-block'
@@ -140,6 +154,97 @@
         <span class="anim-label blk-pos blk-pos-none">stationary · drag to set</span>
       {/if}
     </div>
+  </div>
+
+{:else if entity.kind === 'setpiece-initial' && selSetPiece}
+  {@const piece = selSetPiece}
+  {@const geom = piece.geometry}
+  <div class="prop-section">
+    <div class="prop-header">
+      <span class="prop-label">Set piece — {entity.setPieceId}</span>
+      <span class="prop-type-badge">{geom.type}</span>
+    </div>
+    <div class="anim-row">
+      <label class="anim-label" for="pp-sp-color">Color</label>
+      <input
+        id="pp-sp-color"
+        type="color"
+        class="sp-color-input"
+        value={numToHex(piece.material.color)}
+        onchange={(e) => execute(new UpdateSetPieceCommand(entity.setPieceId, { material: { ...piece.material, color: hexToNum(e.currentTarget.value) } }))}
+      />
+    </div>
+    {#if geom.type === 'box'}
+      <div class="anim-row">
+        <label class="anim-label" for="pp-sp-w">W</label>
+        <input id="pp-sp-w" class="anim-number" type="number" step="0.1" min="0.01"
+          value={geom.width}
+          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) execute(new UpdateSetPieceCommand(entity.setPieceId, { geometry: { type: 'box', width: n, height: geom.height, depth: geom.depth } })); }}
+        />
+        <label class="anim-label" for="pp-sp-h">H</label>
+        <input id="pp-sp-h" class="anim-number" type="number" step="0.1" min="0.01"
+          value={geom.height}
+          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) execute(new UpdateSetPieceCommand(entity.setPieceId, { geometry: { type: 'box', width: geom.width, height: n, depth: geom.depth } })); }}
+        />
+        <label class="anim-label" for="pp-sp-d">D</label>
+        <input id="pp-sp-d" class="anim-number" type="number" step="0.1" min="0.01"
+          value={geom.depth}
+          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) execute(new UpdateSetPieceCommand(entity.setPieceId, { geometry: { type: 'box', width: geom.width, height: geom.height, depth: n } })); }}
+        />
+      </div>
+    {:else if geom.type === 'plane'}
+      <div class="anim-row">
+        <label class="anim-label" for="pp-sp-w">W</label>
+        <input id="pp-sp-w" class="anim-number" type="number" step="0.1" min="0.01"
+          value={geom.width}
+          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) execute(new UpdateSetPieceCommand(entity.setPieceId, { geometry: { type: 'plane', width: n, height: geom.height } })); }}
+        />
+        <label class="anim-label" for="pp-sp-h">H</label>
+        <input id="pp-sp-h" class="anim-number" type="number" step="0.1" min="0.01"
+          value={geom.height}
+          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) execute(new UpdateSetPieceCommand(entity.setPieceId, { geometry: { type: 'plane', width: geom.width, height: n } })); }}
+        />
+      </div>
+    {:else if geom.type === 'sphere'}
+      <div class="anim-row">
+        <label class="anim-label" for="pp-sp-r">Radius</label>
+        <input id="pp-sp-r" class="anim-number" type="number" step="0.1" min="0.01"
+          value={geom.radius}
+          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) execute(new UpdateSetPieceCommand(entity.setPieceId, { geometry: { type: 'sphere', radius: n } })); }}
+        />
+      </div>
+    {:else if geom.type === 'cylinder'}
+      <div class="anim-row">
+        <label class="anim-label" for="pp-sp-cr">Radius</label>
+        <input id="pp-sp-cr" class="anim-number" type="number" step="0.1" min="0"
+          value={geom.radiusTop}
+          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n >= 0) execute(new UpdateSetPieceCommand(entity.setPieceId, { geometry: { type: 'cylinder', radiusTop: n, radiusBottom: n, height: geom.height } })); }}
+        />
+        <label class="anim-label" for="pp-sp-ch">H</label>
+        <input id="pp-sp-ch" class="anim-number" type="number" step="0.1" min="0.01"
+          value={geom.height}
+          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) execute(new UpdateSetPieceCommand(entity.setPieceId, { geometry: { type: 'cylinder', radiusTop: geom.radiusTop, radiusBottom: geom.radiusBottom, height: n } })); }}
+        />
+      </div>
+    {/if}
+    <div class="anim-row">
+      <label class="anim-label" for="pp-sp-sx">Scale</label>
+      <input id="pp-sp-sx" class="anim-number" type="number" step="0.1" min="0.01"
+        value={piece.scale?.[0] ?? 1}
+        onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) execute(new UpdateSetPieceCommand(entity.setPieceId, { scale: [n, piece.scale?.[1] ?? 1, piece.scale?.[2] ?? 1] })); }}
+      />
+      <label class="anim-label" for="pp-sp-sy">Y</label>
+      <input id="pp-sp-sy" class="anim-number" type="number" step="0.1" min="0.01"
+        value={piece.scale?.[1] ?? 1}
+        onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) execute(new UpdateSetPieceCommand(entity.setPieceId, { scale: [piece.scale?.[0] ?? 1, n, piece.scale?.[2] ?? 1] })); }}
+      />
+      <label class="anim-label" for="pp-sp-sz">Z</label>
+      <input id="pp-sp-sz" class="anim-number" type="number" step="0.1" min="0.01"
+        value={piece.scale?.[2] ?? 1}
+        onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) execute(new UpdateSetPieceCommand(entity.setPieceId, { scale: [piece.scale?.[0] ?? 1, piece.scale?.[1] ?? 1, n] })); }}
+      />
+    </div>
+    <p class="prop-hint">Drag the set piece in the viewport to set its position.</p>
   </div>
 
 {:else if entity.kind === 'setpiece-initial'}
@@ -413,6 +518,16 @@
 
   .icon-btn:hover { color: #ccc; background: #2a2a2a; }
   .icon-btn.danger:hover { color: #ff6b6b; }
+
+  .sp-color-input {
+    width: 38px;
+    height: 22px;
+    padding: 1px 2px;
+    border: 1px solid #333;
+    border-radius: 3px;
+    background: transparent;
+    cursor: pointer;
+  }
 
   .actor-char-select {
     flex: 1;

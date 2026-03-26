@@ -7,7 +7,8 @@ export class GLTFAsset extends Object3DAsset {
 
   constructor(
     public readonly name: string,
-    public readonly url: string
+    public readonly url: string,
+    public readonly emissiveTint?: number
   ) {
     super(name);
     this._animations = [];
@@ -24,6 +25,20 @@ export class GLTFAsset extends Object3DAsset {
       this._threeObject = gltf.scene;
       this._animations = gltf.animations;
       this._threeObject.name = this.name;
+      if (this.emissiveTint !== undefined) {
+        // Clone each material to prevent cross-actor contamination when the same
+        // GLTF URL is shared, then apply a subtle emissive tint for identification.
+        const color = new THREE.Color(this.emissiveTint);
+        this._threeObject.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            const mesh = child as THREE.Mesh;
+            const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            mesh.material = Array.isArray(mesh.material)
+              ? mats.map((m) => { const c = (m as THREE.MeshStandardMaterial).clone(); c.emissive = color; c.emissiveIntensity = 0.1; return c; })
+              : (() => { const c = (mesh.material as THREE.MeshStandardMaterial).clone(); c.emissive = color; c.emissiveIntensity = 0.1; return c; })();
+          }
+        });
+      }
       this._threeObject.position.copy(this._position);
       this._threeObject.rotation.copy(this._rotation);
       this._threeObject.scale.copy(this._scale);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { AddActorCommand, RemoveActorCommand, SetSpeakLinesCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand } from './commands';
+import { AddActorCommand, RemoveActorCommand, SetSpeakLinesCommand, MoveStagedActorCommand, MoveSetPieceCommand, UpdateSetPieceCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand } from './commands';
 import type { StoredActor, StoredProduction, StoredScene, NamedScene } from '../storage/types';
 import { getScenes } from '../storage/types';
 import type { ScriptLine } from '../../lib/script/types';
@@ -297,6 +297,49 @@ describe('MoveSetPieceCommand', () => {
   it('is a no-op when no scenes', () => {
     const doc = makeProduction();
     const result = new MoveSetPieceCommand('box', [1, 0, 1]).execute(doc);
+    expect(result.tree).toBeUndefined();
+  });
+});
+
+// ── UpdateSetPieceCommand ───────────────────────────────────────────
+
+describe('UpdateSetPieceCommand', () => {
+  const boxSet = [{ name: 'box', geometry: { type: 'box' as const, width: 1, height: 1, depth: 1 }, material: { color: 0xff0000, emissive: 0x111111 } }];
+
+  it('patches material color without clobbering emissive', () => {
+    const doc = makeProduction({ tree: [makeNamedScene({ set: boxSet })], activeSceneId: 'sc1' });
+    const result = new UpdateSetPieceCommand('box', { material: { color: 0x00ff00 } }).execute(doc);
+    const piece = getResultScene(result).set[0];
+    expect(piece.material.color).toBe(0x00ff00);
+    expect(piece.material.emissive).toBe(0x111111);
+  });
+
+  it('patches geometry width without clobbering other dimensions', () => {
+    const doc = makeProduction({ tree: [makeNamedScene({ set: boxSet })], activeSceneId: 'sc1' });
+    const result = new UpdateSetPieceCommand('box', { geometry: { type: 'box', width: 4, height: 1, depth: 1 } }).execute(doc);
+    const piece = getResultScene(result).set[0];
+    expect(piece.geometry).toEqual({ type: 'box', width: 4, height: 1, depth: 1 });
+  });
+
+  it('sets scale', () => {
+    const doc = makeProduction({ tree: [makeNamedScene({ set: boxSet })], activeSceneId: 'sc1' });
+    const result = new UpdateSetPieceCommand('box', { scale: [2, 2, 2] }).execute(doc);
+    expect(getResultScene(result).set[0].scale).toEqual([2, 2, 2]);
+  });
+
+  it('leaves other set pieces unchanged', () => {
+    const twoSet = [
+      { name: 'box', geometry: { type: 'box' as const, width: 1, height: 1, depth: 1 }, material: { color: 0xff0000 } },
+      { name: 'sphere', geometry: { type: 'sphere' as const, radius: 0.5 }, material: { color: 0x0000ff } },
+    ];
+    const doc = makeProduction({ tree: [makeNamedScene({ set: twoSet })], activeSceneId: 'sc1' });
+    const result = new UpdateSetPieceCommand('box', { material: { color: 0x00ff00 } }).execute(doc);
+    expect(getResultScene(result).set[1].material.color).toBe(0x0000ff);
+  });
+
+  it('is a no-op when no scenes', () => {
+    const doc = makeProduction();
+    const result = new UpdateSetPieceCommand('box', { material: { color: 0x00ff00 } }).execute(doc);
     expect(result.tree).toBeUndefined();
   });
 });

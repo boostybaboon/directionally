@@ -14,6 +14,8 @@ export type Actor = {
    * computed facing-track quaternion so direction-of-travel is accurate.
    */
   defaultRotation?: Vec3;
+  /** Emissive tint as a 24-bit RGB integer. Applied to cloned materials after load. */
+  tint?: number;
 };
 
 export class Production {
