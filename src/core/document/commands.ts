@@ -1,7 +1,8 @@
 import type { Command } from './Command.js';
 import type { StoredProduction, StoredActor, StoredScene, NamedScene, StoredGroup, ProductionSpeechSettings } from '../storage/types.js';
 import { getScenes } from '../storage/types.js';
-import type { ScriptLine } from '../../lib/script/types.js';
+import type { ScriptLine, DialogueLine } from '../../lib/script/types.js';
+import { isDialogueLine, isDirectionLine } from '../../lib/script/types.js';
 import type { CameraConfig, LightConfig, Vec3, SetPiece, StagedActor, SpeakAction, CameraTrackAction, PathKeyframe, ClipTrack, TransformTrack, LightingTrack, LoopStyle, ActorBlock, LightBlock, CameraBlock, SetPieceBlock, ActorVoice } from '../domain/types.js';
 import { restageCast, estimateDuration, defaultSceneShell, getActiveScene } from '../storage/sceneBuilder.js';
 
@@ -24,6 +25,27 @@ function mapScenesInTree(
     if (isGroup(node)) return { ...node, children: mapScenesInTree(node.children, fn) };
     return fn(node);
   });
+}
+
+/** Recursively apply `fn` to a single `NamedScene` node (including its metadata) identified by `targetId`. */
+function patchNamedSceneInTree(
+  tree: Array<StoredGroup | NamedScene>,
+  targetId: string,
+  fn: (ns: NamedScene) => NamedScene,
+): Array<StoredGroup | NamedScene> {
+  return tree.map((node) => {
+    if (isGroup(node)) return { ...node, children: patchNamedSceneInTree(node.children, targetId, fn) };
+    return node.id === targetId ? fn(node) : node;
+  });
+}
+
+/** Apply `fn` to the active `NamedScene` node (not just its inner StoredScene). */
+function updateActiveNamedScene(doc: StoredProduction, fn: (ns: NamedScene) => NamedScene): StoredProduction {
+  const allScenes = getScenes(doc.tree ?? []);
+  if (allScenes.length === 0) return doc;
+  const activeId = doc.activeSceneId ?? allScenes[0].id;
+  const tree = patchNamedSceneInTree(doc.tree ?? [], activeId, fn);
+  return { ...doc, tree };
 }
 
 /** Recursively apply `fn` to a single `NamedScene` leaf identified by `targetId`. */
@@ -219,7 +241,7 @@ export class RemoveActorCommand implements Command {
     return touch({
       ...doc,
       actors: (doc.actors ?? []).filter((a) => a.id !== this.actorId),
-      script: (doc.script ?? []).filter((l) => l.actorId !== this.actorId),
+      script: (doc.script ?? []).filter((l) => isDirectionLine(l) || (l as DialogueLine).actorId !== this.actorId),
       tree,
     });
   }
@@ -276,7 +298,7 @@ export class SetScriptCommand implements Command {
  */
 export class SetSpeakLinesCommand implements Command {
   readonly label = 'Set dialogue';
-  constructor(private readonly lines: ScriptLine[]) {}
+  constructor(private readonly lines: DialogueLine[]) {}
   execute(doc: StoredProduction): StoredProduction {
     const newScript = [...this.lines];
 
@@ -299,17 +321,29 @@ export class SetSpeakLinesCommand implements Command {
       };
     });
 
-    return touch({
-      ...updateActiveScene(doc, (scene) => {
-        const duration = Math.max(scene.duration ?? 6, t + 1);
-        // Preserve non-speak actions. Looping idle animate actions intentionally have
-        // no endTime (→ Infinity in GLTFAction) so no Tone hard-stop schedule fires and
-        // the actor holds its idle pose through scene end instead of snapping to T-pose.
-        const nonSpeak = scene.actions.filter((a) => a.type !== 'speak');
-        return { ...scene, duration, actions: [...nonSpeak, ...speakActions] };
-      }),
-      script: newScript,
+    // Merge updated dialogue lines back into the scene's full script, preserving
+    // direction lines at their authored positions.
+    const withScene = updateActiveScene(doc, (scene) => {
+      const duration = Math.max(scene.duration ?? 6, t + 1);
+      // Preserve non-speak actions. Looping idle animate actions intentionally have
+      // no endTime (→ Infinity in GLTFAction) so no Tone hard-stop schedule fires and
+      // the actor holds its idle pose through scene end instead of snapping to T-pose.
+      const nonSpeak = scene.actions.filter((a) => a.type !== 'speak');
+      return { ...scene, duration, actions: [...nonSpeak, ...speakActions] };
     });
+    const withNsScript = updateActiveNamedScene(withScene, (ns) => {
+      // Replace dialogue lines positionally, leaving direction lines in place.
+      let dIdx = 0;
+      const merged: ScriptLine[] = (ns.script ?? []).map((line) =>
+        isDirectionLine(line) ? line : (this.lines[dIdx++] ?? line)
+      );
+      // Append any new dialogue lines that didn't fit existing slots.
+      const remaining = this.lines.slice(dIdx);
+      const newNsScript = ns.script ? [...merged, ...remaining] : undefined;
+      return { ...ns, script: newNsScript };
+    });
+    // Keep the legacy root `script` field in sync for the fallback rendering path.
+    return touch({ ...withNsScript, script: newScript });
   }
 }
 
@@ -1275,5 +1309,142 @@ export class SetProductionSpeechSettingsCommand implements Command {
   }
   execute(doc: StoredProduction): StoredProduction {
     return touch({ ...doc, speechSettings: this.settings });
+  }
+}
+
+// ── Scene script + structural annotation commands ────────────────────────────
+
+/**
+ * Replace the full ordered script (dialogue + direction lines) for a named scene.
+ * Re-derives speak actions and timing from the new dialogue lines, identical to
+ * `SetSpeakLinesCommand`, but accepts the complete `ScriptLine[]` so the caller
+ * does not need to separate dialogue from directions before calling.
+ */
+export class SetSceneScriptCommand implements Command {
+  readonly label = 'Edit scene script';
+  constructor(
+    private readonly sceneId: string,
+    private readonly script: ScriptLine[],
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    const dialogueLines = this.script.filter(isDialogueLine);
+    const active = dialogueLines.filter((l) => l.text.trim().length > 0);
+    let t = 1.0;
+    const speakActions: SpeakAction[] = active.map((line) => {
+      const start = line.startTime ?? t;
+      t = Math.max(start + 0.1, start + estimateDuration(line.text) + line.pauseAfter);
+      return { type: 'speak', actorId: line.actorId, startTime: start, text: line.text, pauseAfter: line.pauseAfter };
+    });
+    const withScene = patchSceneInTree(doc.tree ?? [], this.sceneId, (scene) => {
+      const duration = Math.max(scene.duration ?? 6, t + 1);
+      const nonSpeak = scene.actions.filter((a) => a.type !== 'speak');
+      return { ...scene, duration, actions: [...nonSpeak, ...speakActions] };
+    });
+    const tree = patchNamedSceneInTree(withScene, this.sceneId, (ns) => ({ ...ns, script: this.script }));
+    // Keep the legacy root script in sync (dialogue only).
+    return touch({ ...doc, tree, script: dialogueLines });
+  }
+}
+
+/** Set or clear the transition note shown after a scene's last line in the full script view. */
+export class SetSceneTransitionCommand implements Command {
+  readonly label = 'Set scene transition';
+  constructor(
+    private readonly sceneId: string,
+    private readonly transition: string,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    const tree = patchNamedSceneInTree(doc.tree ?? [], this.sceneId, (ns) => ({
+      ...ns,
+      transition: this.transition || undefined,
+    }));
+    return touch({ ...doc, tree });
+  }
+}
+
+/** Set or clear the context note shown below a group (act) heading in the full script view. */
+export class SetGroupNotesCommand implements Command {
+  readonly label = 'Set act notes';
+  constructor(
+    private readonly groupId: string,
+    private readonly notes: string,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    const groupId = this.groupId;
+    const notes = this.notes || undefined;
+    function patch(tree: Array<StoredGroup | NamedScene>): Array<StoredGroup | NamedScene> {
+      return tree.map((node) => {
+        if (!isGroup(node)) return node;
+        if (node.id === groupId) return { ...node, notes };
+        return { ...node, children: patch(node.children) };
+      });
+    }
+    return touch({ ...doc, tree: patch(doc.tree ?? []) });
+  }
+}
+
+// ── Direction-line (stage direction) commands ─────────────────────────────────
+
+/**
+ * Append a stage-direction line to a named scene's script at a given position.
+ * If `insertAfterIndex` is omitted the line is appended at the end.
+ * Creates `NamedScene.script` from existing speak actions when it doesn't exist yet.
+ */
+export class AddDirectionLineCommand implements Command {
+  readonly label = 'Add stage direction';
+  constructor(
+    private readonly sceneId: string,
+    private readonly text: string,
+    private readonly insertAfterIndex?: number,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    const tree = patchNamedSceneInTree(doc.tree ?? [], this.sceneId, (ns) => {
+      // Bootstrap script from speak actions if not yet initialised.
+      const base: ScriptLine[] = ns.script ?? ns.scene.actions
+        .filter((a): a is SpeakAction => a.type === 'speak')
+        .map((a) => ({ actorId: a.actorId, text: a.text, pauseAfter: a.pauseAfter ?? 0, startTime: a.startTime }));
+      const direction: ScriptLine = { type: 'direction', text: this.text };
+      const idx = this.insertAfterIndex !== undefined ? this.insertAfterIndex + 1 : base.length;
+      const script = [...base.slice(0, idx), direction, ...base.slice(idx)];
+      return { ...ns, script };
+    });
+    return touch({ ...doc, tree });
+  }
+}
+
+/** Remove a stage-direction line from a named scene's script by index. */
+export class RemoveDirectionLineCommand implements Command {
+  readonly label = 'Remove stage direction';
+  constructor(
+    private readonly sceneId: string,
+    private readonly lineIndex: number,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    const tree = patchNamedSceneInTree(doc.tree ?? [], this.sceneId, (ns) => {
+      if (!ns.script) return ns;
+      const script = ns.script.filter((_, i) => i !== this.lineIndex);
+      return { ...ns, script };
+    });
+    return touch({ ...doc, tree });
+  }
+}
+
+/** Update the text of a stage-direction line in a named scene's script by index. */
+export class UpdateDirectionLineCommand implements Command {
+  readonly label = 'Update stage direction';
+  constructor(
+    private readonly sceneId: string,
+    private readonly lineIndex: number,
+    private readonly text: string,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    const tree = patchNamedSceneInTree(doc.tree ?? [], this.sceneId, (ns) => {
+      if (!ns.script) return ns;
+      const script = ns.script.map((line, i) =>
+        i === this.lineIndex && isDirectionLine(line) ? { ...line, text: this.text } : line
+      );
+      return { ...ns, script };
+    });
+    return touch({ ...doc, tree });
   }
 }

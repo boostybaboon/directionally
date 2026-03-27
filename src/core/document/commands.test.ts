@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { AddActorCommand, RemoveActorCommand, SetSpeakLinesCommand, MoveStagedActorCommand, MoveSetPieceCommand, UpdateSetPieceCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand } from './commands';
+import { AddActorCommand, RemoveActorCommand, SetSpeakLinesCommand, MoveStagedActorCommand, MoveSetPieceCommand, UpdateSetPieceCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand, AddDirectionLineCommand, RemoveDirectionLineCommand, UpdateDirectionLineCommand, SetSceneScriptCommand, SetSceneTransitionCommand, SetGroupNotesCommand } from './commands';
 import type { StoredActor, StoredProduction, StoredScene, NamedScene } from '../storage/types';
 import { getScenes } from '../storage/types';
-import type { ScriptLine } from '../../lib/script/types';
+import type { ScriptLine, DialogueLine } from '../../lib/script/types';
+import { isDirectionLine } from '../../lib/script/types';
 import type { ClipTrack, LightingTrack, TransformTrack, StagedActor } from '../domain/types';
 import { defaultSceneShell, estimateDuration } from '../storage/sceneBuilder';
 
@@ -35,8 +36,12 @@ function getResultScene(result: StoredProduction): StoredScene {
   return getScenes(result.tree ?? [])[0].scene;
 }
 
-function makeLine(actorId: string, text: string, pauseAfter = 0): ScriptLine {
+function makeLine(actorId: string, text: string, pauseAfter = 0): DialogueLine {
   return { actorId, text, pauseAfter };
+}
+
+function makeDirection(text: string): ScriptLine {
+  return { type: 'direction', text };
 }
 
 // ── AddActorCommand ───────────────────────────────────────────────────────────
@@ -108,7 +113,7 @@ describe('RemoveActorCommand', () => {
     });
     const result = new RemoveActorCommand('a1').execute(doc);
     expect(result.script).toHaveLength(1);
-    expect(result.script![0].actorId).toBe('a2');
+    expect((result.script![0] as DialogueLine).actorId).toBe('a2');
   });
 });
 
@@ -182,7 +187,7 @@ describe('SetSpeakLinesCommand', () => {
 
   it('skips blank lines when building speak actions', () => {
     const doc = makeProduction({ actors: [], tree: [makeNamedScene()], activeSceneId: 'sc1' });
-    const lines = [makeLine('a1', ''), makeLine('a2', 'Hello'), makeLine('a1', '  ')];
+    const lines: DialogueLine[] = [makeLine('a1', ''), makeLine('a2', 'Hello'), makeLine('a1', '  ')];
     const result = new SetSpeakLinesCommand(lines).execute(doc);
     const speaks = getResultScene(result).actions.filter((a) => a.type === 'speak');
     expect(speaks).toHaveLength(1);
@@ -875,6 +880,203 @@ describe('SetProductionSpeechSettingsCommand', () => {
     const before = makeProduction();
     const after = new SetProductionSpeechSettingsCommand({ engine: 'espeak', bubbleScale: 1 }).execute(before);
     expect(after.modifiedAt).toBeGreaterThanOrEqual(before.modifiedAt);
+  });
+});
+
+// ── Direction-line commands ───────────────────────────────────────────────────
+
+describe('AddDirectionLineCommand', () => {
+  it('appends a direction line to the end of the scene script', () => {
+    const ns: NamedScene = { id: 'sc1', name: 'S1', scene: makeScene(), script: [makeLine('a', 'Hello')] };
+    const doc = makeProduction({ tree: [ns], activeSceneId: 'sc1' });
+    const result = new AddDirectionLineCommand('sc1', 'He enters.').execute(doc);
+    const script = getScenes(result.tree ?? [])[0].script!;
+    expect(script).toHaveLength(2);
+    expect(isDirectionLine(script[1])).toBe(true);
+    expect((script[1] as { text: string }).text).toBe('He enters.');
+  });
+
+  it('inserts a direction line after the specified index', () => {
+    const ns: NamedScene = { id: 'sc1', name: 'S1', scene: makeScene(), script: [makeLine('a', 'A'), makeLine('b', 'B')] };
+    const doc = makeProduction({ tree: [ns], activeSceneId: 'sc1' });
+    const result = new AddDirectionLineCommand('sc1', 'A pause.', 0).execute(doc);
+    const script = getScenes(result.tree ?? [])[0].script!;
+    expect(script).toHaveLength(3);
+    expect(isDirectionLine(script[1])).toBe(true);
+  });
+
+  it('bootstraps script from scene actions when script is absent', () => {
+    const scene = makeScene({ actions: [{ type: 'speak', actorId: 'a', text: 'Hi', startTime: 1, pauseAfter: 0 }] });
+    const ns: NamedScene = { id: 'sc1', name: 'S1', scene };
+    const doc = makeProduction({ tree: [ns], activeSceneId: 'sc1' });
+    const result = new AddDirectionLineCommand('sc1', 'Enter stage left.').execute(doc);
+    const script = getScenes(result.tree ?? [])[0].script!;
+    expect(script).toHaveLength(2);
+    expect(isDirectionLine(script[1])).toBe(true);
+  });
+
+  it('is a no-op when sceneId does not exist', () => {
+    const doc = makeProduction({ tree: [makeNamedScene()], activeSceneId: 'sc1' });
+    const result = new AddDirectionLineCommand('nonexistent', 'Text').execute(doc);
+    expect(getScenes(result.tree ?? [])[0].script).toBeUndefined();
+  });
+});
+
+describe('RemoveDirectionLineCommand', () => {
+  it('removes the line at the given index', () => {
+    const ns: NamedScene = { id: 'sc1', name: 'S1', scene: makeScene(), script: [makeLine('a', 'A'), makeDirection('Pause.'), makeLine('b', 'B')] };
+    const doc = makeProduction({ tree: [ns], activeSceneId: 'sc1' });
+    const result = new RemoveDirectionLineCommand('sc1', 1).execute(doc);
+    const script = getScenes(result.tree ?? [])[0].script!;
+    expect(script).toHaveLength(2);
+    expect(script.every((l) => !isDirectionLine(l))).toBe(true);
+  });
+
+  it('is a no-op when script is absent', () => {
+    const doc = makeProduction({ tree: [makeNamedScene()], activeSceneId: 'sc1' });
+    const result = new RemoveDirectionLineCommand('sc1', 0).execute(doc);
+    expect(getScenes(result.tree ?? [])[0].script).toBeUndefined();
+  });
+});
+
+describe('UpdateDirectionLineCommand', () => {
+  it('updates the text of the direction line at the given index', () => {
+    const ns: NamedScene = { id: 'sc1', name: 'S1', scene: makeScene(), script: [makeDirection('Enter.')] };
+    const doc = makeProduction({ tree: [ns], activeSceneId: 'sc1' });
+    const result = new UpdateDirectionLineCommand('sc1', 0, 'Exit.').execute(doc);
+    const script = getScenes(result.tree ?? [])[0].script!;
+    expect((script[0] as { text: string }).text).toBe('Exit.');
+  });
+
+  it('does not modify dialogue lines', () => {
+    const ns: NamedScene = { id: 'sc1', name: 'S1', scene: makeScene(), script: [makeLine('a', 'Hello')] };
+    const doc = makeProduction({ tree: [ns], activeSceneId: 'sc1' });
+    const result = new UpdateDirectionLineCommand('sc1', 0, 'Changed').execute(doc);
+    const script = getScenes(result.tree ?? [])[0].script!;
+    expect((script[0] as { text: string }).text).toBe('Hello');
+  });
+});
+
+describe('SetSpeakLinesCommand direction-line preservation', () => {
+  it('preserves interleaved direction lines when dialogue is updated', () => {
+    const ns: NamedScene = {
+      id: 'sc1', name: 'S1', scene: makeScene(),
+      script: [makeLine('a', 'Hello'), makeDirection('A pause.'), makeLine('b', 'Goodbye')],
+    };
+    const doc = makeProduction({ tree: [ns], activeSceneId: 'sc1', actors: [makeActor('a'), makeActor('b')] });
+    const updated = new SetSpeakLinesCommand([
+      { actorId: 'a', text: 'Hi there', pauseAfter: 0 },
+      { actorId: 'b', text: 'Farewell', pauseAfter: 0 },
+    ]).execute(doc);
+    const script = getScenes(updated.tree ?? [])[0].script!;
+    expect(script).toHaveLength(3);
+    expect(isDirectionLine(script[1])).toBe(true);
+    expect((script[0] as { text: string }).text).toBe('Hi there');
+    expect((script[2] as { text: string }).text).toBe('Farewell');
+  });
+});
+
+// ── SetSceneScriptCommand ─────────────────────────────────────────────────────
+
+describe('SetSceneScriptCommand', () => {
+  it('stores the full ScriptLine[] on the NamedScene', () => {
+    const ns: NamedScene = { id: 'sc1', name: 'S1', scene: makeScene() };
+    const doc = makeProduction({ tree: [ns], activeSceneId: 'sc1', actors: [makeActor('a'), makeActor('b')] });
+    const script: ScriptLine[] = [makeLine('a', 'Hello'), makeDirection('A pause.'), makeLine('b', 'Bye')];
+    const result = new SetSceneScriptCommand('sc1', script).execute(doc);
+    const stored = getScenes(result.tree ?? [])[0].script!;
+    expect(stored).toHaveLength(3);
+    expect(isDirectionLine(stored[1])).toBe(true);
+    expect((stored[0] as DialogueLine).text).toBe('Hello');
+    expect((stored[2] as DialogueLine).text).toBe('Bye');
+  });
+
+  it('rebuilds speak actions from the dialogue lines only', () => {
+    const ns: NamedScene = { id: 'sc1', name: 'S1', scene: makeScene() };
+    const doc = makeProduction({ tree: [ns], activeSceneId: 'sc1', actors: [makeActor('a')] });
+    const script: ScriptLine[] = [makeDirection('Lights rise.'), makeLine('a', 'Hello world')];
+    const result = new SetSceneScriptCommand('sc1', script).execute(doc);
+    const scene = getScenes(result.tree ?? [])[0].scene;
+    const speakActions = scene.actions.filter((a) => a.type === 'speak');
+    expect(speakActions).toHaveLength(1);
+    expect(speakActions[0].actorId).toBe('a');
+  });
+
+  it('keeps the legacy root script in sync (dialogue only)', () => {
+    const ns: NamedScene = { id: 'sc1', name: 'S1', scene: makeScene() };
+    const doc = makeProduction({ tree: [ns], activeSceneId: 'sc1', actors: [makeActor('a')] });
+    const script: ScriptLine[] = [makeLine('a', 'Hi'), makeDirection('Exit.')];
+    const result = new SetSceneScriptCommand('sc1', script).execute(doc);
+    expect(result.script).toHaveLength(1);
+    expect((result.script![0] as DialogueLine).text).toBe('Hi');
+  });
+
+  it('is a no-op on tree structure when sceneId is not found', () => {
+    const ns: NamedScene = { id: 'sc1', name: 'S1', scene: makeScene() };
+    const doc = makeProduction({ tree: [ns], activeSceneId: 'sc1' });
+    const result = new SetSceneScriptCommand('nonexistent', [makeLine('a', 'Hi')]).execute(doc);
+    expect(getScenes(result.tree ?? [])[0].script).toBeUndefined();
+  });
+});
+
+// ── SetSceneTransitionCommand ─────────────────────────────────────────────────
+
+describe('SetSceneTransitionCommand', () => {
+  it('sets a transition string on the named scene', () => {
+    const ns: NamedScene = { id: 'sc1', name: 'S1', scene: makeScene() };
+    const doc = makeProduction({ tree: [ns] });
+    const result = new SetSceneTransitionCommand('sc1', 'LIGHTS FADE.').execute(doc);
+    expect(getScenes(result.tree ?? [])[0].transition).toBe('LIGHTS FADE.');
+  });
+
+  it('clears the transition when an empty string is provided', () => {
+    const ns: NamedScene = { id: 'sc1', name: 'S1', scene: makeScene(), transition: 'CUT.' };
+    const doc = makeProduction({ tree: [ns] });
+    const result = new SetSceneTransitionCommand('sc1', '').execute(doc);
+    expect(getScenes(result.tree ?? [])[0].transition).toBeUndefined();
+  });
+
+  it('is a no-op when sceneId is not found', () => {
+    const ns: NamedScene = { id: 'sc1', name: 'S1', scene: makeScene() };
+    const doc = makeProduction({ tree: [ns] });
+    const result = new SetSceneTransitionCommand('nonexistent', 'CUT.').execute(doc);
+    expect(getScenes(result.tree ?? [])[0].transition).toBeUndefined();
+  });
+});
+
+// ── SetGroupNotesCommand ──────────────────────────────────────────────────────
+
+describe('SetGroupNotesCommand', () => {
+  it('sets notes on the matching group', () => {
+    const withGroup = new AddGroupCommand('Act 1', 'g1').execute(makeProduction());
+    const result = new SetGroupNotesCommand('g1', 'Three days later.').execute(withGroup);
+    const group = result.tree![0] as import('../storage/types').StoredGroup;
+    expect(group.notes).toBe('Three days later.');
+  });
+
+  it('clears notes when empty string is provided', () => {
+    const withGroup = new AddGroupCommand('Act 1', 'g1').execute(makeProduction());
+    const withNotes = new SetGroupNotesCommand('g1', 'Some context.').execute(withGroup);
+    const cleared = new SetGroupNotesCommand('g1', '').execute(withNotes);
+    const group = cleared.tree![0] as import('../storage/types').StoredGroup;
+    expect(group.notes).toBeUndefined();
+  });
+
+  it('sets notes on a nested group', () => {
+    const outer = new AddGroupCommand('Act 1', 'g1').execute(makeProduction());
+    const withInner = new InsertGroupAtCommand('Act 2', 0, 'g2', 'g1').execute(outer);
+    const result = new SetGroupNotesCommand('g2', 'Inner notes.').execute(withInner);
+    const outerGroup = result.tree![0] as import('../storage/types').StoredGroup;
+    const innerGroup = outerGroup.children[0] as import('../storage/types').StoredGroup;
+    expect(innerGroup.notes).toBe('Inner notes.');
+  });
+
+  it('does not affect unrelated groups', () => {
+    const with1 = new AddGroupCommand('Act 1', 'g1').execute(makeProduction());
+    const with2 = new AddGroupCommand('Act 2', 'g2').execute(with1);
+    const result = new SetGroupNotesCommand('g1', 'Notes for act 1.').execute(with2);
+    const g2 = result.tree![1] as import('../storage/types').StoredGroup;
+    expect(g2.notes).toBeUndefined();
   });
 });
 

@@ -565,15 +565,16 @@ A recurring need: dress a stage once (theatre flat + floor + backdrop) and re-ap
 - `SetTemplateStore` service in `src/core/storage/` — same shape as `ProductionStore`, backed by `localStorage`.
 - No live link between template and scenes — a template is a saved snapshot, not a shared reference.
 
-#### UX2.6 — Script editor (pull forward from Phase 6.5)
+#### UX2.6 — Script editor (pull forward from Phase 6.5) ✅ COMPLETE
 
-Pulled forward because it directly enables the multi-scene authoring workflow from UX2.3:
-
-- Full-production screenplay view: a single scrollable document showing all scenes in order, with scene headings (`INT. LOCATION — TIME`) between them.
-- Action / stage direction lines: a dedicated line type with indent, visually distinguished from dialogue.
-- Per-scene script tab retains its current per-scene scope for authoring; the full-production view is primarily for reading and printing.
-- `@media print` styles produce correctly paginated output; ⎙ Print button calls `window.print()`.
-- Depends on UX2.3 stable scene tree (scenes must have a stable depth-first order before spanning them).
+- Full-production screenplay view: a single scrollable document showing all scenes in order, with `SCENE N:` headings and collapsible Act group headings.
+- `DirectionLine` type added alongside `DialogueLine`; `ScriptLine = DialogueLine | DirectionLine` union with type guards.
+- `NamedScene.script?: ScriptLine[]` — per-scene ordered sequence of dialogue and direction lines; falls back to deriving from `scene.actions` when absent.
+- `AddDirectionLineCommand`, `RemoveDirectionLineCommand`, `UpdateDirectionLineCommand` with full undo/redo.
+- `ProductionScriptView.svelte` — DFS view of full production tree: act headings from `StoredGroup` nodes, scene headings below, inline direction editing, hover-to-reveal `＋ direction` after each line.
+- `@media print` styles; ⎙ Print button calls `window.print()`.
+- Full Script tab wired into right panel alongside Scene Script tab.
+- 248/248 tests green, 0 new svelte-check errors.
 
 Full Phase 6.5 spec (pagination, PDF export, title page) remains deferred; this sub-item delivers the 80% case.
 
@@ -609,7 +610,7 @@ A dedicated **Present** button plays all scenes in the production in depth-first
 
 ---
 
-### Phase 9 — Scene dressing: set building + character identification
+### Phase 9 — Scene dressing: set building + character identification ✅ COMPLETE
 
 *Goal: a user can rough in a recognisable venue (theatre stage, TV studio, news desk) from primitive pieces, and tell characters apart at a glance without relying on model labels.*
 
@@ -783,40 +784,123 @@ Playback in the browser is real-time and resolution-bound by the display. Render
 
 ## What's Next — Priority queue
 
-**Baseline:** 225 tests green, 0 svelte-check warnings.  
-**Complete through:** Phases 0–8.9, T, UX1, UX2.1–2.4, UX2.7, UX2.9.
+**Baseline:** 248 tests green, 0 svelte-check warnings (2 pre-existing `catalogue.test.ts` geometry errors tracked separately).  
+**Complete through:** Phases 0–9, T, UX1, UX2.1–2.4, UX2.6, UX2.7, UX2.9.
 
-### Tier 1 — Scene-building visibility
+### Tier 1 — Workflow completeness
 
-1. **Phase 9.A — Set piece property inspector** *(spec above)*  
-   All placed primitives are currently 1×1×1 and white. `UpdateSetPieceCommand(name, patch)` + inspector UI for color, scale, geometry dimensions.
-
-2. **Phase 9.B — Set piece catalogue expansion** *(spec above)*  
-   Wall flat 4×3×0.15 m, stage deck 8×8 m, backdrop, table, step with set-ready default sizes.
-
-3. **Phase 9.C — Actor tint** *(spec above)*  
-   Emissive tint on each staged GLTF actor, auto-assigned from the timeline palette.
-
-### Tier 2 — Workflow completeness
-
-4. **UX2.6 — Full-production screenplay view** *(spec above)*  
-   All scenes in one scrollable document with `INT.` headings and stage-direction lines.
-
-5. **UX2.5 — Reusable set templates** *(spec above)*  
+1. **UX2.5 — Reusable set templates** *(spec above)*  
    `SetTemplateStore`; save current set as named template → apply from Catalogue tab.
 
-6. **Phase 10 — Lighting rig** *(spec above)*  
+2. **UX3.1 — Main-area tab bar** *(spec below)*  
+   Expose the two implicit canvas modes (Playback, Design) as explicit main-area tabs. Full Script view lives here as a third tab rather than in the right panel.
+
+3. **UX3.2 — Script format compliance** *(spec below)*  
+   Make the Full Script view compliant with stage-play or screenplay industry format, with a format-selector theme.
+
+4. **Phase 10 — Lighting rig** *(spec above)*  
    Add lights from catalogue; fix skipped `point` light type.
 
 ### Deferred
 
-- **UX3** — Drag-and-drop cast management (button flows functional; progressive enhancement)
+- **UX3.3** — Drag-and-drop cast management (button flows functional; progressive enhancement)
 - **Phase 6.5** — Screenplay enrichment (PDF, pagination, title page)
 - **Phase 11** — Audio block timeline strip + waveform preview
 - **Phase 12** — Dance/MIDI choreography (needs spike)
 - **Phase 13** — Remote asset store
 - **Phase 14** — Video render export (large; WebCodecs pipeline + audio pre-synthesis)
 - **I1–I5** — Infrastructure (Azure deploy, user management, staged builds, GitHub project management, CI/CD workflows)
+
+---
+
+### Phase UX3.1 — Main-area tab bar *(not yet started)*
+
+*The canvas area currently has two implicit modes (Playback, Design) toggled by a single button. A third surface — the Full Script view — is currently hidden in the right panel where it competes for space with scene-specific editing tools. A tab bar makes all three surfaces explicit and equally accessible.*
+
+#### Current state
+
+- **Playback mode** — live Three.js canvas; transport bar at the bottom. This is the default view.
+- **Design mode** — same canvas with design overlays (gizmos, transform controls); toggled via the ✏ / ▶ button top-right of the canvas.
+- **Full Script** — `ProductionScriptView.svelte` in the right panel; shown via a "Full Script" tab. Because the right panel is narrower than the main area and competes with the Stage/Script staging tools, the full script is cramped.
+
+#### Proposed tab bar
+
+A tab bar runs across the top of the main area (below the title bar, above the canvas):
+
+| Tab | Content | Notes |
+|---|---|---|
+| **▶ Playback** | Three.js canvas in playback mode | Current default |
+| **✏ Design** | Same canvas in design mode | Replaces toggle button |
+| **📄 Script** | `ProductionScriptView` full-width | Moves out of right panel |
+
+The full-script view at main-area width gets room for proper screenplay margins (a standard screenplay page is 8.5" × 11", with specific left/right margins — this width enables print-faithful rendering).
+
+When Script tab is active: the right panel can show scene-level editing tools without the full script competing for the same column. The timeline can optionally be hidden (it has no meaning during script browsing) or left visible as context.
+
+#### State management
+
+`mainTab: 'playback' | 'design' | 'script'` replaces the current boolean `designMode`. The Presenter only renders when `mainTab !== 'script'` (avoids a dead render loop while the canvas is off-screen). The transport bar is hidden in script mode or collapsed to a minimal status strip.
+
+#### Migration path
+
+- Remove the `✏ / ▶` toggle button (its function is now a tab click).
+- Remove the "Full Script" tab from the right panel; `ProductionScriptView` moves to the main area.
+- Right panel retains Stage and Scene Script tabs.
+- Screen-reader / keyboard: tabs follow ARIA tab pattern (`role="tablist"`, `role="tab"`, `aria-selected`).
+
+#### Tear-out to a second window
+
+Because the Script view is a pure read/edit surface over a `StoredProduction` value, it can be opened in a second browser window via `window.open('/script')`. A `BroadcastChannel('directionally')` keeps the two windows in sync: the main window posts the updated production JSON after every command execute; the script window listens and re-renders. No server required — `BroadcastChannel` is same-origin only and works across tabs and `window.open()` children.
+
+A dedicated `/script` route would render `ProductionScriptView` full-screen with no chrome. In a PWA (installed via "Add to Home Screen"), the tear-out window has no browser address bar and the OS groups both windows under the same app — close to a native VS Code-style experience. When Phase I1 lands, both windows can simply subscribe to server state instead.
+
+---
+
+### Phase UX3.2 — Script format compliance *(not yet started)*
+
+*The current Full Script view is readable but informal. Making it match an industry format would let productions be printed directly as a professional script document.*
+
+#### The two dominant formats
+
+**Stage play (British/US)**
+- Title page: title (centred, upper-case), author, draft date, contact block.
+- Acts in Roman numerals (`ACT I`), scenes as `SCENE 1` — the hierarchy the app already uses for `StoredGroup` / `NamedScene`.
+- Character names: UPPER CASE, centred or in a fixed left column (~column 42 in page units).
+- Dialogue: immediately below character name, indented left ~25%, right margin ~60% of page width (creates the characteristic narrow column).
+- Stage directions: in parentheses (brief, inline) or as a full-line italicised paragraph flush-left or indented ~15%.
+- Page numbers: top-right, starting from page 2. Pagination unit: ~55 lines per page.
+
+**Screenplay (Hollywood / WGA)**
+- Scene headings: `INT. LOCATION — DAY` / `EXT. LOCATION — NIGHT` — the app's scene names map here.
+- Action lines: present-tense description flush left, full width.
+- Character name: UPPER CASE, indented to column ~42.
+- Dialogue: indented, ~35 characters wide, centred around column 42.
+- Parentheticals: `(quietly)` inside dialogue block, narrower column.
+- Transitions: `CUT TO:`, `DISSOLVE TO:` — flush right.
+
+#### Implementation approach
+
+1. **Format selector**: `scriptFormat: 'stage-play' | 'screenplay'` stored on `StoredProduction` (default `'stage-play'`). Exposed as a toggle in the Script tab toolbar.
+
+2. **CSS `@page` + column layout**: screenplay column positions are well-known constants. A `format-screenplay` class on the script body switches margins/indents. This covers 90% of the visual transformation without JavaScript.
+
+3. **Scene heading variants**:
+   - *Stage play*: `ACT I / SCENE 2: THE WAREHOUSE` (current)
+   - *Screenplay*: `INT. THE WAREHOUSE — DAY` — requires `location?: string` and `timeOfDay?: 'day' | 'night' | 'continuous'` on `NamedScene`; falls back to scene name when absent.
+
+4. **Pagination**: CSS `orphans`/`widows` and `page-break-*` cover basic print fidelity; true 55-line pagination requires explicit `page-break-before` insertion and is deferred to Phase 6.5.
+
+5. **Title page**: a separate component rendered before the script body when printing.
+
+#### Theming note
+
+The structural differences between formats are mostly CSS (column widths, indentation constants) with a small data-model addition. This can be delivered as a CSS theme layer on top of the existing `ProductionScriptView` component — no component rewrite needed.
+
+#### Out of scope
+
+- PDF export (requires Puppeteer or `jsPDF`; deferred to Phase 6.5)
+- Revision marks (coloured pages, locked pages)
+- Fountain / FDX import/export
 
 ---
 

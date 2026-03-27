@@ -15,15 +15,17 @@
   import { twoRobotsScene } from '$lib/twoRobotsScene';
   import type { Model } from '$lib/Model';
   import ScriptEditor from '$lib/script/ScriptEditor.svelte';
+  import ProductionScriptView from '$lib/script/ProductionScriptView.svelte';
   import PropertiesPanel from '$lib/PropertiesPanel.svelte';
   import { storedSceneToModel } from '../core/storage/storedSceneToModel.js';
   import { starterSceneShell, defaultSceneShell, estimateDuration, getActiveScene } from '../core/storage/sceneBuilder.js';
   import type { ScriptLine } from '$lib/script/types';
+  import { isDialogueLine } from '$lib/script/types';
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import type { StoredProduction, StoredActor, StoredGroup, NamedScene, ProductionSpeechSettings } from '../core/storage/types.js';
   import { getScenes } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
-  import { RenameProductionCommand, SetSpeakLinesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, SetActorCatalogueIdCommand, AddSetPieceCommand, RemoveSetPieceCommand, StageActorCommand, UnstageActorCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, SetActorVoiceCommand, SetActorTintCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand, UpdateSceneLightCommand, AddSceneLightCommand, RemoveSceneLightCommand } from '../core/document/commands.js';
+  import { RenameProductionCommand, SetSpeakLinesCommand, SetSceneScriptCommand, SetSceneTransitionCommand, SetGroupNotesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, SetActorCatalogueIdCommand, AddSetPieceCommand, RemoveSetPieceCommand, StageActorCommand, UnstageActorCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, SetActorVoiceCommand, SetActorTintCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand, UpdateSceneLightCommand, AddSceneLightCommand, RemoveSceneLightCommand, AddDirectionLineCommand, RemoveDirectionLineCommand, UpdateDirectionLineCommand } from '../core/document/commands.js';
   import { ACTOR_COLORS, hexToNum, numToHex } from '$lib/actorColors.js';
   import type { SpeakAction, TransformTrack, LightingTrack, ActorBlock, LightBlock, CameraBlock, SetPieceBlock, ActorVoice, KokoroVoice, LightConfig } from '../core/domain/types.js';
   import { getCharacters, getLights, getSetPieces } from '../core/catalogue/catalogue.js';
@@ -110,6 +112,9 @@
   const RIGHT_PANEL_KEY = 'directionally_right_panel_open';
   let rightPanelOpen = $state((localStorage.getItem(RIGHT_PANEL_KEY) ?? 'true') === 'true');
   $effect(() => { localStorage.setItem(RIGHT_PANEL_KEY, String(rightPanelOpen)); });
+  const MAIN_VIEW_KEY = 'directionally_main_view';
+  let mainView = $state<'3d' | 'script'>((localStorage.getItem(MAIN_VIEW_KEY) as '3d' | 'script' | null) ?? '3d');
+  $effect(() => { localStorage.setItem(MAIN_VIEW_KEY, mainView); });
   let rightTab = $state<'staging' | 'script'>('staging');
   let designMode = $state(false);
   let seedWorkflow2Fn = $state<(() => void) | undefined>();
@@ -155,12 +160,26 @@
   /** Stable string ID of the active scene — reads from the document primitive so $effects only fire on actual scene switches, not on every command. */
   const activeSceneId = $derived(docSnapshot?.activeSceneId);
 
-  /** Dialogue lines for the ScriptEditor — derived from the active scene's speak actions so the
-   *  editor reflects the current scene when switching between scenes. */
-  const speakLines = $derived<ScriptLine[]>(
-    (activeScene?.actions ?? [])
-      .filter((a): a is SpeakAction => a.type === 'speak')
-      .map(a => ({ actorId: a.actorId, text: a.text, pauseAfter: a.pauseAfter ?? 0, startTime: a.startTime }))
+  /** Active NamedScene node (includes metadata + script field). */
+  const activeNamedScene = $derived(
+    sceneDeletedBlank ? undefined : (docSnapshot ? getScenes(docSnapshot.tree ?? []).find((ns) => ns.id === (docSnapshot!.activeSceneId ?? getScenes(docSnapshot!.tree ?? [])[0]?.id)) : undefined)
+  );
+
+  /** Dialogue lines only — used by timeline speech segments and drag-to-retime (SetSpeakLinesCommand). */
+  const speakLines = $derived(
+    activeNamedScene?.script
+      ? activeNamedScene.script.filter(isDialogueLine)
+      : (activeScene?.actions ?? [])
+          .filter((a): a is SpeakAction => a.type === 'speak')
+          .map(a => ({ actorId: a.actorId, text: a.text, pauseAfter: a.pauseAfter ?? 0, startTime: a.startTime }))
+  );
+
+  /** Full ScriptLine[] (dialogue + directions) for the ScriptEditor. */
+  const sceneScriptLines = $derived(
+    activeNamedScene?.script
+      ?? (activeScene?.actions ?? [])
+          .filter((a): a is SpeakAction => a.type === 'speak')
+          .map(a => ({ actorId: a.actorId, text: a.text, pauseAfter: a.pauseAfter ?? 0, startTime: a.startTime }))
   );
 
   /** Speech segments derived from scheduled scene actions, used to display speech blocks on the timeline. */
@@ -1500,12 +1519,42 @@
       <!-- Main pane: Presenter is always mounted here, never destroyed -->
       <Pane minSize={30}>
         <div class="main-pane">
-          {#if designMode && activeDoc}
-            <div class="undo-redo-overlay">
-              <button class="undo-redo-btn" disabled={!canUndo} onclick={() => activeDoc!.undo()} title="Undo (Ctrl+Z)" aria-label="Undo">↩</button>
-              <button class="undo-redo-btn" disabled={!canRedo} onclick={() => activeDoc!.redo()} title="Redo (Ctrl+Y)" aria-label="Redo">↪</button>
+          <div class="main-view-toggle-bar">
+            <button
+              class="main-view-btn"
+              class:active={mainView === '3d'}
+              onclick={() => (mainView = '3d')}
+              title="3D view"
+            >3D</button>
+            <button
+              class="main-view-btn"
+              class:active={mainView === 'script'}
+              onclick={() => (mainView = 'script')}
+              title="Full script view"
+            >Script</button>
+            {#if designMode && activeDoc && mainView === '3d'}
+              <button class="undo-redo-btn main-undo" disabled={!canUndo} onclick={() => activeDoc!.undo()} title="Undo (Ctrl+Z)" aria-label="Undo">↩</button>
+              <button class="undo-redo-btn main-undo" disabled={!canRedo} onclick={() => activeDoc!.redo()} title="Redo (Ctrl+Y)" aria-label="Redo">↪</button>
+            {/if}
+          </div>
+          {#if mainView === 'script'}
+            <div class="main-script-view">
+              {#if activeDoc && docSnapshot}
+                <ProductionScriptView
+                  doc={docSnapshot}
+                  actors={actors.map(a => ({ id: a.id, label: a.role }))}
+                  activeSceneId={treeActiveSceneId}
+                  onactivatescene={(id) => activeDoc?.execute(new SwitchSceneCommand(id))}
+                  onsettransition={(sceneId, t) => activeDoc?.execute(new SetSceneTransitionCommand(sceneId, t))}
+                  onsetgroupnotes={(groupId, notes) => activeDoc?.execute(new SetGroupNotesCommand(groupId, notes))}
+                />
+              {:else}
+                <p class="main-script-placeholder">Select or create a production.</p>
+              {/if}
             </div>
           {/if}
+          <!-- Presenter stays mounted at all times; hidden when script view is active -->
+          <div class="presenter-container" style:display={mainView === '3d' ? 'flex' : 'none'}>
           {#if !rightPanelOpen}
             <button
               class="right-panel-open-btn"
@@ -1565,6 +1614,7 @@
               {/if}
             </div>
           {/if}
+          </div>
         </div>
       </Pane>
 
@@ -1701,13 +1751,15 @@
                 {:else}
                   <p class="panel-placeholder">Select or create a production.</p>
                 {/if}
-              {:else}
+              {:else if rightTab === 'script'}
                 {#if activeDoc}
                   <ScriptEditor
-                    script={speakLines}
+                    script={sceneScriptLines}
                     actors={actors.map(a => ({ id: a.id, label: a.role }))}
                     currentPosition={currentPosition}
-                    onchange={(s) => activeDoc?.execute(new SetSpeakLinesCommand(s))}
+                    transition={activeNamedScene?.transition}
+                    onchange={(s) => { if (treeActiveSceneId) activeDoc?.execute(new SetSceneScriptCommand(treeActiveSceneId, s)); }}
+                    ontransitionchange={(t) => { if (treeActiveSceneId) activeDoc?.execute(new SetSceneTransitionCommand(treeActiveSceneId, t)); }}
                   />
                 {:else}
                   <p class="panel-placeholder">Select or create a production.</p>
@@ -2532,6 +2584,71 @@
     position: relative;
     height: 100%;
     width: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .main-view-toggle-bar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 6px;
+    background: #0e0e0e;
+    border-bottom: 1px solid #1e1e1e;
+    flex-shrink: 0;
+    z-index: 10;
+  }
+
+  .main-view-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    color: #555;
+    font-size: 11px;
+    font-family: inherit;
+    letter-spacing: 0.06em;
+    padding: 2px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: color 0.1s, background 0.1s, border-color 0.1s;
+  }
+
+  .main-view-btn:hover {
+    color: #aaa;
+  }
+
+  .main-view-btn.active {
+    background: #1a1a24;
+    color: #ccc;
+    border-color: #333;
+  }
+
+  .main-undo {
+    width: 28px;
+    height: 24px;
+    font-size: 14px;
+    margin-left: 4px;
+    border-radius: 4px;
+  }
+
+  .main-script-view {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .main-script-placeholder {
+    padding: 16px;
+    color: #444;
+    font-style: italic;
+    font-size: 12px;
+    margin: 0;
+  }
+
+  .presenter-container {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    flex-direction: column;
   }
 
   .right-panel-open-btn {
@@ -2553,15 +2670,6 @@
   .right-panel-open-btn:hover {
     color: #ccc;
     border-color: #555;
-  }
-
-  .undo-redo-overlay {
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    z-index: 10;
-    display: flex;
-    gap: 4px;
   }
 
   .undo-redo-btn {

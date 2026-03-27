@@ -53,6 +53,16 @@ export type NamedScene = {
   id: string;
   name: string;
   scene: StoredScene;
+  /**
+   * Ordered full script sequence for this scene: dialogue and direction lines interleaved.
+   * When absent, the production view falls back to deriving dialogue from scene.actions.
+   */
+  script?: ScriptLine[];
+  /**
+   * Optional scene-ending instruction rendered after the scene's last line in the full
+   * script view (e.g. "LIGHTS FADE TO BLACK."). Not part of the scene's scripted content.
+   */
+  transition?: string;
 };
 
 /**
@@ -64,6 +74,11 @@ export type StoredGroup = {
   id: string;
   name: string;
   children: Array<StoredGroup | NamedScene>;
+  /**
+   * Optional context note rendered below the act heading in the full script view
+   * (e.g. "Three days later. The same warehouse, now ransacked.").
+   */
+  notes?: string;
 };
 
 /** Depth-first flat list of all leaf scenes in a tree. */

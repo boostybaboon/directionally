@@ -93,12 +93,12 @@ describe('CATALOGUE_ENTRIES seed data — Phase 9.B set pieces', () => {
   );
 
   it('wall-flat is a box with correct proportions', () => {
-    const p = getById('wall-flat', CATALOGUE_ENTRIES);
+    const p = getById('wall-flat', CATALOGUE_ENTRIES) as SetPieceEntry | undefined;
     expect(p?.geometry).toMatchObject({ type: 'box', width: 4, height: 3, depth: 0.15 });
   });
 
   it('stage-deck is a plane', () => {
-    const p = getById('stage-deck', CATALOGUE_ENTRIES);
+    const p = getById('stage-deck', CATALOGUE_ENTRIES) as SetPieceEntry | undefined;
     expect(p?.geometry.type).toBe('plane');
   });
 });

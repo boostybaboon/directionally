@@ -1,16 +1,20 @@
 <script lang="ts">
-  import type { ScriptLine } from './types.js';
+  import type { ScriptLine, DialogueLine } from './types.js';
+  import { isDialogueLine, isDirectionLine } from './types.js';
 
   interface Props {
     script:   ScriptLine[];
     onchange: (script: ScriptLine[]) => void;
+    /** Optional scene-ending note, e.g. "LIGHTS FADE TO BLACK.". */
+    transition?: string;
+    ontransitionchange?: (transition: string) => void;
     /** Cast members to populate the actor dropdown. Empty when no actors have been added. */
     actors?:  { id: string; label: string }[];
     /** Current playhead position, used for the "@ now" button. */
     currentPosition?: number;
   }
 
-  let { script, onchange, actors, currentPosition = 0 }: Props = $props();
+  let { script, onchange, transition, ontransitionchange, actors, currentPosition = 0 }: Props = $props();
 
   const castActors = $derived(actors ?? []);
 
@@ -18,8 +22,20 @@
   let localScript = $state<ScriptLine[]>([...script]);
   $effect(() => { localScript = [...script]; });
 
+  let localTransition = $state(transition ?? '');
+  $effect(() => { localTransition = transition ?? ''; });
+
   // Index of the line currently open for editing (-1 = none).
   let editingIdx = $state<number>(-1);
+
+  // Resolve the last dialogue actor id for next-actor cycling.
+  function lastDialogueActorId(): string {
+    for (let i = localScript.length - 1; i >= 0; i--) {
+      const l = localScript[i];
+      if (isDialogueLine(l)) return l.actorId;
+    }
+    return castActors[0]?.id ?? '';
+  }
 
   function actorLabel(id: string): string {
     return castActors.find((a) => a.id === id)?.label ?? id;
@@ -27,14 +43,27 @@
 
   function addLine() {
     if (castActors.length === 0) return;
-    const lastActorId = localScript.at(-1)?.actorId ?? castActors[0].id;
-    const lastIdx     = castActors.findIndex((a) => a.id === lastActorId);
+    const lastId  = lastDialogueActorId();
+    const lastIdx = castActors.findIndex((a) => a.id === lastId);
     const nextActorId = castActors[(lastIdx + 1) % castActors.length].id;
     localScript = [...localScript, { actorId: nextActorId, text: '', pauseAfter: 0 }];
     editingIdx  = localScript.length - 1;
-    // Don't call onchange here — empty lines are filtered by SetSpeakLinesCommand and
-    // would cause the $effect to reset localScript before the user can type anything.
+    // Don't call onchange here — empty dialogue lines would be stripped by SetSceneScriptCommand
+    // and would cause the $effect to reset localScript before the user can type.
     // onchange fires from commitLine() once the user has finished editing.
+  }
+
+  function addDirection() {
+    localScript = [...localScript, { type: 'direction', text: '' }];
+    editingIdx  = localScript.length - 1;
+    // Same deferred-commit reasoning as addLine().
+  }
+
+  function insertDirectionAfter(afterIndex: number) {
+    const newLine: ScriptLine = { type: 'direction', text: '' };
+    localScript = [...localScript.slice(0, afterIndex + 1), newLine, ...localScript.slice(afterIndex + 1)];
+    editingIdx = afterIndex + 1;
+    // Deferred commit — fires from commitLine() when the user finishes typing.
   }
 
   function deleteLine(i: number) {
@@ -44,13 +73,17 @@
     onchange([...localScript]);
   }
 
-  function updateLine(i: number, patch: Partial<ScriptLine>) {
+  function updateLine(i: number, patch: Partial<DialogueLine> | { text: string }) {
     localScript = localScript.map((line, idx) => idx === i ? { ...line, ...patch } : line);
   }
 
   function commitLine(i: number) {
     editingIdx = -1;
     onchange([...localScript]);
+  }
+
+  function commitTransition() {
+    ontransitionchange?.(localTransition);
   }
 </script>
 
@@ -75,114 +108,195 @@
   {:else}
     <ol class="beats">
       {#each localScript as line, i (i)}
-        <li class="beat" class:editing={editingIdx === i}>
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="beat-inner"
-            onclick={(e) => {
-              const tag = (e.target as HTMLElement).tagName.toLowerCase();
-              if (['textarea', 'select', 'input', 'button'].includes(tag)) return;
-              editingIdx = editingIdx === i ? -1 : i;
-              if (editingIdx === -1) onchange([...localScript]);
-            }}
-            onkeydown={(e) => { if (e.key === 'Escape') commitLine(i); }}
-          >
-          {#if editingIdx === i}
-            <!-- Editing mode -->
-            <div class="beat-edit">
-              <div class="edit-top">
-                <select
-                  class="actor-select"
-                  value={line.actorId}
-                  onchange={(e) => { updateLine(i, { actorId: (e.currentTarget as HTMLSelectElement).value }); onchange([...localScript]); }}
-                  aria-label="Actor"
-                >
-                  {#each castActors as actor}
-                    <option value={actor.id}>{actor.label.toUpperCase()}</option>
-                  {/each}
-                </select>
-                <button
-                  class="delete-btn"
-                  onclick={(e) => { e.stopPropagation(); deleteLine(i); }}
-                  title="Delete line"
-                  aria-label="Delete line"
-                >✕</button>
-              </div>
-              <textarea
-                class="dialogue-input"
-                rows="3"
-                placeholder="Dialogue…"
-                value={line.text}
-                oninput={(e) => updateLine(i, { text: (e.currentTarget as HTMLTextAreaElement).value })}
-                onblur={() => commitLine(i)}
-                onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); commitLine(i); } }}
-              ></textarea>
-              <label class="pause-row">
-                <span class="pause-label">pause after</span>
-                <input
-                  type="number"
-                  class="pause-input"
-                  min="-2"
-                  max="30"
-                  step="0.1"
-                  value={line.pauseAfter}
-                  oninput={(e) => updateLine(i, { pauseAfter: parseFloat((e.currentTarget as HTMLInputElement).value) || 0 })}
+        {#if isDirectionLine(line)}
+          <li class="beat direction-beat" class:editing={editingIdx === i}>
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="beat-inner"
+              onclick={(e) => {
+                const tag = (e.target as HTMLElement).tagName.toLowerCase();
+                if (['textarea', 'button'].includes(tag)) return;
+                editingIdx = editingIdx === i ? -1 : i;
+                if (editingIdx === -1) onchange([...localScript]);
+              }}
+              onkeydown={(e) => { if (e.key === 'Escape') commitLine(i); }}
+            >
+            {#if editingIdx === i}
+              <div class="beat-edit">
+                <div class="edit-top">
+                  <span class="direction-label">Stage direction</span>
+                  <button
+                    class="delete-btn"
+                    onclick={(e) => { e.stopPropagation(); deleteLine(i); }}
+                    title="Delete direction"
+                    aria-label="Delete direction"
+                  >✕</button>
+                </div>
+                <!-- svelte-ignore a11y_autofocus -->
+                <textarea
+                  class="dialogue-input direction-input"
+                  rows="2"
+                  placeholder="Stage direction…"
+                  autofocus
+                  value={line.text}
+                  oninput={(e) => updateLine(i, { text: (e.currentTarget as HTMLTextAreaElement).value })}
                   onblur={() => commitLine(i)}
-                  aria-label="Pause after line in seconds"
-                />
-                <span class="pause-unit">s</span>
-              </label>
-              <label class="pause-row">
-                <span class="pause-label">@ time</span>
-                <input
-                  type="number"
-                  class="pause-input"
-                  min="0"
-                  step="0.1"
-                  placeholder="auto"
-                  value={line.startTime ?? ''}
-                  oninput={(e) => {
-                    const v = (e.currentTarget as HTMLInputElement).value;
-                    updateLine(i, { startTime: v === '' ? undefined : (parseFloat(v) || 0) });
-                  }}
-                  onblur={() => commitLine(i)}
-                  aria-label="Start time in seconds (leave blank for auto)"
-                />
-                <span class="pause-unit">s</span>
-                <button
-                  class="now-btn"
-                  onclick={(e) => { e.stopPropagation(); updateLine(i, { startTime: parseFloat(currentPosition.toFixed(2)) }); commitLine(i); }}
-                  title="Set to current playhead position"
-                >★ now</button>
-              </label>
-            </div>
-          {:else}
-            <!-- Read mode -->
-            <div class="beat-read">
-              <span class="character-name">{actorLabel(line.actorId).toUpperCase()}</span>
-              <p class="dialogue-text">{line.text || '…'}</p>
-              <div class="beat-meta">
-                {#if line.startTime !== undefined}
-                  <span class="pause-tag">@ {line.startTime}s</span>
-                {:else}
-                  <span class="pause-tag auto-tag">@ auto</span>
-                {/if}
-                {#if line.pauseAfter !== 0}
-                  <span class="pause-tag">{line.pauseAfter > 0 ? '+' : ''}{line.pauseAfter}s</span>
-                {/if}
+                  onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); commitLine(i); } }}
+                ></textarea>
               </div>
+            {:else}
+              <div class="beat-read direction-read">
+                <p class="direction-text">{line.text || '(stage direction…)'}</p>
+              </div>
+            {/if}
             </div>
-          {/if}
-          </div>
-        </li>
+          </li>
+        {:else}
+          {@const dl = line as DialogueLine}
+          <li class="beat" class:editing={editingIdx === i}>
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="beat-inner"
+              onclick={(e) => {
+                const tag = (e.target as HTMLElement).tagName.toLowerCase();
+                if (['textarea', 'select', 'input', 'button'].includes(tag)) return;
+                editingIdx = editingIdx === i ? -1 : i;
+                if (editingIdx === -1) onchange([...localScript]);
+              }}
+              onkeydown={(e) => { if (e.key === 'Escape') commitLine(i); }}
+            >
+            {#if editingIdx === i}
+              <!-- Editing mode -->
+              <div class="beat-edit">
+                <div class="edit-top">
+                  <select
+                    class="actor-select"
+                    value={dl.actorId}
+                    onchange={(e) => { updateLine(i, { actorId: (e.currentTarget as HTMLSelectElement).value }); onchange([...localScript]); }}
+                    aria-label="Actor"
+                  >
+                    {#each castActors as actor}
+                      <option value={actor.id}>{actor.label.toUpperCase()}</option>
+                    {/each}
+                  </select>
+                  <button
+                    class="delete-btn"
+                    onclick={(e) => { e.stopPropagation(); deleteLine(i); }}
+                    title="Delete line"
+                    aria-label="Delete line"
+                  >✕</button>
+                </div>
+                <input
+                  class="parenthetical-input"
+                  type="text"
+                  placeholder="(parenthetical)…"
+                  value={dl.parenthetical ?? ''}
+                  oninput={(e) => updateLine(i, { parenthetical: (e.currentTarget as HTMLInputElement).value || undefined })}
+                  onblur={() => commitLine(i)}
+                  onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); commitLine(i); } }}
+                  aria-label="Parenthetical (speech direction)"
+                />
+                <textarea
+                  class="dialogue-input"
+                  rows="3"
+                  placeholder="Dialogue…"
+                  value={dl.text}
+                  oninput={(e) => updateLine(i, { text: (e.currentTarget as HTMLTextAreaElement).value })}
+                  onblur={() => commitLine(i)}
+                  onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); commitLine(i); } }}
+                ></textarea>
+                <label class="pause-row">
+                  <span class="pause-label">pause after</span>
+                  <input
+                    type="number"
+                    class="pause-input"
+                    min="-2"
+                    max="30"
+                    step="0.1"
+                    value={dl.pauseAfter}
+                    oninput={(e) => updateLine(i, { pauseAfter: parseFloat((e.currentTarget as HTMLInputElement).value) || 0 })}
+                    onblur={() => commitLine(i)}
+                    aria-label="Pause after line in seconds"
+                  />
+                  <span class="pause-unit">s</span>
+                </label>
+                <label class="pause-row">
+                  <span class="pause-label">@ time</span>
+                  <input
+                    type="number"
+                    class="pause-input"
+                    min="0"
+                    step="0.1"
+                    placeholder="auto"
+                    value={dl.startTime ?? ''}
+                    oninput={(e) => {
+                      const v = (e.currentTarget as HTMLInputElement).value;
+                      updateLine(i, { startTime: v === '' ? undefined : (parseFloat(v) || 0) });
+                    }}
+                    onblur={() => commitLine(i)}
+                    aria-label="Start time in seconds (leave blank for auto)"
+                  />
+                  <span class="pause-unit">s</span>
+                  <button
+                    class="now-btn"
+                    onclick={(e) => { e.stopPropagation(); updateLine(i, { startTime: parseFloat(currentPosition.toFixed(2)) }); commitLine(i); }}
+                    title="Set to current playhead position"
+                  >★ now</button>
+                </label>
+                <button
+                  class="insert-direction-btn"
+                  onclick={(e) => { e.stopPropagation(); insertDirectionAfter(i); }}
+                  title="Insert stage direction after this line"
+                >↓ direction after</button>
+              </div>
+            {:else}
+              <!-- Read mode -->
+              <div class="beat-read">
+                <span class="character-name">{actorLabel(dl.actorId).toUpperCase()}</span>
+                {#if dl.parenthetical}
+                  <p class="parenthetical-text">({dl.parenthetical})</p>
+                {/if}
+                <p class="dialogue-text">{dl.text || '…'}</p>
+                <div class="beat-meta">
+                  {#if dl.startTime !== undefined}
+                    <span class="pause-tag">@ {dl.startTime}s</span>
+                  {:else}
+                    <span class="pause-tag auto-tag">@ auto</span>
+                  {/if}
+                  {#if dl.pauseAfter !== 0}
+                    <span class="pause-tag">{dl.pauseAfter > 0 ? '+' : ''}{dl.pauseAfter}s</span>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+            </div>
+          </li>
+        {/if}
       {/each}
     </ol>
   {/if}
 
   <div class="toolbar">
     <button class="add-btn" disabled={castActors.length === 0} onclick={(e) => { e.stopPropagation(); addLine(); }}>+ Add line</button>
+    <button class="add-btn dir-btn" onclick={(e) => { e.stopPropagation(); addDirection(); }}>+ Direction</button>
     <button class="print-btn" onclick={(e) => { e.stopPropagation(); window.print(); }} title="Print screenplay">⎙ Print</button>
   </div>
+
+  {#if ontransitionchange !== undefined || transition}
+    <div class="transition-field">
+      <label class="transition-label" for="scene-transition-input">Scene transition</label>
+      <input
+        id="scene-transition-input"
+        class="transition-input"
+        type="text"
+        placeholder="e.g. LIGHTS FADE TO BLACK."
+        value={localTransition}
+        oninput={(e) => { localTransition = (e.currentTarget as HTMLInputElement).value; }}
+        onblur={commitTransition}
+        onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget as HTMLInputElement).blur(); } }}
+      />
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -327,6 +441,34 @@
     outline: 1px solid #4a9eff;
   }
 
+  .parenthetical-input {
+    background: #141418;
+    color: #aaa;
+    border: 1px solid #2a2a3a;
+    border-radius: 2px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-family: inherit;
+    font-style: italic;
+    margin-left: 16px;
+    width: calc(100% - 16px);
+    box-sizing: border-box;
+  }
+
+  .parenthetical-input:focus {
+    outline: 1px solid #4a9eff;
+    border-color: #4a9eff;
+  }
+
+  .parenthetical-text {
+    margin: 0;
+    padding: 0 0 0 16px;
+    font-size: 11px;
+    font-style: italic;
+    color: #777;
+    line-height: 1.4;
+  }
+
   .dialogue-input {
     resize: vertical;
     background: #141418;
@@ -446,6 +588,101 @@
 
   /* Print styles */
 
+  /* Direction line (read mode) */
+
+  .direction-beat {
+    cursor: pointer;
+  }
+
+  .direction-read {
+    padding: 2px 0;
+  }
+
+  .direction-text {
+    margin: 0;
+    font-size: 12px;
+    font-style: italic;
+    color: #888;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    text-align: center;
+    padding: 0 24px;
+  }
+
+  .direction-label {
+    font-size: 10px;
+    font-style: italic;
+    color: #666;
+    user-select: none;
+  }
+
+  .direction-input {
+    /* inherits .dialogue-input styling */
+    font-style: italic;
+    color: #aaa;
+  }
+
+  .dir-btn {
+    /* secondary shade so it's visually distinct from the primary + Add line button */
+    color: #888;
+  }
+
+  .insert-direction-btn {
+    align-self: flex-start;
+    background: transparent;
+    border: 1px dashed #333;
+    color: #555;
+    font-size: 10px;
+    font-family: inherit;
+    font-style: italic;
+    padding: 2px 8px;
+    border-radius: 2px;
+    cursor: pointer;
+    margin-left: 16px;
+    margin-top: 2px;
+    transition: color 0.1s, border-color 0.1s;
+  }
+
+  .insert-direction-btn:hover {
+    color: #9b7fcc;
+    border-color: #9b7fcc;
+  }
+
+/* Scene transition field */
+
+  .transition-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 12px;
+    border-top: 1px solid #222;
+    flex-shrink: 0;
+  }
+
+  .transition-label {
+    font-size: 10px;
+    font-style: italic;
+    color: #555;
+    user-select: none;
+  }
+
+  .transition-input {
+    background: #141418;
+    color: #d4d4d4;
+    border: 1px solid #2a2a2a;
+    border-radius: 2px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-family: inherit;
+    font-style: italic;
+  }
+
+  .transition-input:focus {
+    outline: 1px solid #4a9eff;
+    border-color: #4a9eff;
+  }
+
   @media print {
     .screenplay {
       font-family: 'Courier New', monospace;
@@ -472,8 +709,16 @@
       font-weight: bold;
     }
 
+    .parenthetical-text {
+      color: #333;
+    }
+
     .dialogue-text {
       color: #000;
+    }
+
+    .direction-text {
+      color: #333;
     }
 
     .pause-tag {
@@ -481,5 +726,6 @@
     }
 
     .toolbar { display: none; }
+    .transition-field { display: none; }
   }
 </style>
