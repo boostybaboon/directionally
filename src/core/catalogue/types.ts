@@ -1,6 +1,6 @@
 import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 
-export type CatalogueKind = 'character' | 'set-piece' | 'light';
+export type CatalogueKind = 'character' | 'set-piece' | 'light' | 'environment';
 
 export interface CharacterEntry {
   kind: 'character';
@@ -46,4 +46,14 @@ export interface LightEntry {
   config: DistributiveOmit<LightConfig, 'id'>;
 }
 
-export type CatalogueEntry = CharacterEntry | SetPieceEntry | LightEntry;
+export interface EnvironmentEntry {
+  kind: 'environment';
+  id: string;
+  label: string;
+  /** Path to the .hdr file served from /static, e.g. '/environments/studio-neutral.hdr'. */
+  hdriPath: string;
+  /** Optional path to a thumbnail image for catalogue preview. */
+  thumbnail?: string;
+}
+
+export type CatalogueEntry = CharacterEntry | SetPieceEntry | LightEntry | EnvironmentEntry;

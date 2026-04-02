@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { AddActorCommand, RemoveActorCommand, SetSpeakLinesCommand, MoveStagedActorCommand, MoveSetPieceCommand, UpdateSetPieceCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand, AddDirectionLineCommand, RemoveDirectionLineCommand, UpdateDirectionLineCommand, SetSceneScriptCommand, SetSceneTransitionCommand, SetGroupNotesCommand } from './commands';
+import { AddActorCommand, RemoveActorCommand, SetSpeakLinesCommand, MoveStagedActorCommand, MoveSetPieceCommand, UpdateSetPieceCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand, AddDirectionLineCommand, RemoveDirectionLineCommand, UpdateDirectionLineCommand, SetSceneScriptCommand, SetSceneTransitionCommand, SetGroupNotesCommand, SetSceneEnvironmentCommand } from './commands';
 import type { StoredActor, StoredProduction, StoredScene, NamedScene } from '../storage/types';
 import { getScenes } from '../storage/types';
 import type { ScriptLine, DialogueLine } from '../../lib/script/types';
@@ -1208,5 +1208,27 @@ describe('MoveNodeCommand', () => {
     // try to move g1 into itself (g1 as target parent)
     const result = new MoveNodeCommand('g1', 'g1', 0).execute(d2);
     expect(result.tree!.map((n) => n.id)).toEqual(['g1']);
+  });
+});
+
+// ── SetSceneEnvironmentCommand ──────────────────────────────────────────────────
+
+describe('SetSceneEnvironmentCommand', () => {
+  it('sets environmentMap on the target scene', () => {
+    const doc = makeProduction({ tree: [makeNamedScene()] });
+    const result = new SetSceneEnvironmentCommand('sc1', 'exterior-sky').execute(doc);
+    expect(getResultScene(result).environmentMap).toBe('exterior-sky');
+  });
+
+  it('clears environmentMap when called with undefined', () => {
+    const doc = makeProduction({ tree: [makeNamedScene({ environmentMap: 'exterior-sky' })] });
+    const result = new SetSceneEnvironmentCommand('sc1', undefined).execute(doc);
+    expect(getResultScene(result).environmentMap).toBeUndefined();
+  });
+
+  it('is a no-op when sceneId is not found', () => {
+    const doc = makeProduction({ tree: [makeNamedScene()] });
+    const result = new SetSceneEnvironmentCommand('nonexistent', 'exterior-sky').execute(doc);
+    expect(getResultScene(result).environmentMap).toBeUndefined();
   });
 });

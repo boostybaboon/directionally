@@ -1448,3 +1448,19 @@ export class UpdateDirectionLineCommand implements Command {
     return touch({ ...doc, tree });
   }
 }
+
+/** Set or clear the HDRI environment map for a scene. Pass undefined to remove it. */
+export class SetSceneEnvironmentCommand implements Command {
+  readonly label = 'Set scene environment';
+  constructor(
+    private readonly sceneId: string,
+    private readonly environmentId: string | undefined,
+  ) {}
+  execute(doc: StoredProduction): StoredProduction {
+    const tree = patchSceneInTree(doc.tree ?? [], this.sceneId, (scene) => ({
+      ...scene,
+      environmentMap: this.environmentId ?? undefined,
+    }));
+    return touch({ ...doc, tree });
+  }
+}

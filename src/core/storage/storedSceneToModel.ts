@@ -63,6 +63,7 @@ export function storedSceneToModel(storedScene: StoredScene, storedActors: Store
   const scene = new Scene('production', {
     duration:        storedScene.duration ?? 10,
     backgroundColor: storedScene.backgroundColor,
+    environmentMap:  storedScene.environmentMap,
   });
 
   scene.setCamera(storedScene.camera);

@@ -8,11 +8,14 @@
   import { buildSceneGraph } from './scene/buildSceneGraph.js';
   import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
   import { TransformControls } from 'three/addons/controls/TransformControls.js';
+  import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
   import { synthesise, isAvailable } from './tts/KokoroSynthesiser';
   import { synthesise as espeakSynthesise } from './tts/EspeakSynthesiser';
   import type { ActorVoice, VoiceFallback } from '../core/domain/types';
   import type { VoiceMode, VoiceBackend } from './types.js';
   import { estimateDuration } from '../core/storage/sceneBuilder.js';
+  import { getById } from '../core/catalogue/catalogue.js';
+  import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
 
   let canvas: HTMLCanvasElement;
   // Overlay div covering the editor (right) viewport — used as domElement for
@@ -397,6 +400,32 @@
     ({ scene, camera, authoredFov, animationDict, mixers } = graphResult);
     ondiscoverclips?.(graphResult.discoveredClips);
     updateRendererSize();
+
+    // Load HDRI environment map when the model specifies one.
+    // Must run after buildSceneGraph (scene exists) and before any rendering.
+    if (model.environmentMap) {
+      const entry = getById(model.environmentMap, CATALOGUE_ENTRIES);
+      const hdriPath = entry?.kind === 'environment'
+        ? entry.hdriPath
+        : model.environmentMap.startsWith('/') || model.environmentMap.startsWith('http')
+          ? model.environmentMap
+          : null;
+      if (hdriPath) {
+        const pmremGenerator = new THREE.PMREMGenerator(renderer);
+        try {
+          const texture = await new RGBELoader().loadAsync(hdriPath);
+          const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+          scene.environment = envMap;
+          // Only set background if no solid backgroundColor is authored — HDRI sky is the background.
+          if (model.backgroundColor === undefined) {
+            scene.background = envMap;
+          }
+          texture.dispose();
+        } finally {
+          pmremGenerator.dispose();
+        }
+      }
+    }
 
     // Playback camera frustum — visible to the editor camera (layer 1) only.
     cameraHelper = new THREE.CameraHelper(camera);

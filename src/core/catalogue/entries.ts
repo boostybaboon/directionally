@@ -108,4 +108,24 @@ export const CATALOGUE_ENTRIES: CatalogueEntry[] = [
     label: 'Directional Light',
     config: { type: 'directional', color: 0xffffff, intensity: 1.0, position: [0, 10, 5] },
   },
+
+  // ── Environments ──────────────────────────────────────────────────────────
+  {
+    kind: 'environment',
+    id: 'studio-neutral',
+    label: 'Studio (neutral)',
+    hdriPath: '/environments/studio-neutral.hdr',
+  },
+  {
+    kind: 'environment',
+    id: 'exterior-sky',
+    label: 'Exterior (sky)',
+    hdriPath: '/environments/exterior-sky.hdr',
+  },
+  {
+    kind: 'environment',
+    id: 'evening-warm',
+    label: 'Evening (warm)',
+    hdriPath: '/environments/evening-warm.hdr',
+  },
 ];

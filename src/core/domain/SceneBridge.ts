@@ -261,5 +261,5 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
     }
   }
 
-  return new Model(camera, meshes, gltfs, actions, lights, scene.backgroundColor, speechEntries, scene.duration);
+  return new Model(camera, meshes, gltfs, actions, lights, scene.backgroundColor, speechEntries, scene.duration, scene.environmentMap);
 }

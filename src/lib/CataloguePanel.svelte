@@ -1,18 +1,23 @@
 <script lang="ts">
-  import { getCharacters, getLights, getSetPieces } from '../core/catalogue/catalogue.js';
+  import { getCharacters, getLights, getSetPieces, getEnvironments } from '../core/catalogue/catalogue.js';
   import PreviewRenderer from './PreviewRenderer.svelte';
 
   interface Props {
     /** Called when the user taps / clicks "Add to scene". Provides a touch-friendly
      *  alternative to drag-and-drop (which is unsupported on mobile). */
     onadd?: (kind: 'character' | 'setpiece' | 'light', id: string) => void;
+    /** Called when the user applies an environment to the active scene. */
+    onapplyenvironment?: (environmentId: string | undefined) => void;
+    /** The environmentMap id currently set on the active scene, for display. */
+    activeEnvironmentId?: string;
   }
 
-  let { onadd }: Props = $props();
+  let { onadd, onapplyenvironment, activeEnvironmentId }: Props = $props();
 
   const characters = getCharacters();
   const setPieces = getSetPieces();
   const lights = getLights();
+  const environments = getEnvironments();
 
   let selectedCharacterId = $state<string | null>(null);
 
@@ -122,6 +127,43 @@
             </button>
             {#if onadd}
               <button class="add-inline-btn" onclick={() => onadd('light', entry.id)} title="Add {entry.label} to scene" aria-label="Add {entry.label} to scene">+</button>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+
+  <section class="catalogue-section">
+    <h3 class="catalogue-section-heading">Environments</h3>
+    {#if onapplyenvironment && activeEnvironmentId}
+      {@const active = environments.find((e) => e.id === activeEnvironmentId)}
+      {#if active}
+        <div class="environment-active">
+          <span class="env-dot" aria-hidden="true">◉</span>
+          <span class="env-active-label">{active.label}</span>
+          <button class="env-clear-btn" onclick={() => onapplyenvironment!(undefined)} title="Remove environment" aria-label="Remove environment">×</button>
+        </div>
+      {/if}
+    {/if}
+    {#if environments.length === 0}
+      <p class="empty-hint">No environments in catalogue.</p>
+    {:else}
+      <ul class="catalogue-list">
+        {#each environments as entry (entry.id)}
+          {@const isActive = activeEnvironmentId === entry.id}
+          <li class="setpiece-row">
+            <button
+              type="button"
+              class="catalogue-item catalogue-item--environment"
+              class:active={isActive}
+              title={entry.label}
+            >
+              <span class="item-icon" aria-hidden="true">🌐</span>
+              <span class="item-label">{entry.label}</span>
+            </button>
+            {#if onapplyenvironment}
+              <button class="add-inline-btn" onclick={() => onapplyenvironment!(entry.id)} title="Apply {entry.label}" aria-label="Apply {entry.label}">+</button>
             {/if}
           </li>
         {/each}
@@ -318,4 +360,40 @@
   }
   .add-inline-btn:hover { background: #1e3248; }
   .add-inline-btn:active { background: #22395a; }
+
+  .catalogue-item--environment {
+    border-left: 2px solid transparent;
+    background: none;
+    border-right: none;
+    border-top: none;
+    border-bottom: none;
+    text-align: left;
+    color: #7abfaa;
+  }
+  .catalogue-item--environment.active {
+    border-left-color: #7abfaa;
+    color: #a8e0cc;
+  }
+
+  .environment-active {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+    color: #7abfaa;
+    border-bottom: 1px solid #1e2e1e;
+  }
+  .env-dot { font-size: 10px; flex-shrink: 0; }
+  .env-active-label { flex: 1; }
+  .env-clear-btn {
+    background: none;
+    border: none;
+    color: #555;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 2px;
+    line-height: 1;
+  }
+  .env-clear-btn:hover { color: #ccc; }
 </style>

@@ -1,4 +1,4 @@
-import type { CatalogueEntry, CharacterEntry, LightEntry, SetPieceEntry } from './types.js';
+import type { CatalogueEntry, CharacterEntry, EnvironmentEntry, LightEntry, SetPieceEntry } from './types.js';
 import { CATALOGUE_ENTRIES } from './entries.js';
 
 /**
@@ -23,6 +23,14 @@ export function getSetPieces(entries: CatalogueEntry[] = CATALOGUE_ENTRIES): Set
  */
 export function getLights(entries: CatalogueEntry[] = CATALOGUE_ENTRIES): LightEntry[] {
   return entries.filter((e): e is LightEntry => e.kind === 'light');
+}
+
+/**
+ * Returns all environment entries from the catalogue.
+ * Pass a custom entries array to override the default catalogue (useful for testing).
+ */
+export function getEnvironments(entries: CatalogueEntry[] = CATALOGUE_ENTRIES): EnvironmentEntry[] {
+  return entries.filter((e): e is EnvironmentEntry => e.kind === 'environment');
 }
 
 /**

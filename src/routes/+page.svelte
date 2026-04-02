@@ -25,7 +25,7 @@
   import type { StoredProduction, StoredActor, StoredGroup, NamedScene, ProductionSpeechSettings } from '../core/storage/types.js';
   import { getScenes } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
-  import { RenameProductionCommand, SetSpeakLinesCommand, SetSceneScriptCommand, SetSceneTransitionCommand, SetGroupNotesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, SetActorCatalogueIdCommand, AddSetPieceCommand, RemoveSetPieceCommand, StageActorCommand, UnstageActorCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, SetActorVoiceCommand, SetActorTintCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand, UpdateSceneLightCommand, AddSceneLightCommand, RemoveSceneLightCommand, AddDirectionLineCommand, RemoveDirectionLineCommand, UpdateDirectionLineCommand } from '../core/document/commands.js';
+  import { RenameProductionCommand, SetSpeakLinesCommand, SetSceneScriptCommand, SetSceneTransitionCommand, SetGroupNotesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, SetActorCatalogueIdCommand, AddSetPieceCommand, RemoveSetPieceCommand, StageActorCommand, UnstageActorCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, SetActorVoiceCommand, SetActorTintCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand, UpdateSceneLightCommand, AddSceneLightCommand, RemoveSceneLightCommand, AddDirectionLineCommand, RemoveDirectionLineCommand, UpdateDirectionLineCommand, SetSceneEnvironmentCommand } from '../core/document/commands.js';
   import { ACTOR_COLORS, hexToNum, numToHex } from '$lib/actorColors.js';
   import type { SpeakAction, TransformTrack, LightingTrack, ActorBlock, LightBlock, CameraBlock, SetPieceBlock, ActorVoice, KokoroVoice, LightConfig } from '../core/domain/types.js';
   import { getCharacters, getLights, getSetPieces } from '../core/catalogue/catalogue.js';
@@ -1479,7 +1479,15 @@
 
                 </aside>
               {:else}
-                <CataloguePanel onadd={(kind, id) => handleCatalogueDrop(kind, id, [0, 0, 0])} />
+                <CataloguePanel
+                  onadd={(kind, id) => handleCatalogueDrop(kind, id, [0, 0, 0])}
+                  onapplyenvironment={(id) => {
+                    if (activeSceneId && activeDoc) {
+                      activeDoc.execute(new SetSceneEnvironmentCommand(activeSceneId, id));
+                    }
+                  }}
+                  activeEnvironmentId={activeScene?.environmentMap}
+                />
               {/if}
             </div>
           </div>

@@ -44,6 +44,9 @@ export type StoredScene = {
   blocks?: Block[];
   duration?: number;
   backgroundColor?: number;
+  /** Catalogue entry id of an EnvironmentEntry, or a bare URL to a .hdr file. When set,
+   *  the renderer loads it as an IBL environment map and visible background. */
+  environmentMap?: string;
 };
 
 /**

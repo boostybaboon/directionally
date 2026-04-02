@@ -15,6 +15,7 @@ export class Model {
   backgroundColor?: number;
   duration?: number;
   speechEntries: SpeechEntry[];
+  environmentMap?: string;
 
   constructor(
     camera: CameraAsset,
@@ -24,7 +25,8 @@ export class Model {
     lights: LightAsset[] = [],
     backgroundColor?: number,
     speechEntries: SpeechEntry[] = [],
-    duration?: number
+    duration?: number,
+    environmentMap?: string,
   ) {
     this.camera = camera;
     this.meshes = meshes;
@@ -34,5 +36,6 @@ export class Model {
     this.backgroundColor = backgroundColor;
     this.speechEntries = speechEntries;
     this.duration = duration;
+    this.environmentMap = environmentMap;
   }
 }

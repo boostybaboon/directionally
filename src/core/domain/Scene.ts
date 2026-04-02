@@ -10,12 +10,14 @@ import type {
 export type SceneOptions = {
   duration: number;
   backgroundColor?: number;
+  environmentMap?: string;
 };
 
 export class Scene {
   readonly name: string;
   readonly duration: number;
   readonly backgroundColor?: number;
+  readonly environmentMap?: string;
 
   camera: CameraConfig = { position: [0, 2, 8], lookAt: [0, 0, 0] };
   readonly lights: LightConfig[] = [];
@@ -27,6 +29,7 @@ export class Scene {
     this.name = name;
     this.duration = options.duration;
     this.backgroundColor = options.backgroundColor;
+    this.environmentMap = options.environmentMap;
   }
 
   setCamera(config: CameraConfig): this {
