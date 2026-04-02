@@ -6,14 +6,24 @@ export abstract class MaterialAsset {
 
 export class MeshStandardMaterialAsset extends MaterialAsset {
     private _threeMaterial: THREE.MeshStandardMaterial;
+
+    readonly textureUrl?: string;
+    readonly repeatU?: number;
+    readonly repeatV?: number;
     
     constructor(
         public readonly color: number,
         public readonly emissive?: number,
         public readonly metalness?: number,
-        public readonly roughness?: number
+        public readonly roughness?: number,
+        textureUrl?: string,
+        repeatU?: number,
+        repeatV?: number,
     ) {
         super();
+        this.textureUrl = textureUrl;
+        this.repeatU = repeatU;
+        this.repeatV = repeatV;
         this._threeMaterial = new THREE.MeshStandardMaterial();
         this._threeMaterial.color.setHex(color);
         

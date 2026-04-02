@@ -13,6 +13,12 @@ export type MaterialConfig = {
   emissive?: number;
   metalness?: number;
   roughness?: number;
+  /** URL to a texture image (e.g. '/textures/brick.jpg'). Loaded by the renderer via TextureLoader. */
+  textureUrl?: string;
+  /** Horizontal repeat count for the texture. Defaults to 1. */
+  repeatU?: number;
+  /** Vertical repeat count for the texture. Defaults to 1. */
+  repeatV?: number;
 };
 
 // A piece of scenery: static geometry placed in the scene (floor, walls, steps, blocks etc.)

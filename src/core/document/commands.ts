@@ -441,6 +441,22 @@ export class RemoveSetPieceCommand implements Command {
 }
 
 /**
+ * Replace the entire set with a new list of pieces — used by set generators.
+ * Overwrites the existing set; the previous list is recoverable via undo.
+ */
+export class ApplySetCommand implements Command {
+  readonly label = 'Apply generated set';
+  constructor(private readonly sceneId: string, private readonly pieces: SetPiece[]) {}
+  execute(doc: StoredProduction): StoredProduction {
+    const tree = patchNamedSceneInTree(doc.tree ?? [], this.sceneId, (ns) => ({
+      ...ns,
+      scene: { ...ns.scene, set: this.pieces },
+    }));
+    return touch({ ...doc, tree });
+  }
+}
+
+/**
  * Patch non-positional fields on the named SetPiece (color, scale, geometry dimensions).
  * Uses shallow merge for the `material` and `geometry` sub-objects so partial patches
  * (e.g. changing only color) do not clobber unrelated fields.

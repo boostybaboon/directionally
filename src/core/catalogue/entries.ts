@@ -95,6 +95,38 @@ export const CATALOGUE_ENTRIES: CatalogueEntry[] = [
     material: { color: 0x555555, roughness: 0.8, metalness: 0.1 },
   },
 
+  // ── Textured set pieces ───────────────────────────────────────────────────
+  {
+    kind: 'set-piece',
+    id: 'brick-wall',
+    label: 'Brick Wall',
+    geometry: { type: 'box', width: 4, height: 3, depth: 0.15 },
+    material: { color: 0xffffff, roughness: 0.9, metalness: 0.0, textureUrl: '/textures/brick.jpg', repeatU: 2.5, repeatV: 1.5 },
+  },
+  {
+    kind: 'set-piece',
+    id: 'concrete-floor',
+    label: 'Concrete Floor',
+    geometry: { type: 'plane', width: 10, height: 10 },
+    material: { color: 0xffffff, roughness: 0.95, metalness: 0.0, textureUrl: '/textures/concrete.jpg', repeatU: 4, repeatV: 4 },
+    defaultRotation: [-Math.PI / 2, 0, 0],
+  },
+  {
+    kind: 'set-piece',
+    id: 'wood-floor',
+    label: 'Wood Floor',
+    geometry: { type: 'plane', width: 8, height: 8 },
+    material: { color: 0xffffff, roughness: 0.7, metalness: 0.05, textureUrl: '/textures/wood-boards.jpg', repeatU: 3, repeatV: 3 },
+    defaultRotation: [-Math.PI / 2, 0, 0],
+  },
+  {
+    kind: 'set-piece',
+    id: 'plaster-wall',
+    label: 'Plaster Wall',
+    geometry: { type: 'box', width: 4, height: 3, depth: 0.15 },
+    material: { color: 0xffffff, roughness: 0.85, metalness: 0.0, textureUrl: '/textures/plaster.jpg', repeatU: 2, repeatV: 1.5 },
+  },
+
   // ── Lights ────────────────────────────────────────────────────────────────
   {
     kind: 'light',

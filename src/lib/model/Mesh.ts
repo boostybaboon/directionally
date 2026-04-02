@@ -5,6 +5,7 @@ import { Object3DAsset } from './Object3DAsset';
 
 export class MeshAsset extends Object3DAsset {
     private _threeMesh: THREE.Mesh;
+    readonly material: MaterialAsset;
     
     constructor(
         name: string,
@@ -14,6 +15,7 @@ export class MeshAsset extends Object3DAsset {
         const threeMesh = new THREE.Mesh(geometry.threeGeometry, material.threeMaterial);
         super(name, threeMesh);
         this._threeMesh = threeMesh;
+        this.material = material;
     }
 
     get threeMesh(): THREE.Mesh {

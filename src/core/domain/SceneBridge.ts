@@ -51,6 +51,9 @@ function buildMaterial(config: MaterialConfig): MeshStandardMaterialAsset {
     config.emissive,
     config.metalness,
     config.roughness,
+    config.textureUrl,
+    config.repeatU,
+    config.repeatV,
   );
 }
 

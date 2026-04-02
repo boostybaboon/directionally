@@ -174,6 +174,31 @@
         onchange={(e) => execute(new UpdateSetPieceCommand(entity.setPieceId, { material: { ...piece.material, color: hexToNum(e.currentTarget.value) } }))}
       />
     </div>
+    <div class="anim-row">
+      <label class="anim-label" for="pp-sp-tex">Texture</label>
+      <input
+        id="pp-sp-tex"
+        type="text"
+        class="anim-text"
+        placeholder="/textures/brick.jpg"
+        value={piece.material.textureUrl ?? ''}
+        onchange={(e) => execute(new UpdateSetPieceCommand(entity.setPieceId, { material: { ...piece.material, textureUrl: e.currentTarget.value.trim() || undefined } }))}
+      />
+    </div>
+    {#if piece.material.textureUrl}
+      <div class="anim-row">
+        <label class="anim-label" for="pp-sp-ru">Repeat U</label>
+        <input id="pp-sp-ru" class="anim-number" type="number" step="0.5" min="0.1"
+          value={piece.material.repeatU ?? 1}
+          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) execute(new UpdateSetPieceCommand(entity.setPieceId, { material: { ...piece.material, repeatU: n } })); }}
+        />
+        <label class="anim-label" for="pp-sp-rv">V</label>
+        <input id="pp-sp-rv" class="anim-number" type="number" step="0.5" min="0.1"
+          value={piece.material.repeatV ?? 1}
+          onchange={(e) => { const n = parseFloat(e.currentTarget.value); if (!isNaN(n) && n > 0) execute(new UpdateSetPieceCommand(entity.setPieceId, { material: { ...piece.material, repeatV: n } })); }}
+        />
+      </div>
+    {/if}
     {#if geom.type === 'box'}
       <div class="anim-row">
         <label class="anim-label" for="pp-sp-w">W</label>
@@ -479,6 +504,17 @@
     font-size: 11px;
     padding: 2px 4px;
     text-align: right;
+  }
+
+  .anim-text {
+    flex: 1;
+    min-width: 0;
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 3px;
+    color: #ddd;
+    font-size: 11px;
+    padding: 2px 4px;
   }
 
   .blk-pos {

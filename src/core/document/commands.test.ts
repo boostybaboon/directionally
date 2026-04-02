@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { AddActorCommand, RemoveActorCommand, SetSpeakLinesCommand, MoveStagedActorCommand, MoveSetPieceCommand, UpdateSetPieceCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand, AddDirectionLineCommand, RemoveDirectionLineCommand, UpdateDirectionLineCommand, SetSceneScriptCommand, SetSceneTransitionCommand, SetGroupNotesCommand, SetSceneEnvironmentCommand } from './commands';
+import { AddActorCommand, RemoveActorCommand, SetSpeakLinesCommand, MoveStagedActorCommand, MoveSetPieceCommand, UpdateSetPieceCommand, SetSceneDurationCommand, AddAnimateSegmentCommand, RemoveAnimateSegmentCommand, UpdateAnimateSegmentCommand, CapturePositionKeyframeCommand, RemoveTransformKeyframeCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand, AddDirectionLineCommand, RemoveDirectionLineCommand, UpdateDirectionLineCommand, SetSceneScriptCommand, SetSceneTransitionCommand, SetGroupNotesCommand, SetSceneEnvironmentCommand, ApplySetCommand } from './commands';
 import type { StoredActor, StoredProduction, StoredScene, NamedScene } from '../storage/types';
 import { getScenes } from '../storage/types';
 import type { ScriptLine, DialogueLine } from '../../lib/script/types';
@@ -1230,5 +1230,41 @@ describe('SetSceneEnvironmentCommand', () => {
     const doc = makeProduction({ tree: [makeNamedScene()] });
     const result = new SetSceneEnvironmentCommand('nonexistent', 'exterior-sky').execute(doc);
     expect(getResultScene(result).environmentMap).toBeUndefined();
+  });
+});
+
+// ── ApplySetCommand ───────────────────────────────────────────────────────────
+
+describe('ApplySetCommand', () => {
+  const box = { name: 'box', geometry: { type: 'box' as const, width: 1, height: 1, depth: 1 }, material: { color: 0xff0000 } };
+  const sphere = { name: 'sphere', geometry: { type: 'sphere' as const, radius: 0.5 }, material: { color: 0x0000ff } };
+
+  it('replaces the entire set with the given pieces', () => {
+    const doc = makeProduction({ tree: [makeNamedScene({ set: [box] })] });
+    const result = new ApplySetCommand('sc1', [sphere]).execute(doc);
+    const s = getResultScene(result);
+    expect(s.set).toHaveLength(1);
+    expect(s.set[0].name).toBe('sphere');
+  });
+
+  it('clears the set when an empty array is supplied', () => {
+    const doc = makeProduction({ tree: [makeNamedScene({ set: [box, sphere] })] });
+    const result = new ApplySetCommand('sc1', []).execute(doc);
+    expect(getResultScene(result).set).toHaveLength(0);
+  });
+
+  it('does not affect other scenes', () => {
+    const ns2: NamedScene = { id: 'sc2', name: 'Scene 2', scene: makeScene({ set: [box] }) };
+    const doc = makeProduction({ tree: [makeNamedScene(), ns2] });
+    const result = new ApplySetCommand('sc1', [sphere]).execute(doc);
+    const scenes = getScenes(result.tree ?? []);
+    expect(scenes.find((n) => n.id === 'sc2')!.scene.set).toHaveLength(1);
+  });
+
+  it('is a no-op when sceneId is not found', () => {
+    const doc = makeProduction({ tree: [makeNamedScene({ set: [box] })] });
+    const result = new ApplySetCommand('nonexistent', [sphere]).execute(doc);
+    expect(getResultScene(result).set).toHaveLength(1);
+    expect(getResultScene(result).set[0].name).toBe('box');
   });
 });

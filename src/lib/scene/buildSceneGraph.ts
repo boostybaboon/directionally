@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { PerspectiveCameraAsset } from '../model/Camera.js';
+import { MeshStandardMaterialAsset } from '../model/Material.js';
 import type { Model } from '../Model.js';
 import type { AnimationDict } from '../model/Action.js';
 
@@ -59,6 +60,21 @@ export async function buildSceneGraph(model: Model): Promise<SceneGraphResult> {
       }
     }
   });
+
+  // Load textures for any mesh whose material specifies a textureUrl.
+  await Promise.all(
+    model.meshes
+      .filter((mesh) => mesh.material instanceof MeshStandardMaterialAsset && mesh.material.textureUrl)
+      .map(async (mesh) => {
+        const mat = mesh.material as MeshStandardMaterialAsset;
+        const texture = await new THREE.TextureLoader().loadAsync(mat.textureUrl!);
+        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+        texture.repeat.set(mat.repeatU ?? 1, mat.repeatV ?? 1);
+        const threeMat = mesh.threeMesh.material as THREE.MeshStandardMaterial;
+        threeMat.map = texture;
+        threeMat.needsUpdate = true;
+      }),
+  );
 
   // Clip lookup built during GLTF loading; used only to wire up actions below.
   const modelAnimationClips: { [key: string]: THREE.AnimationClip[] } = {};

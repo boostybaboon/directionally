@@ -1,0 +1,9 @@
+three-csg-ts and three-bhv-csg
+
+three-csg-ts and three-bvh-csg
+three-csg-ts is a straightforward port of the classic Lischinski/Naylor BSP-tree CSG approach. Union, subtract, intersect on BufferGeometry. The original algorithm (from the 1990s era you studied) builds a BSP tree per operand, clips polygons across the partition planes, and recombines. Pure JS, no WASM. Works for simple cases — boolean a door hole out of a wall, for instance. Known problems: numerically fragile at coincident faces, slow on high-poly meshes (the BSP rebuild is O(n log n) per operation but with bad constants), and produces messy output geometry with T-junctions that cause render artifacts. Fine for prototyping; not production-quality.
+
+three-mesh-bvh (the library is actually three-mesh-bvh; the CSG extension is three-bvh-csg) uses a completely different strategy. The BVH (Bounding Volume Hierarchy) accelerates the intersection phase — finding which triangle pairs actually intersect is the expensive step, and the BVH reduces that from O(m×n) to roughly O((m+n) log(m+n)). The CSG logic itself then only processes intersection candidates. Result: much faster on real-world mesh density, numerically more robust (uses exact intersection tests), output geometry is cleaner. Actively maintained, used in production Three.js projects. This is the one worth using if you were going to use either.
+
+Neither gives you a modelling interaction — they're pure computational kernels. You'd still need to build the UI layer: "select these two objects, press subtract."
+

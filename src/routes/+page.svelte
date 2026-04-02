@@ -25,7 +25,10 @@
   import type { StoredProduction, StoredActor, StoredGroup, NamedScene, ProductionSpeechSettings } from '../core/storage/types.js';
   import { getScenes } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
-  import { RenameProductionCommand, SetSpeakLinesCommand, SetSceneScriptCommand, SetSceneTransitionCommand, SetGroupNotesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, SetActorCatalogueIdCommand, AddSetPieceCommand, RemoveSetPieceCommand, StageActorCommand, UnstageActorCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, SetActorVoiceCommand, SetActorTintCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand, UpdateSceneLightCommand, AddSceneLightCommand, RemoveSceneLightCommand, AddDirectionLineCommand, RemoveDirectionLineCommand, UpdateDirectionLineCommand, SetSceneEnvironmentCommand } from '../core/document/commands.js';
+  import { RenameProductionCommand, SetSpeakLinesCommand, SetSceneScriptCommand, SetSceneTransitionCommand, SetGroupNotesCommand, AddActorCommand, RemoveActorCommand, RenameActorCommand, SetActorCatalogueIdCommand, AddSetPieceCommand, RemoveSetPieceCommand, StageActorCommand, UnstageActorCommand, MoveStagedActorCommand, MoveSetPieceCommand, SetSceneDurationCommand, CaptureLightIntensityKeyframeCommand, RemoveLightKeyframeCommand, SetActorIdleAnimationCommand, SetActorScaleCommand, SetActorVoiceCommand, SetActorTintCommand, AddActorBlockCommand, RemoveActorBlockCommand, UpdateActorBlockCommand, AddLightBlockCommand, RemoveLightBlockCommand, UpdateLightBlockCommand, AddCameraBlockCommand, RemoveCameraBlockCommand, UpdateCameraBlockCommand, UpdateCameraCommand, AddSetPieceBlockCommand, RemoveSetPieceBlockCommand, UpdateSetPieceBlockCommand, AddSceneCommand, RenameSceneCommand, RemoveSceneCommand, SwitchSceneCommand, AddGroupCommand, RenameGroupCommand, RemoveGroupCommand, SetProductionSpeechSettingsCommand, InsertSceneAtCommand, InsertGroupAtCommand, MoveNodeCommand, UpdateSceneLightCommand, AddSceneLightCommand, RemoveSceneLightCommand, AddDirectionLineCommand, RemoveDirectionLineCommand, UpdateDirectionLineCommand, SetSceneEnvironmentCommand, ApplySetCommand } from '../core/document/commands.js';
+  import { generateTheatreStage } from '../core/storage/generators/theatreStage.js';
+  import type { TheatreStageType } from '../core/storage/generators/theatreStage.js';
+  import { generateStudioRoom } from '../core/storage/generators/studioRoom.js';
   import { ACTOR_COLORS, hexToNum, numToHex } from '$lib/actorColors.js';
   import type { SpeakAction, TransformTrack, LightingTrack, ActorBlock, LightBlock, CameraBlock, SetPieceBlock, ActorVoice, KokoroVoice, LightConfig } from '../core/domain/types.js';
   import { getCharacters, getLights, getSetPieces } from '../core/catalogue/catalogue.js';
@@ -117,6 +120,29 @@
   $effect(() => { localStorage.setItem(MAIN_VIEW_KEY, mainView); });
   let rightTab = $state<'staging' | 'script'>('staging');
   let designMode = $state(false);
+
+  // Generate-set panel
+  let generatePanelOpen = $state(false);
+  let generateKind = $state<'theatre' | 'studio'>('theatre');
+  let genTheatreType = $state<TheatreStageType>('proscenium');
+  let genTheatreWidth = $state(14);
+  let genTheatreDepth = $state(9);
+  let genTheatreHeight = $state(7);
+  let genTheatreLegs = $state(4);
+  let genTheatreLegAngle = $state(12);
+  let genStudioWidth = $state(10);
+  let genStudioDepth = $state(8);
+  let genStudioHeight = $state(4);
+  let genStudioCeiling = $state(false);
+
+  function applyGeneratedSet() {
+    if (!activeSceneId) return;
+    const pieces = generateKind === 'theatre'
+      ? generateTheatreStage({ type: genTheatreType, stageWidthM: genTheatreWidth, stageDepthM: genTheatreDepth, flatHeightM: genTheatreHeight, legs: genTheatreLegs, legAngleDeg: genTheatreLegAngle })
+      : generateStudioRoom({ widthM: genStudioWidth, depthM: genStudioDepth, heightM: genStudioHeight, ceiling: genStudioCeiling });
+    activeDoc?.execute(new ApplySetCommand(activeSceneId, pieces));
+    generatePanelOpen = false;
+  }
   let seedWorkflow2Fn = $state<(() => void) | undefined>();
 
   // Presentation mode — plays all scenes in depth-first order, canvas fills the window.
@@ -1697,6 +1723,71 @@
                     {/if}
 
                     <!-- Set pieces -->
+                    <!-- Generate set -->
+                    <div class="generate-set">
+                      <button class="generate-set-toggle" onclick={() => (generatePanelOpen = !generatePanelOpen)}>
+                        {generatePanelOpen ? '▲' : '▼'} Generate set…
+                      </button>
+                      {#if generatePanelOpen}
+                        <div class="generate-set-panel">
+                          <div class="gen-row">
+                            <label class="gen-label" for="gen-kind">Type</label>
+                            <select id="gen-kind" class="gen-select" bind:value={generateKind}>
+                              <option value="theatre">Theatre stage</option>
+                              <option value="studio">Studio room</option>
+                            </select>
+                          </div>
+                          {#if generateKind === 'theatre'}
+                            <div class="gen-row">
+                              <label class="gen-label" for="gen-th-type">Stage</label>
+                              <select id="gen-th-type" class="gen-select" bind:value={genTheatreType}>
+                                <option value="proscenium">Proscenium</option>
+                                <option value="thrust">Thrust</option>
+                              </select>
+                            </div>
+                            <div class="gen-row">
+                              <label class="gen-label" for="gen-th-w">Width (m)</label>
+                              <input id="gen-th-w" class="gen-number" type="number" min="2" max="30" step="0.5" bind:value={genTheatreWidth} />
+                            </div>
+                            <div class="gen-row">
+                              <label class="gen-label" for="gen-th-d">Depth (m)</label>
+                              <input id="gen-th-d" class="gen-number" type="number" min="2" max="20" step="0.5" bind:value={genTheatreDepth} />
+                            </div>
+                            <div class="gen-row">
+                              <label class="gen-label" for="gen-th-h">Arch height (m)</label>
+                              <input id="gen-th-h" class="gen-number" type="number" min="2" max="15" step="0.5" bind:value={genTheatreHeight} />
+                            </div>
+                            <div class="gen-row">
+                              <label class="gen-label" for="gen-th-legs">Leg pairs</label>
+                              <input id="gen-th-legs" class="gen-number" type="number" min="0" max="8" step="1" bind:value={genTheatreLegs} />
+                            </div>
+                            <div class="gen-row">
+                              <label class="gen-label" for="gen-th-angle">Leg angle (°)</label>
+                              <input id="gen-th-angle" class="gen-number" type="number" min="0" max="45" step="1" bind:value={genTheatreLegAngle} />
+                            </div>
+                          {:else}
+                            <div class="gen-row">
+                              <label class="gen-label" for="gen-st-w">Width (m)</label>
+                              <input id="gen-st-w" class="gen-number" type="number" min="2" max="40" step="0.5" bind:value={genStudioWidth} />
+                            </div>
+                            <div class="gen-row">
+                              <label class="gen-label" for="gen-st-d">Depth (m)</label>
+                              <input id="gen-st-d" class="gen-number" type="number" min="2" max="30" step="0.5" bind:value={genStudioDepth} />
+                            </div>
+                            <div class="gen-row">
+                              <label class="gen-label" for="gen-st-h">Height (m)</label>
+                              <input id="gen-st-h" class="gen-number" type="number" min="1" max="10" step="0.25" bind:value={genStudioHeight} />
+                            </div>
+                            <div class="gen-row">
+                              <label class="gen-label" for="gen-st-ceil">Ceiling</label>
+                              <input id="gen-st-ceil" type="checkbox" bind:checked={genStudioCeiling} />
+                            </div>
+                          {/if}
+                          <button class="generate-set-apply" onclick={applyGeneratedSet}>Apply (replaces set)</button>
+                        </div>
+                      {/if}
+                    </div>
+
                     <div class="roster-setpieces">
                       {#if scenePieces.length > 0}
                         <ul class="cast-list">
@@ -2300,6 +2391,87 @@
 
   .roster-setpieces {
     margin-top: 4px;
+  }
+
+  .generate-set {
+    margin: 4px 0 2px;
+  }
+
+  .generate-set-toggle {
+    background: none;
+    border: 1px solid #333;
+    border-radius: 4px;
+    color: #aaa;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 2px 8px;
+    width: 100%;
+    text-align: left;
+  }
+
+  .generate-set-toggle:hover {
+    border-color: #555;
+    color: #ddd;
+  }
+
+  .generate-set-panel {
+    background: #1a1a1a;
+    border: 1px solid #2e2e2e;
+    border-radius: 4px;
+    margin-top: 4px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .gen-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .gen-label {
+    color: #888;
+    font-size: 11px;
+    min-width: 72px;
+    flex-shrink: 0;
+  }
+
+  .gen-select {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 3px;
+    color: #ccc;
+    font-size: 11px;
+    padding: 2px 4px;
+    flex: 1;
+  }
+
+  .gen-number {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 3px;
+    color: #ccc;
+    font-size: 11px;
+    padding: 2px 4px;
+    width: 60px;
+  }
+
+  .generate-set-apply {
+    align-self: flex-end;
+    background: #2a4a2a;
+    border: 1px solid #3a6a3a;
+    border-radius: 4px;
+    color: #9fdf9f;
+    cursor: pointer;
+    font-size: 11px;
+    margin-top: 2px;
+    padding: 3px 10px;
+  }
+
+  .generate-set-apply:hover {
+    background: #3a5a3a;
   }
 
   .stage-section-design-camera {
