@@ -8,7 +8,7 @@ Evolve Directionally from a scene player into a full production authoring tool: 
 
 ---
 
-## Phase L — Locations & Environment Generation *(next — top priority)*
+## Phase L — Locations & Environment Generation *(L1–L4 complete; L5 next)*
 
 *A director should be able to rough in a convincing location — a theatre stage, a TV studio, an exterior plaza — in under two minutes, without Blender expertise. This phase builds that capability in six ordered steps, each independently valuable.*
 
@@ -17,17 +17,17 @@ Evolve Directionally from a scene player into a full production authoring tool: 
 ```
 Level 5 — External assets            (user-supplied URL or file upload)
 Level 4 — Paid/free third-party GLBs (Sketchfab, Ready Player Me, etc.)
-Level 3 — Bundled GLTF props         (we curate ~15 CC0 items)
-Level 2 — HDRI environments          (Poly Haven CC0 + textured backdrops)
-Level 1 — Parameterised generators   (emit SetPiece[] from authored dimensions)
-Level 0 — Bare primitives            (today — box, plane, sphere, cylinder)
+Level 3 — Bundled GLTF props         (we curate ~15 CC0 items)       ← next
+Level 2 — HDRI environments          ✅ complete
+Level 1 — Parameterised generators   ✅ complete
+Level 0 — Bare primitives            (always available)
 ```
 
 Each level adds coverage without obsoleting the one below. A production can mix levels freely.
 
 ---
 
-### Step L1 — HDRI environment maps
+### Step L1 — HDRI environment maps ✅ COMPLETE
 
 *Unlocks all exterior scenes with near-zero code; dramatically improves interior atmosphere.*
 
@@ -50,7 +50,7 @@ Each level adds coverage without obsoleting the one below. A production can mix 
 
 ---
 
-### Step L2 — Textured materials
+### Step L2 — Textured materials ✅ COMPLETE
 
 *Unlocks painted backdrops, textured floors, brick walls.*
 
@@ -70,7 +70,7 @@ Each level adds coverage without obsoleting the one below. A production can mix 
 
 ---
 
-### Step L3 — Theatre stage generator
+### Step L3 — Theatre stage generator ✅ COMPLETE
 
 *The most theatrically specific use case; achievable entirely with existing primitives.*
 
@@ -97,7 +97,7 @@ type TheatreStageConfig = {
 
 ---
 
-### Step L4 — Drama studio / soundstage generator
+### Step L4 — Drama studio / soundstage generator ✅ COMPLETE
 
 *A box room with configurable dimensions. "Drama studio" and "soundstage" are the same concept — a bare rectangular space with controlled lighting.*
 
@@ -124,7 +124,7 @@ type StudioConfig = {
 
 ---
 
-### Step L5 — Bundled CC0 asset curation
+### Step L5 — Bundled CC0 asset curation *(next — top priority)*
 
 *10–15 carefully selected, appropriately licensed GLTF props covering the most common staging needs.*
 

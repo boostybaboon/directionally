@@ -314,6 +314,53 @@ Redesign areas delivered:
 
 ---
 
+## Phase L1 — HDRI environment maps ✅ COMPLETE
+
+- `EnvironmentEntry { kind: 'environment'; id; label; hdriPath; thumbnail? }` added to catalogue type union.
+- `environmentMap?: string` threaded through `StoredScene` → `Scene` → `Model`.
+- `SetSceneEnvironmentCommand(sceneId, environmentId?)` — full undo/redo; `null` clears the map.
+- `RGBELoader` + `PMREMGenerator` in `Presenter.svelte` `loadModel()` (not `buildSceneGraph` — needs a renderer instance). Sets `scene.environment` for IBL and `scene.background` for visible sky.
+- 3 bundled seed entries in `entries.ts`: `studio-neutral`, `exterior-sky`, `evening-warm`; HDR files in `static/environments/`.
+- Catalogue tab gains an "Environments" section with thumbnail cards and an "Apply" button.
+- `CataloguePanel` gains `onapplyenvironment` event prop + `activeEnvironmentId` for active-state highlight.
+
+---
+
+## Phase L2 — Textured materials ✅ COMPLETE
+
+- `textureUrl?: string`, `repeatU?: number`, `repeatV?: number` added to `MaterialConfig`.
+- `buildSceneGraph.ts` runs an async `TextureLoader` pass after the synchronous mesh loop; sets `MeshStandardMaterial.map`, `texture.repeat`, and `RepeatWrapping`.
+- 4 textured set-piece catalogue entries: `brick-wall`, `concrete-floor`, `wood-floor`, `plaster-wall`; texture files in `static/textures/`.
+- PropertiesPanel gains a "Texture" text input and repeat U/V number fields.
+- No new command needed — `UpdateSetPieceCommand` already accepts material patches.
+
+---
+
+## Phase L3 — Theatre stage generator ✅ COMPLETE
+
+- `src/core/storage/generators/theatreStage.ts` — `generateTheatreStage(config?): SetPiece[]`.
+- **Config** (`TheatreStageConfig`): `type: 'proscenium' | 'thrust'`, `stageWidthM` (default 14), `stageDepthM` (default 9), `flatHeightM` (default 7), `legs` (default 4), `legAngleDeg` (default 12), `deckColor` (default `0x1a1816`), `legColor` (default `0x6b1a22`), `maskingColor` (default `0x0d0c0b`).
+- Defaults at West End scale (Prince of Wales / Victoria Palace proportions).
+- Legs angled inward by `legAngleDeg` (converging wing perspective). Tormentors and legs use `legColor` (crimson velvet); back wall and border use `maskingColor` (near-black). Deck near-black painted boards.
+- Proscenium output: deck + back-wall + N×2 leg flats + border + 2 tormentors.
+- Thrust output: extended deck + N×2 leg flats (no back wall).
+- 19 tests in `theatreStage.test.ts`.
+
+---
+
+## Phase L4 — Drama studio / soundstage generator ✅ COMPLETE
+
+- `src/core/storage/generators/studioRoom.ts` — `generateStudioRoom(config?): SetPiece[]`.
+- **Config** (`StudioRoomConfig`): `widthM` (default 10), `depthM` (default 8), `heightM` (default 4), `wallColor` (default `0xddd4c5` warm off-white), `floorColor` (default `0x4a4742` warm dark grey), `ceiling` (default `false`), `floorTextureUrl?`, `floorRepeat?`.
+- Output: floor plane + back-wall + left-wall + right-wall + optional ceiling — all named `SetPiece`s.
+- 19 tests in `studioRoom.test.ts`.
+
+**Shared infrastructure (L3 + L4):**
+- `ApplySetCommand(sceneId, pieces)` in `commands.ts` — replaces the entire scene set via `patchNamedSceneInTree`; full undo/redo. 4 tests in `commands.test.ts`.
+- "Generate set…" collapsible panel in the Staging tab (`+page.svelte`) — type selector (Theatre / Studio), all config fields with labelled inputs, Apply button.
+
+---
+
 ## Architecture Decisions (locked in)
 
 - **Storage**: Portable JSON document format from day one. No `localStorage` key names leak into business logic — `ProductionStore` owns all persistence so the backing store can switch to a server later without touching callers.
