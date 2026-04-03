@@ -160,24 +160,25 @@ type StudioConfig = {
 
 ---
 
-### Step L6 — LocalCatalogueStore (user-extensible catalogue)
+### Step L6 — OPFSCatalogueStore (user-extensible catalogue)
 
 *Let authors bring their own GLB assets without writing code. Sets up the external asset architecture for Phase 13.*
 
-**Concept:** a user can paste a URL (or upload a file) to add a new `CatalogueEntry` backed by localStorage. From that point the entry appears in the Catalogue tab exactly like a bundled asset — it can be previewed, dragged into scenes, and used in productions.
+**Concept:** a user can paste a URL (or upload a file) to add a new `CatalogueEntry` stored in the browser's Origin Private File System (OPFS). The entry appears in the Catalogue tab exactly like a bundled asset — it can be previewed, dragged into scenes, and used in productions. Productions reference assets by stable `catalogueId` string; the `gltfPath` is an object URL resolved fresh from OPFS each session.
+
+**Why OPFS, not localStorage:** GLB binaries encoded as `data:` URIs would exhaust the ~5 MB `localStorage` cap after a handful of assets. OPFS stores raw binary files with quota managed by the browser against available disk space — effectively unlimited for practical use. Supported in Chrome/Edge/Firefox/Safari 17+.
 
 **Data model:**
 ```ts
 type UserCatalogueEntry = CatalogueEntry & { userAdded: true; addedAt: number };
 ```
-`LocalCatalogueStore` in `src/core/storage/LocalCatalogueStore.ts` — same service interface as `ProductionStore`; backed by `localStorage`.
+`OPFSCatalogueStore` in `src/core/storage/OPFSCatalogueStore.ts` — async interface; GLB files stored under an `assets/` directory in the origin OPFS root. On `list()`, each file produces a fresh `URL.createObjectURL()` — no reload fragility.
 
 **UI:**
 - "Add asset…" button at the bottom of the Catalogue tab.
-- A modal with: URL input (or file drag), label, kind selector (Character / Set Piece). Submit → loads the GLTF to validate, then saves the entry.
-- File upload: `URL.createObjectURL(file)` creates a local blob URL used as the `gltfPath`. Note: blob URLs do not survive a page reload; Phase 13's server-backed store lifts this limitation.
+- A modal with: file drag/drop or file picker, label, kind selector (Character / Set Piece). Submit → loads the GLTF to validate, writes the blob to OPFS, saves metadata.
 
-**Future path (Phase 13):** `LocalCatalogueStore` is the local-storage implementation of a `CatalogueStore` interface. Phase 13 replaces it with a server-backed store — callers are unchanged.
+**Future path (Phase 13):** `OPFSCatalogueStore` is the local implementation of a `CatalogueStore` interface. Phase 13 replaces it with a server-backed store — callers are unchanged. User assets can be uploaded to the server store at that point.
 
 ---
 
@@ -201,7 +202,7 @@ This cluster of features shares a prerequisite: the character positioning system
 - "Save as set template" action in the Set section of the Staging tab — saves the current scene's `set: SetPiece[]` under a user-chosen name.
 - Set templates appear in the Catalogue tab under a new "Set Templates" group.
 - Applying a template copies all its set pieces into the active scene (non-destructive append; name collisions get a numeric suffix).
-- `SetTemplateStore` in `src/core/storage/` — same shape as `ProductionStore`, backed by `localStorage`.
+- `SetTemplateStore` in `src/core/storage/` — same shape as `ProductionStore`; backed by IndexedDB once Phase I0 lands, `localStorage` until then.
 - No live link between template and scenes — a template is a saved snapshot, not a shared reference.
 
 This lands naturally after Step L3 (theatre stage generator): generate a stage → save as template → apply to each scene.
@@ -210,19 +211,19 @@ This lands naturally after Step L3 (theatre stage generator): generate a stage �
 
 ## Phase UX3.1 — Main-area tab bar *(not yet started)*
 
-*Make the three primary canvas surfaces (Playback, Design, Script) explicit tabs rather than implicit modes.*
+*Make the three primary canvas surfaces (Playback, Edit, Script) explicit tabs rather than implicit modes.*
 
-**Current state:** Playback and Design modes are toggled by a ✏ / ▶ button; the Script view has its own 3D / Script toggle bar.
+**Current state:** Playback and Edit modes are toggled by a ✏ / ▶ button; the Script view has its own 3D / Script toggle bar.
 
 **Proposed tab bar** across the top of the main area:
 
 | Tab | Content |
 |---|---|
 | **▶ Playback** | Three.js canvas in playback mode |
-| **✏ Design** | Same canvas in design mode |
+| **✏ Edit** | Same canvas in edit mode |
 | **📄 Script** | `ProductionScriptView` full-width |
 
-`mainTab: 'playback' | 'design' | 'script'` replaces `designMode` boolean + `mainView` string. The Presenter only renders when `mainTab !== 'script'`. Transport bar hidden/collapsed in script mode.
+`mainTab: 'playback' | 'edit' | 'script'` replaces `editMode` boolean + `mainView` string. The Presenter only renders when `mainTab !== 'script'`. Transport bar hidden/collapsed in script mode.
 
 **Migration:** remove the `✏ / ▶` toggle button; remove the 3D / Script button bar; right panel retains Stage and Scene Script tabs.
 
@@ -288,7 +289,7 @@ interface AssetStore {
 }
 ```
 
-`CATALOGUE_ENTRIES` becomes the `BundledAssetStore` implementation; `LocalCatalogueStore` (Step L6) is the user-local implementation. Callers never change.
+`CATALOGUE_ENTRIES` becomes the `BundledAssetStore` implementation; `OPFSCatalogueStore` (Step L6) is the user-local implementation. Callers never change.
 
 Possible directions: self-hosted S3/R2, Sketchfab API, Ready Player Me, Mixamo FBX→GLB pipeline.
 
@@ -316,11 +317,32 @@ Prerequisites: UX2.3 and UX2.4. Button-based flows remain — this is progressiv
 
 ## Infrastructure *(deferred)*
 
+### Phase I0 — ProductionStore → IndexedDB *(local users)*
+
+*Removes the ~5 MB `localStorage` ceiling before it becomes a practical constraint.*
+
+**Motivation:** `localStorage` is capped at ~5 MB shared across all keys. A realistic production reaches 100–300 KB of JSON; with dozens of productions this becomes a genuine limit. IndexedDB provides gigabytes of quota-managed storage, survives page reloads, and has a native binary blob API.
+
+**What changes:**
+- `ProductionStore` interface methods become `async` — `list()`, `get()`, `save()`, `delete()` all return `Promise`s.
+- Implementation moves from `localStorage` to IndexedDB (key `directionally_productions`).
+- `SetTemplateStore` (Phase UX2.5) adopts the same async interface and IndexedDB backing when it is built.
+- `ProductionDocument.execute()` returns `Promise<void>`; all call sites in `+page.svelte` `await` it.
+- All `ProductionStore` and `ProductionDocument` tests updated for async.
+
+**What does not change:** `StoredProduction` shape is identical — no data migration needed for the stored JSON.
+
+**One-way migration:** on first load under I0, existing `localStorage` productions are read and written into IndexedDB, then the `localStorage` key is cleared. Silent, automatic.
+
+**Phase I1 readiness:** the async interface produced here maps directly to a `fetch`-backed Cosmos DB adapter — no further interface change required.
+
+---
+
 ### Phase I1 — Azure deployment + database serialisation
 - **Frontend:** Azure Static Web App (`swa-cli.config.json` already in repo).
 - **API:** SvelteKit `+server.ts` handlers; SWA managed functions proxy `/api/*`.
 - **Database:** Azure Cosmos DB NoSQL. `StoredProduction` maps directly to a Cosmos DB item. Partition key = `userId`.
-- **`ProductionStore` interface unchanged** — swapping `localStorage` for a `fetch`-backed store touches zero callers.
+- **`ProductionStore` async interface from Phase I0** — swapping the IndexedDB implementation for a `fetch`-backed store touches zero callers.
 
 ### Phase I2 — User management
 - **Identity:** Microsoft Entra External ID (GitHub, Google, email/password).
@@ -376,7 +398,7 @@ Prerequisites: UX2.3 and UX2.4. Button-based flows remain — this is progressiv
 | Theatre stage generator | Phase L3 |
 | Drama studio / soundstage generator | Phase L4 |
 | Bundled CC0 prop assets (~15 items) | Phase L5 |
-| LocalCatalogueStore (user-extensible catalogue) | Phase L6 |
+| OPFSCatalogueStore (user-extensible catalogue, OPFS-backed) | Phase L6 |
 | Multi-level sets / terrain | Future advanced |
 | Reusable set templates | Phase UX2.5 |
 | Main-area tab bar | Phase UX3.1 |
@@ -388,6 +410,7 @@ Prerequisites: UX2.3 and UX2.4. Button-based flows remain — this is progressiv
 | Remote asset store | Phase 13 |
 | Video render export | Phase 14 (large) |
 | Drag-and-drop cast management | Phase UX3 |
+| ProductionStore → IndexedDB | Phase I0 |
 | Azure SWA + Cosmos DB | Phase I1 |
 | User management | Phase I2 |
 | Staged builds | Phase I3 |
