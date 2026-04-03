@@ -22,6 +22,8 @@
   import type { ScriptLine } from '$lib/script/types';
   import { isDialogueLine } from '$lib/script/types';
   import { ProductionStore } from '../core/storage/ProductionStore.js';
+  import * as OPFSCatalogueStore from '../core/storage/OPFSCatalogueStore.js';
+  import type { UserCatalogueEntry } from '../core/storage/OPFSCatalogueStore.js';
   import type { StoredProduction, StoredActor, StoredGroup, NamedScene, ProductionSpeechSettings } from '../core/storage/types.js';
   import { getScenes } from '../core/storage/types.js';
   import { ProductionDocument } from '../core/document/ProductionDocument.js';
@@ -35,9 +37,10 @@
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
   import type { SetPiece } from '../core/domain/types.js';
 
-  const CATALOGUE_CHARACTERS = getCharacters(CATALOGUE_ENTRIES);
-  const CATALOGUE_SET_PIECES = getSetPieces(CATALOGUE_ENTRIES);
+  let CATALOGUE_CHARACTERS = $state(getCharacters(CATALOGUE_ENTRIES));
+  let CATALOGUE_SET_PIECES = $state(getSetPieces(CATALOGUE_ENTRIES));
   const CATALOGUE_LIGHTS = getLights(CATALOGUE_ENTRIES);
+  let userCatalogueEntries = $state<UserCatalogueEntry[]>([]);
 
   // Preset voice configurations covering the four main persona styles.
   const VOICE_PRESETS: { label: string; voice: ActorVoice }[] = [
@@ -915,7 +918,12 @@
   }
 
   onMount(() => {
-    void ProductionStore.init().then(() => { productions = ProductionStore.list(); });
+    void Promise.all([ProductionStore.init(), OPFSCatalogueStore.list()]).then(([, userEntries]) => {
+      productions = ProductionStore.list();
+      userCatalogueEntries = userEntries;
+      CATALOGUE_CHARACTERS = getCharacters([...CATALOGUE_ENTRIES, ...userEntries]);
+      CATALOGUE_SET_PIECES = getSetPieces([...CATALOGUE_ENTRIES, ...userEntries]);
+    });
 
     const mq = window.matchMedia('(max-width: 640px)');
     isMobile = mq.matches;
@@ -1515,6 +1523,7 @@
                     }
                   }}
                   activeEnvironmentId={activeScene?.environmentMap}
+                  userEntries={userCatalogueEntries}
                 />
               {/if}
             </div>

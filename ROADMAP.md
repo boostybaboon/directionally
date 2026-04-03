@@ -124,39 +124,18 @@ type StudioConfig = {
 
 ---
 
-### Step L5 — Bundled CC0 asset curation *(next — top priority)*
+### Step L5 — GLTF set-piece infrastructure *(next)*
 
-*10–15 carefully selected, appropriately licensed GLTF props covering the most common staging needs.*
+*Enable set pieces to reference external GLTF/GLB files, not only procedural geometry. This is the prerequisite for user-authored assets (L6) to appear as set pieces in productions.*
 
-**Selection criteria:** CC0 or MIT licence; small file size (<2 MB each); stylistically neutral (low-poly realistic or semi-stylised); covers four primary venue types.
+**Data model change:**
+- `SetPieceEntry` gains an optional `gltfPath?: string` field (mirroring `CharacterEntry.gltfPath`).
+- `BuildSceneGraph.ts` handles a `SetPiece` whose catalogue entry has a `gltfPath`: loads via `GLTFLoader` instead of generating geometry. Falls through to existing geometry path when `gltfPath` is absent.
+- Preview in `PreviewRenderer` already handles arbitrary GLTF paths — no change needed there.
 
-**Target list — indicative, to be confirmed against final licensing:**
+**No assets bundled in this step.** The infrastructure is validated by wiring up one of the existing bundled character GLBs as a set-piece entry in tests. Real assets come in via L6 (user-authored) or the deferred bundled curation step.
 
-| Asset | Venue use | Source candidate |
-|---|---|---|
-| Wooden chair | Theatre, drawing room, office | Kenney / Quaternius |
-| Sofa / settee | Drawing room, interior | Quaternius |
-| Dining table | Drawing room, kitchen | Kenney |
-| Office desk | Office, studio | Kenney |
-| Wooden bookcase | Library, drawing room, office | Quaternius |
-| Steel filing cabinet | Office | Kenney |
-| Park bench | Exterior | Kenney |
-| Streetlamp post | Exterior marker | Kenney |
-| Traffic cone / barrier | Exterior marker | Kenney |
-| Studio camera on dolly | TV studio, behind-the-scenes | — |
-| Studio spotlight rig | Theatre, TV studio | — |
-| Microphone on stand | Music studio, interview | Quaternius |
-| Café table + chair set | Exterior / café | Quaternius |
-| Hospital bed | Medical drama | Kenney |
-
-**Integration:**
-- Each asset stored in `static/models/gltf/props/`.
-- `SetPieceEntry` gains an optional `gltfPath?: string` field (mirrors `CharacterEntry.gltfPath`).
-- `entries.ts` gains one entry per bundled prop.
-- `buildSceneGraph.ts` handles `SetPieceEntry` with a `gltfPath` — loads via `GLTFLoader` instead of generating geometry.
-- Preview in `PreviewRenderer` works immediately (it already handles arbitrary GLTF paths).
-
-**Sources:** [Kenney.nl](https://kenney.nl/assets) — CC0; [Quaternius](https://quaternius.com) — CC0; individual picks from [Poly Haven 3D](https://polyhaven.com/models) — CC0.
+**Tests:** `storedSceneToModel` or `buildSceneGraph` test covering a set piece with `gltfPath` set (mock `GLTFLoader`).
 
 ---
 
@@ -182,6 +161,18 @@ type UserCatalogueEntry = CatalogueEntry & { userAdded: true; addedAt: number };
 
 ---
 
+### Deferred: Bundled third-party prop curation *(was L5)*
+
+*Curating 10–15 CC0/MIT-licensed GLB props from Kenney.nl, Quaternius, Poly Haven.*
+
+Deferred in favour of author-created assets via the sketcher (Phase S1–S4). When this is revisited:
+- Assets stored in `static/models/gltf/props/`
+- One `SetPieceEntry` per prop in `entries.ts` (L5 infrastructure already supports this)
+- Selection criteria: CC0 or MIT; <2 MB each; low-poly, stylistically neutral
+- Likely sources: Kenney.nl, Quaternius, Poly Haven 3D (all CC0)
+
+---
+
 ### Future: Multi-level sets & terrain *(deferred — advanced)*
 
 *For productions requiring stage lifts, mezzanine levels, stairways, or outdoor terrain.*
@@ -192,8 +183,6 @@ type UserCatalogueEntry = CatalogueEntry & { userAdded: true; addedAt: number };
 - **CSG for window/door apertures in walls:** [`three-bvh-csg`](https://github.com/gkjohnson/three-bvh-csg) (BVH-accelerated, preferred over `three-csg-ts` BSP approach) can punch a door or window hole in a wall flat. A future "Wall" generator entry with optional aperture config.
 
 This cluster of features shares a prerequisite: the character positioning system must be aware of walkable surfaces. Design this as a spike before committing.
-
----
 
 ## Phase UX2.5 — Reusable set templates *(not yet started)*
 
@@ -397,8 +386,9 @@ Prerequisites: UX2.3 and UX2.4. Button-based flows remain — this is progressiv
 | Textured materials | Phase L2 |
 | Theatre stage generator | Phase L3 |
 | Drama studio / soundstage generator | Phase L4 |
-| Bundled CC0 prop assets (~15 items) | Phase L5 |
+| GLTF set-piece infrastructure (SetPieceEntry.gltfPath) | Phase L5 |
 | OPFSCatalogueStore (user-extensible catalogue, OPFS-backed) | Phase L6 |
+| Bundled third-party prop curation (~15 CC0 assets) | Deferred |
 | Multi-level sets / terrain | Future advanced |
 | Reusable set templates | Phase UX2.5 |
 | Main-area tab bar | Phase UX3.1 |

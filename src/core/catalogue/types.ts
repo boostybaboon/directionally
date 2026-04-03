@@ -23,6 +23,8 @@ export interface SetPieceEntry {
   kind: 'set-piece';
   id: string;
   label: string;
+  /** When set, load this GLB path instead of using procedural geometry. */
+  gltfPath?: string;
   geometry: GeometryConfig;
   material: MaterialConfig;
   /**

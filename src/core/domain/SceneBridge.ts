@@ -134,19 +134,28 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
     if (light) lights.push(light);
   }
 
-  // Set pieces → MeshAssets
+  // Set pieces → MeshAssets or GLTFAssets
   const meshes: MeshAsset[] = [];
+  const gltfs: GLTFAsset[] = [];
   for (const piece of scene.set) {
-    const mesh = new MeshAsset(piece.name, buildGeometry(piece.geometry), buildMaterial(piece.material));
-    if (piece.position) mesh.position = new THREE.Vector3(...piece.position);
-    if (piece.rotation) mesh.rotation = new THREE.Euler(...piece.rotation);
-    if (piece.scale) mesh.scale = new THREE.Vector3(...piece.scale);
-    if (piece.parent) mesh.parent = piece.parent;
-    meshes.push(mesh);
+    if (piece.gltfPath) {
+      const gltf = new GLTFAsset(piece.name, piece.gltfPath);
+      if (piece.position) gltf.position = new THREE.Vector3(...piece.position);
+      if (piece.rotation) gltf.rotation = new THREE.Euler(...piece.rotation);
+      if (piece.scale)    gltf.scale    = new THREE.Vector3(...piece.scale);
+      if (piece.parent)   gltf.parent   = piece.parent;
+      gltfs.push(gltf);
+    } else {
+      const mesh = new MeshAsset(piece.name, buildGeometry(piece.geometry), buildMaterial(piece.material));
+      if (piece.position) mesh.position = new THREE.Vector3(...piece.position);
+      if (piece.rotation) mesh.rotation = new THREE.Euler(...piece.rotation);
+      if (piece.scale)    mesh.scale    = new THREE.Vector3(...piece.scale);
+      if (piece.parent)   mesh.parent   = piece.parent;
+      meshes.push(mesh);
+    }
   }
 
   // Staged actors → MeshAssets or GLTFAssets
-  const gltfs: GLTFAsset[] = [];
   for (const staged of scene.stagedActors) {
     const actor = actorMap.get(staged.actorId);
     if (!actor) {

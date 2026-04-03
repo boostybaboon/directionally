@@ -1,5 +1,7 @@
 <script lang="ts">
   import { getCharacters, getLights, getSetPieces, getEnvironments } from '../core/catalogue/catalogue.js';
+  import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
+  import type { CatalogueEntry } from '../core/catalogue/types.js';
   import PreviewRenderer from './PreviewRenderer.svelte';
 
   interface Props {
@@ -10,14 +12,17 @@
     onapplyenvironment?: (environmentId: string | undefined) => void;
     /** The environmentMap id currently set on the active scene, for display. */
     activeEnvironmentId?: string;
+    /** User-added entries from OPFSCatalogueStore, merged with bundled entries. */
+    userEntries?: CatalogueEntry[];
   }
 
-  let { onadd, onapplyenvironment, activeEnvironmentId }: Props = $props();
+  let { onadd, onapplyenvironment, activeEnvironmentId, userEntries = [] }: Props = $props();
 
-  const characters = getCharacters();
-  const setPieces = getSetPieces();
-  const lights = getLights();
-  const environments = getEnvironments();
+  const allEntries = $derived([...CATALOGUE_ENTRIES, ...userEntries]);
+  const characters = $derived(getCharacters(allEntries));
+  const setPieces = $derived(getSetPieces(allEntries));
+  const lights = $derived(getLights(allEntries));
+  const environments = $derived(getEnvironments(allEntries));
 
   let selectedCharacterId = $state<string | null>(null);
 

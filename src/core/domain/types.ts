@@ -24,6 +24,8 @@ export type MaterialConfig = {
 // A piece of scenery: static geometry placed in the scene (floor, walls, steps, blocks etc.)
 export type SetPiece = {
   name: string;
+  /** When set, load this GLB path instead of using procedural geometry. */
+  gltfPath?: string;
   geometry: GeometryConfig;
   material: MaterialConfig;
   position?: Vec3;
