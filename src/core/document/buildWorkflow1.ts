@@ -149,12 +149,12 @@ export function buildWorkflow1(initial: StoredProduction): StoredProduction {
 }
 
 /**
- * Creates "The Robot Play" in localStorage and returns the saved production.
+ * Creates "The Robot Play" in IndexedDB and returns the saved production.
  * For browser dev use: `window.__seedWorkflow1()`.
  */
-export function seedWorkflow1(): StoredProduction {
-  const initial = ProductionStore.create('The Robot Play');
+export async function seedWorkflow1(): Promise<StoredProduction> {
+  const initial = await ProductionStore.create('The Robot Play');
   const final = buildWorkflow1(initial);
-  ProductionStore.save(final);
+  await ProductionStore.save(final);
   return final;
 }

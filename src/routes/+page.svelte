@@ -151,8 +151,8 @@
   let prePresentationSceneId = $state<string | undefined>(undefined);
   let wakeLock = $state<WakeLockSentinel | null>(null);
 
-  // Productions
-  let productions = $state<StoredProduction[]>(ProductionStore.list());
+  // Productions — populated in onMount after ProductionStore.init()
+  let productions = $state<StoredProduction[]>([]);
   let activeProductionId = $state<string | null>(null);
   /** True after the currently-active scene is deleted — blanks 3D + all views until user selects another scene. */
   let sceneDeletedBlank = $state(false);
@@ -416,12 +416,12 @@
 
   // Auto-save handled by ProductionDocument.execute() — no $effect needed.
 
-  function newProduction() {
+  async function newProduction() {
     const sceneId = crypto.randomUUID();
     const starter: NamedScene = { id: sceneId, name: 'Scene 1', scene: starterSceneShell() };
-    let prod = ProductionStore.create();
+    let prod = await ProductionStore.create();
     prod = { ...prod, tree: [starter], activeSceneId: sceneId };
-    ProductionStore.save(prod);
+    await ProductionStore.save(prod);
     productions = ProductionStore.list();
     loadProduction(prod);
     renamingId = prod.id;
@@ -466,8 +466,8 @@
     expandedProductionCast = new Set([prod.id]);
   }
 
-  function deleteProduction(id: string) {
-    ProductionStore.delete(id);
+  async function deleteProduction(id: string) {
+    await ProductionStore.delete(id);
     productions = ProductionStore.list();
     if (activeProductionId === id) {
       activeProductionId = null;
@@ -531,9 +531,9 @@
     });
   }
 
-  function duplicateProduction(prod: StoredProduction) {
-    const copy = ProductionStore.create(`${prod.name} (copy)`);
-    ProductionStore.save({
+  async function duplicateProduction(prod: StoredProduction) {
+    const copy = await ProductionStore.create(`${prod.name} (copy)`);
+    await ProductionStore.save({
       ...copy,
       actors: prod.actors ? [...prod.actors] : undefined,
       tree: prod.tree ? deepCopyTree(prod.tree) : undefined,
@@ -888,7 +888,7 @@
     renamingActorId = null;
   }
 
-  function commitRename(id: string) {
+  async function commitRename(id: string) {
     const trimmed = renameValue.trim();
     if (trimmed) {
       if (id === activeProductionId && activeDoc) {
@@ -897,7 +897,7 @@
       } else {
         const prod = productions.find((p) => p.id === id);
         if (prod) {
-          ProductionStore.save({ ...prod, name: trimmed, modifiedAt: Date.now() });
+          await ProductionStore.save({ ...prod, name: trimmed, modifiedAt: Date.now() });
           productions = ProductionStore.list();
         }
       }
@@ -915,6 +915,8 @@
   }
 
   onMount(() => {
+    void ProductionStore.init().then(() => { productions = ProductionStore.list(); });
+
     const mq = window.matchMedia('(max-width: 640px)');
     isMobile = mq.matches;
     // Right panel takes up too much space on phone; default it closed.
@@ -953,16 +955,16 @@
 
     if (import.meta.env.DEV) {
       void import('../core/document/buildWorkflow1.js').then(({ seedWorkflow1 }) => {
-        (window as unknown as Record<string, unknown>).__seedWorkflow1 = () => {
-          const p = seedWorkflow1();
+        (window as unknown as Record<string, unknown>).__seedWorkflow1 = async () => {
+          const p = await seedWorkflow1();
           console.info('[dev] Seeded "' + p.name + '" (' + p.id + ') — reloading…');
           window.location.reload();
         };
       });
     }
     void import('../core/document/buildWorkflow2.js').then(({ seedWorkflow2 }) => {
-      seedWorkflow2Fn = () => {
-        seedWorkflow2();
+      seedWorkflow2Fn = async () => {
+        await seedWorkflow2();
         window.location.reload();
       };
       if (import.meta.env.DEV) {
