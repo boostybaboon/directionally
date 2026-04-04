@@ -122,7 +122,7 @@
   let mainView = $state<'3d' | 'script'>((localStorage.getItem(MAIN_VIEW_KEY) as '3d' | 'script' | null) ?? '3d');
   $effect(() => { localStorage.setItem(MAIN_VIEW_KEY, mainView); });
   let rightTab = $state<'staging' | 'script'>('staging');
-  let designMode = $state(false);
+  let editMode = $state(false);
 
   // Generate-set panel
   let generatePanelOpen = $state(false);
@@ -387,7 +387,7 @@
   let actorScaleValues = $state<Record<string, string>>({});
 
   const dragHint = $derived((() => {
-    if (!designMode || !selectionState) return '';
+    if (!editMode || !selectionState) return '';
     const k = selectionState.kind;
     if (k === 'actor-initial' || k === 'actor-block' || k === 'setpiece-initial' || k === 'setpiece-block')
       return 'drag → set position';
@@ -399,7 +399,7 @@
   })());
 
   const hudMode = $derived((() => {
-    if (!designMode) return '';
+    if (!editMode) return '';
     if (selectionState?.kind.endsWith('-block')) return 'Block End';
     if (currentPosition < 0.05) return 'Scene Start';
     return '';
@@ -490,7 +490,7 @@
     activeDoc.execute(new SwitchSceneCommand(scenes[0].id));
     // loadModel(model, 0) fires via onChange (sceneChanged=true); ondidload → presenter.play()
     presentationMode = true;
-    designMode = false;
+    editMode = false;
     void document.documentElement.requestFullscreen?.();
     if ('wakeLock' in navigator) {
       void navigator.wakeLock.request('screen').then((s) => { wakeLock = s; }).catch(() => {});
@@ -633,7 +633,7 @@
 
   function captureBlockPosition(end: boolean) {
     if (selBlockIdx === null || !activeDoc || !selBlock) return;
-    if (!designMode) designMode = true;
+    if (!editMode) editMode = true;
     const transform = presenter?.getObjectTransform(selBlock.block.actorId);
     if (!transform) return;
     const pos = transform.position as [number, number, number];
@@ -642,10 +642,10 @@
     }));
   }
 
-  function captureDesignCameraForBlock() {
+  function captureEditCameraForBlock() {
     if (selBlockIdx === null || !activeDoc || !selCameraBlock) return;
-    if (!designMode) designMode = true;
-    const state = presenter?.getDesignCameraState();
+    if (!editMode) editMode = true;
+    const state = presenter?.getEditCameraState();
     if (!state) return;
     activeDoc.execute(new UpdateCameraBlockCommand(selBlockIdx, {
       endPosition: state.position,
@@ -654,8 +654,8 @@
   }
 
   function captureInitialCamera() {
-    if (!activeDoc || !designMode) return;
-    const state = presenter?.getDesignCameraState();
+    if (!activeDoc || !editMode) return;
+    const state = presenter?.getEditCameraState();
     if (!state) return;
     const current = getActiveScene(activeDoc.current)?.camera;
     if (!current) return;
@@ -663,7 +663,7 @@
   }
 
   function enterSpawnMode(entityId: string) {
-    if (!designMode) designMode = true;
+    if (!editMode) editMode = true;
     if (entityId === '__camera__') {
       selectionState = { kind: 'camera-initial' };
     } else if (scenePieces.some((p) => p.name === entityId)) {
@@ -1577,7 +1577,7 @@
               onclick={() => (mainView = 'script')}
               title="Full script view"
             >Script</button>
-            {#if designMode && activeDoc && mainView === '3d'}
+            {#if editMode && activeDoc && mainView === '3d'}
               <button class="undo-redo-btn main-undo" disabled={!canUndo} onclick={() => activeDoc!.undo()} title="Undo (Ctrl+Z)" aria-label="Undo">↩</button>
               <button class="undo-redo-btn main-undo" disabled={!canRedo} onclick={() => activeDoc!.redo()} title="Redo (Ctrl+Y)" aria-label="Redo">↪</button>
             {/if}
@@ -1619,7 +1619,7 @@
             bind:voiceBackend={voiceBackend}
             bind:sliderValue={sliderValue}
             bind:isSliderDragging={isSliderDragging}
-            bind:designMode={designMode}
+            bind:editMode={editMode}
             selectedObjectId={selectedObjectId}
             onviewportselect={handleViewportSelect}
             ontransformend={handleTransformEnd}
@@ -1814,13 +1814,13 @@
                     </div>
                   </div>
 
-                  <!-- Design camera -->
-                  {#if designMode}
+                  <!-- Edit camera -->
+                  {#if editMode}
                     <div class="stage-section stage-section-design-camera">
                       <div class="stage-section-header">
-                        <span class="stage-section-label">🎥 Design camera</span>
+                        <span class="stage-section-label">🎥 Edit camera</span>
                       </div>
-                      <button class="sync-design-camera-btn" onclick={() => presenter?.snapDesignCameraToPlayback()} title="Snap design view to match the playback camera's current position (P)">Sync design view to current playback view</button>
+                      <button class="sync-design-camera-btn" onclick={() => presenter?.snapEditCameraToPlayback()} title="Snap edit view to match the playback camera's current position (P)">Sync edit view to current playback view</button>
                     </div>
                   {/if}
 
@@ -1840,9 +1840,9 @@
                       setPieces={scenePieces}
                       {activeScene}
                       {discoveredClips}
-                      {designMode}
+                      {editMode}
                       execute={(cmd) => activeDoc?.execute(cmd)}
-                      oncapturecamerablock={captureDesignCameraForBlock}
+                      oncapturecamerablock={captureEditCameraForBlock}
                       oncaptureinitialcamera={captureInitialCamera}
                       onremoveblock={(idx) => {
                         const blkType = (activeScene?.blocks ?? [])[idx]?.type;
@@ -1945,7 +1945,7 @@
           }}
           onaddblock={(actorId, startTime, endTime) => {
             if (!activeDoc) return;
-            if (!designMode) designMode = true;
+            if (!editMode) editMode = true;
             const newBlock: ActorBlock = { type: 'actorBlock', actorId, startTime, endTime };
             activeDoc.execute(new AddActorBlockCommand(newBlock));
             const newIdx = (getActiveScene(activeDoc.current)?.blocks?.length ?? 1) - 1;

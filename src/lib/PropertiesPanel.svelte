@@ -17,7 +17,7 @@
     setPieces: SetPiece[];
     activeScene: StoredScene | undefined | null;
     discoveredClips: Record<string, string[]>;
-    designMode: boolean;
+    editMode: boolean;
     execute: (cmd: Command) => void;
     oncapturecamerablock?: () => void;
     oncaptureinitialcamera?: () => void;
@@ -35,7 +35,7 @@
     setPieces,
     activeScene,
     discoveredClips,
-    designMode,
+    editMode,
     execute,
     oncapturecamerablock,
     oncaptureinitialcamera,
@@ -380,12 +380,12 @@
         <span class="anim-label blk-pos">{(activeScene.camera.position ?? []).map((v: number) => v.toFixed(1)).join(', ')}</span>
       </div>
     {/if}
-    {#if designMode}
+    {#if editMode}
       <div class="anim-row">
-        <button class="new-btn" onclick={oncaptureinitialcamera} title="Capture current design camera as scene opening view">⊕ Capture view</button>
+        <button class="new-btn" onclick={oncaptureinitialcamera} title="Capture current edit camera as scene opening view">⊕ Capture view</button>
       </div>
     {:else}
-      <p class="prop-hint">Enable design mode to capture the opening camera position.</p>
+      <p class="prop-hint">Enable edit mode to capture the opening camera position.</p>
     {/if}
   </div>
 
@@ -425,9 +425,9 @@
         <span class="anim-label blk-pos blk-pos-none">not set · orbit to capture</span>
       {/if}
     </div>
-    {#if designMode}
+    {#if editMode}
       <div class="anim-row">
-        <button class="new-btn" onclick={oncapturecamerablock} title="Capture current design camera as block end state">⊕ Capture end</button>
+        <button class="new-btn" onclick={oncapturecamerablock} title="Capture current edit camera as block end state">⊕ Capture end</button>
       </div>
     {/if}
   </div>

@@ -89,8 +89,8 @@
   let sceneVersion = 0;
 
   interface PresenterProps {
-    /** When true: split-screen design/playback view. When false: full-canvas playback. */
-    designMode?: boolean;
+    /** When true: split-screen edit/playback view. When false: full-canvas playback. */
+    editMode?: boolean;
     /** Name of the currently selected scene object (actor ID or set-piece name). Drives TC gizmo and selection highlight. */
     selectedObjectId?: string | null;
     /** Fired when the user clicks an object (or misses) in the design viewport. Caller updates selection state. */
@@ -135,7 +135,7 @@
   }
 
   let {
-    designMode = $bindable(false),
+    editMode = $bindable(false),
     selectedObjectId,
     onviewportselect,
     ontransformend,
@@ -176,10 +176,10 @@
   });
 
   $effect(() => {
-    void designMode; // react when design/playback mode is toggled
+    void editMode; // react when edit/playback mode is toggled
     if (!renderer) return;
     updateRendererSize();
-    if (orbitControls) orbitControls.enabled = designMode;
+    if (orbitControls) orbitControls.enabled = editMode;
   });
 
 
@@ -225,8 +225,8 @@
     tcHelper = transformControls.getHelper();
     // Do NOT move tcHelper to layer 1 — TC's internal hover raycaster defaults to layer 0
     // only, so shifting picker meshes to layer 1 would blind its own hit-detection.
-    // Instead, visibility is toggled each frame based on designMode (see animate()).
-    tcHelper.visible = false; // hidden until design mode is entered
+    // Instead, visibility is toggled each frame based on editMode (see animate()).
+    tcHelper.visible = false; // hidden until edit mode is entered
     transformControls.addEventListener('dragging-changed', (event) => {
       if (event.value) {
         // Drag started — disable orbit so it doesn't fight the gizmo.
@@ -235,7 +235,7 @@
       } else {
         // Drag ended — re-enable orbit and emit the new transform.
         tcDragging = false;
-        orbitControls.enabled = designMode;
+        orbitControls.enabled = editMode;
         if (selectedObjectId && transformControls.object) {
           const obj = transformControls.object;
           ontransformend?.(
@@ -268,7 +268,7 @@
     });
 
     orbitControls = new OrbitControls(editorCamera, editorOverlay);
-    orbitControls.enabled = false; // only active in design mode
+    orbitControls.enabled = false; // only active in edit mode
     orbitControls.target.set(0, 1, 0); // orbit around roughly actor-eye-height
     // Record pointer-down position on the overlay for drag vs click discrimination.
     editorOverlay.addEventListener('pointerdown', (e) => {
@@ -293,17 +293,17 @@
         handlePlayPauseClick();
         return;
       }
-      if (e.key === 'Shift' && designMode && !shiftHeld) {
+      if (e.key === 'Shift' && editMode && !shiftHeld) {
         shiftHeld = true;
         orbitControls.rotateSpeed = 0.1;
         orbitControls.panSpeed = 0.1;
         orbitControls.zoomSpeed = 0.1;
       }
-      if (!designMode || isTyping) return;
+      if (!editMode || isTyping) return;
       if (e.key === 'Escape') { onviewportselect?.(null); return; }
       if (e.key === 'g' || e.key === 'G') setGizmoMode('translate');
       if (e.key === 'r' || e.key === 'R') setGizmoMode('rotate');
-      if (e.key === 'p' || e.key === 'P') snapDesignCameraToPlayback();
+      if (e.key === 'p' || e.key === 'P') snapEditCameraToPlayback();
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Shift') {
@@ -346,7 +346,7 @@
     if (editorOverlay) {
       editorOverlay.style.width = `${width - half}px`;
     }
-    if (designMode) {
+    if (editMode) {
       if (camera instanceof THREE.PerspectiveCamera) {
         camera.aspect = half / height;
         camera.fov = 2 * Math.atan(Math.tan((authoredFov * Math.PI) / 360) * DESIGN_ASPECT / (half / height)) * (180 / Math.PI);
@@ -635,7 +635,7 @@
     // Drive mixers via the playback engine
     engine.update(delta);
 
-    if (designMode) {
+    if (editMode) {
       // Keep the frustum helper in sync with the playback camera's current transform.
       cameraHelper?.update();
       // Keep the selection bounding box tight around any animated object.
@@ -747,7 +747,7 @@
    * Raycasts against the y=0 ground plane to find the world-space drop position.
    */
   function handleCatalogueDrop(e: DragEvent) {
-    if (!designMode || !editorCamera) return;
+    if (!editMode || !editorCamera) return;
     e.preventDefault();
     const raw = e.dataTransfer?.getData('application/directionally-catalogue');
     if (!raw) return;
@@ -766,7 +766,7 @@
   }
 
   function handleOverlayPointerUp(e: PointerEvent) {
-    if (!designMode || !scene || !editorCamera) return;
+    if (!editMode || !scene || !editorCamera) return;
     if (e.button !== 0) return; // only left-button clicks
     // Skip if the pointer moved enough to be a drag (gizmo drag or orbit).
     const dx = e.clientX - overlayPointerDownPos.x;
@@ -843,11 +843,11 @@
   };
 
   /**
-   * Returns the current design camera position and the OrbitControls look-at target.
+   * Returns the current edit camera position and the OrbitControls look-at target.
    * Use this to capture a camera keyframe at the current playback time.
-   * Returns null when design mode is not yet initialised.
+   * Returns null when edit mode is not yet initialised.
    */
-  export function getDesignCameraState(): { position: [number, number, number]; lookAt: [number, number, number] } | null {
+  export function getEditCameraState(): { position: [number, number, number]; lookAt: [number, number, number] } | null {
     if (!editorCamera || !orbitControls) return null;
     const p = editorCamera.position;
     const t = orbitControls.target;
@@ -858,11 +858,11 @@
   }
 
   /**
-   * Snap the design (editor) camera to the current playback camera position and orientation.
+   * Snap the edit camera to the current playback camera position and orientation.
    * The orbit target is set 5 units ahead along the playback camera's look direction,
    * giving a sensible pivot for continued orbiting after snapping.
    */
-  export function snapDesignCameraToPlayback() {
+  export function snapEditCameraToPlayback() {
     if (!camera || !orbitControls || !editorCamera) return;
     editorCamera.position.copy(camera.position);
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
@@ -1247,21 +1247,21 @@
       bind:this={editorOverlay}
       id="editor-overlay"
       role="application"
-      aria-label="Design viewport"
-      class:active={designMode}
+      aria-label="Edit viewport"
+      class:active={editMode}
       onpointerup={handleOverlayPointerUp}
-      ondragover={(e) => { if (designMode) e.preventDefault(); }}
+      ondragover={(e) => { if (editMode) e.preventDefault(); }}
       ondrop={handleCatalogueDrop}
       onkeydown={() => {}}
     ></div>
     {#if !presentationMode}
       <button
         class="mode-toggle"
-        onclick={() => { designMode = !designMode; }}
-        title={designMode ? 'Switch to playback view' : 'Switch to design view'}
-      >{designMode ? '▶ Switch to Playback view' : '✏ Switch to Design view'}</button>
+        onclick={() => { editMode = !editMode; }}
+        title={editMode ? 'Switch to playback view' : 'Switch to edit view'}
+      >{editMode ? '▶ Switch to Playback view' : '✏ Switch to Edit view'}</button>
     {/if}
-    {#if designMode}
+    {#if editMode}
       <div class="gizmo-toolbar" role="toolbar" aria-label="Gizmo mode">
         {#if selectedObjectId}
           <button
