@@ -217,6 +217,80 @@ describe('CartoonSketcher', () => {
     }
     expect(sketcher.getSession().parts).toHaveLength(2);
   });
+
+  it('insertPrimitive() adds a part and returns it', () => {
+    const part = sketcher.insertPrimitive('cylinder');
+    expect(part).not.toBeNull();
+    expect(part!.name).toBe('Cylinder');
+    expect(sketcher.getSession().parts).toHaveLength(1);
+    expect(sketcher.getSession().parts[0]).toBe(part);
+  });
+
+  it('insertPrimitive() adds the mesh to the scene', () => {
+    const part = sketcher.insertPrimitive('box');
+    expect(scene.children).toContain(part!.mesh);
+  });
+
+  it('insertPrimitive() produces a mesh with non-zero vertices', () => {
+    const names = ['box', 'sphere', 'cylinder', 'capsule', 'cone'];
+    for (const name of names) {
+      const part = sketcher.insertPrimitive(name);
+      expect(part, `${name} should resolve`).not.toBeNull();
+      const count = part!.mesh.geometry.attributes.position?.count ?? 0;
+      expect(count, `${name} should have vertices`).toBeGreaterThan(0);
+    }
+  });
+
+  it('insertPrimitive() returns null for an unknown name', () => {
+    expect(sketcher.insertPrimitive('prism')).toBeNull();
+  });
+
+  it('multiple primitives accumulate as independent parts', () => {
+    sketcher.insertPrimitive('box');
+    sketcher.insertPrimitive('sphere');
+    sketcher.insertPrimitive('cylinder');
+    expect(sketcher.getSession().parts).toHaveLength(3);
+  });
+
+  it('removePart() removes the primitive mesh from the scene', () => {
+    const part = sketcher.insertPrimitive('cone')!;
+    sketcher.removePart(part.id);
+    expect(scene.children).not.toContain(part.mesh);
+    expect(sketcher.getSession().parts).toHaveLength(0);
+  });
+
+  it('setPartColor() updates part.color and mesh material', () => {
+    const part = sketcher.insertPrimitive('box')!;
+    sketcher.setPartColor(part.id, 0xff0000);
+    expect(part.color).toBe(0xff0000);
+    const mat = part.mesh.material as THREE.MeshStandardMaterial;
+    expect(mat.color.getHex()).toBe(0xff0000);
+  });
+
+  it('setPartColor() is a no-op for unknown id', () => {
+    expect(() => sketcher.setPartColor('nonexistent', 0xff0000)).not.toThrow();
+  });
+
+  it('duplicatePart() creates independent clone with same color', () => {
+    const src = sketcher.insertPrimitive('cylinder')!;
+    sketcher.setPartColor(src.id, 0x00ff00);
+    const clone = sketcher.duplicatePart(src.id);
+    expect(clone).not.toBeNull();
+    expect(clone!.color).toBe(0x00ff00);
+    expect(clone!.id).not.toBe(src.id);
+    expect(sketcher.getSession().parts).toHaveLength(2);
+  });
+
+  it('duplicatePart() clone is offset by +1 on X from source', () => {
+    const src = sketcher.insertPrimitive('box')!;
+    src.mesh.position.set(2, 0, 0);
+    const clone = sketcher.duplicatePart(src.id);
+    expect(clone!.mesh.position.x).toBeCloseTo(3);
+  });
+
+  it('duplicatePart() returns null for unknown id', () => {
+    expect(sketcher.duplicatePart('nonexistent')).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -232,7 +306,9 @@ describe('exportGLB', () => {
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial());
 
     const session: SketcherSession = {
-      parts: [{ id: 'part-1', mesh, depth: 1, centroid }],
+      parts: [{ id: 'part-1', mesh, depth: 1, centroid, name: 'Shape', color: 0x8888cc }],
+      joints: [],
+      assemblyGroups: [],
     };
 
     const { blob, filename } = await exportGLB(session);
@@ -241,7 +317,7 @@ describe('exportGLB', () => {
   });
 
   it('returns a Blob for an empty session', async () => {
-    const session: SketcherSession = { parts: [] };
+    const session: SketcherSession = { parts: [], joints: [], assemblyGroups: [] };
     const { blob } = await exportGLB(session);
     expect(blob.size).toBeGreaterThan(0); // GLTF header is always present
   });

@@ -102,8 +102,14 @@ export class ExtrusionHandle {
     });
     // Rotate so the shape lies in the XZ plane extruding upward along +Y.
     // ExtrudeGeometry extrudes along +Z by default, so rotate -90° around X.
+    // After rotation: group 1 cap faces +Y (Top), group 2 cap faces -Y (Bottom).
     geo.rotateX(-Math.PI / 2);
     geo.translate(this.centroid.x, 0, this.centroid.z);
+    geo.userData.faceGroups = [
+      { normal: new THREE.Vector3(1, 0, 0),  label: 'Side' },
+      { normal: new THREE.Vector3(0, 1, 0),  label: 'Top' },
+      { normal: new THREE.Vector3(0, -1, 0), label: 'Bottom' },
+    ];
 
     const mat = new THREE.MeshStandardMaterial({ color: 0xaaddff, metalness: 0.1, roughness: 0.6 });
     return new THREE.Mesh(geo, mat);
