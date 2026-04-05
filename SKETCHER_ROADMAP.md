@@ -1,6 +1,6 @@
 # Directionally — Cartoon Sketcher Roadmap
 
-Captures the design thinking and phased plan for the cartoon 3D sketcher: a separable asset-authoring surface that feeds user-created meshes into the production catalogue.
+Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHER_ROADMAP_ARCHIVE.md).
 
 ---
 
@@ -12,115 +12,214 @@ Captures the design thinking and phased plan for the cartoon 3D sketcher: a sepa
 - `docs/sketcher.md` — implementation design for the polygon sketcher + extrusion pipeline
 - `docs/asset-authoring-decision.md` — geometry kernel decision (mesh-first wins; monorepo ruled out)
 
-### Decisions
-
 | Decision | Choice | Rationale |
 |---|---|---|
 | Package location | `src/core/sketcher/` inside existing app | Extractable later if needed; zero tooling cost now |
 | Navigation | Separate SvelteKit route `/sketch` | Clean URL; dev-only guard until production-ready |
-| Naming | Current "Design mode" → "Edit"; sketcher surface → "Design" | Frees up the better word for the more creative surface |
-| MVP geometry | Static mesh only — GLB export, no bones/skinning yet | Simpler; rigging is Phase S2 |
-| Catalogue landing | `OPFSCatalogueStore` (Phase L6) built alongside | `localStorage` (~5 MB cap) unsuitable for GLB blobs; OPFS has no practical size limit |
-| Geometry kernel | `THREE.Shape` + `ExtrudeGeometry`, `three-mesh-bvh` for spatial queries | Cartoon aesthetic; immediate `SkinnedMesh` compatibility; trivial GLB export |
-| Monorepo | Ruled out | Premature infrastructure for a single-developer, single-app project |
+| Geometry kernel | `THREE.Shape` + `ExtrudeGeometry` | Cartoon aesthetic; trivial GLB export |
+| Monorepo | Ruled out | Premature for a single-developer project |
 
 ---
 
 ## Current state — April 2026
 
-The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour → glue parts into assemblies → transform the assembly. The implementation is clean, with generic geometry handling (no per-geometry-type branching), a solid glue joint model with face-normal alignment, and 378 tests passing.
+The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour → glue parts into assemblies → transform. Generic geometry handling (no per-geometry-type branching), face-normal-aligned glue joints, 378 tests passing.
 
 **Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5.
 
-**Immediate next priorities (in order):**
-1. SH1 — Poly sketcher hardening
-2. SA7 — Per-side materials *(elevated)*
-3. SA8 — Textures *(elevated)*
-4. SA10 — Uniform object scale
-5. SA11 — Snap to floor
-6. SA12 — Positioning precision
-7. SA13 — Undo / redo
+**Priority order:**
+1. SA13 — Undo / redo *(foundation; cheap now, expensive after anything else)*
+2. SH2 — Session autosave *(30 min; solves "lost on refresh" immediately after SA13)*
+3. SH1a — Poly sketcher data-integrity fixes *(unblocks SA7)*
+4. SA7 — Per-side materials
+5. SA8 — Textures
+6. SH1b — Poly sketcher UX + polish
+7. SA11 — Snap to floor
+8. SA12 — Positioning precision *(absorbs SA10; biggest feature; needs stable foundation)*
+9. SA9 — Named assemblies *(full Word-style open/save/autosave model)*
 
 ---
 
-## Phase S0 — Rename Design → Edit *(prerequisite)*
+## Phase SA13 — Undo / redo
 
-Rename the existing production-canvas toggle from "Design" to "Edit" throughout the UI and codebase to free up "Design" as the label for the sketcher surface.
+**Why first:** The command infrastructure has near-zero cost right now — the `ProductionDocument` pattern exists in this codebase as a direct reference. Every feature built before it adds a retrofit pass: revisiting how `+page.svelte` calls into `CartoonSketcher` and turning imperative calls into command dispatches. SA12 (numeric field edits) built without undo ships unundoable state mutations.
 
-- `designMode` boolean in `src/routes/+page.svelte` → `editMode`
-- UI button and tab labels "Design" → "Edit"
-- No data model change — the flag is not persisted to `StoredProduction`
+The main app reference: `src/core/document/Command.ts`, `ProductionDocument.ts`.
 
-**Files:** `src/routes/+page.svelte`, `src/lib/Presenter.svelte`, `src/lib/TransportBar.svelte`
+**`SketcherDocument.ts`** — analogous to `ProductionDocument`:
+- `execute(cmd: SketcherCommand): void`
+- `undo(): void`, `redo(): void`
+- `canUndo: boolean`, `canRedo: boolean`
+- `current: SketcherSession` (read-only snapshot for rendering)
+
+**Command scope:**
+
+| Command | Inverse |
+|---|---|
+| `InsertPartCommand` | remove the part |
+| `DeletePartCommand` | re-insert with saved geometry/material |
+| `TransformPartCommand` | restore previous position/rotation/scale |
+| `ChangeColorCommand` | restore previous colour |
+| `CommitGlueCommand` | unglue, dissolve groups |
+| `UnglueCommand` | re-commit joint, reform groups |
+
+**Wiring in `+page.svelte`:** `Ctrl+Z` / `Ctrl+Shift+Z` (and `Ctrl+Y`). All mutations route through `sketcherDoc.execute(cmd)` rather than calling `CartoonSketcher` directly.
+
+**Three.js sync:** Commands are responsible for both the data mutation (updating `SketcherSession`) and the corresponding scene-graph update (adding/removing meshes, calling `glue.commitGlue` / `glue.unglue`, etc.).
 
 ---
 
-## Phase S1 — Sketcher kernel
+## Phase SH2 — Session autosave
 
-Pure TypeScript, no Svelte/framework dependencies. Lives in `src/core/sketcher/`.
+**Why immediately after SA13:** Once `SketcherDocument` exists, `sketcherDoc.current` is the clean, complete serializable source of truth for the session. Persisting it is a one-liner. Before SA13 there is no such source of truth — scene state is scattered across imperative calls — so this cannot reliably come earlier.
 
-### `types.ts`
+Solves the most immediate pain point: losing work on page refresh.
+
+**Implementation:**
+- On every `sketcherDoc.execute()` call (i.e. after every mutation), JSON-serialize `sketcherDoc.current` and write to `localStorage['sketcher-draft']`. Debounce to ~500 ms to avoid thrashing on rapid input.
+- On mount in `+page.svelte`, check for `localStorage['sketcher-draft']`; if present, deserialize and reconstruct the scene (same load path as SA9 will use).
+- A **"New assembly"** toolbar button clears the draft and starts fresh.
+- Single draft only — no named saves, no list. That's SA9.
+
+**Storage cost:** `SketcherSession` is transform matrices, quaternions, and a joint list — well under 100 KB for any realistic assembly. `localStorage` is fine; no OPFS needed at this stage.
+
+---
+
+## Phase SH1a — Poly sketcher data-integrity fixes
+
+Correctness bugs that must be fixed before SA7, because SA7 builds on top of the face group schema these bugs corrupt.
+
+- **Fix duplicate solid on final commit.** The extrusion pipeline currently creates a second mesh at generation time, leaving a duplicate coincident solid in the scene. Diagnose whether this is a double-`commitPart` call or a geometry rebuild firing twice; remove the duplicate.
+- **Fix solid placement (sketch ≠ solid position).** The committed solid is not placed at the same world position as the sketch preview. Ensure the extruded mesh inherits the sketch plane origin and the same world-space centroid the preview showed.
+- **Fix face labels and UVs.** Extruded solids should label groups as `top`, `side-0`, `side-1`, …, `bottom` with side rectangles having UV in `[0,1]×[0,1]`. Currently all sides and the top share the same `Top` label and UV mapping.
+
+---
+
+## Phase SA7 — Per-side materials
+
+**Per-face colour:**
+- `mesh.material` becomes a `THREE.Material[]` array; each face group gets its own `MeshStandardMaterial`
+- Interaction: select part → click a face (raycast + `userData.faceGroups` lookup) → colour picker
+- Prerequisite: face labels/UVs correct (SH1a)
+
+**UV wrapping mode:**
+- Toggle per-part: *per-face* (each side `[0,1]` independently) vs *wrapped* (U proportional around perimeter)
+- Default heuristic: ≤8 sides → per-face + faceted normals; >8 → wrapped + smooth normals
+- User override via toggle in the part HUD
+
+---
+
+## Phase SA8 — Textures
+
+Drag-and-drop an image file onto a selected face → assigns via `THREE.TextureLoader` on that material group.
+
+- Single texture per material group (UV wrapping mode from SA7 determines layout)
+- Blob lifecycle via `URL.createObjectURL`; stored in OPFS alongside GLB on export
+- Prerequisite: SA7 (material-per-face array must exist)
+
+---
+
+## Phase SH1b — Poly sketcher UX + polish
+
+Non-blocking UX improvements that don't gate anything; do whenever convenient after SA7/SA8.
+
+- **Fix view rotation when sketching.** OrbitControls and the polygon-pick raycaster fight for mouse events. Disable OrbitControls while a sketch is in progress; re-enable on shape close or Escape.
+- **Closure click indication.** When the cursor is close enough to the first vertex to close the polygon, highlight that vertex distinctly (filled circle, colour change) so the user knows the next click closes rather than extends.
+- **Better extrude / de-extrude grab handle.** Replace the current small sphere with an arrow-style handle that affords clear up/down drag; show depth value live in a HUD overlay.
+- **Remove default edge bevelling.** `bevelEnabled: true` distorts geometry unexpectedly. Switch `ExtrudeGeometry` to `bevelEnabled: false`; expose as an optional toggle.
+
+---
+
+## Phase SA11 — Snap to floor
+
+After assembling a glue group the assembly often floats above `y = 0`. One-click "⬇ Floor" button on the toolbar.
+
+**Start with bounding-box snap:** compute world-space AABB of the selection (part or whole group); translate so `aabb.min.y = 0`. Trivial — a `Box3` + `SnapToFloorCommand`.
+
+**Nominated-face snap** *(deferred)*: mark one face of one part as the floor contact face; group translates so that face's world-space centroid lies on `y = 0`. Needed for angled feet, irregular bases.
+
+---
+
+## Phase SA12 — Positioning precision
+
+*(Absorbs the former SA10 uniform-scale toggle, which is a sub-item here.)*
+
+Currently all positioning is by mouse drag — hard to place table legs at exact coordinates before gluing. This is the largest feature in the active queue; it benefits from SA13 being in place so that all numeric edits are undoable.
+
+**Transform precision**
+- When an object is selected, show world-space position / rotation / scale as editable numeric fields in the properties panel. Tab between X/Y/Z; Enter to confirm. Each confirmed edit issues a `TransformPartCommand`.
+- Uniform scale toggle: **Scale XYZ** | **Scale uniform** (locks TransformControls scale axis to `'XYZ'`). Sufficiently small that it belongs here rather than as a standalone phase.
+
+**Sketch points**
+- Expose grid snap size as an editable field (currently hardcoded at 0.1)
+- Numeric coordinate entry: click a vertex or handle → XYZ input panel
+
+**Extrusion depth**
+- Numeric depth field in the extrude HUD overlay alongside the grab handle
+
+**Glue precision**
+- *Midpoint mode:* toggle that snaps the glue source pick to face-centre automatically, without requiring precise hover — equivalent to `(0.5, 0.5)` in face UV space
+- Free-mouse glue stays available as the alternative
+- *Glue point editor:* select a joint → inspector showing UV position on each face + twist angle (`alpha`); edits reposition the joint live. Prerequisite: SA7 (face UV positions only meaningful once faces have individual materials)
+
+---
+
+## Phase SA6 — Sketch shape presets
+
+Extend the polygon sketcher with rectangle and circle input modes alongside the existing free-polygon.
+
+- **Rectangle:** click + drag diagonal → 4-point closed shape → extrude pipeline unchanged
+- **Circle:** click centre + drag radius → closed N-gon approximation (default 32 segments; segment count editable in toolbar)
+- Toolbar mode switcher: **Polygon** | **Rectangle** | **Circle**
+
+**Files:** `PolygonSketcher.ts` extended; `types.ts` adds `SketchMode` union.
+
+---
+
+## Phase SA9 — Named assemblies
+
+The Word-style open/save document model for the sketcher. SH2 already keeps a single autosaved draft alive across refreshes; SA9 adds named saves, a list of assemblies, and the ability to open any of them for continued editing.
+
+**Why after SA12:** SA9's `AssemblySpec` schema needs `uvMode` (SA7) and benefits from the stable `SketcherSession` shape that SA12's numeric-field commands will finalise. Building the serialized schema before those fields exist means a migration pass.
+
+**`AssemblySpec` JSON** — stored in OPFS:
 ```ts
-type SketcherPart = {
+type PartSpec = {
   id: string;
-  mesh: THREE.Mesh;
-  depth: number;
-  centroid: THREE.Vector3;
+  kind: 'sketch' | 'primitive';
+  name: string;                          // 'Box', 'Cylinder', 'Shape', etc.
+  shapePoints?: [number, number][];      // for sketch parts
+  depth?: number;
+  position: [number, number, number];
+  rotation: [number, number, number, number];  // quaternion
+  scale: [number, number, number];
+  color: number;
+  uvMode: 'per-face' | 'wrapped';
 };
-type SketcherSession = { parts: SketcherPart[] };
+type AssemblySpec = { parts: PartSpec[]; joints: GlueJoint[] };
 ```
 
-### `PolygonSketcher.ts`
-- Raycasts mouse onto `THREE.Plane` → world-space points
-- 0.1 grid snap for clean shapes
-- Rubber-band preview line following cursor
-- `onShapeClosed(shape: THREE.Shape, centroid: THREE.Vector3)` callback
+**Store:** `SketcherAssemblyStore` in `src/core/storage/` — mirrors `ProductionStore` in shape (`list`, `get`, `save`, `create`, `delete`), but backed by OPFS (no size limit for future texture data) instead of `localStorage`.
 
-### `ExtrusionHandle.ts`
-- Draggable yellow sphere handle at shape centroid
-- Throttled (~30fps) live `ExtrudeGeometry` rebuild during drag
-- `bevelEnabled: true` for instant cartoon roundness
-- `onExtrusionComplete(mesh: THREE.Mesh, depth: number)` callback
+**UI:**
+- Toolbar: assembly name (editable inline) + **Save** button + **Open…** dropdown listing saved assemblies
+- Autosave on every mutation (upgrades SH2's `localStorage` draft to the named OPFS document once open)
+- **Export to Catalogue** remains a separate explicit action (produces the GLB for use in productions)
 
-### `CartoonSketcher.ts`
-- Wires `PolygonSketcher` → `ExtrusionHandle` pipeline
-- Stores completed `SketcherPart[]`
-- API: `startNewSketch()`, `clearSession()`, `getSession(): SketcherSession`
+**Load path:** `AssemblySpec` → reconstruct Three.js scene using the same geometry-build functions as creation → immediately editable.
 
-### `exportGLB.ts`
-- Takes `SketcherSession`, uses `THREE.GLTFExporter` to produce a `Blob`
-- Returns `{ blob: Blob, filename: string }` (human-readable generated name)
-- Adds `extras: { source: 'directionally-sketcher', createdAt: <ISO> }` attribution metadata
-
-### Tests: `CartoonSketcher.test.ts`
-- Polygon shape closing behaviour
-- Extrusion geometry output (non-zero vertex count, correct bounding box direction)
-- GLB export produces a non-empty Blob
+> **Note on full parametric history:** `AssemblySpec` achieves the practical need — re-open, adjust, re-export — without a modifier stack. Full history replay deferred indefinitely.
 
 ---
 
-## Phase S2 — `/sketch` SvelteKit route
+## Phase S4 — Promote to production *(manual gate)*
 
-### `src/routes/sketch/+page.ts`
-```ts
-export const ssr = false; // Three.js / native binary deps
-```
-
-### `src/routes/sketch/+page.svelte`
-- Mounts Three.js canvas and `CartoonSketcher` in `onMount`
-- OrbitControls for 3D navigation when not sketching
-- Toolbar: **New sketch** | **Clear** | **Export to Catalogue**
-- "Export to Catalogue" → `exportGLB()` → passes blob to `OPFSCatalogueStore.add()`
-- Inline status feedback: "Saved to catalogue as [name]"
-- Route guard: redirect to `/` when `!import.meta.env.DEV` (invisible in production builds until promoted)
+- Remove `import.meta.env.DEV` guard from `/sketch` route and nav link
+- Prerequisite: `OPFSCatalogueStore` (Phase L6) or the Phase I1 server store in place
 
 ---
 
-## Phase L6 — OPFSCatalogueStore *(built alongside S2)*
-
-*See also the corresponding Phase L6 entry in `ROADMAP.md` for the full UI spec.*
-
-### `src/core/storage/OPFSCatalogueStore.ts`
+## Phase L6 — OPFSCatalogueStore
 
 ```ts
 type UserCatalogueEntry = CatalogueEntry & { userAdded: true; addedAt: number };
@@ -132,310 +231,30 @@ interface OPFSCatalogueStore {
 }
 ```
 
-- GLB blobs stored as real files under `assets/` in the origin OPFS root (`navigator.storage.getDirectory()`)
-- Metadata (id, label, kind, addedAt) stored in a companion `assets-meta.json` file in the same OPFS directory
-- `list()` reads metadata, then calls `fileHandle.getFile()` + `URL.createObjectURL()` per entry to produce live `gltfPath` values — fresh each session, no reload fragility
-- Quota managed by the browser against available disk space — no practical size limit for GLB assets
-- Browser support: Chrome/Edge/Firefox/Safari 17+
+- GLB blobs stored as real files under `assets/` in the origin OPFS root
+- Metadata in a companion `assets-meta.json` in the same OPFS directory
+- `list()` calls `fileHandle.getFile()` + `URL.createObjectURL()` per entry — fresh object URLs each session
+- `StoredProduction` stores only `catalogueId`; `gltfPath` resolved at runtime
 
-**Production JSON stays clean:** `StoredProduction` stores only the stable `catalogueId`. The `gltfPath` object URL is resolved at runtime by `OPFSCatalogueStore.list()` before first render. When Phase I1 server store lands, the same `catalogueId` resolves via `fetch` instead — no production JSON migration.
+**Catalogue integration:** `catalogue.ts` `getCharacters()` / `getSetPieces()` accept an optional `userEntries` arg for testable injection. `/` route merges OPFS entries at startup.
 
-### Catalogue integration
-
-- `catalogue.ts` `getCharacters()` / `getSetPieces()` — accept optional `userEntries` arg (consistent with existing testable-injection pattern)
-- `src/routes/+page.svelte` — calls `OPFSCatalogueStore.list()` at startup alongside `ProductionStore.list()`, merges results into `CATALOGUE_CHARACTERS` / `CATALOGUE_SET_PIECES`:
-
-```ts
-const [productions, userAssets] = await Promise.all([
-  ProductionStore.list(),
-  OPFSCatalogueStore.list()
-]);
-```
-
-### Tests: `OPFSCatalogueStore.test.ts`
-
-OPFS is not available in Node/Vitest; test via a mock of `navigator.storage.getDirectory()`:
-- `add()` → `list()` returns entry with non-empty `gltfPath`
-- `remove()` → `list()` no longer includes the entry
-- Metadata persists across re-instantiation (reads same OPFS directory)
+**Tests via mocked `navigator.storage.getDirectory()`:** add → list, remove → absent, metadata persists across re-instantiation.
 
 ---
 
-## Phase S3 — Dev-only nav link
+## Known bugs
 
-Add a **Design** link to `/sketch` in the app header, guarded by `import.meta.env.DEV`. Remove the guard when the sketcher is ready for production promotion (separate explicit decision).
+### BUG-1 — Glue into scaled group produces misaligned contact points and scale bleed
 
----
+**Reproduction:** (1) insert two parts and glue them; (2) scale the resulting assembly group using the TC gizmo; (3) insert a third standalone (unscaled) part; (4) start a glue operation — place the anchor blob on a face of a part *inside the scaled group*, then click a face of the unscaled standalone part as the mover.
 
-## Phase S4 — Promote to production *(manual gate)*
+**Observed:** The two picked surface points are not coincident after the snap, and the mover appears to inherit the group's scale (i.e. it shrinks or grows to match the scaled group's coordinate space rather than preserving its original world size).
 
-- Remove `import.meta.env.DEV` guard from `/sketch` route and nav link
-- Prerequisite: `OPFSCatalogueStore` (or Phase I1 server store) in place
+**Root cause:** `_applyJointPosition` applies the rotation and translation to `target` (= the mover mesh, still at scene root) in world space, then `_mergeIntoGroup` calls `group.attach(moverMesh)` to re-parent it. `THREE.Object3D.attach` is supposed to preserve world transform by decomposing `parentWorldInverse * moverMatrixWorld` into the new local matrix. When the parent group carries a non-identity scale (from the TC gizmo), this decomposition must invert a matrix that has rotation **and** scale simultaneously — `Matrix4.decompose` is only exact for orthogonal matrices; combined rotation + non-uniform scale produces incorrect quaternion/scale extraction, meaning the attach lands the mover at the wrong world position and with a spurious scale component.
 
----
+**Fix approach:** Before calling `group.attach(moverMesh)`, strip the group's scale out of the decomposition path, or pre-apply the group's world-space inverse transform manually (multiply mover's world matrix by `group.matrixWorld.clone().invert()`, then decompose). Alternatively, factor the group's scale into `_applyJointPosition` so the mover is placed in the group's local coordinate frame (not world space) before `attach` is called.
 
-## Phase SA1 — Selection + TransformControls *(complete ✓)*
-
-Click to select a part; gizmo to translate/rotate/scale. W/E/R keyboard shortcuts. Delete removes part. Cyan edge outline auto-follows the gizmo.
-
----
-
-## Phase SA2 — Primitive palette *(complete ✓)*
-
-Insert preset shapes from the toolbar without sketching.
-
-**Shapes:** cube, sphere, cylinder, capsule, cone  
-Each inserts a new `SketcherPart` at world origin and auto-selects it (gizmo ready to reposition immediately).
-
-Default sizes chosen to "feel right" for set-piece assembly — cylinder proportioned for a table leg, cube for a tabletop:
-
-| Primitive | Geometry |
-|---|---|
-| Cube | `BoxGeometry(1, 1, 1)` |
-| Sphere | `SphereGeometry(0.75, 16, 12)` |
-| Cylinder | `CylinderGeometry(0.3, 0.3, 2, 16)` |
-| Capsule | `CapsuleGeometry(0.3, 1, 4, 8)` |
-| Cone | `ConeGeometry(0.5, 2, 16)` |
-
-**Files:** `CartoonSketcher.ts` — `insertPrimitive(kind)` method; `+page.svelte` — new toolbar row of primitive buttons.
-
----
-
-## Phase SA3 — Per-part colour *(complete ✓)*
-
-Select a part → colour picker appears in a floating HUD → updates `mesh.material.color`.
-
-- 8 cartoon palette presets + hex field
-- Single `MeshStandardMaterial` per part (no per-face splitting yet; that's SA6)
-- Colour persisted in `SketcherPart` for SA9 serialization
-
----
-
-## Phase SA4 — Duplicate & array *(Ctrl+D complete ✓; linear array deferred)*
-
-- **Ctrl+D**: duplicate selected part → clones geometry + material, offsets +1 on X, auto-selects clone
-- **Linear array**: N copies along an axis with a step distance — useful for fence posts, table legs, columns
-- All duplicates are independent `SketcherPart` entries (deep-cloned geometry + material)
-
----
-
-## Phase SA5 — Glue / snap attachment *(complete ✓)*
-
-Gluing two parts together records a geometric recipe for how their faces touch, forms a persistent `THREE.Group` in the scene graph containing all connected parts, and re-evaluates that recipe whenever any group member is transformed — without a live constraint solver.
-
-### Design decisions
-
-**Joint model is symmetric — no parent/child.** A joint is a recipe: `[(faceA, uvA), (faceB, uvB), alpha]`. Neither part is privileged. When either part is scaled or moved (in glue-edit mode), the recipe re-evaluates and repositions the other.
-
-**Persistent explicit groups — not on-the-fly.** When a joint is created the two parts (or their existing groups) are merged under a single `THREE.Group` immediately and permanently. The group is the scene graph manifestation of the connected component. This means TC simply `attach(group)` — no temporary construction/teardown per gesture.
-
-Scene graph example — 4 legs + tabletop, two legs glued:
-```
-scene
-├── legC   (SketcherPart, top-level)
-├── legD   (SketcherPart, top-level)
-└── Group_1
-    ├── tabletop (SketcherPart)
-    ├── legA     (SketcherPart)
-    └── legB     (SketcherPart)
-```
-
-**Recipe replay on drag-end.** Joints are re-evaluated on every `TransformControls` `dragging-changed` (release) event for any member of the group. Example: scale cuboid Z → release → all joints touching the cuboid re-evaluate → cylinder bottom repositions to match new face position. No solver; just re-run the recipe.
-
-**Two interaction modes for a group:**
-- *Normal mode* (default): clicking any mesh in a group selects the whole group; TC gizmo at group AABB centroid; all members move together.
-- *Glue-edit mode* (G key or toolbar toggle): clicking a mesh selects that individual part; TC attached to it; joints re-evaluate on drag-end. Status bar shows "Glue edit" in amber.
-
-**Explicit unglue only.** Joints are never silently broken by dragging. To detach: enter glue-edit mode, select a part, press U (or "Unglue" button in HUD). `dissolveGroup()` runs a BFS connected-components pass on remaining joints: if the group splits into two disconnected components each gets a new group (or returns to scene root if size 1).
-
-### Data model
-
-```ts
-type GlueJoint = {
-  id: string;
-  partAId: string;  faceA: number;  uvA: [number, number];
-  partBId: string;  faceB: number;  uvB: [number, number];
-  alpha: number;   // twist around shared normal, default 0
-};
-
-type AssemblyGroup = {
-  id: string;
-  group: THREE.Group;
-  partIds: string[];  // mirrors group.children membership
-};
-```
-
-`SketcherSession` gains `joints: GlueJoint[]` and `assemblyGroups: AssemblyGroup[]`.
-
-### Face group conventions
-
-- `BoxGeometry` primitives: 6 constant-normal groups (±X, ±Y, ±Z faces)
-- `CylinderGeometry` primitives: group 0 = barrel, group 1 = top cap, group 2 = bottom cap
-- `ExtrudeGeometry` parts: group 0 = side faces, group 1 = front cap, group 2 = back cap
-
-### Interaction flow
-
-1. Select a part (or whole group — any member mesh)
-2. Press **G** or click **"Glue…"** in toolbar → enter glue-pick mode; cursor changes
-3. Hover over any other mesh → nearest face highlights yellow (raycast + face-normal group lookup)
-4. **Click** → selected part snaps flush; child face centre touches hit point; joint committed; group formed/expanded; glue-pick mode exits
-5. **Escape** → cancel, part returns to pre-glue world position
-
-The grab point on the moving part defaults to the face centre of its face closest to the camera (no extra click needed). `alpha = 0` by default; rotation around the shared normal is a deferred control.
-
-### GLB export
-
-Joints encoded in root `extras.directionally.joints`. Group membership reconstructed from joint graph on load — no separate group data needed in the file.
-
-### Table walkthrough with SA2–SA5
-
-1. SA2: insert cylinder (leg), SA3: colour wood-brown
-2. SA4: Ctrl+D × 3 → four legs (4 top-level parts)
-3. SA2: insert cube (top), SA3: colour wood-brown (5 top-level parts)
-4. SA5: glue legA top cap to cube bottom face → Group_1 forms {cube, legA}
-5. SA5: glue legB top cap to cube bottom face → Group_1 grows {cube, legA, legB}
-6. SA5: glue legC, legD → Group_1 = {cube, legA, legB, legC, legD}
-7. L6: Export to Catalogue → usable in productions
-
----
-
-## Phase SH1 — Poly sketcher hardening *(next priority)*
-
-A batch of UX and correctness fixes to make the polygon sketcher reliable before building further on top of it.
-
-- **Remove default edge bevelling.** `bevelEnabled: true` was an early shortcut for roundness; it distorts geometry unexpectedly. Switch `ExtrudeGeometry` to `bevelEnabled: false` by default; expose it as an optional toggle if cartoon roundness is desired.
-- **Fix view rotation when sketching.** OrbitControls and the polygon-pick raycaster fight for mouse events during sketch drawing. Disable OrbitControls while a sketch is in progress; re-enable on shape close or Escape.
-- **Closure click indication.** When the cursor is close enough to the first vertex to close the polygon, highlight the first vertex distinctly (e.g. filled circle, colour change) so the user knows a click will close rather than extend.
-- **Better extrude / de-extrude grab handle.** The current handle is small and hard to pick. Replace with an arrow-style handle that affords clear up/down drag; show depth value live in a HUD overlay.
-- **Fix duplicate solid on final commit.** The extrusion pipeline currently creates a second mesh at generation time, leaving a duplicate coincident solid in the scene. Diagnose whether this is a double-`commitPart` call or a geometry rebuild firing twice; remove the duplicate.
-- **Fix solid placement (sketch ≠ solid position).** The committed solid is not placed at the same world position as the sketch preview. Ensure the extruded mesh inherits the sketch plane origin and the same world-space centroid the preview showed.
-- **Fix face labels and UVs.** Extruded solids should label groups as `top`, `side-0`, `side-1`, …, `bottom` with side rectangles having UV in `[0,1]×[0,1]`. Currently all sides and the top share the same `Top` label and UV mapping.
-
----
-
-## Phase SA6 — Sketch shape presets
-
-Extend polygon sketcher with rectangle and circle input modes alongside the existing free-polygon.
-
-- **Rectangle:** click + drag diagonal → 4-point closed shape → extrude pipeline unchanged
-- **Circle:** click center + drag radius → closed N-gon approximation (default 32 segments, segment count input in toolbar)
-- Toolbar mode switcher: **Polygon** | **Rectangle** | **Circle**
-
-**Files:** `PolygonSketcher.ts` extended; `types.ts` adds `SketchMode` union.
-
----
-
-## Phase SA7 — Per-side materials *(elevated priority)*
-
-**Per-face colour:**
-- `mesh.material` becomes a `THREE.Material[]` array; each face group gets its own `MeshStandardMaterial`
-- Interaction: select part → click a face (raycast + group lookup) → colour picker
-- Prerequisite: face group metadata from SA5 already in place
-
-**UV wrapping mode:**
-- Toggle per-part: *per-face* (each side 0..1 independently) vs *wrapped* (U proportional around perimeter)
-- Default heuristic: ≤8 sides → per-face + faceted normals; >8 → wrapped + smooth normals
-- User override via toggle in the part HUD
-
----
-
-## Phase SA8 — Textures *(elevated priority)*
-
-Drag-and-drop an image file onto a selected face → assigns via `THREE.TextureLoader` on that material group.
-
-- Single texture per material group (UV wrapping mode from SA7 determines layout)
-- Blob lifecycle via `URL.createObjectURL`; stored in OPFS alongside GLB on export
-
----
-
-## Phase SA10 — Uniform object scale
-
-TransformControls already exposes per-axis scale. Add a uniform-scale mode: a toolbar toggle constrains all three axes to move together. Useful once an assembly is composed and the user wants to resize the whole thing without distorting proportions.
-
-- Toolbar toggle: **Scale XYZ** | **Scale uniform**
-- Implement by locking `TransformControls` scale axis to `'XYZ'` when in uniform mode
-- Report scale factor as a single number in the HUD overlay
-
----
-
-## Phase SA11 — Snap to floor
-
-After assembling a glue group (e.g. table + legs) the assembly often floats above `y = 0`. The user needs a one-click way to slide it down so it sits on the floor.
-
-**Design options (start with bounding-box; face nomination deferred):**
-- **Bounding-box floor snap.** Compute the world-space AABB of the entire group; translate the group so `aabb.min.y = 0`. Simple; always correct for symmetric flat-bottomed objects.
-- **Nominated-face floor snap** *(deferred)*. Mark one face of one part in the group as the "floor contact" face; the group translates so that face's world-space centroid lies on `y = 0`. Handles angled feet, irregular bases, etc.
-
-Toolbar button: "⬇ Floor". Works on a single part or an entire assembly group.
-
----
-
-## Phase SA12 — Positioning precision
-
-Currently all positioning is by mouse drag, making it difficult to achieve exact coordinates — e.g. placing four table legs at `(±1, 0, ±0.2)` before gluing.
-
-**Sketch points**
-- Grid-snap toggle (0.1 grid already partially in place); expose snap size as an editable field
-- Numeric coordinate entry: click a vertex or handle to reveal an XYZ input panel
-
-**Extrusion depth**
-- Numeric depth field in the extrude HUD overlay (alongside the grab handle)
-
-**Transform precision**
-- When an object is selected, show its world-space position / rotation / scale as editable numeric fields in the properties panel
-- Tab between X / Y / Z fields; Enter to confirm
-
-**Glue precision**
-- *Midpoint mode:* toggle that snaps the glue source pick to face-centre automatically — equivalent to `(0.5, 0.5)` in face UV space — without requiring the user to hover precisely over the centre
-- Free-mouse glue stays available as the alternative
-- *Glue point editor:* after a joint is committed, select it and open an inspector showing the UV position on each face plus the twist angle (`alpha`); edits reposition the joint live in the viewport
-
----
-
-## Phase SA13 — Undo / redo
-
-Add an undo/redo stack to the sketcher. The main Directionally app already has a command pattern (`src/core/document/Command.ts`, `ProductionDocument.ts`) providing a reference implementation.
-
-**Scope for sketcher commands:**
-- `InsertPartCommand` (primitive insert or extrusion commit)
-- `DeletePartCommand`
-- `TransformPartCommand` (position / rotation / scale change on drag-end)
-- `ChangeColorCommand`
-- `CommitGlueCommand`
-- `UnglueCommand`
-
-**Implementation notes:**
-- Commands operate on `SketcherSession` (immutable snapshots or structural mutations + inverse)
-- `SketcherDocument` analogous to `ProductionDocument`: `execute(cmd)`, `undo()`, `redo()`, `canUndo`, `canRedo`
-- Wire `Ctrl+Z` / `Ctrl+Shift+Z` (and `Ctrl+Y`) in `+page.svelte`
-- Three.js scene state must stay in sync: commands are responsible for both the data mutation and the corresponding scene-graph update
-
----
-
-## Phase SA9 — Assembly serialization
-
-Re-editable save/load for the full assembly.
-
-**`AssemblySpec` JSON** — stored in OPFS alongside the GLB:
-```ts
-type PartSpec = {
-  id: string;
-  kind: 'sketch' | 'primitive';
-  primitiveType?: 'box' | 'sphere' | 'cylinder' | 'capsule' | 'cone';
-  shapePoints?: [number, number][];  // for sketch parts
-  depth?: number;
-  position: [number, number, number];
-  rotation: [number, number, number, number];  // quaternion
-  scale: [number, number, number];
-  color: number;
-  uvMode: 'per-face' | 'wrapped';
-};
-type AssemblySpec = { parts: PartSpec[]; joints: GlueJoint[] };
-```
-
-Load path: `AssemblySpec` → reconstruct Three.js scene using the same geometry-build functions as creation. Parts are editable immediately.
-
-> **Note on full parametric history:** A true modify-mid-stack-with-dependency-propagation history (Fusion 360 / Blender modifier stack) is a multi-year CAD feature. `AssemblySpec` achieves the practical need — re-open, adjust, re-export — at a fraction of the complexity. If a leg needs resizing after gluing, load the assembly, scale the leg, re-export. Full history replay is deferred indefinitely.
+**Niche-ness:** Requires a deliberate group-scale step between gluing the first pair and gluing the third part. Most "primitives at default scale + glue" workflows are unaffected. Low priority; record here until a regression test can be written.
 
 ---
 
@@ -449,6 +268,7 @@ Load path: `AssemblySpec` → reconstruct Three.js scene using the same geometry
 | SD4 | Convex hull collider export for Rapier.js |
 | SD5 | Boolean cuts via `three-bvh-csg` |
 | SD6 | "Add asset…" UI in the Catalogue tab |
+| SA4b | Linear array: N copies along an axis with step distance |
 
 ---
 
@@ -456,17 +276,11 @@ Load path: `AssemblySpec` → reconstruct Three.js scene using the same geometry
 
 ### CB0 — Base humanoid decision
 
-Pick a base GLB source for owned humanoids. Recommendation: **VRoid Studio** (free, browser-based). It exports `VRMC_vrm 1.0`-spec models with a standard bone vocabulary that `three-vrm` understands out of the box.
-
-Key constraints:
-- Target **VRM 1.0** (`extensions.VRMC_vrm`) from day one — VRM 0.x has a different bone hierarchy and would need a migration pass later.
-- Use [`three-vrm`](https://github.com/pixiv/three-vrm) (`@pixiv/three-vrm`) for loading; it wraps `GLTFLoader` and exposes `vrm.humanoid` with named bones (`leftUpperArm`, `spine`, etc.).
-- `springBone` (secondary motion for hair/clothing) and blendshape groups (facial expressions) are included in the spec — no custom extension work needed.
-- No constraint to Soldier.glb or any existing bundled character; the project uses its own greenfield humanoids.
+Recommendation: **VRoid Studio** (free, browser-based) → `VRMC_vrm 1.0` spec + [`three-vrm`](https://github.com/pixiv/three-vrm) for loading. Target VRM 1.0 from day one; 0.x has a different bone hierarchy requiring a migration pass.
 
 ### CB1 — Bone proportion editor
 
-Mii-style sliders that call `bone.scale.set()` on VRM bones (head size, limb length, torso width, etc.). Non-destructive at runtime; bake to a new GLB on export.
+Mii-style sliders calling `bone.scale.set()` on VRM bones. Non-destructive at runtime; bake to GLB on export.
 
 ### CB2 — Colour picker
 
@@ -476,8 +290,7 @@ Per-material colour swaps on the loaded VRM mesh (diffuse colour + optional toon
 
 ## Verification checklist
 
-- [ ] `yarn test` — all existing + new sketcher/OPFSCatalogueStore tests green
+- [ ] `yarn test` — all tests green
 - [ ] `yarn check` — 0 errors, 0 warnings
-- [ ] Manual: draw polygon → extrude → "Export to Catalogue" on `/sketch` → switch to `/` → Catalogue panel → user asset appears → add to production scene
-- [ ] Manual: "Design mode" label gone from production UI; "Edit" in its place
-- [ ] Manual: `yarn build` + production URL → `/sketch` redirects to `/` (not reachable)
+- [ ] Manual: draw polygon → extrude → Export to Catalogue → switch to `/` → asset appears in Catalogue panel → add to production scene
+- [ ] Manual: `yarn build` + production URL → `/sketch` redirects to `/`

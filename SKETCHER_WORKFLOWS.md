@@ -64,16 +64,18 @@ Each workflow is a step-by-step sequence that can be followed top-to-bottom to v
 
 ### Part E — Glue the legs to the tabletop
 
+Glue is a two-phase pick. **First click** on any surface sets the anchor (stays still). **Second click** on a different part is the mover — it rotates face-flush and snaps to the anchor point. Both parts are merged into an assembly group.
+
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 16 | Click the first leg (front-left) to select it | — | |
-| 17 | Press **G** or click **"Glue…"** in the HUD; cursor changes; status bar enters glue-pick mode | OK | |
-| 18 | Move the cursor over the underside of the tabletop; the closest face highlights yellow | OK | |
-| 19 | Click the highlighted face; the leg snaps so its top cap is flush with the tabletop underside; a group forms (`Group_1`) containing the leg and tabletop | FAIL | tabletop snapped to middle of cylinder. Can't move the glued pair |
-| 20 | Click the second leg; press **G**; hover the tabletop underside; click to glue — `Group_1` grows to 3 parts | — | |
-| 21 | Repeat for the third leg | — | |
-| 22 | Repeat for the fourth leg | — | |
-| ✓ | `Group_1` contains all 5 parts; scene has no remaining top-level SketcherParts outside the group | — | |
+| 16 | Press **G** or click **Glue…** in the primitives bar; status bar shows "Click any surface to place the anchor blob. Esc cancels." | — | |
+| 17 | Move the cursor over the underside of the tabletop; a yellow sphere dot tracks the hovered surface point | — | |
+| 18 | Click the tabletop underside; a pink blob marks the fixed anchor point; status changes to "Now click any surface on a different part to snap it here. Esc cancels." | — | |
+| 19 | Move the cursor over the first leg's top; the yellow dot now tracks only the leg surface (the tabletop and any group members are excluded from the second pick) | — | |
+| 20 | Click the leg top; the leg rotates so its top face becomes flush with the tabletop underside, then snaps so the two contact points meet; status "Glued. Parts joined in assembly group." | — | |
+| 21 | TC gizmo re-attaches to the new assembly group; drag the gizmo and confirm both parts move together | — | |
+| 22 | Repeat steps 16–20 for the three remaining legs, anchoring on the tabletop underside each time; the same group grows with each repeat | — | |
+| ✓ | Assembly group `assembly-1` contains all 5 parts; no standalone legs remain at scene root | — | |
 
 ---
 
@@ -88,29 +90,33 @@ Each workflow is a step-by-step sequence that can be followed top-to-bottom to v
 
 ---
 
-### Part G — Verify glue-edit mode and joint replay
+### Part G — Extend the assembly with an additional part
+
+**G** works at any time — you can anchor on a surface that already belongs to an existing group. The mover joins that group.
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 26 | Click away to deselect; press **G** to toggle into glue-edit mode; status bar shows "Glue edit" in amber | — | |
-| 27 | Click one leg; TC gizmo attaches to that individual leg (not the whole group) | — | |
-| 28 | Press **R** to switch to scale; drag the Y axis to make the leg visibly taller; release the gizmo | — | |
-| 29 | After releasing, the leg repositions so its top cap remains flush with the tabletop underside (joint recipe replays automatically) | — | |
-| 30 | Press **G** again to exit glue-edit mode; group normalises | — | |
-| ✓ | Individual part editing within a group works; joints replay on drag-end to preserve face contact | — | |
+| 26 | Insert a new **Cube** via the primitives bar; position it near (but not touching) the assembled table | — | |
+| 27 | Press **G**; status "Click any surface to place the anchor blob." | — | |
+| 28 | Click any face of the existing table assembly as the anchor (e.g. the tabletop side face); pink blob appears | — | |
+| 29 | Click a face on the new standalone cube; the cube rotates to face-align and snaps to the table | — | |
+| 30 | Drag the TC gizmo; all six parts (original 5 + new cube) move as a unit | — | |
+| ✓ | Gluing a new part to an existing group expands the group correctly | — | |
 
 ---
 
 ### Part H — Unglue a leg and re-glue it
 
+`U` removes **all** joints touching the currently tracked part. Clicking a mesh in a group selects the group for TC, but the specifically-clicked mesh is tracked — so click the exact leg you want to detach, then press `U`.
+
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 31 | Enter glue-edit mode (**G**); click one leg to select it | — | |
-| 32 | Press **U** or click **"Unglue"** in the HUD; the joint is removed | — | |
-| 33 | Observe: if the leg was the only joint on that leg, the leg is detached from `Group_1` and returns to the scene as a top-level part; the remaining 4 parts stay in the group | — | |
+| 31 | Click the leg you want to detach; TC attaches to the whole group, but the clicked leg is tracked (the **Unglue** button appears in the primitives bar confirming which part is active) | — | |
+| 32 | Press **U** or click **Unglue** in the primitives bar; all joints touching the clicked leg are removed | — | |
+| 33 | The leg detaches from the group and returns to scene root as a standalone part; the remaining parts stay in the group | — | |
 | 34 | Move the detached leg to a different position using the TC gizmo | — | |
-| 35 | Select the moved leg; press **G**; hover the tabletop underside; click to re-glue | — | |
-| 36 | The leg snaps back flush; re-joins `Group_1` | — | |
+| 35 | Press **G**; click the detached leg's top as anchor (pink blob); click the tabletop underside to complete the re-glue | — | |
+| 36 | The leg snaps flush to the tabletop underside and re-joins the assembly group | — | |
 | ✓ | Unglue followed by re-glue works cleanly | — | |
 
 ---
@@ -149,5 +155,7 @@ Part J - Repeat the above but drawing polys and extruding
 |---|---|
 | Per-face colour on individual faces | SA7 |
 | Texture dragged onto a face | SA8 |
-| Save assembly for re-editing later | SA9 |
+| Named assemblies (open/save/re-edit across sessions) | SA9 |
 | Sketch shape presets (rectangle, circle) | SA6 |
+| Individual-part transforms within a group (clicking a mesh in a group moves the whole group; TC cannot target a single member) | post-SA13 |
+| Undo / redo | SA13 |
