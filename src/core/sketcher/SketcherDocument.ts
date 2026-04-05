@@ -88,6 +88,17 @@ export class SketcherDocument {
     this.onChange?.();
   }
 
+  /**
+   * Record a history entry for a mutation that already happened outside of
+   * execute() (e.g. extrusion commit driven by pointer events).
+   */
+  record(before: SessionSnapshot, after: SessionSnapshot, label: string): void {
+    this.stack.splice(this.cursor + 1);
+    this.stack.push({ before, after, label });
+    this.cursor++;
+    this.onChange?.();
+  }
+
   /** Reset the history stack. Call when clearing the entire session. */
   clearStack(): void {
     this.stack.length = 0;

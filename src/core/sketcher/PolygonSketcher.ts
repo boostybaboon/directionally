@@ -116,15 +116,19 @@ export class PolygonSketcher {
   private _closeShape(): void {
     if (this.points.length < 3) return;
 
-    // Build a THREE.Shape in the XZ plane (y is depth after extrusion).
-    const shape = new THREE.Shape(
-      this.points.map((p) => new THREE.Vector2(p.x, p.z)),
-    );
-
     // Centroid: average of all points.
     const cx = this.points.reduce((s, p) => s + p.x, 0) / this.points.length;
     const cz = this.points.reduce((s, p) => s + p.z, 0) / this.points.length;
     const centroid = new THREE.Vector3(cx, 0, cz);
+
+    // Build shape with centroid-relative, Z-corrected coords so the geometry
+    // is centred at local origin and mesh.position carries the world offset.
+    // Mapping: shape.x = world.x - cx; shape.y = cz - world.z.
+    // After rotateX(-π/2) in ExtrusionHandle: world.x = shape.x + cx,
+    // world.z = -(shape.y) + cz = world.z. ✓
+    const shape = new THREE.Shape(
+      this.points.map((p) => new THREE.Vector2(p.x - cx, cz - p.z)),
+    );
 
     this.onShapeClosed?.(shape, centroid);
     this.reset();

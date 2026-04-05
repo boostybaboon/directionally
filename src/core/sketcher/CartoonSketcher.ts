@@ -111,6 +111,16 @@ export class CartoonSketcher {
     this.scene.add(this.polygonSketcher.rubberBand);
   }
 
+  /**
+   * Cancel an in-progress polygon sketch and return to idle.
+   * No-op if not currently in the drawing phase.
+   */
+  cancelSketch(): void {
+    if (this.phase !== 'drawing') return;
+    this._endCurrentSketch();
+    this.phase = 'idle';
+  }
+
   /** Remove all parts, joints, and groups, then reset to idle. */
   clearSession(): void {
     this.glue.dispose();
@@ -278,8 +288,10 @@ export class CartoonSketcher {
     vertPlane.constant = -vertPlane.normal.dot(handlePos);
     const hit = new THREE.Vector3();
     if (!raycaster.ray.intersectPlane(vertPlane, hit)) return null;
+    const oldMesh = this.extrusionHandle.mesh;
     const newMesh = this.extrusionHandle.onDrag(hit.y);
     if (newMesh) {
+      this.scene.remove(oldMesh);
       this.scene.add(newMesh);
     }
     return newMesh;
@@ -410,7 +422,7 @@ export class CartoonSketcher {
       localPointB: [j.localPointB.x, j.localPointB.y, j.localPointB.z],
       localNormalB: [j.localNormalB.x, j.localNormalB.y, j.localNormalB.z],
     }));
-    return { version: 1, parts, joints };
+    return { version: 2, parts, joints };
   }
 
   /**
@@ -438,9 +450,8 @@ export class CartoonSketcher {
         depth = pd.depth;
         const pts = pd.shapePoints.map(([x, y]) => new THREE.Vector2(x, y));
         const shape = new THREE.Shape(pts);
-        const cx = pd.shapePoints.reduce((s, [x]) => s + x, 0) / pd.shapePoints.length;
-        const cz = pd.shapePoints.reduce((s, [, y]) => s + y, 0) / pd.shapePoints.length;
-        centroid.set(cx, 0, cz);
+        // shapePoints are centroid-relative (from the new shape convention), so
+        // geometry is centred at local origin and mesh.position carries the offset.
         geometry = new THREE.ExtrudeGeometry(shape, {
           depth,
           bevelEnabled: true,
@@ -449,11 +460,18 @@ export class CartoonSketcher {
           bevelSegments: 2,
         });
         geometry.rotateX(-Math.PI / 2);
-        geometry.translate(centroid.x, 0, centroid.z);
+        geometry.translate(0, -depth / 2, 0);
+        const sideGroups = pts.map((a, i) => {
+          const b = pts[(i + 1) % pts.length];
+          const dx = b.x - a.x;
+          const dz = b.y - a.y;
+          const len = Math.sqrt(dx * dx + dz * dz) || 1;
+          return { normal: new THREE.Vector3(-dz / len, 0, -dx / len), label: `side-${i}` };
+        });
         geometry.userData.faceGroups = [
-          { normal: new THREE.Vector3(1, 0, 0),  label: 'Side' },
-          { normal: new THREE.Vector3(0, 1, 0),  label: 'Top' },
-          { normal: new THREE.Vector3(0, -1, 0), label: 'Bottom' },
+          ...sideGroups,
+          { normal: new THREE.Vector3(0, 1, 0),  label: 'top' },
+          { normal: new THREE.Vector3(0, -1, 0), label: 'bottom' },
         ];
       }
 

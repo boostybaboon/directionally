@@ -141,6 +141,22 @@ describe('SketcherDocument', () => {
     expect(snap.joints).toHaveLength(0);
   });
 
+  it('record() creates an undoable entry for an already-committed mutation', () => {
+    const { sketcher } = makeSketcher();
+    const { doc } = makeDoc(sketcher);
+    const before = doc.captureSnapshot();
+    sketcher.insertPrimitive('box');
+    const after = doc.captureSnapshot();
+    doc.record(before, after, 'Commit sketch');
+    expect(doc.canUndo).toBe(true);
+    expect(sketcher.getSession().parts).toHaveLength(1);
+    doc.undo();
+    expect(sketcher.getSession().parts).toHaveLength(0);
+    expect(doc.canUndo).toBe(false);
+    doc.redo();
+    expect(sketcher.getSession().parts).toHaveLength(1);
+  });
+
   it('execute() with priorSnapshot uses it as the before-state', () => {
     const { sketcher } = makeSketcher();
     const { doc } = makeDoc(sketcher);

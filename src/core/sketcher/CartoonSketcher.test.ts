@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { CartoonSketcher } from './CartoonSketcher.js';
 import { PolygonSketcher } from './PolygonSketcher.js';
+import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { exportGLB } from './exportGLB.js';
 import type { SketcherSession } from './types.js';
 
@@ -340,7 +341,7 @@ describe('toDraft / loadDraft', () => {
 
   it('toDraft() on an empty session produces a valid draft with no parts', () => {
     const draft = sketcher.toDraft();
-    expect(draft.version).toBe(1);
+    expect(draft.version).toBe(2);
     expect(draft.parts).toHaveLength(0);
     expect(draft.joints).toHaveLength(0);
   });
@@ -438,7 +439,91 @@ describe('toDraft / loadDraft', () => {
 
   it('loadDraft() on empty draft produces an empty session', () => {
     sketcher.insertPrimitive('box');
-    sketcher.loadDraft({ version: 1, parts: [], joints: [] });
+    sketcher.loadDraft({ version: 2, parts: [], joints: [] });
     expect(sketcher.getSession().parts).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ExtrusionHandle — face labels and duplicate-mesh fix
+// ---------------------------------------------------------------------------
+
+describe('ExtrusionHandle via CartoonSketcher', () => {
+  let scene: THREE.Scene;
+  let camera: THREE.PerspectiveCamera;
+  let sketcher: CartoonSketcher;
+
+  beforeEach(() => {
+    scene = makeScene();
+    camera = makePerspectiveCamera();
+    sketcher = new CartoonSketcher(scene, camera);
+  });
+
+  function commitSquareExtrusion(): void {
+    sketcher.startNewSketch();
+    // click four corners of a square in XZ then close
+    sketcher.onClick(-0.5, -0.5);
+    sketcher.onClick(0.5, -0.5);
+    sketcher.onClick(0.5, 0.5);
+    sketcher.onClick(-0.5, 0.5);
+    sketcher.onClick(-0.5, -0.5); // close
+    // commit at default depth (no drag)
+    sketcher.onPointerDown(0, 0);
+    sketcher.onPointerUp();
+  }
+
+  it('committed sketch part faceGroups has side-N labels for each edge', () => {
+    commitSquareExtrusion();
+    const parts = sketcher.getSession().parts;
+    expect(parts).toHaveLength(1);
+    const groups: { label: string }[] = parts[0].mesh.geometry.userData.faceGroups;
+    const labels = groups.map((g) => g.label);
+    // Square has 4 edges: side-0 … side-3 plus top and bottom
+    expect(labels).toContain('side-0');
+    expect(labels).toContain('side-1');
+    expect(labels).toContain('side-2');
+    expect(labels).toContain('side-3');
+    expect(labels).toContain('top');
+    expect(labels).toContain('bottom');
+    expect(labels.filter((l) => l === 'Side')).toHaveLength(0);
+    expect(labels.filter((l) => l === 'Top')).toHaveLength(0);
+    expect(labels.filter((l) => l === 'Bottom')).toHaveLength(0);
+  });
+
+  it('scene contains exactly one extruded mesh after a drag rebuild', () => {    sketcher.startNewSketch();
+    sketcher.onClick(-0.5, -0.5);
+    sketcher.onClick(0.5, -0.5);
+    sketcher.onClick(0.5, 0.5);
+    sketcher.onClick(-0.5, 0.5);
+    sketcher.onClick(-0.5, -0.5); // close → enters extruding phase
+
+    // Simulate two drag updates — should not accumulate meshes
+    sketcher.onPointerDown(0, 0);
+    sketcher.onPointerMove(0, 0.1);
+    sketcher.onPointerMove(0, 0.2);
+    sketcher.onPointerUp(); // commit
+
+    // Count Mesh children in the scene (exclude lines/handle sphere)
+    const meshes = scene.children.filter(
+      (c) => c instanceof THREE.Mesh && c.geometry instanceof THREE.ExtrudeGeometry,
+    );
+    expect(meshes).toHaveLength(1);
+  });
+
+  it('ExtrusionHandle mesh.position equals the supplied centroid', () => {
+    // Shape is centroid-relative; mesh.position must carry the world offset.
+    const shape = new THREE.Shape([
+      new THREE.Vector2(-5, -5),
+      new THREE.Vector2( 5, -5),
+      new THREE.Vector2( 5,  5),
+      new THREE.Vector2(-5,  5),
+    ]);
+    const centroid = new THREE.Vector3(10, 0, 7);
+    const handle = new ExtrusionHandle(shape, centroid);
+
+    expect(handle.mesh.position.x).toBeCloseTo(10, 5);
+    expect(handle.mesh.position.y).toBeCloseTo(0.5, 5); // depth/2 = 1/2
+    expect(handle.mesh.position.z).toBeCloseTo(7, 5);
+    handle.dispose();
   });
 });

@@ -29,8 +29,9 @@ The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop
 
 **Priority order:**
 1. ~~SA13 — Undo / redo~~ ✅ COMPLETE (snapshot-based; `SketcherDocument` with `{ before, after }` per entry)
-2. SH2 — Session autosave *(next; solves "lost on refresh" with a one-liner now that `SketcherDocument` is the single source of truth)*
-3. SH1a — Poly sketcher data-integrity fixes *(unblocks SA7)*
+2. ~~SH2 — Session autosave~~ ✅ COMPLETE (`toDraft`/`loadDraft` + `localStorage` debounced save)
+3. ~~SH1a — Poly sketcher data-integrity fixes~~ ✅ COMPLETE
+4. SA7 — Per-side materials *(next; face label schema now correct)*
 4. SA7 — Per-side materials
 5. SA8 — Textures
 6. SH1b — Poly sketcher UX + polish
@@ -52,7 +53,7 @@ The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop
 
 ---
 
-## Phase SH2 — Session autosave *(next)*
+## Phase SH2 — Session autosave ✅ COMPLETE
 
 **Why immediately after SA13:** `SketcherDocument` now has a clean `onChange` callback fired after every mutation. A serializable draft format built on top of the session is the only missing piece.
 
@@ -96,13 +97,11 @@ type SketcherDraft = { version: 1; parts: PartDraft[]; joints: JointSnapshot[] }
 
 ---
 
-## Phase SH1a — Poly sketcher data-integrity fixes
+## Phase SH1a — Poly sketcher data-integrity fixes ✅ COMPLETE
 
-Correctness bugs that must be fixed before SA7, because SA7 builds on top of the face group schema these bugs corrupt.
-
-- **Fix duplicate solid on final commit.** The extrusion pipeline currently creates a second mesh at generation time, leaving a duplicate coincident solid in the scene. Diagnose whether this is a double-`commitPart` call or a geometry rebuild firing twice; remove the duplicate.
-- **Fix solid placement (sketch ≠ solid position).** The committed solid is not placed at the same world position as the sketch preview. Ensure the extruded mesh inherits the sketch plane origin and the same world-space centroid the preview showed.
-- **Fix face labels and UVs.** Extruded solids should label groups as `top`, `side-0`, `side-1`, …, `bottom` with side rectangles having UV in `[0,1]×[0,1]`. Currently all sides and the top share the same `Top` label and UV mapping.
+- **Duplicate mesh during drag** — fixed: `onPointerMove` now removes the previous mesh from the scene before adding the rebuilt one. Root cause: `onDrag` disposes and replaces `handle.mesh` but the old scene node was never removed.
+- **Solid placement** — no placement bug found. The `_buildMesh` bakes centroid into geometry vertices via `geo.translate(cx, 0, cz)`; preview and committed mesh use the same code path and the same mesh object, so positions are identical.
+- **Face labels** — fixed: `_buildMesh` in `ExtrusionHandle` now computes per-edge outward normals from `shape.getPoints()` and emits `{ label: 'side-N', normal }` for each edge, plus `top` and `bottom`. `loadDraft` in `CartoonSketcher` uses the same logic. Old `Side`, `Top`, `Bottom` labels removed.
 
 ---
 

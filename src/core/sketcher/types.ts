@@ -121,7 +121,7 @@ export type PartDraft = {
 };
 
 export type SketcherDraft = {
-  version: 1;
+  version: 2;
   parts: PartDraft[];
   joints: JointSnapshot[];
 };

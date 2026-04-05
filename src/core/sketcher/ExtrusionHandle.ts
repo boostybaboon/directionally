@@ -102,16 +102,37 @@ export class ExtrusionHandle {
     });
     // Rotate so the shape lies in the XZ plane extruding upward along +Y.
     // ExtrudeGeometry extrudes along +Z by default, so rotate -90° around X.
-    // After rotation: group 1 cap faces +Y (Top), group 2 cap faces -Y (Bottom).
+    // After rotation: cap facing +Y = top, cap facing -Y = bottom.
+    // Shape coords are centroid-relative (shape.x = world.x - cx,
+    // shape.y = cz - world.z), so geometry is centred at local origin;
+    // mesh.position carries the world centroid offset.
     geo.rotateX(-Math.PI / 2);
-    geo.translate(this.centroid.x, 0, this.centroid.z);
+    // Shift geometry so local Y spans -depth/2..+depth/2, placing the pivot at
+    // the vertical centre. mesh.position.y = depth/2 keeps the bottom on Y=0.
+    geo.translate(0, -depth / 2, 0);
+
+    // Per-edge side normals. With centroid-relative Z-corrected shape coords,
+    // dz = b.y - a.y = -(world Z diff), so outward normal = (-dz/len, 0, -dx/len).
+    const pts = this.shape.getPoints();
+    const sideGroups = pts.map((a, i) => {
+      const b = pts[(i + 1) % pts.length];
+      const dx = b.x - a.x;
+      const dz = b.y - a.y;
+      const len = Math.sqrt(dx * dx + dz * dz) || 1;
+      return { normal: new THREE.Vector3(-dz / len, 0, -dx / len), label: `side-${i}` };
+    });
+
     geo.userData.faceGroups = [
-      { normal: new THREE.Vector3(1, 0, 0),  label: 'Side' },
-      { normal: new THREE.Vector3(0, 1, 0),  label: 'Top' },
-      { normal: new THREE.Vector3(0, -1, 0), label: 'Bottom' },
+      ...sideGroups,
+      { normal: new THREE.Vector3(0, 1, 0),  label: 'top' },
+      { normal: new THREE.Vector3(0, -1, 0), label: 'bottom' },
     ];
 
     const mat = new THREE.MeshStandardMaterial({ color: 0xaaddff, metalness: 0.1, roughness: 0.6 });
-    return new THREE.Mesh(geo, mat);
+    const mesh = new THREE.Mesh(geo, mat);
+    // Place the mesh at the world centroid so geometry vertices land at the
+    // drawn polygon positions, and the selection gizmo lands on the shape.
+    mesh.position.set(this.centroid.x, depth / 2, this.centroid.z);
+    return mesh;
   }
 }

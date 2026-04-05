@@ -66,6 +66,7 @@
 
   // Extrusion handle drag suppresses orbit.
   let handleDragActive = false;
+  let extrusionBeforeSnapshot: ReturnType<typeof sketcherDoc.captureSnapshot> | null = null;
 
   // Snapshot captured at TC drag-start; passed to execute() at drag-end.
   let tcPreDragSnapshot: ReturnType<typeof sketcherDoc.captureSnapshot> | null = null;
@@ -149,7 +150,7 @@
     if (rawDraft) {
       try {
         const draft = JSON.parse(rawDraft);
-        if (draft?.version === 1) sketcher.loadDraft(draft);
+        if (draft?.version === 2) sketcher.loadDraft(draft);
       } catch {
         // Corrupt draft — ignore and start fresh.
       }
@@ -170,7 +171,9 @@
           if (e.ctrlKey) { sketcherDoc.redo(); e.preventDefault(); }
           break;
         case 'Escape':
-          if (gluePhase !== null) { cancelGluePick(); } else { selection.deselect(); }
+          if (gluePhase !== null) { cancelGluePick(); }
+          else if (sketcher.currentPhase === 'drawing') { sketcher.cancelSketch(); orbit.enabled = true; }
+          else { selection.deselect(); }
           break;
         case 'Delete': case 'Backspace': deleteSelected(); break;
         case 'd': case 'D':
@@ -293,10 +296,11 @@
     updateDiagnosticHover(x, y);
     if (sketcher.currentPhase === 'drawing') {
       sketcher.onMouseMove(x, y);
+      // Alt held → let the user orbit mid-sketch without placing a point
+      orbit.enabled = e.altKey;
     }
     if (handleDragActive) {
-      const newMesh = sketcher.onPointerMove(x, y);
-      if (newMesh) scene.add(newMesh);
+      sketcher.onPointerMove(x, y);
     }
     if (gluePhase !== null) {
       updateFaceHighlight(x, y);
@@ -309,7 +313,10 @@
     const [x, y] = toNDC(e);
 
     if (sketcher.currentPhase === 'drawing') {
+      if (e.altKey) return; // Alt held — user is orbiting, not placing a vertex
       sketcher.onClick(x, y);
+      // Re-enable orbit when the polygon closes and extrusion phase starts
+      if (sketcher.currentPhase !== 'drawing') orbit.enabled = true;
       return;
     }
 
@@ -352,6 +359,10 @@
     if (consumed) {
       handleDragActive = true;
       orbit.enabled = false;
+      // Capture state before the extrusion is committed so it can be undone.
+      if (sketcher.currentPhase === 'extruding') {
+        extrusionBeforeSnapshot = sketcherDoc.captureSnapshot();
+      }
     }
   }
 
@@ -366,6 +377,11 @@
       sketcher.onPointerUp();
       handleDragActive = false;
       orbit.enabled = true;
+      // If this pointer-up committed an extrusion, record it as an undoable entry.
+      if (extrusionBeforeSnapshot) {
+        sketcherDoc.record(extrusionBeforeSnapshot, sketcherDoc.captureSnapshot(), 'Commit sketch');
+        extrusionBeforeSnapshot = null;
+      }
     }
   }
 
@@ -559,7 +575,8 @@
   function newSketch() {
     selection.deselect();
     sketcher.startNewSketch();
-    statusMessage = 'Click to place polygon vertices. Click near the first vertex to close the shape.';
+    orbit.enabled = false; // orbit suppressed during polygon drawing; hold Alt to orbit temporarily
+    statusMessage = 'Click to place polygon vertices. Click near the first vertex to close the shape. Hold Alt to orbit.';
   }
 
   function clearSession() {
