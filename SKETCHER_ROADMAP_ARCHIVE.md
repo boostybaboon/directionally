@@ -112,3 +112,26 @@ scene
 ### GLB export note
 
 Joints encoded in root `extras.directionally.joints`. Group membership reconstructable from joint graph on load.
+
+---
+
+## Phase SA13 — Undo / redo ✅ COMPLETE
+
+**Approach:** Snapshot-based. Each history entry stores `{ before: SessionSnapshot, after: SessionSnapshot, label }`. `SketcherDocument.undo()` and `redo()` call `sketcher.restoreSnapshot()` — no inverse command logic.
+
+**Why snapshot over forward/inverse:** An initial forward/inverse implementation had two regressions: (1) `TransformPartCommand` held a stale `THREE.Group` reference after glue-undo dissolved the group — redo moved the gizmo but not the mesh. (2) `scene.attach()` during group BFS-split accumulated incorrect intermediate world transforms — part B vanished on undo of `CommitGlue(A-B)`. Snapshot restores world-space transforms directly, bypassing both failure modes.
+
+**`SessionSnapshot`** stores:
+- `parts: PartSnapshot[]` — world-space `position`, `quaternion`, `scale` per part id (world-space so group-parented meshes restore correctly)
+- `joints: JointSnapshot[]` — `localPointA/B`, `localNormalA/B`, `partA/B` ids (local-space vectors, unchanged by group transforms)
+
+**`CartoonSketcher`** additions:
+- `allParts: Map<string, SketcherPart>` — mesh pool; geometry is never disposed on remove, allowing safe restore
+- `takeSnapshot()` — `matrixWorld.decompose()` for each part
+- `restoreSnapshot()` — sets `mesh.position/quaternion/scale` directly, rebuilds groups via `GlueManager.registerJoint()`
+
+**`GlueManager.registerJoint()`** — records a joint and merges into a group without repositioning (used only on restore, where world transforms are already correct).
+
+**Key files:** `SketcherCommand.ts` (forward-only interface), `SketcherDocument.ts` (`{ before, after }` stack; `captureSnapshot()`; `clearStack()`), `sketcherCommands.ts` (all `undo()` removed), `CartoonSketcher.ts`, `GlueManager.ts`, `src/routes/sketch/+page.svelte` (Ctrl+Z/Y/Shift+Z; pre-drag `tcPreDragSnapshot` pattern).
+
+**Test coverage:** 37 integration tests in `SketcherDocument.test.ts`, including B-vanishes and redo-stops regression scenarios. 415 tests total passing.

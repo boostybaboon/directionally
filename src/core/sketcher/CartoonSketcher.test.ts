@@ -306,7 +306,7 @@ describe('exportGLB', () => {
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial());
 
     const session: SketcherSession = {
-      parts: [{ id: 'part-1', mesh, depth: 1, centroid, name: 'Shape', color: 0x8888cc }],
+      parts: [{ id: 'part-1', mesh, depth: 1, centroid, name: 'Shape', color: 0x8888cc, shapePoints: null }],
       joints: [],
       assemblyGroups: [],
     };
@@ -320,5 +320,125 @@ describe('exportGLB', () => {
     const session: SketcherSession = { parts: [], joints: [], assemblyGroups: [] };
     const { blob } = await exportGLB(session);
     expect(blob.size).toBeGreaterThan(0); // GLTF header is always present
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toDraft / loadDraft round-trip tests
+// ---------------------------------------------------------------------------
+
+describe('toDraft / loadDraft', () => {
+  let scene: THREE.Scene;
+  let camera: THREE.PerspectiveCamera;
+  let sketcher: CartoonSketcher;
+
+  beforeEach(() => {
+    scene = makeScene();
+    camera = makePerspectiveCamera();
+    sketcher = new CartoonSketcher(scene, camera);
+  });
+
+  it('toDraft() on an empty session produces a valid draft with no parts', () => {
+    const draft = sketcher.toDraft();
+    expect(draft.version).toBe(1);
+    expect(draft.parts).toHaveLength(0);
+    expect(draft.joints).toHaveLength(0);
+  });
+
+  it('toDraft() round-trip preserves primitive position and color', () => {
+    const part = sketcher.insertPrimitive('box')!;
+    part.mesh.position.set(3, 1, 2);
+    part.mesh.updateWorldMatrix(false, true);
+    sketcher.setPartColor(part.id, 0xff0000);
+
+    const draft = sketcher.toDraft();
+    sketcher.loadDraft(draft);
+
+    const restored = sketcher.getSession().parts[0];
+    expect(restored.mesh.position).toMatchObject({ x: expect.closeTo(3, 3), y: expect.closeTo(1, 3), z: expect.closeTo(2, 3) });
+    expect(restored.color).toBe(0xff0000);
+    expect(restored.name).toBe('Box');
+    expect(restored.shapePoints).toBeNull();
+  });
+
+  it('toDraft() round-trip preserves multiple primitives', () => {
+    sketcher.insertPrimitive('box');
+    sketcher.insertPrimitive('sphere');
+    sketcher.insertPrimitive('cylinder');
+
+    const draft = sketcher.toDraft();
+    sketcher.loadDraft(draft);
+
+    expect(sketcher.getSession().parts).toHaveLength(3);
+  });
+
+  it('loadDraft() restores part ids so future inserts do not collide', () => {
+    sketcher.insertPrimitive('box'); // part-1
+    sketcher.insertPrimitive('box'); // part-2
+
+    const draft = sketcher.toDraft();
+    sketcher.loadDraft(draft);
+
+    const newPart = sketcher.insertPrimitive('sphere')!;
+    const ids = sketcher.getSession().parts.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length); // all unique
+    expect(ids).toContain(newPart.id);
+  });
+
+  it('toDraft() round-trip preserves a sketch part with shapePoints and depth', () => {
+    // Drive the sketcher to produce a committed extrusion part.
+    sketcher.startNewSketch();
+    sketcher.onClick(0, 0);
+    sketcher.onClick(0.1, 0);
+    sketcher.onClick(0, 0.1);
+    sketcher.onClick(0, 0);       // close
+    sketcher.onPointerDown(0, 0);
+    sketcher.onPointerUp();       // commit
+
+    expect(sketcher.getSession().parts).toHaveLength(1);
+    const original = sketcher.getSession().parts[0];
+    expect(original.shapePoints).not.toBeNull();
+    expect(original.shapePoints!.length).toBeGreaterThan(2);
+
+    const draft = sketcher.toDraft();
+    expect(draft.parts[0].kind).toBe('sketch');
+    expect(draft.parts[0].shapePoints).toBeDefined();
+
+    sketcher.loadDraft(draft);
+
+    const restored = sketcher.getSession().parts[0];
+    expect(restored.name).toBe('Shape');
+    expect(restored.shapePoints).not.toBeNull();
+    expect(restored.mesh.geometry.attributes.position.count).toBeGreaterThan(0);
+  });
+
+  it('toDraft() round-trip preserves a glue joint', () => {
+    const pA = sketcher.insertPrimitive('box')!;
+    const pB = sketcher.insertPrimitive('box')!;
+    pB.mesh.position.set(2, 0, 0);
+    pB.mesh.updateWorldMatrix(false, true);
+
+    sketcher.glueManager.commitGlue(
+      pA, new THREE.Vector3(0.5, 0, 0), new THREE.Vector3(1, 0, 0),
+      pB, new THREE.Vector3(-0.5, 0, 0), new THREE.Vector3(-1, 0, 0),
+    );
+    expect(sketcher.getSession().joints).toHaveLength(1);
+
+    const draft = sketcher.toDraft();
+    expect(draft.joints).toHaveLength(1);
+
+    sketcher.loadDraft(draft);
+
+    expect(sketcher.getSession().joints).toHaveLength(1);
+    expect(sketcher.getSession().parts).toHaveLength(2);
+    // The two parts should be in a group after joint restore.
+    const ag = sketcher.glueManager.groupForPart(sketcher.getSession().parts[0].id);
+    expect(ag).not.toBeUndefined();
+  });
+
+  it('loadDraft() on empty draft produces an empty session', () => {
+    sketcher.insertPrimitive('box');
+    sketcher.loadDraft({ version: 1, parts: [], joints: [] });
+    expect(sketcher.getSession().parts).toHaveLength(0);
   });
 });

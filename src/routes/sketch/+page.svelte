@@ -53,6 +53,7 @@
   let sketcherDoc: SketcherDocument;
   let selection: SelectionManager;
   let animId: number;
+  let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Yellow hover highlight shown over the hovered face during glue-pick.
   let faceHighlight: THREE.Mesh | null = null;
@@ -135,7 +136,24 @@
     sketcherDoc = new SketcherDocument(sketcher, () => {
       canUndo = sketcherDoc.canUndo;
       canRedo = sketcherDoc.canRedo;
+      // Persist the session after every mutation so it survives a page reload.
+      if (draftSaveTimer !== null) clearTimeout(draftSaveTimer);
+      draftSaveTimer = setTimeout(() => {
+        localStorage.setItem('sketcher-draft', JSON.stringify(sketcher.toDraft()));
+        draftSaveTimer = null;
+      }, 500);
     });
+
+    // Restore draft from a previous session if one was saved.
+    const rawDraft = localStorage.getItem('sketcher-draft');
+    if (rawDraft) {
+      try {
+        const draft = JSON.parse(rawDraft);
+        if (draft?.version === 1) sketcher.loadDraft(draft);
+      } catch {
+        // Corrupt draft — ignore and start fresh.
+      }
+    }
 
     // ── Keyboard shortcuts ───────────────────────────────────────────────────
     const onKey = (e: KeyboardEvent) => {
@@ -549,6 +567,7 @@
     selection.deselect();
     sketcher.clearSession();
     sketcherDoc.clearStack();
+    localStorage.removeItem('sketcher-draft');
     statusMessage = 'Session cleared.';
   }
 

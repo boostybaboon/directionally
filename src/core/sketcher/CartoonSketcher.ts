@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { GlueManager } from './GlueManager.js';
-import type { FaceGroupInfo, PartSnapshot, JointSnapshot, SessionSnapshot, SketcherPart, SketcherSession } from './types.js';
+import type { FaceGroupInfo, PartSnapshot, JointSnapshot, PartDraft, SessionSnapshot, SketcherDraft, SketcherPart, SketcherSession } from './types.js';
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
@@ -148,6 +148,7 @@ export class CartoonSketcher {
       centroid: new THREE.Vector3(),
       name: preset.name,
       color: DEFAULT_COLOR,
+      shapePoints: null,
     };
     this.scene.add(mesh);
     this.parts.push(part);
@@ -188,6 +189,7 @@ export class CartoonSketcher {
       centroid: src.centroid.clone(),
       name: src.name,
       color: src.color,
+      shapePoints: src.shapePoints,
     };
     this.scene.add(mesh);
     this.parts.push(part);
@@ -374,6 +376,119 @@ export class CartoonSketcher {
     }
   }
 
+  /**
+   * Serialise the current session to a plain-data JSON-safe draft.
+   * Call on every mutation (debounced) and write to localStorage to survive page refresh.
+   */
+  toDraft(): SketcherDraft {
+    const wp = new THREE.Vector3();
+    const wq = new THREE.Quaternion();
+    const ws = new THREE.Vector3();
+    const parts: PartDraft[] = this.parts.map((p) => {
+      p.mesh.updateWorldMatrix(true, false);
+      p.mesh.matrixWorld.decompose(wp, wq, ws);
+      const draft: PartDraft = {
+        id: p.id,
+        kind: p.shapePoints !== null ? 'sketch' : 'primitive',
+        name: p.name,
+        position: [wp.x, wp.y, wp.z],
+        quaternion: [wq.x, wq.y, wq.z, wq.w],
+        scale: [ws.x, ws.y, ws.z],
+        color: p.color,
+      };
+      if (p.shapePoints !== null) {
+        draft.shapePoints = p.shapePoints;
+        draft.depth = p.depth;
+      }
+      return draft;
+    });
+    const joints: JointSnapshot[] = this.glue.getJoints().map((j) => ({
+      partAId: j.partAId,
+      localPointA: [j.localPointA.x, j.localPointA.y, j.localPointA.z],
+      localNormalA: [j.localNormalA.x, j.localNormalA.y, j.localNormalA.z],
+      partBId: j.partBId,
+      localPointB: [j.localPointB.x, j.localPointB.y, j.localPointB.z],
+      localNormalB: [j.localNormalB.x, j.localNormalB.y, j.localNormalB.z],
+    }));
+    return { version: 1, parts, joints };
+  }
+
+  /**
+   * Reconstruct the Three.js scene from a plain-data draft (the inverse of toDraft).
+   * Clears the current session first. Part ids are preserved so the nextId counter
+   * is advanced past the highest restored id to avoid collisions.
+   */
+  loadDraft(draft: SketcherDraft): void {
+    this.clearSession();
+    this.nextId = 1;
+
+    for (const pd of draft.parts) {
+      let geometry: THREE.BufferGeometry;
+      let shapePoints: [number, number][] | null = null;
+      let depth = 0;
+      let centroid = new THREE.Vector3();
+
+      if (pd.kind === 'primitive') {
+        const preset = PRESET_BY_NAME.get(pd.name.toLowerCase());
+        if (!preset) continue;
+        geometry = preset.geometry();
+      } else {
+        if (!pd.shapePoints || !pd.depth) continue;
+        shapePoints = pd.shapePoints;
+        depth = pd.depth;
+        const pts = pd.shapePoints.map(([x, y]) => new THREE.Vector2(x, y));
+        const shape = new THREE.Shape(pts);
+        const cx = pd.shapePoints.reduce((s, [x]) => s + x, 0) / pd.shapePoints.length;
+        const cz = pd.shapePoints.reduce((s, [, y]) => s + y, 0) / pd.shapePoints.length;
+        centroid.set(cx, 0, cz);
+        geometry = new THREE.ExtrudeGeometry(shape, {
+          depth,
+          bevelEnabled: true,
+          bevelThickness: 0.04,
+          bevelSize: 0.04,
+          bevelSegments: 2,
+        });
+        geometry.rotateX(-Math.PI / 2);
+        geometry.translate(centroid.x, 0, centroid.z);
+        geometry.userData.faceGroups = [
+          { normal: new THREE.Vector3(1, 0, 0),  label: 'Side' },
+          { normal: new THREE.Vector3(0, 1, 0),  label: 'Top' },
+          { normal: new THREE.Vector3(0, -1, 0), label: 'Bottom' },
+        ];
+      }
+
+      const material = new THREE.MeshStandardMaterial({ color: pd.color });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(pd.position[0], pd.position[1], pd.position[2]);
+      mesh.quaternion.set(pd.quaternion[0], pd.quaternion[1], pd.quaternion[2], pd.quaternion[3]);
+      mesh.scale.set(pd.scale[0], pd.scale[1], pd.scale[2]);
+      mesh.updateWorldMatrix(false, true);
+
+      const part: SketcherPart = { id: pd.id, mesh, depth, centroid, name: pd.name, color: pd.color, shapePoints };
+      this.scene.add(mesh);
+      this.parts.push(part);
+      this.allParts.set(part.id, part);
+
+      const num = parseInt(pd.id.replace('part-', ''), 10);
+      if (!isNaN(num) && num >= this.nextId) this.nextId = num + 1;
+    }
+
+    for (const js of draft.joints) {
+      const partA = this.parts.find((p) => p.id === js.partAId);
+      const partB = this.parts.find((p) => p.id === js.partBId);
+      if (partA && partB) {
+        this.glue.registerJoint(
+          partA,
+          new THREE.Vector3(js.localPointA[0], js.localPointA[1], js.localPointA[2]),
+          new THREE.Vector3(js.localNormalA[0], js.localNormalA[1], js.localNormalA[2]),
+          partB,
+          new THREE.Vector3(js.localPointB[0], js.localPointB[1], js.localPointB[2]),
+          new THREE.Vector3(js.localNormalB[0], js.localNormalB[1], js.localNormalB[2]),
+        );
+      }
+    }
+  }
+
   // ── Private ─────────────────────────────────────────────────────────────────
 
   private _beginExtrusion(shape: THREE.Shape, centroid: THREE.Vector3): void {
@@ -385,23 +500,24 @@ export class CartoonSketcher {
     }
 
     this.phase = 'extruding';
+    const shapePoints: [number, number][] = shape.getPoints().map((v) => [v.x, v.y]);
     const handle = new ExtrusionHandle(shape, centroid);
     handle.onExtrusionComplete = (mesh, depth) => {
-      this._commitPart(mesh, depth, centroid);
+      this._commitPart(mesh, depth, centroid, shapePoints);
     };
     this.extrusionHandle = handle;
     this.scene.add(handle.handle);
     this.scene.add(handle.mesh);
   }
 
-  private _commitPart(mesh: THREE.Mesh, depth: number, centroid: THREE.Vector3): void {
+  private _commitPart(mesh: THREE.Mesh, depth: number, centroid: THREE.Vector3, shapePoints: [number, number][]): void {
     if (this.extrusionHandle) {
       this.scene.remove(this.extrusionHandle.handle);
       this.extrusionHandle.handle.geometry.dispose();
       (this.extrusionHandle.handle.material as THREE.Material).dispose();
       this.extrusionHandle = null;
     }
-    this.parts.push({ id: `part-${this.nextId++}`, mesh, depth, centroid: centroid.clone(), name: 'Shape', color: DEFAULT_COLOR });
+    this.parts.push({ id: `part-${this.nextId++}`, mesh, depth, centroid: centroid.clone(), name: 'Shape', color: DEFAULT_COLOR, shapePoints });
     const part = this.parts[this.parts.length - 1];
     this.allParts.set(part.id, part);
     this.phase = 'idle';

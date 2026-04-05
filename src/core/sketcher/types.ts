@@ -9,6 +9,12 @@ export type SketcherPart = {
   name: string;
   /** Hex colour integer, e.g. 0x8888cc. Kept in sync with mesh.material.color. */
   color: number;
+  /**
+   * XZ shape points for sketch parts (from THREE.Shape.getPoints()), null for
+   * primitives. Required by loadDraft() to reconstruct ExtrudeGeometry after
+   * a page reload.
+   */
+  shapePoints: [number, number][] | null;
 };
 
 /**
@@ -91,5 +97,31 @@ export type JointSnapshot = {
  */
 export type SessionSnapshot = {
   parts: PartSnapshot[];
+  joints: JointSnapshot[];
+};
+
+// ── Draft types (used by CartoonSketcher.toDraft / loadDraft for persistence) ─
+
+/**
+ * JSON-serializable description of a single part. Geometry is stored as either
+ * a primitive name ('Box', 'Cylinder', …) or the XZ shape points + depth for
+ * sketch-extruded parts. World-space transforms allow correct restoration
+ * regardless of prior group membership.
+ */
+export type PartDraft = {
+  id: string;
+  kind: 'primitive' | 'sketch';
+  name: string;
+  shapePoints?: [number, number][];
+  depth?: number;
+  position: [number, number, number];
+  quaternion: [number, number, number, number];
+  scale: [number, number, number];
+  color: number;
+};
+
+export type SketcherDraft = {
+  version: 1;
+  parts: PartDraft[];
   joints: JointSnapshot[];
 };

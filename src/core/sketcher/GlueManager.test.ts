@@ -25,6 +25,7 @@ function makePart(scene: THREE.Scene, position = new THREE.Vector3()): SketcherP
     centroid: position.clone(),
     name: 'Box',
     color: 0x8888cc,
+    shapePoints: null,
   };
 }
 

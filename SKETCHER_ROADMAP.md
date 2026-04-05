@@ -23,13 +23,13 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 
 ## Current state — April 2026
 
-The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour → glue parts into assemblies → transform. Generic geometry handling (no per-geometry-type branching), face-normal-aligned glue joints, 378 tests passing.
+The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour → glue parts into assemblies → transform → undo/redo. Generic geometry handling (no per-geometry-type branching), face-normal-aligned glue joints, snapshot-based undo/redo, 415 tests passing.
 
-**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5.
+**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13.
 
 **Priority order:**
-1. SA13 — Undo / redo *(foundation; cheap now, expensive after anything else)*
-2. SH2 — Session autosave *(30 min; solves "lost on refresh" immediately after SA13)*
+1. ~~SA13 — Undo / redo~~ ✅ COMPLETE (snapshot-based; `SketcherDocument` with `{ before, after }` per entry)
+2. SH2 — Session autosave *(next; solves "lost on refresh" with a one-liner now that `SketcherDocument` is the single source of truth)*
 3. SH1a — Poly sketcher data-integrity fixes *(unblocks SA7)*
 4. SA7 — Per-side materials
 5. SA8 — Textures
@@ -40,48 +40,59 @@ The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop
 
 ---
 
-## Phase SA13 — Undo / redo
+## Phase SA13 — Undo / redo ✅ COMPLETE
 
-**Why first:** The command infrastructure has near-zero cost right now — the `ProductionDocument` pattern exists in this codebase as a direct reference. Every feature built before it adds a retrofit pass: revisiting how `+page.svelte` calls into `CartoonSketcher` and turning imperative calls into command dispatches. SA12 (numeric field edits) built without undo ships unundoable state mutations.
+**Approach (final):** Snapshot-based, matching the main app's `ProductionDocument` pattern. Each history entry stores `{ before: SessionSnapshot, after: SessionSnapshot, label }` as plain data. `undo()` and `redo()` call `sketcher.restoreSnapshot()` to rebuild the Three.js scene from the snapshot — no inverse command logic required.
 
-The main app reference: `src/core/document/Command.ts`, `ProductionDocument.ts`.
+**Why snapshot over forward/inverse:** An initial forward/inverse implementation was working but had two bugs: (1) `TransformPartCommand` stored a `THREE.Group` object reference that became stale when the group was dissolved on undo of `CommitGlueCommand` — redo moved the gizmo but not the mesh. (2) `scene.attach(B.mesh)` during multi-step group BFS-split accumulated incorrect intermediate world transforms — B vanished on undo of glue. Snapshot sidesteps both by saving/restoring world-space transforms directly.
 
-**`SketcherDocument.ts`** — analogous to `ProductionDocument`:
-- `execute(cmd: SketcherCommand): void`
-- `undo(): void`, `redo(): void`
-- `canUndo: boolean`, `canRedo: boolean`
-- `current: SketcherSession` (read-only snapshot for rendering)
+**Key files:** `SketcherCommand.ts`, `SketcherDocument.ts`, `sketcherCommands.ts`, `CartoonSketcher.ts` (`allParts` pool + `takeSnapshot`/`restoreSnapshot`), `GlueManager.ts` (`registerJoint`), `src/routes/sketch/+page.svelte` (Ctrl+Z/Y/Shift+Z, pre-drag snapshot capture).
 
-**Command scope:**
-
-| Command | Inverse |
-|---|---|
-| `InsertPartCommand` | remove the part |
-| `DeletePartCommand` | re-insert with saved geometry/material |
-| `TransformPartCommand` | restore previous position/rotation/scale |
-| `ChangeColorCommand` | restore previous colour |
-| `CommitGlueCommand` | unglue, dissolve groups |
-| `UnglueCommand` | re-commit joint, reform groups |
-
-**Wiring in `+page.svelte`:** `Ctrl+Z` / `Ctrl+Shift+Z` (and `Ctrl+Y`). All mutations route through `sketcherDoc.execute(cmd)` rather than calling `CartoonSketcher` directly.
-
-**Three.js sync:** Commands are responsible for both the data mutation (updating `SketcherSession`) and the corresponding scene-graph update (adding/removing meshes, calling `glue.commitGlue` / `glue.unglue`, etc.).
+**Test coverage:** 37 tests in `SketcherDocument.test.ts` including integration scenarios for B-vanishes and redo-stops regressions.
 
 ---
 
-## Phase SH2 — Session autosave
+## Phase SH2 — Session autosave *(next)*
 
-**Why immediately after SA13:** Once `SketcherDocument` exists, `sketcherDoc.current` is the clean, complete serializable source of truth for the session. Persisting it is a one-liner. Before SA13 there is no such source of truth — scene state is scattered across imperative calls — so this cannot reliably come earlier.
+**Why immediately after SA13:** `SketcherDocument` now has a clean `onChange` callback fired after every mutation. A serializable draft format built on top of the session is the only missing piece.
 
 Solves the most immediate pain point: losing work on page refresh.
 
-**Implementation:**
-- On every `sketcherDoc.execute()` call (i.e. after every mutation), JSON-serialize `sketcherDoc.current` and write to `localStorage['sketcher-draft']`. Debounce to ~500 ms to avoid thrashing on rapid input.
-- On mount in `+page.svelte`, check for `localStorage['sketcher-draft']`; if present, deserialize and reconstruct the scene (same load path as SA9 will use).
-- A **"New assembly"** toolbar button clears the draft and starts fresh.
-- Single draft only — no named saves, no list. That's SA9.
+**Serialization format — `SketcherDraft`** (new type in `types.ts`):
 
-**Storage cost:** `SketcherSession` is transform matrices, quaternions, and a joint list — well under 100 KB for any realistic assembly. `localStorage` is fine; no OPFS needed at this stage.
+```ts
+type PartDraft = {
+  id: string;
+  kind: 'primitive' | 'sketch';
+  name: string;              // 'Box', 'Cylinder', 'Shape', …
+  shapePoints?: [number, number][];   // sketch parts only
+  depth?: number;            // sketch parts only
+  position: [number, number, number];
+  quaternion: [number, number, number, number];  // XYZW world-space
+  scale: [number, number, number];
+  color: number;
+};
+type SketcherDraft = { version: 1; parts: PartDraft[]; joints: JointSnapshot[] };
+```
+
+`SketcherDraft` is fully JSON-serializable. `JointSnapshot` is already plain data (defined alongside `SessionSnapshot`).
+
+**`SketcherPart` change** — add `shapePoints: [number, number][] | null`. Set to `null` for primitives; populated from the `THREE.Shape.extractPoints()` points array in `_commitPart`. Required so `loadDraft` can reconstruct the `ExtrudeGeometry` for sketch parts.
+
+**`CartoonSketcher` additions:**
+- `toDraft(): SketcherDraft` — iterates `this.parts`, decomposes world matrix, emits `PartDraft[]`; copies joints from `glue.getJoints()`
+- `loadDraft(draft: SketcherDraft): void` — calls `clearSession()`, reconstructs each part (primitives via `_insertPrimitiveAtWorldTransform`; sketch parts via `new THREE.ExtrudeGeometry` + `_commitPartFromDraft`), then re-registers joints via `registerJoint`
+
+**`SketcherDocument` change** — the existing `onChange` callback already fires after every `execute / undo / redo`. No structural change needed; the page subscribes.
+
+**`+page.svelte` wiring:**
+1. `onChange` callback: debounce 500 ms → `localStorage.setItem('sketcher-draft', JSON.stringify(sketcher.toDraft()))`
+2. `onMount`: if `localStorage.getItem('sketcher-draft')` is set, parse and call `sketcher.loadDraft(draft)`
+3. **"New assembly"** toolbar button: `sketcherDoc.clearStack()`, `sketcher.clearSession()`, `localStorage.removeItem('sketcher-draft')`
+
+**Storage cost:** `SketcherDraft` is numbers and ids — well under 100 KB for any realistic assembly. `localStorage` is fine at this scale.
+
+**Tests:** `CartoonSketcher` unit tests for `toDraft()` round-trip (primitive: insert → set position → toDraft → clearSession → loadDraft → check position/color); for sketch parts (insert + commit → toDraft → loadDraft → check part count). Joints: A+B glued → toDraft → loadDraft → check joint restored.
 
 ---
 
