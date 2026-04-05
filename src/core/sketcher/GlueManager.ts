@@ -205,6 +205,26 @@ export class GlueManager {
     }
   }
 
+  /**
+   * Record a joint without repositioning partB.
+   * Used by CartoonSketcher.restoreSnapshot() to rebuild the joint graph
+   * after world-space transforms have already been applied from the snapshot.
+   * Merges both parts into a single assembly group identically to commitGlue.
+   */
+  registerJoint(
+    partA: SketcherPart, localPointA: THREE.Vector3, localNormalA: THREE.Vector3,
+    partB: SketcherPart, localPointB: THREE.Vector3, localNormalB: THREE.Vector3,
+  ): GlueJoint {
+    const joint: GlueJoint = {
+      id: `joint-${_jointSeq++}`,
+      partAId: partA.id, localPointA: localPointA.clone(), localNormalA: localNormalA.clone(),
+      partBId: partB.id, localPointB: localPointB.clone(), localNormalB: localNormalB.clone(),
+    };
+    this.joints.push(joint);
+    this._mergeIntoGroup(partA, partB);
+    return joint;
+  }
+
   dispose(): void {
     for (const ag of this.assemblyGroups) {
       this.scene.remove(ag.group);

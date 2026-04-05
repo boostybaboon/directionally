@@ -7,6 +7,16 @@
   import { CartoonSketcher } from '../../core/sketcher/CartoonSketcher.js';
   import { SelectionManager } from '../../core/sketcher/SelectionManager.js';
   import { faceGroupFromNormal, faceGroupLabel } from '../../core/sketcher/GlueManager.js';
+  import { SketcherDocument } from '../../core/sketcher/SketcherDocument.js';
+  import {
+    InsertPartCommand,
+    DuplicatePartCommand,
+    DeletePartCommand,
+    ChangeColorCommand,
+    TransformPartCommand,
+    CommitGlueCommand,
+    UnglueAllCommand,
+  } from '../../core/sketcher/sketcherCommands.js';
   import { exportGLB } from '../../core/sketcher/exportGLB.js';
   import * as OPFSCatalogueStore from '../../core/storage/OPFSCatalogueStore.js';
 
@@ -20,6 +30,8 @@
   let transformMode = $state<'translate' | 'rotate' | 'scale'>('translate');
   let selectedPartId = $state<string | null>(null);
   let selectedColor = $state('#8888cc');
+  let canUndo = $state(false);
+  let canRedo = $state(false);
   // Glue interaction state
   let gluePhase = $state<'src' | 'target' | null>(null);
   // The anchor blob placed in phase 'src'.
@@ -38,6 +50,7 @@
   let orbit: OrbitControls;
   let tc: TransformControls;
   let sketcher: CartoonSketcher;
+  let sketcherDoc: SketcherDocument;
   let selection: SelectionManager;
   let animId: number;
 
@@ -52,6 +65,9 @@
 
   // Extrusion handle drag suppresses orbit.
   let handleDragActive = false;
+
+  // Snapshot captured at TC drag-start; passed to execute() at drag-end.
+  let tcPreDragSnapshot: ReturnType<typeof sketcherDoc.captureSnapshot> | null = null;
 
   onMount(() => {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -78,12 +94,22 @@
     tc = new TransformControls(camera, renderer.domElement);
     scene.add(tc.getHelper());
     tc.addEventListener('dragging-changed', (e) => {
+      const isDragging = e.value as boolean;
       // Suppress orbit while the gizmo is being dragged.
-      orbit.enabled = !(e.value as boolean);
-      // On release, re-evaluate any glue joints touching the moved part.
-      if (!(e.value as boolean) && selectedPartId) {
-        const part = sketcher.getSession().parts.find((p) => p.id === selectedPartId);
-        if (part) sketcher.glueManager.replayJoints(part, sketcher.getSession().parts);
+      orbit.enabled = !isDragging;
+      if (isDragging) {
+        // Capture the scene state before the gizmo starts mutating the object.
+        tcPreDragSnapshot = sketcherDoc.captureSnapshot();
+      } else {
+        // Drag ended: record the transform as an undoable entry using the
+        // pre-drag snapshot as `before` so it is immune to stale group references.
+        if (tcPreDragSnapshot) {
+          sketcherDoc.execute(
+            new TransformPartCommand(sketcher, selectedPartId),
+            tcPreDragSnapshot,
+          );
+        }
+        tcPreDragSnapshot = null;
       }
     });
 
@@ -106,6 +132,10 @@
     };
 
     sketcher = new CartoonSketcher(scene, camera);
+    sketcherDoc = new SketcherDocument(sketcher, () => {
+      canUndo = sketcherDoc.canUndo;
+      canRedo = sketcherDoc.canRedo;
+    });
 
     // ── Keyboard shortcuts ───────────────────────────────────────────────────
     const onKey = (e: KeyboardEvent) => {
@@ -114,6 +144,13 @@
         case 'w': case 'W': setTransformMode('translate'); break;
         case 'e': case 'E': setTransformMode('rotate'); break;
         case 'r': case 'R': setTransformMode('scale'); break;
+        case 'z': case 'Z':
+          if (e.ctrlKey && e.shiftKey) { sketcherDoc.redo(); e.preventDefault(); }
+          else if (e.ctrlKey) { sketcherDoc.undo(); e.preventDefault(); }
+          break;
+        case 'y': case 'Y':
+          if (e.ctrlKey) { sketcherDoc.redo(); e.preventDefault(); }
+          break;
         case 'Escape':
           if (gluePhase !== null) { cancelGluePick(); } else { selection.deselect(); }
           break;
@@ -190,7 +227,7 @@
     const part = session.parts.find((p) => p.mesh === mesh);
     if (!part) return;
     selection.deselect();
-    sketcher.removePart(part.id);
+    sketcherDoc.execute(new DeletePartCommand(part.id, sketcher));
     statusMessage = 'Part deleted.';
   }
 
@@ -198,9 +235,10 @@
     const id = selectedPartId;
     if (!id) return;
     selection.deselect();
-    const clone = sketcher.duplicatePart(id);
-    if (clone) {
-      selection.select(clone.mesh);
+    const cmd = new DuplicatePartCommand(id, sketcher);
+    sketcherDoc.execute(cmd);
+    if (cmd.clonedPart) {
+      selection.select(cmd.clonedPart.mesh);
       statusMessage = 'Duplicated. Reposition with gizmo.';
     }
   }
@@ -208,7 +246,7 @@
   function applyColor(hex: string) {
     selectedColor = hex;
     if (!selectedPartId) return;
-    sketcher.setPartColor(selectedPartId, parseInt(hex.replace('#', ''), 16));
+    sketcherDoc.execute(new ChangeColorCommand(selectedPartId, parseInt(hex.replace('#', ''), 16), sketcher));
   }
 
   // ── Mouse / pointer handlers ─────────────────────────────────────────────────
@@ -458,10 +496,11 @@
     const localNormalTarget = (hits[0].face?.normal ?? new THREE.Vector3(0, 1, 0)).clone();
 
     // Anchor (A) stays; mover (B) rotates to face-align then snaps to meet the anchor point.
-    sketcher.glueManager.commitGlue(
+    sketcherDoc.execute(new CommitGlueCommand(
+      sketcher,
       srcPart, glueSrcBlob.localPoint, glueSrcBlob.localNormal,
       targetPart, localPointTarget, localNormalTarget,
-    );
+    ));
 
     clearFaceHighlight();
     clearGlueBlobMarker();
@@ -480,7 +519,7 @@
 
   function unglueSelected() {
     if (!selectedPartId) return;
-    sketcher.glueManager.unglueAll(selectedPartId, sketcher.getSession().parts);
+    sketcherDoc.execute(new UnglueAllCommand(selectedPartId, sketcher));
     // Re-attach TC to the individual mesh after ungluing.
     const part = sketcher.getSession().parts.find((p) => p.id === selectedPartId);
     if (part) tc.attach(part.mesh);
@@ -491,10 +530,12 @@
 
   function insertPrimitive(kind: string) {
     selection.deselect();
-    const part = sketcher.insertPrimitive(kind);
-    if (!part) return;
-    selection.select(part.mesh);
-    statusMessage = `Inserted ${kind}. Move with gizmo, then add more parts or export.`;
+    const cmd = new InsertPartCommand(kind, sketcher);
+    sketcherDoc.execute(cmd);
+    if (cmd.insertedPart) {
+      selection.select(cmd.insertedPart.mesh);
+      statusMessage = `Inserted ${kind}. Move with gizmo, then add more parts or export.`;
+    }
   }
 
   function newSketch() {
@@ -507,6 +548,7 @@
     if (gluePhase !== null) cancelGluePick();
     selection.deselect();
     sketcher.clearSession();
+    sketcherDoc.clearStack();
     statusMessage = 'Session cleared.';
   }
 
@@ -533,6 +575,8 @@
     <div class="actions">
       <button onclick={newSketch}>New sketch</button>
       <button onclick={clearSession}>Clear</button>
+      <button disabled={!canUndo} onclick={() => sketcherDoc.undo()} title="Ctrl+Z">↩ Undo</button>
+      <button disabled={!canRedo} onclick={() => sketcherDoc.redo()} title="Ctrl+Shift+Z">↪ Redo</button>
       <span class="separator"></span>
       <button class:active={transformMode === 'translate'} onclick={() => setTransformMode('translate')} title="W">Move</button>
       <button class:active={transformMode === 'rotate'} onclick={() => setTransformMode('rotate')} title="E">Rotate</button>

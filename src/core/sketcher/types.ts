@@ -60,3 +60,36 @@ export type FaceGroupInfo = {
   normal: THREE.Vector3;
   label: string;
 };
+
+// ── Snapshot types (used by SketcherDocument for undo/redo) ──────────────────
+
+export type PartSnapshot = {
+  id: string;
+  /** World-space position — correct regardless of group parentage. */
+  worldPosition: [number, number, number];
+  worldQuaternionXYZW: [number, number, number, number];
+  worldScale: [number, number, number];
+  color: number;
+};
+
+export type JointSnapshot = {
+  partAId: string;
+  /** Local-space — unchanged by group transforms. */
+  localPointA: [number, number, number];
+  localNormalA: [number, number, number];
+  partBId: string;
+  localPointB: [number, number, number];
+  localNormalB: [number, number, number];
+};
+
+/**
+ * Plain-data snapshot of an entire session, used by SketcherDocument for
+ * undo/redo. Mesh geometry and material are NOT cloned — the mesh objects
+ * stay alive in CartoonSketcher's allParts pool and are reused on restore.
+ * Only currently-present parts are listed; absent (soft-removed) parts are
+ * omitted and restored from the pool by id on demand.
+ */
+export type SessionSnapshot = {
+  parts: PartSnapshot[];
+  joints: JointSnapshot[];
+};

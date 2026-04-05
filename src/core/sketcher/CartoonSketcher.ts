@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { GlueManager } from './GlueManager.js';
-import type { FaceGroupInfo, SketcherPart, SketcherSession } from './types.js';
+import type { FaceGroupInfo, PartSnapshot, JointSnapshot, SessionSnapshot, SketcherPart, SketcherSession } from './types.js';
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
@@ -78,6 +78,13 @@ type Phase = 'idle' | 'drawing' | 'extruding';
 export class CartoonSketcher {
   private phase: Phase = 'idle';
   private readonly parts: SketcherPart[] = [];
+  /**
+   * All parts ever created in this session, including those currently absent
+   * from the scene (removed via removePart). Geometry and material are kept
+   * alive here so restoreSnapshot() can reinsert them without re-creating GPU
+   * resources. Cleared (and disposed) on clearSession().
+   */
+  private readonly allParts = new Map<string, SketcherPart>();
   private polygonSketcher: PolygonSketcher | null = null;
   private extrusionHandle: ExtrusionHandle | null = null;
   private nextId = 1;
@@ -108,11 +115,15 @@ export class CartoonSketcher {
   clearSession(): void {
     this.glue.dispose();
     for (const part of this.parts) {
-      this.scene.remove(part.mesh);
+      part.mesh.removeFromParent();
+    }
+    this.parts.length = 0;
+    // Dispose ALL parts including those hibernated by removePart.
+    for (const part of this.allParts.values()) {
       part.mesh.geometry.dispose();
       (part.mesh.material as THREE.Material).dispose();
     }
-    this.parts.length = 0;
+    this.allParts.clear();
     this._endCurrentSketch();
     this.phase = 'idle';
   }
@@ -140,6 +151,7 @@ export class CartoonSketcher {
     };
     this.scene.add(mesh);
     this.parts.push(part);
+    this.allParts.set(part.id, part);
     return part;
   }
 
@@ -179,10 +191,16 @@ export class CartoonSketcher {
     };
     this.scene.add(mesh);
     this.parts.push(part);
+    this.allParts.set(part.id, part);
     return part;
   }
 
-  /** Remove a single part by id. */
+  /**
+   * Remove a single part by id.
+   * Geometry and material are NOT disposed — the part stays in allParts so
+   * SketcherDocument.undo() can reinsert it via restoreSnapshot() without
+   * recreating GPU resources.
+   */
   removePart(id: string): void {
     const idx = this.parts.findIndex((p) => p.id === id);
     if (idx === -1) return;
@@ -192,8 +210,7 @@ export class CartoonSketcher {
     this.glue.evictFromGroup(id, this.parts);
     const [part] = this.parts.splice(idx, 1);
     part.mesh.removeFromParent();
-    part.mesh.geometry.dispose();
-    (part.mesh.material as THREE.Material).dispose();
+    // part remains in allParts for potential undo restoration.
   }
 
   /** Return a snapshot of the current session. */
@@ -277,6 +294,86 @@ export class CartoonSketcher {
     this.clearSession();
   }
 
+  /**
+   * Capture a plain-data snapshot of the current session.
+   * Uses world-space transforms so positions are correct regardless of group
+   * parentage. Joints are recorded in local space (unchanged by group transforms).
+   */
+  takeSnapshot(): SessionSnapshot {
+    const wp = new THREE.Vector3();
+    const wq = new THREE.Quaternion();
+    const ws = new THREE.Vector3();
+    const parts: PartSnapshot[] = this.parts.map((p) => {
+      p.mesh.updateWorldMatrix(true, false);
+      p.mesh.matrixWorld.decompose(wp, wq, ws);
+      return {
+        id: p.id,
+        worldPosition: [wp.x, wp.y, wp.z],
+        worldQuaternionXYZW: [wq.x, wq.y, wq.z, wq.w],
+        worldScale: [ws.x, ws.y, ws.z],
+        color: p.color,
+      };
+    });
+    const joints: JointSnapshot[] = this.glue.getJoints().map((j) => ({
+      partAId: j.partAId,
+      localPointA: [j.localPointA.x, j.localPointA.y, j.localPointA.z],
+      localNormalA: [j.localNormalA.x, j.localNormalA.y, j.localNormalA.z],
+      partBId: j.partBId,
+      localPointB: [j.localPointB.x, j.localPointB.y, j.localPointB.z],
+      localNormalB: [j.localNormalB.x, j.localNormalB.y, j.localNormalB.z],
+    }));
+    return { parts, joints };
+  }
+
+  /**
+   * Rebuild the Three.js scene to match a plain-data snapshot.
+   * All currently-present meshes are removed; the correct subset from allParts
+   * is re-added at their snapshotted world positions; joints are re-registered
+   * (no repositioning — world positions already reflect the glued state).
+   */
+  restoreSnapshot(snap: SessionSnapshot): void {
+    // Remove all current meshes from their parents (group or scene root).
+    for (const part of this.parts) {
+      part.mesh.removeFromParent();
+    }
+    // Dissolve all groups and clear the joint list.
+    this.glue.dispose();
+    this.parts.length = 0;
+
+    // Restore part meshes at world-space transforms from the snapshot.
+    for (const ps of snap.parts) {
+      const part = this.allParts.get(ps.id);
+      if (!part) continue;
+      part.mesh.position.set(ps.worldPosition[0], ps.worldPosition[1], ps.worldPosition[2]);
+      part.mesh.quaternion.set(
+        ps.worldQuaternionXYZW[0], ps.worldQuaternionXYZW[1],
+        ps.worldQuaternionXYZW[2], ps.worldQuaternionXYZW[3],
+      );
+      part.mesh.scale.set(ps.worldScale[0], ps.worldScale[1], ps.worldScale[2]);
+      part.mesh.updateWorldMatrix(false, true);
+      part.color = ps.color;
+      (part.mesh.material as THREE.MeshStandardMaterial).color.setHex(ps.color);
+      this.scene.add(part.mesh);
+      this.parts.push(part);
+    }
+
+    // Re-register joints without repositioning (merges parts into groups).
+    for (const js of snap.joints) {
+      const partA = this.parts.find((p) => p.id === js.partAId);
+      const partB = this.parts.find((p) => p.id === js.partBId);
+      if (partA && partB) {
+        this.glue.registerJoint(
+          partA,
+          new THREE.Vector3(js.localPointA[0], js.localPointA[1], js.localPointA[2]),
+          new THREE.Vector3(js.localNormalA[0], js.localNormalA[1], js.localNormalA[2]),
+          partB,
+          new THREE.Vector3(js.localPointB[0], js.localPointB[1], js.localPointB[2]),
+          new THREE.Vector3(js.localNormalB[0], js.localNormalB[1], js.localNormalB[2]),
+        );
+      }
+    }
+  }
+
   // ── Private ─────────────────────────────────────────────────────────────────
 
   private _beginExtrusion(shape: THREE.Shape, centroid: THREE.Vector3): void {
@@ -305,6 +402,8 @@ export class CartoonSketcher {
       this.extrusionHandle = null;
     }
     this.parts.push({ id: `part-${this.nextId++}`, mesh, depth, centroid: centroid.clone(), name: 'Shape', color: DEFAULT_COLOR });
+    const part = this.parts[this.parts.length - 1];
+    this.allParts.set(part.id, part);
     this.phase = 'idle';
   }
 
