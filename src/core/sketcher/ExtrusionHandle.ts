@@ -1,7 +1,63 @@
 import * as THREE from 'three';
+import type { FaceGroupInfo } from './types.js';
 
 const DEFAULT_DEPTH = 1;
 const DRAG_FPS_CAP = 1000 / 30; // ms between live rebuilds while dragging
+
+function disposeMaterials(m: THREE.Material | THREE.Material[]): void {
+  if (Array.isArray(m)) m.forEach((mat) => mat.dispose());
+  else m.dispose();
+}
+
+/**
+ * Build ExtrudeGeometry for a sketch shape with per-edge draw groups and no bevel.
+ * Three.js ExtrudeGeometry (bevelEnabled:false, steps:1) produces 2 groups:
+ *   group 0: both caps combined (materialIndex 0)
+ *   group 1: all N wall faces (materialIndex 1)
+ * We reassign materialIndices so each wall edge i → materialIndex i and the
+ * combined caps → materialIndex N, giving N+1 draw groups total.
+ */
+export function buildExtrusionGeometry(shape: THREE.Shape, depth: number): THREE.BufferGeometry {
+  const geo = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
+  // Rotate so the shape lies in the XZ plane extruding upward along +Y.
+  // Shape coords are centroid-relative, so geometry is centred at local origin;
+  // mesh.position carries the world centroid offset.
+  geo.rotateX(-Math.PI / 2);
+  // Shift geometry so local Y spans -depth/2..+depth/2, placing the pivot at
+  // the vertical centre. mesh.position.y = depth/2 keeps the bottom on Y=0.
+  geo.translate(0, -depth / 2, 0);
+
+  const pts = shape.getPoints();
+  const N = pts.length;
+
+  // Capture the two default group ranges before clearing.
+  // group 0 = caps (bottom+top, count = 2*(N-2)*3)
+  // group 1 = walls (count = N*6, 6 indices per edge)
+  const capsStart = geo.groups[0].start;  // = 0
+  const capsCount = geo.groups[0].count;
+  const wallStart = geo.groups[1].start;  // = capsCount
+
+  geo.clearGroups();
+  // Per-edge walls: materialIndex 0…N-1
+  for (let i = 0; i < N; i++) {
+    geo.addGroup(wallStart + i * 6, 6, i);
+  }
+  // Combined caps (bottom+top): materialIndex N
+  geo.addGroup(capsStart, capsCount, N);
+
+  // Per-edge side normals. With centroid-relative Z-corrected shape coords,
+  // dz = b.y - a.y = -(world Z diff), so outward normal = (-dz/len, 0, -dx/len).
+  const faceGroups: FaceGroupInfo[] = pts.map((a, i) => {
+    const b = pts[(i + 1) % N];
+    const dx = b.x - a.x;
+    const dz = b.y - a.y;
+    const len = Math.sqrt(dx * dx + dz * dz) || 1;
+    return { normal: new THREE.Vector3(-dz / len, 0, -dx / len), label: `side-${i}`, materialIndex: i };
+  });
+  faceGroups.push({ normal: new THREE.Vector3(0, 1, 0), label: 'caps', materialIndex: N });
+  geo.userData.faceGroups = faceGroups;
+  return geo;
+}
 
 /**
  * Renders a draggable yellow sphere at the centroid of a just-closed shape.
@@ -69,7 +125,7 @@ export class ExtrusionHandle {
     this.handle.position.y = this.depth;
     const newMesh = this._buildMesh(this.depth);
     this.mesh.geometry.dispose();
-    (this.mesh.material as THREE.Material).dispose();
+    disposeMaterials(this.mesh.material);
     this.mesh = newMesh;
     return newMesh;
   }
@@ -89,47 +145,15 @@ export class ExtrusionHandle {
     this.handle.geometry.dispose();
     (this.handle.material as THREE.Material).dispose();
     this.mesh.geometry.dispose();
-    (this.mesh.material as THREE.Material).dispose();
+    disposeMaterials(this.mesh.material);
   }
 
   private _buildMesh(depth: number): THREE.Mesh {
-    const geo = new THREE.ExtrudeGeometry(this.shape, {
-      depth,
-      bevelEnabled: true,
-      bevelThickness: 0.04,
-      bevelSize:      0.04,
-      bevelSegments:  2,
-    });
-    // Rotate so the shape lies in the XZ plane extruding upward along +Y.
-    // ExtrudeGeometry extrudes along +Z by default, so rotate -90° around X.
-    // After rotation: cap facing +Y = top, cap facing -Y = bottom.
-    // Shape coords are centroid-relative (shape.x = world.x - cx,
-    // shape.y = cz - world.z), so geometry is centred at local origin;
-    // mesh.position carries the world centroid offset.
-    geo.rotateX(-Math.PI / 2);
-    // Shift geometry so local Y spans -depth/2..+depth/2, placing the pivot at
-    // the vertical centre. mesh.position.y = depth/2 keeps the bottom on Y=0.
-    geo.translate(0, -depth / 2, 0);
-
-    // Per-edge side normals. With centroid-relative Z-corrected shape coords,
-    // dz = b.y - a.y = -(world Z diff), so outward normal = (-dz/len, 0, -dx/len).
-    const pts = this.shape.getPoints();
-    const sideGroups = pts.map((a, i) => {
-      const b = pts[(i + 1) % pts.length];
-      const dx = b.x - a.x;
-      const dz = b.y - a.y;
-      const len = Math.sqrt(dx * dx + dz * dz) || 1;
-      return { normal: new THREE.Vector3(-dz / len, 0, -dx / len), label: `side-${i}` };
-    });
-
-    geo.userData.faceGroups = [
-      ...sideGroups,
-      { normal: new THREE.Vector3(0, 1, 0),  label: 'top' },
-      { normal: new THREE.Vector3(0, -1, 0), label: 'bottom' },
-    ];
-
-    const mat = new THREE.MeshStandardMaterial({ color: 0xaaddff, metalness: 0.1, roughness: 0.6 });
-    const mesh = new THREE.Mesh(geo, mat);
+    const geo = buildExtrusionGeometry(this.shape, depth);
+    const materials = Array.from({ length: geo.groups.length }, () =>
+      new THREE.MeshStandardMaterial({ color: 0x8888cc, metalness: 0.1, roughness: 0.6 })
+    );
+    const mesh = new THREE.Mesh(geo, materials);
     // Place the mesh at the world centroid so geometry vertices land at the
     // drawn polygon positions, and the selection gizmo lands on the shape.
     mesh.position.set(this.centroid.x, depth / 2, this.centroid.z);

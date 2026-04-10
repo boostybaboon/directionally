@@ -13,6 +13,7 @@
     DuplicatePartCommand,
     DeletePartCommand,
     ChangeColorCommand,
+    ChangeFaceColorCommand,
     TransformPartCommand,
     CommitGlueCommand,
     UnglueAllCommand,
@@ -30,6 +31,10 @@
   let transformMode = $state<'translate' | 'rotate' | 'scale'>('translate');
   let selectedPartId = $state<string | null>(null);
   let selectedColor = $state('#8888cc');
+  // Face paint mode: when true, clicks colour individual faces instead of selecting parts.
+  let facePaintMode = $state(false);
+  // The materialIndex of the face last hovered/selected when in face paint mode.
+  let hoveredFaceMaterialIndex = $state<number | null>(null);
   let canUndo = $state(false);
   let canRedo = $state(false);
   // Glue interaction state
@@ -130,6 +135,8 @@
         tc.detach();
         statusMessage = '';
         selectedPartId = null;
+        facePaintMode = false;
+        hoveredFaceMaterialIndex = null;
       }
     };
 
@@ -267,7 +274,11 @@
   function applyColor(hex: string) {
     selectedColor = hex;
     if (!selectedPartId) return;
-    sketcherDoc.execute(new ChangeColorCommand(selectedPartId, parseInt(hex.replace('#', ''), 16), sketcher));
+    if (facePaintMode && hoveredFaceMaterialIndex !== null) {
+      sketcherDoc.execute(new ChangeFaceColorCommand(selectedPartId, hoveredFaceMaterialIndex, parseInt(hex.replace('#', ''), 16), sketcher));
+    } else {
+      sketcherDoc.execute(new ChangeColorCommand(selectedPartId, parseInt(hex.replace('#', ''), 16), sketcher));
+    }
   }
 
   // ── Mouse / pointer handlers ─────────────────────────────────────────────────
@@ -280,7 +291,7 @@
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
     const hits = raycaster.intersectObjects(meshes, false);
-    if (!hits.length) { hoverInfo = '—'; return; }
+    if (!hits.length) { hoverInfo = '—'; hoveredFaceMaterialIndex = null; return; }
     const hit = hits[0];
     const hitMesh = hit.object as THREE.Mesh;
     const part = session.parts.find((p) => p.mesh === hitMesh);
@@ -289,6 +300,12 @@
     const label = faceGroupLabel(hitMesh.geometry, group);
     const uv = hit.uv ? `(${hit.uv.x.toFixed(2)}, ${hit.uv.y.toFixed(2)})` : 'n/a';
     hoverInfo = `${part?.name ?? '?'} · ${label} · uv ${uv}`;
+    // Track which material index is under the cursor so face paint clicks know which slot to update.
+    if (facePaintMode && part?.id === selectedPartId) {
+      hoveredFaceMaterialIndex = hit.face?.materialIndex ?? null;
+    } else {
+      hoveredFaceMaterialIndex = null;
+    }
   }
 
   function onMouseMove(e: MouseEvent) {
@@ -330,10 +347,26 @@
       return;
     }
 
-    // Idle phase: click → try to select a part.
+    // Idle phase: click → try to select a part (or paint a face in face-paint mode).
     if (sketcher.currentPhase === 'idle') {
       const session = sketcher.getSession();
       const meshes = session.parts.map((p) => p.mesh);
+
+      // In face paint mode, a click on the selected part's mesh paints the hovered face.
+      if (facePaintMode && selectedPartId && hoveredFaceMaterialIndex !== null) {
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+        const hits = raycaster.intersectObjects(meshes, false);
+        if (hits.length) {
+          const hitPart = session.parts.find((p) => p.mesh === hits[0].object);
+          if (hitPart?.id === selectedPartId) {
+            const mi = hits[0].face?.materialIndex ?? hoveredFaceMaterialIndex;
+            sketcherDoc.execute(new ChangeFaceColorCommand(selectedPartId, mi, parseInt(selectedColor.replace('#', ''), 16), sketcher));
+            return;
+          }
+        }
+      }
+
       const hit = selection.pick(x, y, camera, meshes);
       if (hit) {
         // In normal mode, selecting any mesh in a group selects the whole group.
@@ -653,6 +686,17 @@
         value={selectedColor}
         oninput={(e) => applyColor((e.target as HTMLInputElement).value)}
       />
+      <button
+        class="face-paint-btn"
+        class:active={facePaintMode}
+        title="Face paint mode: click a face to colour it individually"
+        onclick={() => { facePaintMode = !facePaintMode; hoveredFaceMaterialIndex = null; }}
+      >Face</button>
+      {#if facePaintMode}
+        <span class="hud-label" style="font-size:9px">
+          {hoveredFaceMaterialIndex !== null ? `face ${hoveredFaceMaterialIndex}` : 'hover a face'}
+        </span>
+      {/if}
       <button class="dup-btn" onclick={duplicateSelected} title="Shift+D">Duplicate</button>
     </div>
   {/if}
@@ -824,6 +868,16 @@
     font-size: 11px;
     padding: 3px 6px;
     margin-top: 2px;
+  }
+
+  .face-paint-btn {
+    font-size: 11px;
+    padding: 3px 6px;
+  }
+  .face-paint-btn.active {
+    background: #1a3a2a;
+    border-color: #44cc88;
+    color: #88ffcc;
   }
 
   .glue-btn {

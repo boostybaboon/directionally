@@ -15,6 +15,8 @@ export type SketcherPart = {
    * a page reload.
    */
   shapePoints: [number, number][] | null;
+  /** Per-draw-group colour array. Length matches mesh.material[]. */
+  faceColors: number[];
 };
 
 /**
@@ -65,6 +67,8 @@ export type SketcherSession = {
 export type FaceGroupInfo = {
   normal: THREE.Vector3;
   label: string;
+  /** Index into the mesh's material array for face-paint operations. */
+  materialIndex: number;
 };
 
 // ── Snapshot types (used by SketcherDocument for undo/redo) ──────────────────
@@ -76,6 +80,7 @@ export type PartSnapshot = {
   worldQuaternionXYZW: [number, number, number, number];
   worldScale: [number, number, number];
   color: number;
+  faceColors: number[];
 };
 
 export type JointSnapshot = {
@@ -118,6 +123,7 @@ export type PartDraft = {
   quaternion: [number, number, number, number];
   scale: [number, number, number];
   color: number;
+  faceColors?: number[];
 };
 
 export type SketcherDraft = {

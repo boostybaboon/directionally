@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { PolygonSketcher } from './PolygonSketcher.js';
-import { ExtrusionHandle } from './ExtrusionHandle.js';
+import { ExtrusionHandle, buildExtrusionGeometry } from './ExtrusionHandle.js';
 import { GlueManager } from './GlueManager.js';
 import type { FaceGroupInfo, PartSnapshot, JointSnapshot, PartDraft, SessionSnapshot, SketcherDraft, SketcherPart, SketcherSession } from './types.js';
 
@@ -17,40 +17,42 @@ const PRIMITIVE_PRESETS: PrimitivePreset[] = [
   {
     name: 'Box',
     geometry: () => withFaceGroups(new THREE.BoxGeometry(1, 1, 1), [
-      { normal: V(1, 0, 0),  label: '+X' },
-      { normal: V(-1, 0, 0), label: '−X' },
-      { normal: V(0, 1, 0),  label: 'Top' },
-      { normal: V(0, -1, 0), label: 'Bottom' },
-      { normal: V(0, 0, 1),  label: '+Z' },
-      { normal: V(0, 0, -1), label: '−Z' },
+      { normal: V(1, 0, 0),  label: '+X',        materialIndex: 0 },
+      { normal: V(-1, 0, 0), label: '−X',        materialIndex: 1 },
+      { normal: V(0, 1, 0),  label: 'Top',       materialIndex: 2 },
+      { normal: V(0, -1, 0), label: 'Bottom',    materialIndex: 3 },
+      { normal: V(0, 0, 1),  label: '+Z',        materialIndex: 4 },
+      { normal: V(0, 0, -1), label: '−Z',        materialIndex: 5 },
     ]),
   },
   {
     name: 'Sphere',
     geometry: () => withFaceGroups(new THREE.SphereGeometry(0.75, 16, 12), [
-      { normal: V(0, 1, 0), label: 'Surface' },
+      { normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 },
     ]),
   },
   {
     name: 'Cylinder',
     geometry: () => withFaceGroups(new THREE.CylinderGeometry(0.3, 0.3, 2, 16), [
-      { normal: V(1, 0, 0),  label: 'Barrel' },
-      { normal: V(0, 1, 0),  label: 'Top cap' },
-      { normal: V(0, -1, 0), label: 'Bottom cap' },
+      { normal: V(1, 0, 0),  label: 'Barrel',     materialIndex: 0 },
+      { normal: V(0, 1, 0),  label: 'Top cap',    materialIndex: 1 },
+      { normal: V(0, -1, 0), label: 'Bottom cap', materialIndex: 2 },
     ]),
   },
   {
     name: 'Capsule',
     geometry: () => withFaceGroups(new THREE.CapsuleGeometry(0.3, 1, 4, 8), [
-      { normal: V(0, 1, 0), label: 'Surface' },
+      { normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 },
     ]),
   },
   {
     name: 'Cone',
+    // ConeGeometry is CylinderGeometry with radiusTop=0. Three.js skips the top
+    // cap group but still assigns materialIndex=2 to the bottom cap, so the
+    // material array must cover indices 0–2 even though index 1 is unused.
     geometry: () => withFaceGroups(new THREE.ConeGeometry(0.5, 2, 16), [
-      { normal: V(1, 0, 0),  label: 'Barrel' },
-      { normal: V(0, 1, 0),  label: 'Top cap' },
-      { normal: V(0, -1, 0), label: 'Bottom cap' },
+      { normal: V(1, 0, 0),  label: 'Barrel',     materialIndex: 0 },
+      { normal: V(0, -1, 0), label: 'Bottom cap', materialIndex: 2 },
     ]),
   },
 ];
@@ -59,6 +61,14 @@ const PRIMITIVE_PRESETS: PrimitivePreset[] = [
 const PRESET_BY_NAME = new Map(PRIMITIVE_PRESETS.map((p) => [p.name.toLowerCase(), p]));
 
 const DEFAULT_COLOR = 0x8888cc;
+
+/** Create one MeshStandardMaterial per draw group, covering all materialIndex values in geometry.groups. */
+function buildMaterials(geo: THREE.BufferGeometry, color: number): THREE.MeshStandardMaterial[] {
+  const count = geo.groups.length > 0
+    ? Math.max(...geo.groups.map((g) => g.materialIndex ?? 0)) + 1
+    : 1;
+  return Array.from({ length: count }, () => new THREE.MeshStandardMaterial({ color }));
+}
 
 type Phase = 'idle' | 'drawing' | 'extruding';
 
@@ -131,7 +141,7 @@ export class CartoonSketcher {
     // Dispose ALL parts including those hibernated by removePart.
     for (const part of this.allParts.values()) {
       part.mesh.geometry.dispose();
-      (part.mesh.material as THREE.Material).dispose();
+      (part.mesh.material as THREE.Material[]).forEach((m) => m.dispose());
     }
     this.allParts.clear();
     this._endCurrentSketch();
@@ -146,8 +156,8 @@ export class CartoonSketcher {
     const preset = PRESET_BY_NAME.get(name.toLowerCase());
     if (!preset) return null;
     const geometry = preset.geometry();
-    const material = new THREE.MeshStandardMaterial({ color: DEFAULT_COLOR });
-    const mesh = new THREE.Mesh(geometry, material);
+    const materials = buildMaterials(geometry, DEFAULT_COLOR);
+    const mesh = new THREE.Mesh(geometry, materials);
     // Sit the primitive on the floor (y = 0 ground plane).
     geometry.computeBoundingBox();
     mesh.position.y = -(geometry.boundingBox!.min.y);
@@ -159,6 +169,7 @@ export class CartoonSketcher {
       name: preset.name,
       color: DEFAULT_COLOR,
       shapePoints: null,
+      faceColors: materials.map(() => DEFAULT_COLOR),
     };
     this.scene.add(mesh);
     this.parts.push(part);
@@ -171,12 +182,22 @@ export class CartoonSketcher {
     return PRIMITIVE_PRESETS.map((p) => p.name);
   }
 
-  /** Update a part's colour. Syncs mesh material immediately. */
+  /** Update a part's colour, resetting all face colours to a uniform value. */
   setPartColor(id: string, color: number): void {
     const part = this.parts.find((p) => p.id === id);
     if (!part) return;
     part.color = color;
-    (part.mesh.material as THREE.MeshStandardMaterial).color.setHex(color);
+    part.faceColors.fill(color);
+    (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m) => m.color.setHex(color));
+  }
+
+  /** Update the colour of a single draw group. Does not change part.color. */
+  setFaceColor(id: string, materialIndex: number, color: number): void {
+    const part = this.parts.find((p) => p.id === id);
+    if (!part) return;
+    if (materialIndex < 0 || materialIndex >= part.faceColors.length) return;
+    part.faceColors[materialIndex] = color;
+    (part.mesh.material as THREE.MeshStandardMaterial[])[materialIndex].color.setHex(color);
   }
 
   /**
@@ -187,9 +208,10 @@ export class CartoonSketcher {
     const src = this.parts.find((p) => p.id === id);
     if (!src) return null;
     const geo = src.mesh.geometry.clone();
-    const mat = (src.mesh.material as THREE.MeshStandardMaterial).clone();
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.copy(src.mesh.position).x += 1;
+    const mats = (src.mesh.material as THREE.MeshStandardMaterial[]).map((m) => m.clone());
+    const mesh = new THREE.Mesh(geo, mats);
+    mesh.position.copy(src.mesh.position);
+    mesh.position.x += 1;
     mesh.rotation.copy(src.mesh.rotation);
     mesh.scale.copy(src.mesh.scale);
     const part: SketcherPart = {
@@ -200,6 +222,7 @@ export class CartoonSketcher {
       name: src.name,
       color: src.color,
       shapePoints: src.shapePoints,
+      faceColors: [...src.faceColors],
     };
     this.scene.add(mesh);
     this.parts.push(part);
@@ -326,6 +349,7 @@ export class CartoonSketcher {
         worldQuaternionXYZW: [wq.x, wq.y, wq.z, wq.w],
         worldScale: [ws.x, ws.y, ws.z],
         color: p.color,
+        faceColors: [...p.faceColors],
       };
     });
     const joints: JointSnapshot[] = this.glue.getJoints().map((j) => ({
@@ -366,7 +390,10 @@ export class CartoonSketcher {
       part.mesh.scale.set(ps.worldScale[0], ps.worldScale[1], ps.worldScale[2]);
       part.mesh.updateWorldMatrix(false, true);
       part.color = ps.color;
-      (part.mesh.material as THREE.MeshStandardMaterial).color.setHex(ps.color);
+      part.faceColors = [...ps.faceColors];
+      (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m, i) =>
+        m.color.setHex(ps.faceColors[i] ?? ps.color)
+      );
       this.scene.add(part.mesh);
       this.parts.push(part);
     }
@@ -407,6 +434,7 @@ export class CartoonSketcher {
         quaternion: [wq.x, wq.y, wq.z, wq.w],
         scale: [ws.x, ws.y, ws.z],
         color: p.color,
+        faceColors: [...p.faceColors],
       };
       if (p.shapePoints !== null) {
         draft.shapePoints = p.shapePoints;
@@ -450,39 +478,19 @@ export class CartoonSketcher {
         depth = pd.depth;
         const pts = pd.shapePoints.map(([x, y]) => new THREE.Vector2(x, y));
         const shape = new THREE.Shape(pts);
-        // shapePoints are centroid-relative (from the new shape convention), so
-        // geometry is centred at local origin and mesh.position carries the offset.
-        geometry = new THREE.ExtrudeGeometry(shape, {
-          depth,
-          bevelEnabled: true,
-          bevelThickness: 0.04,
-          bevelSize: 0.04,
-          bevelSegments: 2,
-        });
-        geometry.rotateX(-Math.PI / 2);
-        geometry.translate(0, -depth / 2, 0);
-        const sideGroups = pts.map((a, i) => {
-          const b = pts[(i + 1) % pts.length];
-          const dx = b.x - a.x;
-          const dz = b.y - a.y;
-          const len = Math.sqrt(dx * dx + dz * dz) || 1;
-          return { normal: new THREE.Vector3(-dz / len, 0, -dx / len), label: `side-${i}` };
-        });
-        geometry.userData.faceGroups = [
-          ...sideGroups,
-          { normal: new THREE.Vector3(0, 1, 0),  label: 'top' },
-          { normal: new THREE.Vector3(0, -1, 0), label: 'bottom' },
-        ];
+        geometry = buildExtrusionGeometry(shape, depth);
       }
 
-      const material = new THREE.MeshStandardMaterial({ color: pd.color });
-      const mesh = new THREE.Mesh(geometry, material);
+      const materials = buildMaterials(geometry, pd.color);
+      const faceColors = pd.faceColors ? [...pd.faceColors] : materials.map(() => pd.color);
+      faceColors.forEach((c, i) => { if (i < materials.length) materials[i].color.setHex(c); });
+      const mesh = new THREE.Mesh(geometry, materials);
       mesh.position.set(pd.position[0], pd.position[1], pd.position[2]);
       mesh.quaternion.set(pd.quaternion[0], pd.quaternion[1], pd.quaternion[2], pd.quaternion[3]);
       mesh.scale.set(pd.scale[0], pd.scale[1], pd.scale[2]);
       mesh.updateWorldMatrix(false, true);
 
-      const part: SketcherPart = { id: pd.id, mesh, depth, centroid, name: pd.name, color: pd.color, shapePoints };
+      const part: SketcherPart = { id: pd.id, mesh, depth, centroid, name: pd.name, color: pd.color, shapePoints, faceColors };
       this.scene.add(mesh);
       this.parts.push(part);
       this.allParts.set(part.id, part);
@@ -535,7 +543,8 @@ export class CartoonSketcher {
       (this.extrusionHandle.handle.material as THREE.Material).dispose();
       this.extrusionHandle = null;
     }
-    this.parts.push({ id: `part-${this.nextId++}`, mesh, depth, centroid: centroid.clone(), name: 'Shape', color: DEFAULT_COLOR, shapePoints });
+    const faceColors = Array<number>(mesh.geometry.groups.length).fill(DEFAULT_COLOR);
+    this.parts.push({ id: `part-${this.nextId++}`, mesh, depth, centroid: centroid.clone(), name: 'Shape', color: DEFAULT_COLOR, shapePoints, faceColors });
     const part = this.parts[this.parts.length - 1];
     this.allParts.set(part.id, part);
     this.phase = 'idle';

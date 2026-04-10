@@ -135,3 +135,67 @@ Joints encoded in root `extras.directionally.joints`. Group membership reconstru
 **Key files:** `SketcherCommand.ts` (forward-only interface), `SketcherDocument.ts` (`{ before, after }` stack; `captureSnapshot()`; `clearStack()`), `sketcherCommands.ts` (all `undo()` removed), `CartoonSketcher.ts`, `GlueManager.ts`, `src/routes/sketch/+page.svelte` (Ctrl+Z/Y/Shift+Z; pre-drag `tcPreDragSnapshot` pattern).
 
 **Test coverage:** 37 integration tests in `SketcherDocument.test.ts`, including B-vanishes and redo-stops regression scenarios. 415 tests total passing.
+
+---
+
+## Phase SH2 — Session autosave ✅ COMPLETE
+
+Solves the most immediate pain point: losing work on page refresh.
+
+**`SketcherDraft`** (serialization format, version 2):
+```ts
+type PartDraft = {
+  id, kind, name, shapePoints?, depth?, position, quaternion, scale, color, faceColors?
+};
+type SketcherDraft = { version: 2; parts: PartDraft[]; joints: JointSnapshot[]; assemblyGroups: AssemblyGroupSnapshot[] };
+```
+Fully JSON-serializable. `JointSnapshot` is plain data (already defined alongside `SessionSnapshot`).
+
+**`CartoonSketcher` additions:**
+- `toDraft()` — iterates `this.parts`, decomposes world matrix, emits `PartDraft[]`; copies joints from `glue.getJoints()`
+- `loadDraft(draft)` — calls `clearSession()`, reconstructs each part (primitives via preset geometry; sketch parts via `buildExtrusionGeometry`), then re-registers joints
+
+**`+page.svelte`:** `onChange` debounce 500 ms → `localStorage.setItem('sketcher-draft', ...)` on every mutation; `onMount` restores draft if present; "New assembly" button clears `localStorage`.
+
+**Tests:** `toDraft` / `loadDraft` round-trips for primitive position+color, sketch parts, multiple primitives, glue joints, and id-collision prevention.
+
+---
+
+## Phase SH1a — Poly sketcher data-integrity fixes ✅ COMPLETE
+
+- **Duplicate mesh during drag** — fixed: `onPointerMove` removes the previous mesh from the scene before adding the rebuilt one. Root cause: `onDrag` disposes and replaces `handle.mesh` but the old scene node was never removed.
+- **Solid placement** — no bug found; `_buildMesh` bakes centroid into geometry vertices; preview and committed mesh share the same code path.
+- **Face labels** — fixed: `ExtrusionHandle` now computes per-edge outward normals from `shape.getPoints()` and emits `{ label: 'side-N', normal }` for each edge plus `top`/`bottom`. Old `Side`, `Top`, `Bottom` labels removed.
+
+---
+
+## Phase SA7 — Per-edge draw groups ✅ COMPLETE
+
+**Goal:** Give each wall face of an extruded sketch its own draw group so individual faces can be coloured independently.
+
+**Key architectural decision:** Remove bevel (`bevelEnabled: false`). Without bevel, `steps=1` → each edge wall = exactly 2 triangles = 6 consecutive index-buffer entries, making per-edge group splitting trivial.
+
+**Three.js `ExtrudeGeometry` group layout** (no bevel, steps=1):
+- Group 0 — combined caps (bottom+top), count = 2*(N−2)*3
+- Group 1 — all N wall faces, count = N*6
+
+We clear these and rebuild: wall edge i → `materialIndex` i (group of 6 indices), caps → `materialIndex` N.
+
+**`buildExtrusionGeometry(shape, depth)`** — exported from `ExtrusionHandle.ts`. Handles the rotate/translate, group splitting, `faceGroups` userData, and returns a geometry with N+1 draw groups. `ExtrusionHandle._buildMesh` uses it and creates a `MeshStandardMaterial[]` of matching length.
+
+**Data model changes:**
+- `FaceGroupInfo` — added `materialIndex: number`
+- `SketcherPart` — added `faceColors: number[]`
+- `PartSnapshot` — added `faceColors: number[]`
+- `PartDraft` — added optional `faceColors?` (backward-compatible)
+
+**`CartoonSketcher` changes:**
+- `PRIMITIVE_PRESETS` — every `faceGroups` entry has `materialIndex` matching its Three.js draw group (Box 0–5, Cylinder barrel/top cap/bottom cap = 0/1/2, Cone barrel/bottom = 0/2, Sphere/Capsule surface = 0)
+- `buildMaterials(geo, color)` helper — creates one `MeshStandardMaterial` per draw group (covering max `materialIndex` + 1)
+- `setFaceColor(id, materialIndex, color)` — new method; updates `faceColors[materialIndex]` and the material array entry
+- `setPartColor(id, color)` — now fills all `faceColors` entries and all material array entries uniformly
+- `snapshot`/`draft` round-trips, `duplicatePart`, and `_commitPart` all carry `faceColors` through
+
+**Cone note:** `ConeGeometry` skips the top-cap group but still assigns `materialIndex=2` to the bottom cap, so the material array must cover indices 0–2 even though index 1 is unused.
+
+**Tests:** 426 total passing. Updated `setPartColor` test to assert all material array entries change; updated `faceGroups` label test to expect `caps` instead of `top`/`bottom`; added `faceColors` field to manually constructed `SketcherPart` fixtures in `CartoonSketcher.test.ts` and `GlueManager.test.ts`.

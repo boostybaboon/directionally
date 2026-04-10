@@ -23,99 +23,16 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 
 ## Current state — April 2026
 
-The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour → glue parts into assemblies → transform → undo/redo. Generic geometry handling (no per-geometry-type branching), face-normal-aligned glue joints, snapshot-based undo/redo, 415 tests passing.
+The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → glue parts into assemblies → transform → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring. 426 tests passing.
 
-**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13.
+**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7.
 
 **Priority order:**
-1. ~~SA13 — Undo / redo~~ ✅ COMPLETE (snapshot-based; `SketcherDocument` with `{ before, after }` per entry)
-2. ~~SH2 — Session autosave~~ ✅ COMPLETE (`toDraft`/`loadDraft` + `localStorage` debounced save)
-3. ~~SH1a — Poly sketcher data-integrity fixes~~ ✅ COMPLETE
-4. SA7 — Per-side materials *(next; face label schema now correct)*
-4. SA7 — Per-side materials
-5. SA8 — Textures
-6. SH1b — Poly sketcher UX + polish
-7. SA11 — Snap to floor
-8. SA12 — Positioning precision *(absorbs SA10; biggest feature; needs stable foundation)*
-9. SA9 — Named assemblies *(full Word-style open/save/autosave model)*
-
----
-
-## Phase SA13 — Undo / redo ✅ COMPLETE
-
-**Approach (final):** Snapshot-based, matching the main app's `ProductionDocument` pattern. Each history entry stores `{ before: SessionSnapshot, after: SessionSnapshot, label }` as plain data. `undo()` and `redo()` call `sketcher.restoreSnapshot()` to rebuild the Three.js scene from the snapshot — no inverse command logic required.
-
-**Why snapshot over forward/inverse:** An initial forward/inverse implementation was working but had two bugs: (1) `TransformPartCommand` stored a `THREE.Group` object reference that became stale when the group was dissolved on undo of `CommitGlueCommand` — redo moved the gizmo but not the mesh. (2) `scene.attach(B.mesh)` during multi-step group BFS-split accumulated incorrect intermediate world transforms — B vanished on undo of glue. Snapshot sidesteps both by saving/restoring world-space transforms directly.
-
-**Key files:** `SketcherCommand.ts`, `SketcherDocument.ts`, `sketcherCommands.ts`, `CartoonSketcher.ts` (`allParts` pool + `takeSnapshot`/`restoreSnapshot`), `GlueManager.ts` (`registerJoint`), `src/routes/sketch/+page.svelte` (Ctrl+Z/Y/Shift+Z, pre-drag snapshot capture).
-
-**Test coverage:** 37 tests in `SketcherDocument.test.ts` including integration scenarios for B-vanishes and redo-stops regressions.
-
----
-
-## Phase SH2 — Session autosave ✅ COMPLETE
-
-**Why immediately after SA13:** `SketcherDocument` now has a clean `onChange` callback fired after every mutation. A serializable draft format built on top of the session is the only missing piece.
-
-Solves the most immediate pain point: losing work on page refresh.
-
-**Serialization format — `SketcherDraft`** (new type in `types.ts`):
-
-```ts
-type PartDraft = {
-  id: string;
-  kind: 'primitive' | 'sketch';
-  name: string;              // 'Box', 'Cylinder', 'Shape', …
-  shapePoints?: [number, number][];   // sketch parts only
-  depth?: number;            // sketch parts only
-  position: [number, number, number];
-  quaternion: [number, number, number, number];  // XYZW world-space
-  scale: [number, number, number];
-  color: number;
-};
-type SketcherDraft = { version: 1; parts: PartDraft[]; joints: JointSnapshot[] };
-```
-
-`SketcherDraft` is fully JSON-serializable. `JointSnapshot` is already plain data (defined alongside `SessionSnapshot`).
-
-**`SketcherPart` change** — add `shapePoints: [number, number][] | null`. Set to `null` for primitives; populated from the `THREE.Shape.extractPoints()` points array in `_commitPart`. Required so `loadDraft` can reconstruct the `ExtrudeGeometry` for sketch parts.
-
-**`CartoonSketcher` additions:**
-- `toDraft(): SketcherDraft` — iterates `this.parts`, decomposes world matrix, emits `PartDraft[]`; copies joints from `glue.getJoints()`
-- `loadDraft(draft: SketcherDraft): void` — calls `clearSession()`, reconstructs each part (primitives via `_insertPrimitiveAtWorldTransform`; sketch parts via `new THREE.ExtrudeGeometry` + `_commitPartFromDraft`), then re-registers joints via `registerJoint`
-
-**`SketcherDocument` change** — the existing `onChange` callback already fires after every `execute / undo / redo`. No structural change needed; the page subscribes.
-
-**`+page.svelte` wiring:**
-1. `onChange` callback: debounce 500 ms → `localStorage.setItem('sketcher-draft', JSON.stringify(sketcher.toDraft()))`
-2. `onMount`: if `localStorage.getItem('sketcher-draft')` is set, parse and call `sketcher.loadDraft(draft)`
-3. **"New assembly"** toolbar button: `sketcherDoc.clearStack()`, `sketcher.clearSession()`, `localStorage.removeItem('sketcher-draft')`
-
-**Storage cost:** `SketcherDraft` is numbers and ids — well under 100 KB for any realistic assembly. `localStorage` is fine at this scale.
-
-**Tests:** `CartoonSketcher` unit tests for `toDraft()` round-trip (primitive: insert → set position → toDraft → clearSession → loadDraft → check position/color); for sketch parts (insert + commit → toDraft → loadDraft → check part count). Joints: A+B glued → toDraft → loadDraft → check joint restored.
-
----
-
-## Phase SH1a — Poly sketcher data-integrity fixes ✅ COMPLETE
-
-- **Duplicate mesh during drag** — fixed: `onPointerMove` now removes the previous mesh from the scene before adding the rebuilt one. Root cause: `onDrag` disposes and replaces `handle.mesh` but the old scene node was never removed.
-- **Solid placement** — no placement bug found. The `_buildMesh` bakes centroid into geometry vertices via `geo.translate(cx, 0, cz)`; preview and committed mesh use the same code path and the same mesh object, so positions are identical.
-- **Face labels** — fixed: `_buildMesh` in `ExtrusionHandle` now computes per-edge outward normals from `shape.getPoints()` and emits `{ label: 'side-N', normal }` for each edge, plus `top` and `bottom`. `loadDraft` in `CartoonSketcher` uses the same logic. Old `Side`, `Top`, `Bottom` labels removed.
-
----
-
-## Phase SA7 — Per-side materials
-
-**Per-face colour:**
-- `mesh.material` becomes a `THREE.Material[]` array; each face group gets its own `MeshStandardMaterial`
-- Interaction: select part → click a face (raycast + `userData.faceGroups` lookup) → colour picker
-- Prerequisite: face labels/UVs correct (SH1a)
-
-**UV wrapping mode:**
-- Toggle per-part: *per-face* (each side `[0,1]` independently) vs *wrapped* (U proportional around perimeter)
-- Default heuristic: ≤8 sides → per-face + faceted normals; >8 → wrapped + smooth normals
-- User override via toggle in the part HUD
+1. SA8 — Textures
+2. SH1b — Poly sketcher UX + polish
+3. SA11 — Snap to floor
+4. SA12 — Positioning precision *(absorbs SA10; biggest feature; needs stable foundation)*
+5. SA9 — Named assemblies *(full Word-style open/save/autosave model)*
 
 ---
 
@@ -125,7 +42,6 @@ Drag-and-drop an image file onto a selected face → assigns via `THREE.TextureL
 
 - Single texture per material group (UV wrapping mode from SA7 determines layout)
 - Blob lifecycle via `URL.createObjectURL`; stored in OPFS alongside GLB on export
-- Prerequisite: SA7 (material-per-face array must exist)
 
 ---
 
@@ -136,7 +52,6 @@ Non-blocking UX improvements that don't gate anything; do whenever convenient af
 - **Fix view rotation when sketching.** OrbitControls and the polygon-pick raycaster fight for mouse events. Disable OrbitControls while a sketch is in progress; re-enable on shape close or Escape.
 - **Closure click indication.** When the cursor is close enough to the first vertex to close the polygon, highlight that vertex distinctly (filled circle, colour change) so the user knows the next click closes rather than extends.
 - **Better extrude / de-extrude grab handle.** Replace the current small sphere with an arrow-style handle that affords clear up/down drag; show depth value live in a HUD overlay.
-- **Remove default edge bevelling.** `bevelEnabled: true` distorts geometry unexpectedly. Switch `ExtrudeGeometry` to `bevelEnabled: false`; expose as an optional toggle.
 
 ---
 
@@ -170,7 +85,7 @@ Currently all positioning is by mouse drag — hard to place table legs at exact
 **Glue precision**
 - *Midpoint mode:* toggle that snaps the glue source pick to face-centre automatically, without requiring precise hover — equivalent to `(0.5, 0.5)` in face UV space
 - Free-mouse glue stays available as the alternative
-- *Glue point editor:* select a joint → inspector showing UV position on each face + twist angle (`alpha`); edits reposition the joint live. Prerequisite: SA7 (face UV positions only meaningful once faces have individual materials)
+- *Glue point editor:* select a joint → inspector showing UV position on each face + twist angle (`alpha`); edits reposition the joint live.
 
 ---
 

@@ -7,6 +7,7 @@ import {
   DuplicatePartCommand,
   DeletePartCommand,
   ChangeColorCommand,
+  ChangeFaceColorCommand,
   TransformPartCommand,
   CommitGlueCommand,
   UnglueAllCommand,
@@ -332,6 +333,43 @@ describe('ChangeColorCommand', () => {
     doc.undo();
     doc.redo();
     expect(sketcher.getSession().parts[0].color).toBe(0xff0000);
+  });
+});
+
+// ── ChangeFaceColorCommand ────────────────────────────────────────────────────
+
+describe('ChangeFaceColorCommand', () => {
+  it('execute() colours a single face without disturbing the other faces', () => {
+    const { sketcher } = makeSketcher();
+    const { doc } = makeDoc(sketcher);
+    const part = sketcher.insertPrimitive('cylinder')!;
+    const originalBarrel = part.faceColors[0];
+    doc.execute(new ChangeFaceColorCommand(part.id, 0, 0xff0000, sketcher));
+    const updated = sketcher.getSession().parts[0];
+    expect(updated.faceColors[0]).toBe(0xff0000);
+    // Other indices must be unchanged
+    expect(updated.faceColors[1]).toBe(part.faceColors[1]);
+    expect(updated.faceColors[0]).not.toBe(originalBarrel);
+  });
+
+  it('doc.undo() restores the original face colour', () => {
+    const { sketcher } = makeSketcher();
+    const { doc } = makeDoc(sketcher);
+    const part = sketcher.insertPrimitive('cylinder')!;
+    const original = part.faceColors[0];
+    doc.execute(new ChangeFaceColorCommand(part.id, 0, 0xff0000, sketcher));
+    doc.undo();
+    expect(sketcher.getSession().parts[0].faceColors[0]).toBe(original);
+  });
+
+  it('doc.redo() re-applies the face colour', () => {
+    const { sketcher } = makeSketcher();
+    const { doc } = makeDoc(sketcher);
+    const part = sketcher.insertPrimitive('cylinder')!;
+    doc.execute(new ChangeFaceColorCommand(part.id, 0, 0xff0000, sketcher));
+    doc.undo();
+    doc.redo();
+    expect(sketcher.getSession().parts[0].faceColors[0]).toBe(0xff0000);
   });
 });
 

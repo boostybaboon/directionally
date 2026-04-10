@@ -74,6 +74,23 @@ export class ChangeColorCommand implements SketcherCommand {
   }
 }
 
+// ── ChangeFaceColorCommand ────────────────────────────────────────────────────
+
+export class ChangeFaceColorCommand implements SketcherCommand {
+  readonly label = 'Change face color';
+
+  constructor(
+    private readonly partId: string,
+    private readonly materialIndex: number,
+    private readonly newColor: number,
+    private readonly sketcher: CartoonSketcher,
+  ) {}
+
+  execute(): void {
+    this.sketcher.setFaceColor(this.partId, this.materialIndex, this.newColor);
+  }
+}
+
 // ── TransformPartCommand ──────────────────────────────────────────────────────
 
 /**

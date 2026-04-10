@@ -264,8 +264,9 @@ describe('CartoonSketcher', () => {
     const part = sketcher.insertPrimitive('box')!;
     sketcher.setPartColor(part.id, 0xff0000);
     expect(part.color).toBe(0xff0000);
-    const mat = part.mesh.material as THREE.MeshStandardMaterial;
-    expect(mat.color.getHex()).toBe(0xff0000);
+    expect(part.faceColors.every((c) => c === 0xff0000)).toBe(true);
+    const mats = part.mesh.material as THREE.MeshStandardMaterial[];
+    expect(mats.every((m) => m.color.getHex() === 0xff0000)).toBe(true);
   });
 
   it('setPartColor() is a no-op for unknown id', () => {
@@ -307,7 +308,7 @@ describe('exportGLB', () => {
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial());
 
     const session: SketcherSession = {
-      parts: [{ id: 'part-1', mesh, depth: 1, centroid, name: 'Shape', color: 0x8888cc, shapePoints: null }],
+      parts: [{ id: 'part-1', mesh, depth: 1, centroid, name: 'Shape', color: 0x8888cc, shapePoints: null, faceColors: [0x8888cc] }],
       joints: [],
       assemblyGroups: [],
     };
@@ -478,13 +479,12 @@ describe('ExtrusionHandle via CartoonSketcher', () => {
     expect(parts).toHaveLength(1);
     const groups: { label: string }[] = parts[0].mesh.geometry.userData.faceGroups;
     const labels = groups.map((g) => g.label);
-    // Square has 4 edges: side-0 … side-3 plus top and bottom
+    // Square has 4 edges: side-0 … side-3 plus combined caps group
     expect(labels).toContain('side-0');
     expect(labels).toContain('side-1');
     expect(labels).toContain('side-2');
     expect(labels).toContain('side-3');
-    expect(labels).toContain('top');
-    expect(labels).toContain('bottom');
+    expect(labels).toContain('caps');
     expect(labels.filter((l) => l === 'Side')).toHaveLength(0);
     expect(labels.filter((l) => l === 'Top')).toHaveLength(0);
     expect(labels.filter((l) => l === 'Bottom')).toHaveLength(0);
