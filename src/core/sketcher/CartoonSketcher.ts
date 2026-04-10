@@ -141,7 +141,7 @@ export class CartoonSketcher {
     // Dispose ALL parts including those hibernated by removePart.
     for (const part of this.allParts.values()) {
       part.mesh.geometry.dispose();
-      (part.mesh.material as THREE.Material[]).forEach((m) => m.dispose());
+      (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m) => { m.map?.dispose(); m.dispose(); });
     }
     this.allParts.clear();
     this._endCurrentSketch();
@@ -170,6 +170,7 @@ export class CartoonSketcher {
       color: DEFAULT_COLOR,
       shapePoints: null,
       faceColors: materials.map(() => DEFAULT_COLOR),
+      faceTextures: materials.map(() => null),
     };
     this.scene.add(mesh);
     this.parts.push(part);
@@ -201,6 +202,24 @@ export class CartoonSketcher {
   }
 
   /**
+   * Assign a texture (data URL) to a single draw group, replacing any previous
+   * texture on that slot. Pass null to clear the texture.
+   */
+  setFaceTexture(id: string, materialIndex: number, dataUrl: string | null): void {
+    const part = this.parts.find((p) => p.id === id);
+    if (!part) return;
+    if (materialIndex < 0 || materialIndex >= part.faceTextures.length) return;
+    const mat = (part.mesh.material as THREE.MeshStandardMaterial[])[materialIndex];
+    // Dispose the existing texture before replacing it.
+    if (mat.map) { mat.map.dispose(); mat.map = null; }
+    part.faceTextures[materialIndex] = dataUrl;
+    if (dataUrl) {
+      mat.map = new THREE.TextureLoader().load(dataUrl);
+    }
+    mat.needsUpdate = true;
+  }
+
+  /**
    * Duplicate a part. The clone is offset by +1 on X and auto-returned so the
    * caller can select it. Returns null if the part is not found.
    */
@@ -214,6 +233,12 @@ export class CartoonSketcher {
     mesh.position.x += 1;
     mesh.rotation.copy(src.mesh.rotation);
     mesh.scale.copy(src.mesh.scale);
+    // Create new textures from stored data URLs (do not share Texture instances).
+    mats.forEach((m, i) => {
+      if (m.map) { m.map.dispose(); m.map = null; }
+      const url = src.faceTextures[i];
+      if (url) { m.map = new THREE.TextureLoader().load(url); m.needsUpdate = true; }
+    });
     const part: SketcherPart = {
       id: `part-${this.nextId++}`,
       mesh,
@@ -223,6 +248,7 @@ export class CartoonSketcher {
       color: src.color,
       shapePoints: src.shapePoints,
       faceColors: [...src.faceColors],
+      faceTextures: [...src.faceTextures],
     };
     this.scene.add(mesh);
     this.parts.push(part);
@@ -350,6 +376,7 @@ export class CartoonSketcher {
         worldScale: [ws.x, ws.y, ws.z],
         color: p.color,
         faceColors: [...p.faceColors],
+        faceTextures: [...p.faceTextures],
       };
     });
     const joints: JointSnapshot[] = this.glue.getJoints().map((j) => ({
@@ -391,9 +418,14 @@ export class CartoonSketcher {
       part.mesh.updateWorldMatrix(false, true);
       part.color = ps.color;
       part.faceColors = [...ps.faceColors];
-      (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m, i) =>
-        m.color.setHex(ps.faceColors[i] ?? ps.color)
-      );
+      part.faceTextures = [...ps.faceTextures];
+      (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m, i) => {
+        m.color.setHex(ps.faceColors[i] ?? ps.color);
+        if (m.map) { m.map.dispose(); m.map = null; }
+        const url = ps.faceTextures[i] ?? null;
+        if (url) { m.map = new THREE.TextureLoader().load(url); }
+        m.needsUpdate = true;
+      });
       this.scene.add(part.mesh);
       this.parts.push(part);
     }
@@ -435,6 +467,7 @@ export class CartoonSketcher {
         scale: [ws.x, ws.y, ws.z],
         color: p.color,
         faceColors: [...p.faceColors],
+        faceTextures: [...p.faceTextures],
       };
       if (p.shapePoints !== null) {
         draft.shapePoints = p.shapePoints;
@@ -484,13 +517,20 @@ export class CartoonSketcher {
       const materials = buildMaterials(geometry, pd.color);
       const faceColors = pd.faceColors ? [...pd.faceColors] : materials.map(() => pd.color);
       faceColors.forEach((c, i) => { if (i < materials.length) materials[i].color.setHex(c); });
+      const faceTextures = pd.faceTextures ? [...pd.faceTextures] : materials.map(() => null);
+      faceTextures.forEach((url, i) => {
+        if (url && i < materials.length) {
+          materials[i].map = new THREE.TextureLoader().load(url);
+          materials[i].needsUpdate = true;
+        }
+      });
       const mesh = new THREE.Mesh(geometry, materials);
       mesh.position.set(pd.position[0], pd.position[1], pd.position[2]);
       mesh.quaternion.set(pd.quaternion[0], pd.quaternion[1], pd.quaternion[2], pd.quaternion[3]);
       mesh.scale.set(pd.scale[0], pd.scale[1], pd.scale[2]);
       mesh.updateWorldMatrix(false, true);
 
-      const part: SketcherPart = { id: pd.id, mesh, depth, centroid, name: pd.name, color: pd.color, shapePoints, faceColors };
+      const part: SketcherPart = { id: pd.id, mesh, depth, centroid, name: pd.name, color: pd.color, shapePoints, faceColors, faceTextures };
       this.scene.add(mesh);
       this.parts.push(part);
       this.allParts.set(part.id, part);
@@ -544,7 +584,8 @@ export class CartoonSketcher {
       this.extrusionHandle = null;
     }
     const faceColors = Array<number>(mesh.geometry.groups.length).fill(DEFAULT_COLOR);
-    this.parts.push({ id: `part-${this.nextId++}`, mesh, depth, centroid: centroid.clone(), name: 'Shape', color: DEFAULT_COLOR, shapePoints, faceColors });
+    const faceTextures = Array<null>(mesh.geometry.groups.length).fill(null);
+    this.parts.push({ id: `part-${this.nextId++}`, mesh, depth, centroid: centroid.clone(), name: 'Shape', color: DEFAULT_COLOR, shapePoints, faceColors, faceTextures });
     const part = this.parts[this.parts.length - 1];
     this.allParts.set(part.id, part);
     this.phase = 'idle';

@@ -199,3 +199,39 @@ We clear these and rebuild: wall edge i → `materialIndex` i (group of 6 indice
 **Cone note:** `ConeGeometry` skips the top-cap group but still assigns `materialIndex=2` to the bottom cap, so the material array must cover indices 0–2 even though index 1 is unused.
 
 **Tests:** 426 total passing. Updated `setPartColor` test to assert all material array entries change; updated `faceGroups` label test to expect `caps` instead of `top`/`bottom`; added `faceColors` field to manually constructed `SketcherPart` fixtures in `CartoonSketcher.test.ts` and `GlueManager.test.ts`.
+
+---
+
+## Phase SA8 — Textures ✅ COMPLETE
+
+**Goal:** Drag-and-drop an image file onto a selected face → assigns via `THREE.TextureLoader` on that material group. Single texture per material group. Undo/redo supported. Textures round-trip through autosave (localStorage) as data URLs.
+
+**Key design decision:** Store textures as **data URLs** (`FileReader.readAsDataURL`) rather than blob URLs (`URL.createObjectURL`). Data URLs are self-contained strings that survive localStorage serialisation automatically without requiring OPFS or URL revocation lifecycle management. OPFS texture storage (alongside GLB export) is deferred to SA9.
+
+**GLB export:** `GLTFExporter` embeds `material.map` textures automatically — no changes needed in `exportGLB.ts`.
+
+**Data model changes:**
+- `SketcherPart` — added `faceTextures: (string | null)[]`
+- `PartSnapshot` — added `faceTextures: (string | null)[]`
+- `PartDraft` — added optional `faceTextures?: (string | null)[]` (backward-compatible)
+
+**`CartoonSketcher` changes:**
+- `setFaceTexture(id, materialIndex, dataUrl)` — new method; disposes old `mat.map`, assigns new `THREE.TextureLoader().load(dataUrl)` (or null to clear), sets `mat.needsUpdate = true`
+- `insertPrimitive` / `_commitPart` — initialise `faceTextures` to `null` for every material slot
+- `clearSession` — disposes `mat.map` before `mat.dispose()` to avoid GPU leaks
+- `duplicatePart` — creates fresh `THREE.Texture` objects from stored data URLs (avoids shared texture references after `m.clone()`)
+- `takeSnapshot` / `restoreSnapshot` — carry `faceTextures` through; `restoreSnapshot` disposes old `mat.map` before reinstating
+- `toDraft` / `loadDraft` — carry `faceTextures` through; `loadDraft` reconstructs textures from data URLs
+
+**`sketcherCommands.ts`:** Added `ApplyTextureCommand` — snapshot-based undo/redo, calls `sketcher.setFaceTexture()`.
+
+**`+page.svelte` drag-and-drop:**
+- `dragTargetPartId` / `dragTargetMaterialIndex` state for hover tracking
+- `faceBelowPointer(ndcX, ndcY)` — raycasts against all part meshes, returns `{ partId, materialIndex }` or null
+- `onDragOver` — validates image file from `dataTransfer.items`, updates drag target state, shows teal canvas outline
+- `onDragLeave` — resets drag state
+- `onDrop` — reads file as data URL via `FileReader`, executes `ApplyTextureCommand`
+- CSS: `.sketch-canvas.drag-target { outline: 2px solid #44ccaa; outline-offset: -2px; }`
+- Also fixed `unglueSelected()` null guard (`if (!selectedPartId) return`) — pre-existing type error now caught by svelte-check.
+
+**Tests:** 438 total passing (9 new tests: 5 `CartoonSketcher` unit tests for `setFaceTexture`, 1 `toDraft/loadDraft` texture round-trip, 3 `ApplyTextureCommand` undo/redo tests in `SketcherDocument`). Added `beforeAll` mock for `THREE.TextureLoader.prototype.load` in both test files (returns bare `THREE.Texture` without DOM).

@@ -17,6 +17,11 @@ export type SketcherPart = {
   shapePoints: [number, number][] | null;
   /** Per-draw-group colour array. Length matches mesh.material[]. */
   faceColors: number[];
+  /**
+   * Per-draw-group texture data URLs. Null means no texture for that slot.
+   * Length matches faceColors / mesh.material[].
+   */
+  faceTextures: (string | null)[];
 };
 
 /**
@@ -81,6 +86,8 @@ export type PartSnapshot = {
   worldScale: [number, number, number];
   color: number;
   faceColors: number[];
+  /** Per-draw-group texture data URLs matching faceColors. */
+  faceTextures: (string | null)[];
 };
 
 export type JointSnapshot = {
@@ -124,6 +131,7 @@ export type PartDraft = {
   scale: [number, number, number];
   color: number;
   faceColors?: number[];
+  faceTextures?: (string | null)[];
 };
 
 export type SketcherDraft = {

@@ -1,7 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import * as THREE from 'three';
 import { SketcherDocument } from './SketcherDocument.js';
 import { CartoonSketcher } from './CartoonSketcher.js';
+
+// TextureLoader.load() creates a DOM Image element which does not exist in
+// the Node test environment.
+beforeAll(() => {
+  vi.spyOn(THREE.TextureLoader.prototype, 'load').mockImplementation(() => new THREE.Texture());
+});
 import {
   InsertPartCommand,
   DuplicatePartCommand,
@@ -11,6 +17,7 @@ import {
   TransformPartCommand,
   CommitGlueCommand,
   UnglueAllCommand,
+  ApplyTextureCommand,
 } from './sketcherCommands.js';
 import type { SketcherCommand } from './SketcherCommand.js';
 
@@ -370,6 +377,40 @@ describe('ChangeFaceColorCommand', () => {
     doc.undo();
     doc.redo();
     expect(sketcher.getSession().parts[0].faceColors[0]).toBe(0xff0000);
+  });
+});
+
+// ── ApplyTextureCommand ───────────────────────────────────────────────────────
+
+describe('ApplyTextureCommand', () => {
+  const DATA_URL = 'data:image/png;base64,abc123';
+
+  it('execute() stores the data URL on the face slot', () => {
+    const { sketcher } = makeSketcher();
+    const { doc } = makeDoc(sketcher);
+    const part = sketcher.insertPrimitive('box')!;
+    doc.execute(new ApplyTextureCommand(part.id, 0, DATA_URL, sketcher));
+    expect(sketcher.getSession().parts[0].faceTextures[0]).toBe(DATA_URL);
+    expect(sketcher.getSession().parts[0].faceTextures[1]).toBeNull();
+  });
+
+  it('doc.undo() restores null texture', () => {
+    const { sketcher } = makeSketcher();
+    const { doc } = makeDoc(sketcher);
+    const part = sketcher.insertPrimitive('box')!;
+    doc.execute(new ApplyTextureCommand(part.id, 0, DATA_URL, sketcher));
+    doc.undo();
+    expect(sketcher.getSession().parts[0].faceTextures[0]).toBeNull();
+  });
+
+  it('doc.redo() re-applies the texture', () => {
+    const { sketcher } = makeSketcher();
+    const { doc } = makeDoc(sketcher);
+    const part = sketcher.insertPrimitive('box')!;
+    doc.execute(new ApplyTextureCommand(part.id, 0, DATA_URL, sketcher));
+    doc.undo();
+    doc.redo();
+    expect(sketcher.getSession().parts[0].faceTextures[0]).toBe(DATA_URL);
   });
 });
 

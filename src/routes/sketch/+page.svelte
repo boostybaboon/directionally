@@ -14,6 +14,7 @@
     DeletePartCommand,
     ChangeColorCommand,
     ChangeFaceColorCommand,
+    ApplyTextureCommand,
     TransformPartCommand,
     CommitGlueCommand,
     UnglueAllCommand,
@@ -35,6 +36,9 @@
   let facePaintMode = $state(false);
   // The materialIndex of the face last hovered/selected when in face paint mode.
   let hoveredFaceMaterialIndex = $state<number | null>(null);
+  // Id of the part under the cursor during a drag-over (for texture drop targeting).
+  let dragTargetPartId = $state<string | null>(null);
+  let dragTargetMaterialIndex = $state<number | null>(null);
   let canUndo = $state(false);
   let canRedo = $state(false);
   // Glue interaction state
@@ -276,7 +280,7 @@
     if (!selectedPartId) return;
     if (facePaintMode && hoveredFaceMaterialIndex !== null) {
       sketcherDoc.execute(new ChangeFaceColorCommand(selectedPartId, hoveredFaceMaterialIndex, parseInt(hex.replace('#', ''), 16), sketcher));
-    } else {
+    } else if (!facePaintMode) {
       sketcherDoc.execute(new ChangeColorCommand(selectedPartId, parseInt(hex.replace('#', ''), 16), sketcher));
     }
   }
@@ -593,6 +597,65 @@
     statusMessage = 'Unglued. Part detached from assembly.';
   }
 
+  // ── Texture drag-and-drop ────────────────────────────────────────────────────
+
+  function faceBelowPointer(ndcX: number, ndcY: number): { partId: string; materialIndex: number } | null {
+    const session = sketcher.getSession();
+    const meshes = session.parts.map((p) => p.mesh);
+    if (!meshes.length) return null;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+    const hits = raycaster.intersectObjects(meshes, false);
+    if (!hits.length) return null;
+    const hitPart = session.parts.find((p) => p.mesh === hits[0].object);
+    const materialIndex = hits[0].face?.materialIndex ?? 0;
+    return hitPart ? { partId: hitPart.id, materialIndex } : null;
+  }
+
+  function onDragOver(e: DragEvent) {
+    const hasImage = Array.from(e.dataTransfer?.items ?? []).some(
+      (item) => item.kind === 'file' && item.type.startsWith('image/'),
+    );
+    if (!hasImage) return;
+    e.preventDefault();
+    e.dataTransfer!.dropEffect = 'copy';
+    const [x, y] = toNDC(e as unknown as MouseEvent);
+    const target = faceBelowPointer(x, y);
+    dragTargetPartId = target?.partId ?? null;
+    dragTargetMaterialIndex = target?.materialIndex ?? null;
+  }
+
+  function onDragLeave() {
+    dragTargetPartId = null;
+    dragTargetMaterialIndex = null;
+  }
+
+  function onDrop(e: DragEvent) {
+    e.preventDefault();
+    const file = e.dataTransfer?.files[0];
+    if (!file || !file.type.startsWith('image/')) {
+      dragTargetPartId = null;
+      dragTargetMaterialIndex = null;
+      return;
+    }
+    const [x, y] = toNDC(e as unknown as MouseEvent);
+    const target = faceBelowPointer(x, y) ?? (
+      dragTargetPartId !== null && dragTargetMaterialIndex !== null
+        ? { partId: dragTargetPartId, materialIndex: dragTargetMaterialIndex }
+        : null
+    );
+    dragTargetPartId = null;
+    dragTargetMaterialIndex = null;
+    if (!target) { statusMessage = 'Drop an image onto a face to texture it.'; return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      sketcherDoc.execute(new ApplyTextureCommand(target.partId, target.materialIndex, dataUrl, sketcher));
+      statusMessage = 'Texture applied.';
+    };
+    reader.readAsDataURL(file);
+  }
+
   // ── Toolbar actions ─────────────────────────────────────────────────────────
 
   function insertPrimitive(kind: string) {
@@ -704,10 +767,14 @@
   <canvas
     bind:this={canvas}
     class="sketch-canvas"
+    class:drag-target={dragTargetMaterialIndex !== null}
     onmousemove={onMouseMove}
     onclick={onMouseClick}
     onpointerdown={onPointerDown}
     onpointerup={onPointerUp}
+    ondragover={onDragOver}
+    ondragleave={onDragLeave}
+    ondrop={onDrop}
   ></canvas>
   {#if statusMessage}
     <div class="sketch-hint">{statusMessage}</div>
@@ -817,6 +884,10 @@
     width: 100%;
     height: 100%;
     cursor: crosshair;
+  }
+  .sketch-canvas.drag-target {
+    outline: 2px solid #44ccaa;
+    outline-offset: -2px;
   }
 
   .colour-hud {

@@ -27,6 +27,7 @@ function makePart(scene: THREE.Scene, position = new THREE.Vector3()): SketcherP
     color: 0x8888cc,
     shapePoints: null,
     faceColors: [0x8888cc],
+    faceTextures: [null],
   };
 }
 

@@ -91,6 +91,23 @@ export class ChangeFaceColorCommand implements SketcherCommand {
   }
 }
 
+// ── ApplyTextureCommand ───────────────────────────────────────────────────────
+
+export class ApplyTextureCommand implements SketcherCommand {
+  readonly label = 'Apply texture';
+
+  constructor(
+    private readonly partId: string,
+    private readonly materialIndex: number,
+    private readonly dataUrl: string | null,
+    private readonly sketcher: CartoonSketcher,
+  ) {}
+
+  execute(): void {
+    this.sketcher.setFaceTexture(this.partId, this.materialIndex, this.dataUrl);
+  }
+}
+
 // ── TransformPartCommand ──────────────────────────────────────────────────────
 
 /**

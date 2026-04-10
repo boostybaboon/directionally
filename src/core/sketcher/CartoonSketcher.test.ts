@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import * as THREE from 'three';
 import { CartoonSketcher } from './CartoonSketcher.js';
 import { PolygonSketcher } from './PolygonSketcher.js';
@@ -16,6 +16,13 @@ vi.mock('three/examples/jsm/exporters/GLTFExporter.js', () => ({
     }
   },
 }))
+
+// TextureLoader.load() creates a DOM Image element which does not exist in
+// the Node test environment. Return a bare Texture so texture-related unit
+// tests stay in-process without any browser globals.
+beforeAll(() => {
+  vi.spyOn(THREE.TextureLoader.prototype, 'load').mockImplementation(() => new THREE.Texture());
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -273,6 +280,44 @@ describe('CartoonSketcher', () => {
     expect(() => sketcher.setPartColor('nonexistent', 0xff0000)).not.toThrow();
   });
 
+  it('insertPrimitive() initialises faceTextures to null for each material slot', () => {
+    const part = sketcher.insertPrimitive('box')!;
+    // Box has 6 face groups.
+    expect(part.faceTextures).toHaveLength(6);
+    expect(part.faceTextures.every((t) => t === null)).toBe(true);
+  });
+
+  it('setFaceTexture() stores the data URL and leaves other slots unaffected', () => {
+    const part = sketcher.insertPrimitive('cylinder')!;
+    const dataUrl = 'data:image/png;base64,abc123';
+    sketcher.setFaceTexture(part.id, 0, dataUrl);
+    expect(part.faceTextures[0]).toBe(dataUrl);
+    expect(part.faceTextures[1]).toBeNull();
+  });
+
+  it('setFaceTexture(null) clears the slot', () => {
+    const part = sketcher.insertPrimitive('box')!;
+    const dataUrl = 'data:image/png;base64,abc123';
+    sketcher.setFaceTexture(part.id, 0, dataUrl);
+    sketcher.setFaceTexture(part.id, 0, null);
+    expect(part.faceTextures[0]).toBeNull();
+  });
+
+  it('setFaceTexture() is a no-op for unknown id', () => {
+    expect(() => sketcher.setFaceTexture('nonexistent', 0, 'data:image/png;base64,')).not.toThrow();
+  });
+
+  it('duplicatePart() clones faceTextures independently', () => {
+    const part = sketcher.insertPrimitive('box')!;
+    const dataUrl = 'data:image/png;base64,xyz';
+    sketcher.setFaceTexture(part.id, 0, dataUrl);
+    const clone = sketcher.duplicatePart(part.id)!;
+    expect(clone.faceTextures[0]).toBe(dataUrl);
+    // Mutating source does not affect clone.
+    sketcher.setFaceTexture(part.id, 0, null);
+    expect(clone.faceTextures[0]).toBe(dataUrl);
+  });
+
   it('duplicatePart() creates independent clone with same color', () => {
     const src = sketcher.insertPrimitive('cylinder')!;
     sketcher.setPartColor(src.id, 0x00ff00);
@@ -308,7 +353,7 @@ describe('exportGLB', () => {
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial());
 
     const session: SketcherSession = {
-      parts: [{ id: 'part-1', mesh, depth: 1, centroid, name: 'Shape', color: 0x8888cc, shapePoints: null, faceColors: [0x8888cc] }],
+      parts: [{ id: 'part-1', mesh, depth: 1, centroid, name: 'Shape', color: 0x8888cc, shapePoints: null, faceColors: [0x8888cc], faceTextures: [null] }],
       joints: [],
       assemblyGroups: [],
     };
@@ -412,6 +457,21 @@ describe('toDraft / loadDraft', () => {
     expect(restored.name).toBe('Shape');
     expect(restored.shapePoints).not.toBeNull();
     expect(restored.mesh.geometry.attributes.position.count).toBeGreaterThan(0);
+  });
+
+  it('toDraft() round-trip preserves face texture data URLs', () => {
+    const part = sketcher.insertPrimitive('box')!;
+    const dataUrl = 'data:image/png;base64,abc123';
+    sketcher.setFaceTexture(part.id, 0, dataUrl);
+
+    const draft = sketcher.toDraft();
+    expect(draft.parts[0].faceTextures?.[0]).toBe(dataUrl);
+    expect(draft.parts[0].faceTextures?.[1]).toBeNull();
+
+    sketcher.loadDraft(draft);
+    const restored = sketcher.getSession().parts[0];
+    expect(restored.faceTextures[0]).toBe(dataUrl);
+    expect(restored.faceTextures[1]).toBeNull();
   });
 
   it('toDraft() round-trip preserves a glue joint', () => {

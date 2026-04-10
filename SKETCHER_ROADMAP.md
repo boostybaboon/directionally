@@ -23,25 +23,15 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 
 ## Current state — April 2026
 
-The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → glue parts into assemblies → transform → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring. 426 tests passing.
+The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → glue parts into assemblies → transform → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 438 tests passing.
 
-**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7.
+**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8.
 
 **Priority order:**
-1. SA8 — Textures
-2. SH1b — Poly sketcher UX + polish
-3. SA11 — Snap to floor
-4. SA12 — Positioning precision *(absorbs SA10; biggest feature; needs stable foundation)*
-5. SA9 — Named assemblies *(full Word-style open/save/autosave model)*
-
----
-
-## Phase SA8 — Textures
-
-Drag-and-drop an image file onto a selected face → assigns via `THREE.TextureLoader` on that material group.
-
-- Single texture per material group (UV wrapping mode from SA7 determines layout)
-- Blob lifecycle via `URL.createObjectURL`; stored in OPFS alongside GLB on export
+1. SH1b — Poly sketcher UX + polish
+2. SA11 — Snap to floor
+3. SA12 — Positioning precision *(absorbs SA10; biggest feature; needs stable foundation)*
+4. SA9 — Named assemblies *(full Word-style open/save/autosave model)*
 
 ---
 
