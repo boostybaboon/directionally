@@ -37,14 +37,22 @@ let _jointSeq = 1;
 let _groupSeq = 1;
 
 /**
- * Manages the flat joint list and the persistent THREE.Group assembly graph.
+ * Manages the joint list and the weld-group graph.
+ *
+ * SA15 semantics: glue is a *live positional constraint* between two
+ * independent scene entities (standalone meshes or weld groups). Calling
+ * commitGlue() snaps the mover to the anchor and records the joint; it does
+ * NOT reparent any mesh into a shared group. After every TC commit,
+ * resolveConstraints() re-satisfies all joints that involve the moved entity.
+ *
+ * Weld groups remain structural containers (rigid units moved as one); glue
+ * joints are logical constraints between those entities.
  *
  * Responsibilities:
- *  - commitGlue(): position partB flush to partA face, record the joint,
- *    form/expand the shared group.
- *  - replayJoints(): re-evaluate all joints touching a given part after it
- *    has been transformed, repositioning its joint partners.
- *  - unglue(): remove a joint, run BFS to split or dissolve group if needed.
+ *  - commitGlue(): position partB flush to partA face, record the joint.
+ *  - resolveConstraints(): re-satisfy all joints touching a set of moved parts.
+ *  - replayJoints(): single-part convenience wrapper for resolveConstraints.
+ *  - unglue(): remove a joint.
  *  - getConnectedIds(): BFS over joints from a part, returns all reachable ids.
  */
 export class GlueManager {
@@ -60,7 +68,11 @@ export class GlueManager {
   /**
    * Commit a glue joint: rotate partB so its face (localNormalB) becomes
    * flush against partA's face (localNormalA), then snap the contact points,
-   * record the joint, and merge both parts into one persistent THREE.Group.
+   * and record the joint.
+   *
+   * SA15: parts remain at their current hierarchy level — no THREE.Group is
+   * created. The joint is a live constraint re-satisfied by resolveConstraints()
+   * after every transform commit.
    *
    * All four vectors must be in the respective mesh's LOCAL space — typically
    * obtained from the raycast hit's face.normal and matrixWorldInverse.
@@ -81,9 +93,34 @@ export class GlueManager {
       partBId: partB.id, localPointB: localPointB.clone(), localNormalB: localNormalB.clone(),
     };
     this.joints.push(joint);
-
-    this._mergeIntoGroup(partA, partB);
+    // SA15: no group merging — parts remain at their current hierarchy level.
     return joint;
+  }
+
+  /**
+   * Re-satisfy all joints that involve any of the moved parts.
+   *
+   * For each joint touching a moved part:
+   *   - If the anchor side (partAId) moved → reposition the mover to follow.
+   *   - If the mover side (partBId) moved independently → snap it back to satisfy
+   *     the constraint (live constraint semantics; the anchor wins).
+   *
+   * When a moved part lives inside a weld group, the whole group is moved by
+   * _applyJointPosition (it picks up groupForPart automatically).
+   */
+  resolveConstraints(movedPartIds: string[], allParts: SketcherPart[]): void {
+    const movedSet = new Set(movedPartIds);
+    for (const joint of this.joints) {
+      if (!movedSet.has(joint.partAId) && !movedSet.has(joint.partBId)) continue;
+      const partA = allParts.find((p) => p.id === joint.partAId);
+      const partB = allParts.find((p) => p.id === joint.partBId);
+      if (partA && partB) {
+        this._applyJointPosition(
+          partA, joint.localPointA, joint.localNormalA,
+          partB, joint.localPointB, joint.localNormalB,
+        );
+      }
+    }
   }
 
   /**
@@ -91,76 +128,26 @@ export class GlueManager {
    * For each joint, reposition the OTHER part relative to the moved one.
    */
   replayJoints(movedPart: SketcherPart, allParts: SketcherPart[]): void {
-    for (const joint of this.joints) {
-      if (joint.partAId === movedPart.id) {
-        const partB = allParts.find((p) => p.id === joint.partBId);
-        if (partB) this._applyJointPosition(
-          movedPart, joint.localPointA, joint.localNormalA,
-          partB, joint.localPointB, joint.localNormalB,
-        );
-      } else if (joint.partBId === movedPart.id) {
-        const partA = allParts.find((p) => p.id === joint.partAId);
-        if (partA) this._applyJointPosition(
-          partA, joint.localPointA, joint.localNormalA,
-          movedPart, joint.localPointB, joint.localNormalB,
-        );
-      }
-    }
+    this.resolveConstraints([movedPart.id], allParts);
   }
 
   /**
-   * Remove the joint with the given id. Runs BFS on the remaining joint
-   * graph to split or dissolve the group if the component is now disconnected.
+   * Remove the joint with the given id. Under SA15, no group topology
+   * changes are needed — joints are purely logical constraints.
    */
-  unglue(jointId: string, allParts: SketcherPart[]): void {
+  unglue(jointId: string, _allParts?: SketcherPart[]): void {
     const idx = this.joints.findIndex((j) => j.id === jointId);
-    if (idx === -1) return;
-    const [removed] = this.joints.splice(idx, 1);
-
-    // Find the group that contained both parts.
-    const group = this.assemblyGroups.find(
-      (g) => g.partIds.includes(removed.partAId) && g.partIds.includes(removed.partBId),
-    );
-    if (!group) return;
-
-    // BFS to find connected components within the group's part set.
-    const components = this._connectedComponents(group.partIds);
-
-    if (components.length === 1) {
-      // Still connected — group shrinks if one part has no remaining joints.
-      // (nothing to do; parts stay in the group)
-      return;
-    }
-
-    // Dissolve the old group and rebuild one group per component.
-    this._dissolveGroup(group, allParts);
-
-    for (const component of components) {
-      if (component.length === 1) {
-        // Single isolated part — return to scene root.
-        const part = allParts.find((p) => p.id === component[0]);
-        if (part) {
-          this.scene.attach(part.mesh); // preserves world transform
-        }
-      } else {
-        const parts = component
-          .map((id) => allParts.find((p) => p.id === id))
-          .filter(Boolean) as SketcherPart[];
-        this._createGroup(parts);
-      }
-    }
+    if (idx !== -1) this.joints.splice(idx, 1);
   }
 
   /**
-   * Remove all joints touching a part and rebuild affected groups.
-   * Convenience wrapper used by the "Unglue selected" action.
+   * Remove all joints touching a part. Used by the "Unglue selected" action.
    */
-  unglueAll(partId: string, allParts: SketcherPart[]): void {
-    const touching = this.joints.filter(
-      (j) => j.partAId === partId || j.partBId === partId,
-    );
-    for (const j of touching) {
-      this.unglue(j.id, allParts);
+  unglueAll(partId: string, _allParts?: SketcherPart[]): void {
+    for (let i = this.joints.length - 1; i >= 0; i--) {
+      if (this.joints[i].partAId === partId || this.joints[i].partBId === partId) {
+        this.joints.splice(i, 1);
+      }
     }
   }
 
@@ -206,10 +193,10 @@ export class GlueManager {
    * Dissolve a weld group by id. All children are returned to scene root
    * at their current world positions. No-op if the group is not a weld group.
    */
-  dissolveWeldGroup(groupId: string, allParts: SketcherPart[]): void {
+  dissolveWeldGroup(groupId: string, _allParts?: SketcherPart[]): void {
     const ag = this.assemblyGroups.find((g) => g.id === groupId);
     if (!ag || !this.weldGroupIds.has(groupId)) return;
-    this._dissolveGroup(ag, allParts);
+    this._dissolveGroup(ag);
   }
 
   /** Return true if the part belongs to a weld group (not a glue group). */
@@ -220,25 +207,24 @@ export class GlueManager {
 
   /**
    * Remove a part from its assembly group without removing any joints.
-   * Used after `unglueAll` to clean up residual group membership when
-   * the group remained connected (unglue skips group changes in that case).
+   * Used from removePart() to clean up weld group membership when a part is deleted.
    * Dissolves the group if it shrinks to one member.
    */
-  evictFromGroup(partId: string, allParts: SketcherPart[]): void {
+  evictFromGroup(partId: string, _allParts?: SketcherPart[]): void {
     const ag = this.groupForPart(partId);
     if (!ag) return;
     const idx = ag.partIds.indexOf(partId);
     if (idx !== -1) ag.partIds.splice(idx, 1);
     if (ag.partIds.length <= 1) {
-      this._dissolveGroup(ag, allParts);
+      this._dissolveGroup(ag);
     }
   }
 
   /**
    * Record a joint without repositioning partB.
-   * Used by CartoonSketcher.restoreSnapshot() to rebuild the joint graph
-   * after world-space transforms have already been applied from the snapshot.
-   * Merges both parts into a single assembly group identically to commitGlue.
+   * Used by CartoonSketcher.restoreSnapshot() and loadDraft() to rebuild the
+   * joint graph after world-space transforms have already been applied.
+   * SA15: no group merging — parts remain at their current hierarchy level.
    */
   registerJoint(
     partA: SketcherPart, localPointA: THREE.Vector3, localNormalA: THREE.Vector3,
@@ -250,7 +236,7 @@ export class GlueManager {
       partBId: partB.id, localPointB: localPointB.clone(), localNormalB: localNormalB.clone(),
     };
     this.joints.push(joint);
-    this._mergeIntoGroup(partA, partB);
+    // SA15: no group merging — parts remain at their current hierarchy level.
     return joint;
   }
 
@@ -268,8 +254,11 @@ export class GlueManager {
   /**
    * Rotate partB so its face normal (localNormalB) becomes flush against
    * partA's face (anti-parallel to localNormalA), then translate to snap
-   * the contact points together. Moves partB's assembly group if one exists
-   * (so all group members travel together), unless partA is in the same group.
+   * the contact points together.
+   *
+   * If partB is in a weld group and partA is NOT in the same weld group,
+   * the whole weld group is moved (so all group members travel together).
+   * Otherwise partB's mesh is moved directly.
    */
   private _applyJointPosition(
     partA: SketcherPart, localPointA: THREE.Vector3, localNormalA: THREE.Vector3,
@@ -304,39 +293,6 @@ export class GlueManager {
     target.updateWorldMatrix(false, true);
   }
 
-  /**
-   * Merge partA and partB into a single AssemblyGroup.
-   * If either already belongs to a group, the groups are merged.
-   * Uses THREE.attach() to re-parent while preserving world transforms.
-   */
-  private _mergeIntoGroup(partA: SketcherPart, partB: SketcherPart): void {
-    const groupA = this.groupForPart(partA.id);
-    const groupB = this.groupForPart(partB.id);
-
-    if (!groupA && !groupB) {
-      // Neither in a group — create new group containing both.
-      this._createGroup([partA, partB]);
-    } else if (groupA && !groupB) {
-      // partA has a group; absorb partB into it.
-      groupA.group.attach(partB.mesh);
-      groupA.partIds.push(partB.id);
-    } else if (!groupA && groupB) {
-      // partB has a group; absorb partA into it.
-      groupB.group.attach(partA.mesh);
-      groupB.partIds.push(partA.id);
-    } else if (groupA && groupB && groupA.id !== groupB.id) {
-      // Both in different groups — merge groupB into groupA.
-      for (const child of [...groupB.group.children]) {
-        groupA.group.attach(child);
-      }
-      groupA.partIds.push(...groupB.partIds);
-      this.scene.remove(groupB.group);
-      const idx = this.assemblyGroups.indexOf(groupB);
-      if (idx !== -1) this.assemblyGroups.splice(idx, 1);
-    }
-    // If groupA === groupB, both already in the same group — nothing to do.
-  }
-
   private _createGroup(parts: SketcherPart[]): AssemblyGroup {
     const group = new THREE.Group();
     group.name = `assembly-${_groupSeq++}`;
@@ -362,7 +318,7 @@ export class GlueManager {
     return ag;
   }
 
-  private _dissolveGroup(ag: AssemblyGroup, allParts: SketcherPart[]): void {
+  private _dissolveGroup(ag: AssemblyGroup): void {
     // Re-parent all children back to scene root preserving world transforms.
     for (const child of [...ag.group.children]) {
       this.scene.attach(child);
@@ -372,34 +328,5 @@ export class GlueManager {
     if (idx !== -1) this.assemblyGroups.splice(idx, 1);
     // Remove weld marker if present.
     this.weldGroupIds.delete(ag.id);
-  }
-
-  /** Partition a set of partIds into connected components using current joints. */
-  private _connectedComponents(partIds: string[]): string[][] {
-    const remaining = new Set(partIds);
-    const components: string[][] = [];
-
-    while (remaining.size > 0) {
-      const start = remaining.values().next().value as string;
-      const component: string[] = [];
-      const queue = [start];
-      remaining.delete(start);
-
-      while (queue.length) {
-        const current = queue.shift()!;
-        component.push(current);
-        for (const j of this.joints) {
-          let neighbour: string | null = null;
-          if (j.partAId === current) neighbour = j.partBId;
-          else if (j.partBId === current) neighbour = j.partAId;
-          if (neighbour && remaining.has(neighbour)) {
-            remaining.delete(neighbour);
-            queue.push(neighbour);
-          }
-        }
-      }
-      components.push(component);
-    }
-    return components;
   }
 }

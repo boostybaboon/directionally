@@ -135,7 +135,12 @@ export class TransformPartCommand implements SketcherCommand {
     if (!this.movedPartId) return;
     const session = this.sketcher.getSession();
     const part = session.parts.find((p) => p.id === this.movedPartId);
-    if (part) this.sketcher.glueManager.replayJoints(part, session.parts);
+    if (!part) return;
+    // Resolve constraints for all parts in the moved entity: if the part is
+    // in a weld group, the whole group moved, so resolve for all its members.
+    const ag = this.sketcher.glueManager.groupForPart(this.movedPartId);
+    const movedIds = ag ? ag.partIds : [part.id];
+    this.sketcher.glueManager.resolveConstraints(movedIds, session.parts);
   }
 }
 

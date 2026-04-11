@@ -39,6 +39,8 @@
   let multiSelectedCount = $state(0);
   // Whether the primary selected part belongs to a weld group (not a glue group).
   let selectedGroupIsWeld = $state(false);
+  // Whether the primary selected part has any active glue joints.
+  let selectedPartHasGlue = $state(false);
   // When non-null, we are in group edit mode — editing a single member of this weld group id.
   let groupEditGroupId = $state<string | null>(null);
   // Face paint mode: when true, clicks colour individual faces instead of selecting parts.
@@ -156,6 +158,9 @@
           selectedPartId = part.id;
           selectedColor = '#' + part.color.toString(16).padStart(6, '0');
           selectedGroupIsWeld = sketcher.glueManager.isWeldGroup(part.id);
+          selectedPartHasGlue = sketcher.glueManager.getJoints().some(
+            (j) => j.partAId === part.id || j.partBId === part.id,
+          );
         }
       } else {
         // Deselection — if in group edit mode, clean up dimming before TC detaches.
@@ -169,6 +174,7 @@
         facePaintMode = false;
         hoveredFaceMaterialIndex = null;
         selectedGroupIsWeld = false;
+        selectedPartHasGlue = false;
         clearFaceHighlight();
         // tc.detach() already sets _root.visible = false; no need to touch it here.
       }
@@ -675,24 +681,31 @@
     clearGlueBlobMarker();
     gluePhase = null;
     glueSrcBlob = null;
-    statusMessage = 'Glued. Parts joined in assembly group.';
+    statusMessage = 'Glued.';
 
-    // Re-attach TC to the new assembly group.
+    // Re-attach TC: after SA15 glue, parts stay at scene root (no glue group).
+    // If targetPart was already welded, remain attached to the weld group.
     const ag = sketcher.glueManager.groupForPart(targetPart.id);
     if (ag) {
       tc.attach(ag.group);
     } else {
       tc.attach(targetPart.mesh);
     }
+    selectedPartHasGlue = true;
   }
 
   function unglueSelected() {
     if (!selectedPartId) return;
     sketcherDoc.execute(new UnglueAllCommand(selectedPartId, sketcher));
-    // Re-attach TC to the individual mesh after ungluing.
+    // Re-attach TC. Under SA15 parts are never reparented by glue, so the
+    // part stays at scene root (or inside its weld group if it has one).
     const part = sketcher.getSession().parts.find((p) => p.id === selectedPartId);
-    if (part) tc.attach(part.mesh);
-    statusMessage = 'Unglued. Part detached from assembly.';
+    if (part) {
+      const ag = sketcher.glueManager.groupForPart(part.id);
+      tc.attach(ag ? ag.group : part.mesh);
+    }
+    selectedPartHasGlue = false;
+    statusMessage = 'Unglued.';
   }
 
   // ── Texture drag-and-drop ────────────────────────────────────────────────────
@@ -936,7 +949,8 @@
     {#if selectedPartId}
       {#if selectedGroupIsWeld}
         <button class="glue-btn" onclick={unweldSelected} title="Dissolve weld group">Unweld</button>
-      {:else}
+      {/if}
+      {#if selectedPartHasGlue}
         <button class="glue-btn" onclick={unglueSelected} title="U">Unglue</button>
       {/if}
       <button class="glue-btn" onclick={snapToFloor} title="F">⬇ Floor</button>

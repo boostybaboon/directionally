@@ -463,7 +463,7 @@ describe('CommitGlueCommand', () => {
     pB.mesh.updateMatrixWorld(true);
   });
 
-  it('execute() records a joint and forms a group', () => {
+  it('execute() records a joint (SA15: no group created)', () => {
     const cmd = new CommitGlueCommand(
       sketcher,
       pA!, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
@@ -471,10 +471,10 @@ describe('CommitGlueCommand', () => {
     );
     cmd.execute();
     expect(sketcher.getSession().joints).toHaveLength(1);
-    expect(sketcher.getSession().assemblyGroups).toHaveLength(1);
+    expect(sketcher.getSession().assemblyGroups).toHaveLength(0);
   });
 
-  it('doc.undo() removes the joint and dissolves the group', () => {
+  it('doc.undo() removes the joint', () => {
     const { doc } = makeDoc(sketcher);
     doc.execute(new CommitGlueCommand(
       sketcher,
@@ -486,7 +486,7 @@ describe('CommitGlueCommand', () => {
     expect(sketcher.getSession().assemblyGroups).toHaveLength(0);
   });
 
-  it('doc.redo() re-establishes the joint', () => {
+  it('doc.redo() re-establishes the joint (SA15: still no group)', () => {
     const { doc } = makeDoc(sketcher);
     doc.execute(new CommitGlueCommand(
       sketcher,
@@ -496,7 +496,7 @@ describe('CommitGlueCommand', () => {
     doc.undo();
     doc.redo();
     expect(sketcher.getSession().joints).toHaveLength(1);
-    expect(sketcher.getSession().assemblyGroups).toHaveLength(1);
+    expect(sketcher.getSession().assemblyGroups).toHaveLength(0);
   });
 });
 
@@ -516,7 +516,7 @@ describe('UnglueAllCommand', () => {
     expect(sketcher.getSession().assemblyGroups).toHaveLength(0);
   });
 
-  it('doc.undo() re-registers the saved joints', () => {
+  it('doc.undo() re-registers the saved joints (SA15: no groups from glue)', () => {
     const { sketcher } = makeSketcher();
     const { doc } = makeDoc(sketcher);
     const pA = sketcher.insertPrimitive('box')!;
@@ -527,7 +527,7 @@ describe('UnglueAllCommand', () => {
     doc.execute(new UnglueAllCommand(pA.id, sketcher));
     doc.undo();
     expect(sketcher.getSession().joints).toHaveLength(1);
-    expect(sketcher.getSession().assemblyGroups).toHaveLength(1);
+    expect(sketcher.getSession().assemblyGroups).toHaveLength(0);
   });
 
   it('doc.redo() removes the joints again', () => {
@@ -637,7 +637,7 @@ describe('undo/redo glue integration', () => {
    * dissolved during undo. Snapshot-based redo restores the after-snapshot
    * directly, which contains the correct world positions.
    */
-  it('redo of group-move after undo/undo/redo/redo cycle positions parts correctly', () => {
+  it('redo of part-move after undo/undo/redo/redo cycle positions part correctly', () => {
     const { sketcher } = makeSketcher();
     const { doc } = makeDoc(sketcher);
 
@@ -646,21 +646,20 @@ describe('undo/redo glue integration', () => {
     pB.mesh.position.set(3, 0, 0);
     pB.mesh.updateWorldMatrix(false, true);
 
-    // Glue B onto A
+    // Glue B onto A (SA15: no group created; pA and pB remain at scene root).
     doc.execute(new CommitGlueCommand(
       sketcher,
       pA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
       pB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
     ));
 
-    // Simulate TC moving the group: capture pre-drag snapshot, move, then execute.
+    // Simulate TC moving pA directly (no group under SA15).
     const priorSnap = doc.captureSnapshot();
-    const ag = sketcher.getSession().assemblyGroups[0];
-    ag.group.position.set(10, 0, 0);
-    ag.group.updateWorldMatrix(false, true);
+    pA.mesh.position.set(10, 0, 0);
+    pA.mesh.updateWorldMatrix(false, true);
     doc.execute(new TransformPartCommand(sketcher, pA.id), priorSnap);
 
-    // Verify parts moved with the group.
+    // Verify pA moved.
     pA.mesh.updateWorldMatrix(true, false);
     const ax = new THREE.Vector3();
     pA.mesh.matrixWorld.decompose(ax, new THREE.Quaternion(), new THREE.Vector3());
@@ -674,7 +673,7 @@ describe('undo/redo glue integration', () => {
     doc.redo(); // redo glue
     doc.redo(); // redo move
 
-    // After redo, pA's world x should match what it was right after the group move.
+    // After redo, pA's world x should match what it was right after the move.
     pA.mesh.updateWorldMatrix(true, false);
     const axAfterRedo = new THREE.Vector3();
     pA.mesh.matrixWorld.decompose(axAfterRedo, new THREE.Quaternion(), new THREE.Vector3());

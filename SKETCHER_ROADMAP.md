@@ -25,12 +25,11 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 
 The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → glue parts into assemblies → transform → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 456 tests passing.
 
-**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a, SA14b.
+**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a, SA14b, SA15.
 
 **Priority order:**
-1. SA15 — Glue as live constraint *(neck-resizes-moves-head; architectural upgrade to GlueManager)*
-2. SA12 — Positioning precision *(absorbs SA10; benefits from stable group model)*
-3. SA9 — Named assemblies *(schema is stable only after SA14/SA15 settle what "assembly" means)*
+1. SA12 — Positioning precision *(absorbs SA10; benefits from stable group model)*
+2. SA9 — Named assemblies *(schema is stable now that SA14/SA15 have settled what "assembly" means)*
 
 ---
 
@@ -76,27 +75,20 @@ After welding, users occasionally need to tweak one member's position without di
 
 ---
 
-## Phase SA15 — Glue as live constraint
+## Phase SA15 — Glue as live constraint ✅ COMPLETE
 
-Currently glue merges both parts into one `THREE.Group`. SA15 upgrades glue to a *live positional constraint* between two independent root-level entities (weld groups or standalone parts). This enables the neck-resizes-moves-head workflow:
+Glue was upgraded from a merge-based mechanism (wrapping parts in a `THREE.Group`) to a *live positional constraint* between two independent entities (weld groups or standalone parts). Parts now stay at scene root or in their weld group; a `GlueJoint` record is a pure constraint re-satisfied by `resolveConstraints()` after every TC commit.
 
-```
-head-weld-group  ←→ [GlueConstraint, embedded offset]  ←→  neck-cylinder
-```
+**Changes delivered:**
+- `GlueManager.commitGlue` / `registerJoint` no longer call `_mergeIntoGroup` — no group is created from a glue operation
+- New `resolveConstraints(movedPartIds, allParts)` single-pass method — iterates all joints touching any moved part and calls `_applyJointPosition` to re-satisfy each constraint
+- `replayJoints` delegates to `resolveConstraints`; `unglue` / `unglueAll` simplified to pure joint removal
+- `_mergeIntoGroup` and `_connectedComponents` removed (dead code)
+- `TransformPartCommand.execute()` uses all parts of the moved entity (weld group members or singleton) when calling `resolveConstraints`
+- `+page.svelte`: new `selectedPartHasGlue` state; Unweld and Unglue toolbar buttons are now independent conditions; status message simplified; `unglueSelected` TC re-attachment handles weld-group case
+- BUG-1 (scale bleed on glue-into-scaled-group) resolved as side-effect — no more matrix inversion across non-uniform scales
 
-After a TC commit on the neck, `ConstraintSolver` walks the constraint tree and repositions every connected entity to satisfy the joint.
-
-**Architecture**
-- `GlueConstraint` record: `{ id, anchorEntityId, anchorFaceUV, moverEntityId, moverFaceUV, alpha }`
-- `GlueManager` stores `GlueConstraint` records separately from `WeldGroup` records — the two are now distinct concepts
-- After every TC commit, `ConstraintSolver.resolve(constraints, entities)` does a single-pass tree traversal (the constraint graph is acyclic by construction — gluing A→B and B→A is rejected)
-- Glue UX is unchanged: pick face on anchor, pick face on mover, optionally set offset depth
-
-**Migration from current merge-based glue**
-- `AssemblyGroup` splits into `WeldGroup` (rigid, children merged) and `GlueConstraint` (live, entities remain separate)
-- `_mergeIntoGroup` is replaced by constraint registration; `attach()` is no longer called during a glue operation
-- Snapshot/restore continues to work — snapshots capture all entity transforms + all constraint records
-- BUG-1 (scale bleed on glue-into-scaled-group) is resolved as a side-effect
+**Tests:** 460 passing (32 in GlueManager, 44 in SketcherDocument — all updated for SA15 semantics)
 
 ---
 
@@ -140,7 +132,7 @@ Extend the polygon sketcher with rectangle and circle input modes alongside the 
 
 The Word-style open/save document model for the sketcher. SH2 already keeps a single autosaved draft alive across refreshes; SA9 adds named saves, a list of assemblies, and the ability to open any of them for continued editing.
 
-**Why after SA15 and SA12:** SA9's `AssemblySpec` schema must represent both `WeldGroup` membership and `GlueConstraint` records — the split introduced by SA15. SA12's numeric-field commands also finalise the `SketcherSession` shape. Building the schema before both are settled means a migration pass.
+**Why after SA14/SA15:** SA9's `AssemblySpec` schema must represent both `WeldGroup` membership and `GlueConstraint` records — the split introduced by SA15. SA12's numeric-field commands also finalise the `SketcherSession` shape. Building the schema before both are settled means a migration pass.
 
 **`AssemblySpec` JSON** — stored in OPFS:
 ```ts
