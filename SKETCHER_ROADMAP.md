@@ -25,33 +25,11 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 
 The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → glue parts into assemblies → transform → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 438 tests passing.
 
-**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8.
+**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11.
 
 **Priority order:**
-1. SH1b — Poly sketcher UX + polish
-2. SA11 — Snap to floor
-3. SA12 — Positioning precision *(absorbs SA10; biggest feature; needs stable foundation)*
-4. SA9 — Named assemblies *(full Word-style open/save/autosave model)*
-
----
-
-## Phase SH1b — Poly sketcher UX + polish
-
-Non-blocking UX improvements that don't gate anything; do whenever convenient after SA7/SA8.
-
-- **Fix view rotation when sketching.** OrbitControls and the polygon-pick raycaster fight for mouse events. Disable OrbitControls while a sketch is in progress; re-enable on shape close or Escape.
-- **Closure click indication.** When the cursor is close enough to the first vertex to close the polygon, highlight that vertex distinctly (filled circle, colour change) so the user knows the next click closes rather than extends.
-- **Better extrude / de-extrude grab handle.** Replace the current small sphere with an arrow-style handle that affords clear up/down drag; show depth value live in a HUD overlay.
-
----
-
-## Phase SA11 — Snap to floor
-
-After assembling a glue group the assembly often floats above `y = 0`. One-click "⬇ Floor" button on the toolbar.
-
-**Start with bounding-box snap:** compute world-space AABB of the selection (part or whole group); translate so `aabb.min.y = 0`. Trivial — a `Box3` + `SnapToFloorCommand`.
-
-**Nominated-face snap** *(deferred)*: mark one face of one part as the floor contact face; group translates so that face's world-space centroid lies on `y = 0`. Needed for angled feet, irregular bases.
+1. SA12 — Positioning precision *(absorbs SA10; biggest feature; needs stable foundation)*
+2. SA9 — Named assemblies *(full Word-style open/save/autosave model)*
 
 ---
 
@@ -184,6 +162,7 @@ interface OPFSCatalogueStore {
 | SD5 | Boolean cuts via `three-bvh-csg` |
 | SD6 | "Add asset…" UI in the Catalogue tab |
 | SA4b | Linear array: N copies along an axis with step distance |
+| SA11b | Nominated-face floor snap: mark one face as the floor contact face; group translates so that face's world-space centroid lies on `y = 0`. Useful for angled feet and irregular bases. |
 
 ---
 

@@ -587,3 +587,57 @@ describe('ExtrusionHandle via CartoonSketcher', () => {
     handle.dispose();
   });
 });
+
+// ---------------------------------------------------------------------------
+// snapToFloor
+// ---------------------------------------------------------------------------
+describe('snapToFloor', () => {
+  let scene: THREE.Scene;
+  let sketcher: CartoonSketcher;
+
+  beforeEach(() => {
+    scene = makeScene();
+    sketcher = new CartoonSketcher(scene, makePerspectiveCamera());
+  });
+
+  it('moves a standalone part so its lowest vertex sits at y = 0', () => {
+    const part = sketcher.insertPrimitive('box')!;
+    // Lift the box off the floor.
+    part.mesh.position.y = 5;
+    part.mesh.updateMatrixWorld(true);
+
+    sketcher.snapToFloor(part.id);
+
+    // A default BoxGeometry(1,1,1) has its extent from -0.5 to +0.5 in each axis.
+    // After snap, min.y of the world AABB should be 0.
+    const box = new THREE.Box3().setFromObject(part.mesh);
+    expect(box.min.y).toBeCloseTo(0, 5);
+  });
+
+  it('moves the entire assembly group when the part is glued', () => {
+    const partA = sketcher.insertPrimitive('box')!;
+    const partB = sketcher.insertPrimitive('box')!;
+    // Glue them together.
+    sketcher.glueManager.commitGlue(
+      partA,
+      new THREE.Vector3(0, 0.5, 0),
+      new THREE.Vector3(0, 1, 0),
+      partB,
+      new THREE.Vector3(0, -0.5, 0),
+      new THREE.Vector3(0, -1, 0),
+    );
+    // Lift the whole group.
+    const ag = sketcher.glueManager.groupForPart(partA.id)!;
+    ag.group.position.y = 10;
+    ag.group.updateMatrixWorld(true);
+
+    sketcher.snapToFloor(partA.id);
+
+    const box = new THREE.Box3().setFromObject(ag.group);
+    expect(box.min.y).toBeCloseTo(0, 4);
+  });
+
+  it('is a no-op for an unknown id', () => {
+    expect(() => sketcher.snapToFloor('nonexistent')).not.toThrow();
+  });
+});

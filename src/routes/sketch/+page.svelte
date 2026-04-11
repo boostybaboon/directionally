@@ -18,6 +18,7 @@
     TransformPartCommand,
     CommitGlueCommand,
     UnglueAllCommand,
+    SnapToFloorCommand,
   } from '../../core/sketcher/sketcherCommands.js';
   import { exportGLB } from '../../core/sketcher/exportGLB.js';
   import * as OPFSCatalogueStore from '../../core/storage/OPFSCatalogueStore.js';
@@ -75,6 +76,8 @@
 
   // Extrusion handle drag suppresses orbit.
   let handleDragActive = false;
+  let extrusionDepth = $state(1);
+  let isExtruding = $state(false);
   let extrusionBeforeSnapshot: ReturnType<typeof sketcherDoc.captureSnapshot> | null = null;
 
   // Snapshot captured at TC drag-start; passed to execute() at drag-end.
@@ -149,6 +152,8 @@
     };
 
     sketcher = new CartoonSketcher(scene, camera);
+    sketcher.onExtrusionStarted = () => { isExtruding = true; extrusionDepth = 1; };
+    sketcher.onExtrusionDepthChanged = (d) => { extrusionDepth = d; };
     sketcherDoc = new SketcherDocument(sketcher, () => {
       canUndo = sketcherDoc.canUndo;
       canRedo = sketcherDoc.canRedo;
@@ -417,6 +422,7 @@
     if (handleDragActive) {
       sketcher.onPointerUp();
       handleDragActive = false;
+      isExtruding = false;
       orbit.enabled = true;
       // If this pointer-up committed an extrusion, record it as an undoable entry.
       if (extrusionBeforeSnapshot) {
@@ -693,6 +699,11 @@
     statusMessage = 'Session cleared.';
   }
 
+  function snapToFloor() {
+    if (!selectedPartId) return;
+    sketcherDoc.execute(new SnapToFloorCommand(selectedPartId, sketcher));
+  }
+
   async function exportToCatalogue() {
     const session = sketcher?.getSession();
     if (!session || session.parts.length === 0) {
@@ -737,6 +748,7 @@
     <button class="glue-btn" class:active={gluePhase !== null} onclick={startGluePick} title="G">Glue…</button>
     {#if selectedPartId}
       <button class="glue-btn" onclick={unglueSelected} title="U">Unglue</button>
+      <button class="glue-btn" onclick={snapToFloor} title="F">⬇ Floor</button>
     {/if}
   </div>
 
@@ -787,6 +799,9 @@
   ></canvas>
   {#if statusMessage}
     <div class="sketch-hint">{statusMessage}</div>
+  {/if}
+  {#if isExtruding}
+    <div class="depth-hud">Depth: {extrusionDepth.toFixed(2)}</div>
   {/if}
   <div class="diag-hud">{hoverInfo}</div>
 </div>
@@ -882,6 +897,20 @@
     color: #9090c8;
     background: rgba(15, 15, 26, 0.75);
     padding: 4px 8px;
+    border-radius: 4px;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  .depth-hud {
+    position: absolute;
+    top: 56px;
+    right: 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #ffdd00;
+    background: rgba(15, 15, 26, 0.8);
+    padding: 4px 10px;
     border-radius: 4px;
     pointer-events: none;
     z-index: 5;

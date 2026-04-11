@@ -107,6 +107,11 @@ export class CartoonSketcher {
   private nextId = 1;
   private readonly glue: GlueManager;
 
+  /** Called whenever the extrusion depth changes during a drag (phase === 'extruding'). */
+  onExtrusionDepthChanged?: (depth: number) => void;
+  /** Called when a polygon is closed and the extrusion phase begins. */
+  onExtrusionStarted?: () => void;
+
   constructor(
     private readonly scene: THREE.Scene,
     private readonly camera: THREE.Camera,
@@ -126,6 +131,7 @@ export class CartoonSketcher {
     };
     this.scene.add(this.polygonSketcher.line);
     this.scene.add(this.polygonSketcher.rubberBand);
+    this.scene.add(this.polygonSketcher.closureMarker);
   }
 
   /**
@@ -281,6 +287,23 @@ export class CartoonSketcher {
     // part remains in allParts for potential undo restoration.
   }
 
+  /**
+   * Translate a part (or its entire glue group) downward so its lowest vertex
+   * sits exactly on y = 0.
+   *
+   * For a grouped part the bounding box is computed from the THREE.Group so
+   * every part in the assembly contributes, regardless of individual transforms.
+   * For a standalone part the box is computed from the part's mesh directly.
+   */
+  snapToFloor(id: string): void {
+    const part = this.parts.find((p) => p.id === id);
+    if (!part) return;
+    const ag = this.glue.groupForPart(id);
+    const root: THREE.Object3D = ag ? ag.group : part.mesh;
+    const box = new THREE.Box3().setFromObject(root);
+    root.position.y -= box.min.y;
+  }
+
   /** Return a snapshot of the current session. */
   getSession(): SketcherSession {
     return {
@@ -324,7 +347,7 @@ export class CartoonSketcher {
     if (this.phase !== 'extruding' || !this.extrusionHandle) return false;
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
-    const hits = raycaster.intersectObject(this.extrusionHandle.handle);
+    const hits = raycaster.intersectObject(this.extrusionHandle.handle, true);
     if (hits.length === 0) return false;
     this.extrusionHandle.startDrag(hits[0].point.y);
     return true;
@@ -564,10 +587,11 @@ export class CartoonSketcher {
 
   // ── Private ─────────────────────────────────────────────────────────────────
 
-  private _beginExtrusion(shape: THREE.Shape, centroid: THREE.Vector3): void {
+   private _beginExtrusion(shape: THREE.Shape, centroid: THREE.Vector3): void {
     if (this.polygonSketcher) {
       this.scene.remove(this.polygonSketcher.line);
       this.scene.remove(this.polygonSketcher.rubberBand);
+      this.scene.remove(this.polygonSketcher.closureMarker);
       this.polygonSketcher.dispose();
       this.polygonSketcher = null;
     }
@@ -578,15 +602,18 @@ export class CartoonSketcher {
     handle.onExtrusionComplete = (mesh, depth) => {
       this._commitPart(mesh, depth, centroid, shapePoints);
     };
+    handle.onDepthChanged = (depth) => { this.onExtrusionDepthChanged?.(depth); };
     this.extrusionHandle = handle;
     this.scene.add(handle.handle);
     this.scene.add(handle.mesh);
+    this.onExtrusionStarted?.();
   }
 
   private _commitPart(mesh: THREE.Mesh, depth: number, centroid: THREE.Vector3, shapePoints: [number, number][]): void {
     if (this.extrusionHandle) {
       this.scene.remove(this.extrusionHandle.handle);
       this.extrusionHandle.handle.geometry.dispose();
+      this.extrusionHandle.handle.children.forEach((c) => ((c as THREE.Mesh).geometry as THREE.BufferGeometry)?.dispose());
       (this.extrusionHandle.handle.material as THREE.Material).dispose();
       this.extrusionHandle = null;
     }
@@ -602,6 +629,7 @@ export class CartoonSketcher {
     if (this.polygonSketcher) {
       this.scene.remove(this.polygonSketcher.line);
       this.scene.remove(this.polygonSketcher.rubberBand);
+      this.scene.remove(this.polygonSketcher.closureMarker);
       this.polygonSketcher.dispose();
       this.polygonSketcher = null;
     }

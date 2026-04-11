@@ -178,6 +178,21 @@ export class UnglueAllCommand implements SketcherCommand {
 }
 
 
+// ── SnapToFloorCommand ────────────────────────────────────────────────────────
+
+export class SnapToFloorCommand implements SketcherCommand {
+  readonly label = 'Snap to floor';
+
+  constructor(
+    private readonly partId: string,
+    private readonly sketcher: CartoonSketcher,
+  ) {}
+
+  execute(): void {
+    this.sketcher.snapToFloor(this.partId);
+  }
+}
+
 // ── Transform snapshot helpers ────────────────────────────────────────────────
 
 // (end of file)

@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 
 const GRID_SNAP = 0.1;
+const CLOSURE_THRESHOLD = GRID_SNAP * 2;
+const MARKER_COLOR_NORMAL = 0x00ffff;
+const MARKER_COLOR_HOT    = 0xffdd00;
 
 function snap(v: number): number {
   return Math.round(v / GRID_SNAP) * GRID_SNAP;
@@ -24,6 +27,16 @@ export class PolygonSketcher {
   readonly line: THREE.Line;
   /** Rubber-band line from last committed point to cursor */
   readonly rubberBand: THREE.Line;
+  /**
+   * Small sphere placed on the first committed vertex.
+   * Turns yellow when the cursor is close enough to close the shape,
+   * signalling the next click will close rather than extend.
+   * Visible only after the first point is placed.
+   */
+  readonly closureMarker: THREE.Mesh;
+
+  /** True when the cursor is within closure distance of the first vertex (≥3 points). */
+  closureHot = false;
 
   onShapeClosed?: (shape: THREE.Shape, centroid: THREE.Vector3) => void;
 
@@ -33,14 +46,21 @@ export class PolygonSketcher {
     this.rubberBand = new THREE.Line(new THREE.BufferGeometry(), mat.clone());
     this.line.renderOrder       = 999;
     this.rubberBand.renderOrder = 999;
+
+    const markerGeo = new THREE.SphereGeometry(0.07, 10, 7);
+    const markerMat = new THREE.MeshBasicMaterial({ color: MARKER_COLOR_NORMAL, depthTest: false });
+    this.closureMarker = new THREE.Mesh(markerGeo, markerMat);
+    this.closureMarker.renderOrder = 999;
+    this.closureMarker.visible = false;
   }
 
-  /** Feed a mouse-move event (NDC coords + camera). Updates rubber-band preview. */
+  /** Feed a mouse-move event (NDC coords + camera). Updates rubber-band preview and closure indicator. */
   onMouseMove(ndcX: number, ndcY: number, camera: THREE.Camera): void {
     const hit = this._raycast(ndcX, ndcY, camera);
     if (!hit) return;
     this.previewPoint = hit;
     this._updateRubberBand();
+    this._updateClosureHot(hit);
   }
 
   /**
@@ -51,10 +71,10 @@ export class PolygonSketcher {
     const hit = this._raycast(ndcX, ndcY, camera);
     if (!hit) return;
 
-    // Close when click is within snap distance of the first point (≥3 points placed).
+    // Close when click is within closure threshold of the first point (≥3 points placed).
     if (this.points.length >= 3) {
       const first = this.points[0];
-      if (hit.distanceTo(first) <= GRID_SNAP * 2) {
+      if (hit.distanceTo(first) <= CLOSURE_THRESHOLD) {
         this._closeShape();
         return;
       }
@@ -73,6 +93,8 @@ export class PolygonSketcher {
   reset(): void {
     this.points = [];
     this.previewPoint = null;
+    this.closureHot = false;
+    this.closureMarker.visible = false;
     this.line.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
     this.rubberBand.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
   }
@@ -80,8 +102,10 @@ export class PolygonSketcher {
   dispose(): void {
     this.line.geometry.dispose();
     this.rubberBand.geometry.dispose();
+    this.closureMarker.geometry.dispose();
     (this.line.material as THREE.Material).dispose();
     (this.rubberBand.material as THREE.Material).dispose();
+    (this.closureMarker.material as THREE.Material).dispose();
   }
 
   private _raycast(ndcX: number, ndcY: number, camera: THREE.Camera): THREE.Vector3 | null {
@@ -97,6 +121,21 @@ export class PolygonSketcher {
     this.line.geometry.setAttribute(
       'position',
       new THREE.BufferAttribute(new Float32Array(positions), 3),
+    );
+    // Keep closure marker on the first vertex.
+    if (this.points.length > 0) {
+      const first = this.points[0];
+      this.closureMarker.position.set(first.x, first.y + 0.02, first.z);
+      this.closureMarker.visible = true;
+    }
+  }
+
+  private _updateClosureHot(cursor: THREE.Vector3): void {
+    const hot = this.points.length >= 3 && cursor.distanceTo(this.points[0]) <= CLOSURE_THRESHOLD;
+    if (hot === this.closureHot) return;
+    this.closureHot = hot;
+    (this.closureMarker.material as THREE.MeshBasicMaterial).color.setHex(
+      hot ? MARKER_COLOR_HOT : MARKER_COLOR_NORMAL,
     );
   }
 

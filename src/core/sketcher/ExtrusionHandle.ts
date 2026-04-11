@@ -60,8 +60,8 @@ export function buildExtrusionGeometry(shape: THREE.Shape, depth: number): THREE
 }
 
 /**
- * Renders a draggable yellow sphere at the centroid of a just-closed shape.
- * Dragging the sphere up/down controls the extrusion depth and rebuilds
+ * Renders a draggable arrow handle at the centroid of a just-closed shape.
+ * Dragging the arrow up/down controls the extrusion depth and rebuilds
  * ExtrudeGeometry live (throttled to 30 fps). Fires onExtrusionComplete
  * when the user releases the handle.
  *
@@ -69,12 +69,14 @@ export function buildExtrusionGeometry(shape: THREE.Shape, depth: number): THREE
  * The shape origin is the centroid so the mesh is centred under the handle.
  */
 export class ExtrusionHandle {
-  /** The draggable handle sphere. Add this to the scene. */
+  /** The draggable arrow handle. Add this to the scene. */
   readonly handle: THREE.Mesh;
   /** The current extruded mesh. Add this to the scene; replaced on each rebuild. */
   mesh: THREE.Mesh;
 
   onExtrusionComplete?: (mesh: THREE.Mesh, depth: number) => void;
+  /** Called whenever the extrusion depth changes during a drag. */
+  onDepthChanged?: (depth: number) => void;
 
   private shape: THREE.Shape;
   private centroid: THREE.Vector3;
@@ -88,12 +90,22 @@ export class ExtrusionHandle {
     this.shape    = shape;
     this.centroid = centroid.clone();
 
-    // Yellow sphere handle
-    const handleGeo = new THREE.SphereGeometry(0.12, 12, 8);
+    // Arrow handle: thin cylinder shaft with double-headed cones indicating drag direction.
     const handleMat = new THREE.MeshStandardMaterial({ color: 0xffdd00, metalness: 0, roughness: 0.4 });
-    this.handle = new THREE.Mesh(handleGeo, handleMat);
+    const shaftGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.55, 10);
+    this.handle = new THREE.Mesh(shaftGeo, handleMat);
     this.handle.position.set(centroid.x, DEFAULT_DEPTH, centroid.z);
     this.handle.renderOrder = 1;
+
+    const coneGeo = new THREE.ConeGeometry(0.10, 0.22, 10);
+    const coneTop = new THREE.Mesh(coneGeo, handleMat);
+    coneTop.position.y = 0.38;   // tip points up (+Y)
+    this.handle.add(coneTop);
+
+    const coneBot = new THREE.Mesh(coneGeo, handleMat);
+    coneBot.position.y = -0.38;  // flip 180° so tip points down (-Y)
+    coneBot.rotation.z = Math.PI;
+    this.handle.add(coneBot);
 
     // Initial mesh
     this.mesh = this._buildMesh(DEFAULT_DEPTH);
@@ -123,6 +135,7 @@ export class ExtrusionHandle {
     const delta = worldY - this.dragStartY;
     this.depth = Math.max(0.05, this.depthAtDragStart + delta);
     this.handle.position.y = this.depth;
+    this.onDepthChanged?.(this.depth);
     const newMesh = this._buildMesh(this.depth);
     this.mesh.geometry.dispose();
     disposeMaterials(this.mesh.material);
@@ -141,8 +154,14 @@ export class ExtrusionHandle {
     return this.dragging;
   }
 
+  /** Current extrusion depth. Useful for displaying a live HUD overlay. */
+  get currentDepth(): number {
+    return this.depth;
+  }
+
   dispose(): void {
     this.handle.geometry.dispose();
+    this.handle.children.forEach((c) => (c as THREE.Mesh).geometry?.dispose());
     (this.handle.material as THREE.Material).dispose();
     this.mesh.geometry.dispose();
     disposeMaterials(this.mesh.material);

@@ -4,6 +4,16 @@ All phases below are ✅ complete. Active work lives in [SKETCHER_ROADMAP.md](SK
 
 ---
 
+## Phase SA11 — Snap to floor ✅ COMPLETE
+
+One-click "⬇ Floor" button in the primitives bar snaps the selected part (or its entire glue group) to `y = 0`.
+
+- `CartoonSketcher.snapToFloor(id)`: resolves the root object (`assemblyGroup.group` if glued, else `part.mesh`), computes world AABB with `Box3.setFromObject(root)`, then applies `root.position.y -= box.min.y`.
+- `SnapToFloorCommand`: snapshot-based undo/redo via `SketcherDocument.execute()`.
+- Button rendered only when a part is selected; placed alongside the Unglue button.
+
+---
+
 ## Phase S0 — Rename Design → Edit ✅ COMPLETE
 
 Renamed the existing production-canvas toggle from "Design" to "Edit" throughout the UI and codebase to free up "Design" as the label for the sketcher surface.
@@ -199,6 +209,16 @@ We clear these and rebuild: wall edge i → `materialIndex` i (group of 6 indice
 **Cone note:** `ConeGeometry` skips the top-cap group but still assigns `materialIndex=2` to the bottom cap, so the material array must cover indices 0–2 even though index 1 is unused.
 
 **Tests:** 426 total passing. Updated `setPartColor` test to assert all material array entries change; updated `faceGroups` label test to expect `caps` instead of `top`/`bottom`; added `faceColors` field to manually constructed `SketcherPart` fixtures in `CartoonSketcher.test.ts` and `GlueManager.test.ts`.
+
+---
+
+## Phase SH1b — Poly sketcher UX + polish ✅ COMPLETE
+
+**Orbit:** `CartoonSketcher.startNewSketch()` already called `orbit.enabled = false`; the `onMouseMove` handler re-enables only when Alt is held — no new code needed.
+
+**Closure vertex highlight:** `PolygonSketcher` gained a `closureMarker: THREE.Mesh` (small cyan sphere) placed on the first committed vertex. A `closureHot: boolean` property is set whenever the cursor is within `GRID_SNAP * 2` world units of the first vertex with ≥3 points placed. The marker turns yellow (`#ffdd00`) when `closureHot` to signal that the next click will close rather than extend. `CartoonSketcher` adds/removes the marker from the scene alongside `line` and `rubberBand`.
+
+**Arrow extrude handle + depth HUD:** The sphere handle was replaced with a double-headed arrow: yellow `CylinderGeometry` shaft with two `ConeGeometry` heads (one flipped 180°) as child meshes. `CartoonSketcher.onPointerDown` raycasts with `recursive: true` so clicks on the cone children register correctly. `ExtrusionHandle` gained an `onDepthChanged?: (depth: number) => void` callback (fired on every throttled rebuild) and a `get currentDepth(): number` accessor. `CartoonSketcher` exposes `onExtrusionDepthChanged` and `onExtrusionStarted` public callbacks. In `+page.svelte`, `isExtruding: $state(bool)` and `extrusionDepth: $state(number)` drive a yellow `Depth: X.XX` HUD overlay in the top-right corner of the canvas during the extrusion phase.
 
 ---
 
