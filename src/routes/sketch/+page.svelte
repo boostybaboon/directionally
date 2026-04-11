@@ -39,6 +39,8 @@
   let multiSelectedCount = $state(0);
   // Whether the primary selected part belongs to a weld group (not a glue group).
   let selectedGroupIsWeld = $state(false);
+  // When non-null, we are in group edit mode — editing a single member of this weld group id.
+  let groupEditGroupId = $state<string | null>(null);
   // Face paint mode: when true, clicks colour individual faces instead of selecting parts.
   let facePaintMode = $state(false);
   // The materialIndex of the face last hovered/selected when in face paint mode.
@@ -75,6 +77,8 @@
   let faceHighlight: THREE.Mesh | null = null;
   // Pink blob placed at the chosen src face to confirm the glue point.
   let glueBlobMarker: THREE.Mesh | null = null;
+  // Original material properties for meshes dimmed during group edit mode.
+  let dimmedMeshes: Array<{ mesh: THREE.Mesh; origTransparent: boolean[]; origOpacity: number[] }> = [];
 
   // Orbit drag detection: suppress click when the pointer was dragged.
   let pointerDownAt: [number, number] | null = null;
@@ -143,7 +147,10 @@
         tc.attach(mesh);
         // tc.attach() always sets _root.visible = true internally; re-apply face-paint override.
         tc.getHelper().visible = !facePaintMode;
-        statusMessage = 'W translate · E rotate · R scale · Shift+D duplicate · Delete remove · Esc deselect';
+        // In group edit mode the status is set by enterGroupEditMode; don't clobber it.
+        if (groupEditGroupId === null) {
+          statusMessage = 'W translate · E rotate · R scale · Shift+D duplicate · Delete remove · Esc deselect';
+        }
         const part = sketcher.getSession().parts.find((p) => p.mesh === mesh);
         if (part) {
           selectedPartId = part.id;
@@ -151,6 +158,11 @@
           selectedGroupIsWeld = sketcher.glueManager.isWeldGroup(part.id);
         }
       } else {
+        // Deselection — if in group edit mode, clean up dimming before TC detaches.
+        if (groupEditGroupId !== null) {
+          restoreGroupDimming();
+          groupEditGroupId = null;
+        }
         tc.detach();
         statusMessage = '';
         selectedPartId = null;
@@ -195,14 +207,15 @@
         case 'e': case 'E': setTransformMode('rotate'); break;
         case 'r': case 'R': setTransformMode('scale'); break;
         case 'z': case 'Z':
-          if (e.ctrlKey && e.shiftKey) { sketcherDoc.redo(); e.preventDefault(); }
-          else if (e.ctrlKey) { sketcherDoc.undo(); e.preventDefault(); }
+          if (e.ctrlKey && e.shiftKey) { exitGroupEditMode(); sketcherDoc.redo(); e.preventDefault(); }
+          else if (e.ctrlKey) { exitGroupEditMode(); sketcherDoc.undo(); e.preventDefault(); }
           break;
         case 'y': case 'Y':
-          if (e.ctrlKey) { sketcherDoc.redo(); e.preventDefault(); }
+          if (e.ctrlKey) { exitGroupEditMode(); sketcherDoc.redo(); e.preventDefault(); }
           break;
         case 'Escape':
-          if (gluePhase !== null) { cancelGluePick(); }
+          if (groupEditGroupId !== null) { exitGroupEditMode(); }
+          else if (gluePhase !== null) { cancelGluePick(); }
           else if (sketcher.currentPhase === 'drawing') { sketcher.cancelSketch(); orbit.enabled = true; }
           else { selection.deselect(); }
           break;
@@ -421,6 +434,36 @@
       }
 
       const hit = selection.pick(x, y, camera, meshes);
+
+      // ── Group edit mode routing ───────────────────────────────────────────
+      if (groupEditGroupId !== null) {
+        const hitPart = hit ? session.parts.find((p) => p.mesh === hit) : undefined;
+        const ag = hitPart ? sketcher.glueManager.groupForPart(hitPart.id) : undefined;
+        const editAg = sketcher.glueManager.getAssemblyGroups().find((g) => g.id === groupEditGroupId);
+        if (ag && editAg && ag.id === editAg.id) {
+          // Clicked a member inside the group being edited — switch the active member.
+          enterGroupEditMode(ag, hit!);
+        } else {
+          // Clicked outside the group — exit, then handle the new hit normally.
+          exitGroupEditMode();
+          if (hit) {
+            const newHitPart = session.parts.find((p) => p.mesh === hit);
+            const newAg = newHitPart ? sketcher.glueManager.groupForPart(newHitPart.id) : undefined;
+            if (newAg) {
+              selection.select(hit);
+              tc.attach(newAg.group);
+              statusMessage = 'Group selected. W/E/R transform · G=glue edit · U=unglue · double-click to edit a member';
+            } else {
+              selection.select(hit);
+            }
+          } else {
+            selection.select(null);
+          }
+        }
+        return;
+      }
+
+      // ── Normal click (not in group edit mode) ─────────────────────────────
       if (hit) {
         // In normal mode, selecting any mesh in a group selects the whole group.
         const hitPart = session.parts.find((p) => p.mesh === hit);
@@ -430,7 +473,7 @@
           // then override TC to the group so the group moves as a unit.
           selection.select(hit);
           tc.attach(ag.group);
-          statusMessage = 'Group selected. W/E/R transform · G=glue edit · U=unglue';
+          statusMessage = 'Group selected. W/E/R transform · G=glue edit · U=unglue · double-click to edit a member';
           return;
         }
       }
@@ -739,8 +782,56 @@
     statusMessage = 'Session cleared.';
   }
 
-  function weldSelected() {
-    if (!sketcher || !selectedPartId) return;
+  // ── Group edit mode ──────────────────────────────────────────────────────────
+
+  function applyGroupDimming(ag: import('../../core/sketcher/types.js').AssemblyGroup, activeMesh: THREE.Mesh) {
+    restoreGroupDimming();
+    for (const child of ag.group.children) {
+      if (!(child instanceof THREE.Mesh) || child === activeMesh) continue;
+      const mats = Array.isArray(child.material)
+        ? (child.material as THREE.MeshStandardMaterial[])
+        : [child.material as THREE.MeshStandardMaterial];
+      const origTransparent = mats.map((m) => m.transparent);
+      const origOpacity = mats.map((m) => m.opacity);
+      for (const m of mats) { m.transparent = true; m.opacity = 0.22; m.needsUpdate = true; }
+      dimmedMeshes.push({ mesh: child as THREE.Mesh, origTransparent, origOpacity });
+    }
+  }
+
+  function restoreGroupDimming() {
+    for (const { mesh, origTransparent, origOpacity } of dimmedMeshes) {
+      const mats = Array.isArray(mesh.material)
+        ? (mesh.material as THREE.MeshStandardMaterial[])
+        : [mesh.material as THREE.MeshStandardMaterial];
+      mats.forEach((m, i) => { m.transparent = origTransparent[i]; m.opacity = origOpacity[i]; m.needsUpdate = true; });
+    }
+    dimmedMeshes = [];
+  }
+
+  function enterGroupEditMode(ag: import('../../core/sketcher/types.js').AssemblyGroup, activeMesh: THREE.Mesh) {
+    groupEditGroupId = ag.id;
+    applyGroupDimming(ag, activeMesh);
+    // selection.select fires onSelectionChanged → tc.attach(activeMesh); TC stays on the individual mesh.
+    selection.select(activeMesh);
+    statusMessage = 'Group edit: W/E/R transform selected member · click another member to switch · Esc to exit';
+  }
+
+  function exitGroupEditMode() {
+    if (groupEditGroupId === null) return;
+    restoreGroupDimming();
+    const prevGroupId = groupEditGroupId;
+    groupEditGroupId = null;
+    const ag = sketcher.glueManager.getAssemblyGroups().find((g) => g.id === prevGroupId);
+    if (ag && selection.selectedMesh) {
+      // Re-attach TC to the group; selection outline stays on the last-active member.
+      tc.attach(ag.group);
+      statusMessage = 'Group selected. W/E/R transform · double-click to edit a member · U=unweld';
+    } else {
+      selection.deselect();
+    }
+  }
+
+  function weldSelected() {    if (!sketcher || !selectedPartId) return;
     const meshes = selection.selectedMeshes;
     if (meshes.length < 2) return;
     const session = sketcher.getSession();
@@ -772,6 +863,22 @@
     selectedGroupIsWeld = false;
     statusMessage = 'Unwelded. Parts returned to scene root.';
   }
+  function onDoubleClick(e: MouseEvent) {
+    if (!sketcher) return;
+    if (sketcher.currentPhase !== 'idle') return;
+    if (gluePhase !== null) return;
+    const [x, y] = toNDC(e);
+    const session = sketcher.getSession();
+    const meshes = session.parts.map((p) => p.mesh);
+    const hit = selection.pick(x, y, camera, meshes);
+    if (!hit) return;
+    const hitPart = session.parts.find((p) => p.mesh === hit);
+    if (!hitPart) return;
+    if (!sketcher.glueManager.isWeldGroup(hitPart.id)) return;
+    const ag = sketcher.glueManager.groupForPart(hitPart.id);
+    if (!ag) return;
+    enterGroupEditMode(ag, hit);
+  }
 
   function snapToFloor() {
     if (!selectedPartId) return;
@@ -801,8 +908,8 @@
     <div class="actions">
       <button onclick={newSketch}>New sketch</button>
       <button onclick={clearSession}>Clear</button>
-      <button disabled={!canUndo} onclick={() => sketcherDoc.undo()} title="Ctrl+Z">↩ Undo</button>
-      <button disabled={!canRedo} onclick={() => sketcherDoc.redo()} title="Ctrl+Shift+Z">↪ Redo</button>
+      <button disabled={!canUndo} onclick={() => { exitGroupEditMode(); sketcherDoc.undo(); }} title="Ctrl+Z">↩ Undo</button>
+      <button disabled={!canRedo} onclick={() => { exitGroupEditMode(); sketcherDoc.redo(); }} title="Ctrl+Shift+Z">↪ Redo</button>
       <span class="separator"></span>
       <button class:active={transformMode === 'translate'} onclick={() => setTransformMode('translate')} title="W">Move</button>
       <button class:active={transformMode === 'rotate'} onclick={() => setTransformMode('rotate')} title="E">Rotate</button>
@@ -820,6 +927,9 @@
     <button onclick={() => insertPrimitive('cone')}>Cone</button>
     <span class="separator"></span>
     <button class="glue-btn" class:active={gluePhase !== null} onclick={startGluePick} title="G">Glue…</button>
+    {#if groupEditGroupId !== null}
+      <button class="glue-btn" onclick={exitGroupEditMode} title="Esc">Exit group edit</button>
+    {/if}
     {#if multiSelectedCount > 1}
       <button class="glue-btn" onclick={weldSelected} title="Weld selected parts into one rigid group">Weld</button>
     {/if}
@@ -872,6 +982,7 @@
     class:drag-target={dragTargetMaterialIndex !== null}
     onmousemove={onMouseMove}
     onclick={onMouseClick}
+    ondblclick={onDoubleClick}
     onpointerdown={onPointerDown}
     onpointerup={onPointerUp}
     ondragover={onDragOver}

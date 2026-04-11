@@ -23,15 +23,14 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 
 ## Current state — April 2026
 
-The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → glue parts into assemblies → transform → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 452 tests passing.
+The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → glue parts into assemblies → transform → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 456 tests passing.
 
-**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a.
+**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a, SA14b.
 
 **Priority order:**
-1. SA14b — Enter-group edit mode *(double-click to reposition a single member without unwelding)*
-2. SA15 — Glue as live constraint *(neck-resizes-moves-head; architectural upgrade to GlueManager)*
-3. SA12 — Positioning precision *(absorbs SA10; benefits from stable group model)*
-4. SA9 — Named assemblies *(schema is stable only after SA14/SA15 settle what "assembly" means)*
+1. SA15 — Glue as live constraint *(neck-resizes-moves-head; architectural upgrade to GlueManager)*
+2. SA12 — Positioning precision *(absorbs SA10; benefits from stable group model)*
+3. SA9 — Named assemblies *(schema is stable only after SA14/SA15 settle what "assembly" means)*
 
 ---
 
@@ -61,7 +60,7 @@ Users frequently position several parts visually then want to treat them as one 
 
 ---
 
-## Phase SA14b — Enter-group edit mode
+## Phase SA14b — Enter-group edit mode ✅ COMPLETE
 
 After welding, users occasionally need to tweak one member's position without dissolving the whole group (e.g. nudge a capsule eye slightly forward). Double-clicking a weld group enters edit mode for that group.
 

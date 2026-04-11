@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle, buildExtrusionGeometry } from './ExtrusionHandle.js';
 import { GlueManager } from './GlueManager.js';
-import type { FaceGroupInfo, PartSnapshot, JointSnapshot, PartDraft, SessionSnapshot, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup } from './types.js';
+import type { FaceGroupInfo, PartSnapshot, JointSnapshot, WeldGroupSnapshot, PartDraft, SessionSnapshot, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup } from './types.js';
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
@@ -421,6 +421,7 @@ export class CartoonSketcher {
    * Capture a plain-data snapshot of the current session.
    * Uses world-space transforms so positions are correct regardless of group
    * parentage. Joints are recorded in local space (unchanged by group transforms).
+   * Weld groups are captured by part-id lists so they can be re-created on restore.
    */
   takeSnapshot(): SessionSnapshot {
     const wp = new THREE.Vector3();
@@ -447,7 +448,11 @@ export class CartoonSketcher {
       localPointB: [j.localPointB.x, j.localPointB.y, j.localPointB.z],
       localNormalB: [j.localNormalB.x, j.localNormalB.y, j.localNormalB.z],
     }));
-    return { parts, joints };
+    // Capture weld group membership so undo/redo restores the grouped state.
+    const weldGroups: WeldGroupSnapshot[] = this.glue.getAssemblyGroups()
+      .filter((ag) => ag.partIds.length > 0 && this.glue.isWeldGroup(ag.partIds[0]))
+      .map((ag) => ({ partIds: [...ag.partIds] }));
+    return { parts, joints, weldGroups };
   }
 
   /**
@@ -503,6 +508,17 @@ export class CartoonSketcher {
           new THREE.Vector3(js.localPointB[0], js.localPointB[1], js.localPointB[2]),
           new THREE.Vector3(js.localNormalB[0], js.localNormalB[1], js.localNormalB[2]),
         );
+      }
+    }
+
+    // Re-create weld groups. Parts are already at their correct world positions
+    // in the scene, so group.attach() will compute correct local transforms.
+    for (const wg of snap.weldGroups ?? []) {
+      const weldParts = wg.partIds
+        .map((id) => this.parts.find((p) => p.id === id))
+        .filter((p): p is SketcherPart => p !== undefined);
+      if (weldParts.length >= 2) {
+        this.glue.createWeldGroup(weldParts);
       }
     }
   }

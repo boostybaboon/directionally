@@ -722,3 +722,73 @@ describe('weld / unweld', () => {
     expect(() => sketcher.unweld(a.id)).not.toThrow();
   });
 });
+
+// takeSnapshot / restoreSnapshot — weld group round-trip
+describe('snapshot weld group round-trip', () => {
+  let scene: THREE.Scene;
+  let sketcher: CartoonSketcher;
+
+  beforeEach(() => {
+    scene = makeScene();
+    sketcher = new CartoonSketcher(scene, makePerspectiveCamera());
+  });
+
+  it('takeSnapshot captures weld group membership', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    sketcher.weld([a.id, b.id]);
+
+    const snap = sketcher.takeSnapshot();
+
+    expect(snap.weldGroups).toHaveLength(1);
+    expect(snap.weldGroups![0].partIds).toContain(a.id);
+    expect(snap.weldGroups![0].partIds).toContain(b.id);
+  });
+
+  it('takeSnapshot returns empty weldGroups when no weld groups exist', () => {
+    sketcher.insertPrimitive('box');
+    sketcher.insertPrimitive('sphere');
+
+    const snap = sketcher.takeSnapshot();
+
+    expect(snap.weldGroups).toHaveLength(0);
+  });
+
+  it('restoreSnapshot re-creates weld groups at correct world positions', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    a.mesh.position.set(2, 0, 0);
+    b.mesh.position.set(5, 0, 0);
+    sketcher.weld([a.id, b.id]);
+    const snap = sketcher.takeSnapshot();
+
+    // Dissolve group externally, then restore.
+    sketcher.unweld(a.id);
+    sketcher.restoreSnapshot(snap);
+
+    expect(sketcher.glueManager.isWeldGroup(a.id)).toBe(true);
+    expect(sketcher.glueManager.isWeldGroup(b.id)).toBe(true);
+    const ag = sketcher.glueManager.groupForPart(a.id)!;
+    expect(ag).toBeDefined();
+    // World positions should be preserved through the round-trip.
+    const wpA = new THREE.Vector3();
+    const wpB = new THREE.Vector3();
+    a.mesh.updateWorldMatrix(true, false);
+    b.mesh.updateWorldMatrix(true, false);
+    a.mesh.getWorldPosition(wpA);
+    b.mesh.getWorldPosition(wpB);
+    expect(wpA.x).toBeCloseTo(2);
+    expect(wpB.x).toBeCloseTo(5);
+  });
+
+  it('restoreSnapshot is backward-compatible when weldGroups is absent', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const snap = sketcher.takeSnapshot();
+    // Simulate an old snapshot without weldGroups.
+    const oldSnap = { parts: snap.parts, joints: snap.joints };
+
+    expect(() => sketcher.restoreSnapshot(oldSnap)).not.toThrow();
+    expect(sketcher.getSession().parts).toHaveLength(1);
+    expect(sketcher.getSession().parts[0].id).toBe(a.id);
+  });
+});

@@ -107,9 +107,16 @@ export type JointSnapshot = {
  * Only currently-present parts are listed; absent (soft-removed) parts are
  * omitted and restored from the pool by id on demand.
  */
+export type WeldGroupSnapshot = {
+  /** Ordered list of part ids that form the weld group. */
+  partIds: string[];
+};
+
 export type SessionSnapshot = {
   parts: PartSnapshot[];
   joints: JointSnapshot[];
+  /** Weld groups present at snapshot time. Absent means no weld groups. */
+  weldGroups?: WeldGroupSnapshot[];
 };
 
 // ── Draft types (used by CartoonSketcher.toDraft / loadDraft for persistence) ─
