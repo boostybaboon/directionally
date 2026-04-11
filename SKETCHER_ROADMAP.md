@@ -23,13 +23,81 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 
 ## Current state — April 2026
 
-The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → glue parts into assemblies → transform → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 438 tests passing.
+The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → glue parts into assemblies → transform → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 452 tests passing.
 
-**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11.
+**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a.
 
 **Priority order:**
-1. SA12 — Positioning precision *(absorbs SA10; biggest feature; needs stable foundation)*
-2. SA9 — Named assemblies *(full Word-style open/save/autosave model)*
+1. SA14b — Enter-group edit mode *(double-click to reposition a single member without unwelding)*
+2. SA15 — Glue as live constraint *(neck-resizes-moves-head; architectural upgrade to GlueManager)*
+3. SA12 — Positioning precision *(absorbs SA10; benefits from stable group model)*
+4. SA9 — Named assemblies *(schema is stable only after SA14/SA15 settle what "assembly" means)*
+
+---
+
+## Phase SA14a — Multi-select and Weld/Unweld ✅ COMPLETE
+
+Users frequently position several parts visually then want to treat them as one rigid unit for transport, scaling, and export. Weld achieves this without face-snap math — it captures current world transforms only.
+
+**Multi-select**
+- Shift-click adds a part (or weld group) to the selection; `SelectionManager` gains `selectedIds: Set<string>` alongside the existing primary `selectedId`
+- All selected parts receive a highlight outline
+- Clicking empty space or a single part clears the multi-selection
+
+**Weld**
+- Available when `selectedIds.size > 1`
+- Creates a new `THREE.Group` positioned at the centroid of the selection
+- Calls `group.attach(mesh)` for each selected part — Three.js decomposes `parentWorldInverse × meshMatrixWorld` into the correct local transform, preserving every part's current world position/rotation/scale
+- Registers the result as a `WeldGroup` in `GlueManager` (same `AssemblyGroup` type; weld groups have no `GlueJoint` records)
+- TC gizmo attaches to the group; clicking any member selects the whole group, not the individual mesh
+- `WeldCommand` — snapshot-based undo/redo via `SketcherDocument.execute()`
+
+**Unweld**
+- Available when the selected entity is a weld group
+- Detaches all children, calls `scene.attach(mesh)` to restore each mesh's world transform at scene root, removes the `THREE.Group`
+- `UnweldCommand` — snapshot-based
+
+**Constraint:** within a weld group the TC gizmo operates on the group only. To reposition a single member, use SA14b enter-group edit mode, or Unweld → reposition → Weld.
+
+---
+
+## Phase SA14b — Enter-group edit mode
+
+After welding, users occasionally need to tweak one member's position without dissolving the whole group (e.g. nudge a capsule eye slightly forward). Double-clicking a weld group enters edit mode for that group.
+
+**Behaviour**
+- Double-click a weld group → enters edit mode; subsequent single-click selects individual members inside the group
+- TC, colour, texture, and snap-to-floor operations all target the active member in edit mode
+- The active member is highlighted; other group members are dimmed
+- Clicking outside the group, pressing Escape, or clicking "Exit group" in the toolbar returns to group-level selection
+- Edit mode is non-destructive — the weld group is not dissolved; the member's local transform within the group is updated in place
+- All transforms issued in edit mode are individually undoable
+
+**Why before unweld-as-last-resort:** most "I need to reposition an eye" operations don't need the group dissolved permanently. Enter-group → nudge → exit is faster and keeps the assembly intact.
+
+---
+
+## Phase SA15 — Glue as live constraint
+
+Currently glue merges both parts into one `THREE.Group`. SA15 upgrades glue to a *live positional constraint* between two independent root-level entities (weld groups or standalone parts). This enables the neck-resizes-moves-head workflow:
+
+```
+head-weld-group  ←→ [GlueConstraint, embedded offset]  ←→  neck-cylinder
+```
+
+After a TC commit on the neck, `ConstraintSolver` walks the constraint tree and repositions every connected entity to satisfy the joint.
+
+**Architecture**
+- `GlueConstraint` record: `{ id, anchorEntityId, anchorFaceUV, moverEntityId, moverFaceUV, alpha }`
+- `GlueManager` stores `GlueConstraint` records separately from `WeldGroup` records — the two are now distinct concepts
+- After every TC commit, `ConstraintSolver.resolve(constraints, entities)` does a single-pass tree traversal (the constraint graph is acyclic by construction — gluing A→B and B→A is rejected)
+- Glue UX is unchanged: pick face on anchor, pick face on mover, optionally set offset depth
+
+**Migration from current merge-based glue**
+- `AssemblyGroup` splits into `WeldGroup` (rigid, children merged) and `GlueConstraint` (live, entities remain separate)
+- `_mergeIntoGroup` is replaced by constraint registration; `attach()` is no longer called during a glue operation
+- Snapshot/restore continues to work — snapshots capture all entity transforms + all constraint records
+- BUG-1 (scale bleed on glue-into-scaled-group) is resolved as a side-effect
 
 ---
 
@@ -73,7 +141,7 @@ Extend the polygon sketcher with rectangle and circle input modes alongside the 
 
 The Word-style open/save document model for the sketcher. SH2 already keeps a single autosaved draft alive across refreshes; SA9 adds named saves, a list of assemblies, and the ability to open any of them for continued editing.
 
-**Why after SA12:** SA9's `AssemblySpec` schema needs `uvMode` (SA7) and benefits from the stable `SketcherSession` shape that SA12's numeric-field commands will finalise. Building the serialized schema before those fields exist means a migration pass.
+**Why after SA15 and SA12:** SA9's `AssemblySpec` schema must represent both `WeldGroup` membership and `GlueConstraint` records — the split introduced by SA15. SA12's numeric-field commands also finalise the `SketcherSession` shape. Building the schema before both are settled means a migration pass.
 
 **`AssemblySpec` JSON** — stored in OPFS:
 ```ts

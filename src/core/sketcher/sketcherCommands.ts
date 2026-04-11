@@ -193,6 +193,36 @@ export class SnapToFloorCommand implements SketcherCommand {
   }
 }
 
+// ── WeldCommand ───────────────────────────────────────────────────────────────
+
+export class WeldCommand implements SketcherCommand {
+  readonly label = 'Weld';
+
+  constructor(
+    private readonly partIds: string[],
+    private readonly sketcher: CartoonSketcher,
+  ) {}
+
+  execute(): void {
+    this.sketcher.weld(this.partIds);
+  }
+}
+
+// ── UnweldCommand ─────────────────────────────────────────────────────────────
+
+export class UnweldCommand implements SketcherCommand {
+  readonly label = 'Unweld';
+
+  constructor(
+    private readonly partId: string,
+    private readonly sketcher: CartoonSketcher,
+  ) {}
+
+  execute(): void {
+    this.sketcher.unweld(this.partId);
+  }
+}
+
 // ── Transform snapshot helpers ────────────────────────────────────────────────
 
 // (end of file)

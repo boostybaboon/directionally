@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle, buildExtrusionGeometry } from './ExtrusionHandle.js';
 import { GlueManager } from './GlueManager.js';
-import type { FaceGroupInfo, PartSnapshot, JointSnapshot, PartDraft, SessionSnapshot, SketcherDraft, SketcherPart, SketcherSession } from './types.js';
+import type { FaceGroupInfo, PartSnapshot, JointSnapshot, PartDraft, SessionSnapshot, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup } from './types.js';
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
@@ -302,6 +302,36 @@ export class CartoonSketcher {
     const root: THREE.Object3D = ag ? ag.group : part.mesh;
     const box = new THREE.Box3().setFromObject(root);
     root.position.y -= box.min.y;
+  }
+
+  /**
+   * Weld the given parts into a single rigid weld group at their current world
+   * positions. All parts must be standalone (not already in any assembly group).
+   * Returns the new AssemblyGroup, or null if the input is invalid.
+   */
+  weld(partIds: string[]): AssemblyGroup | null {
+    if (partIds.length < 2) return null;
+    const parts = partIds
+      .map((id) => this.parts.find((p) => p.id === id))
+      .filter((p): p is SketcherPart => p !== undefined);
+    if (parts.length < 2) return null;
+    // Reject if any part is already in an assembly group.
+    for (const p of parts) {
+      if (this.glue.groupForPart(p.id)) return null;
+    }
+    return this.glue.createWeldGroup(parts);
+  }
+
+  /**
+   * Dissolve the weld group that contains the given part, returning all members
+   * to the scene root at their current world positions.
+   * No-op if the part is not in a weld group.
+   */
+  unweld(partId: string): void {
+    if (!this.glue.isWeldGroup(partId)) return;
+    const ag = this.glue.groupForPart(partId);
+    if (!ag) return;
+    this.glue.dissolveWeldGroup(ag.id, this.parts);
   }
 
   /** Return a snapshot of the current session. */

@@ -95,4 +95,71 @@ describe('SelectionManager', () => {
     const hit = sm.pick(0, 0, cam, [mesh]);
     expect(hit).toBeNull();
   });
+
+  // ── Multi-select ────────────────────────────────────────────────────────────
+
+  it('addToSelection adds a second mesh with an orange outline', () => {
+    const a = makeMesh();
+    const b = makeMesh();
+    sm.select(a);
+    sm.addToSelection(b);
+
+    expect(sm.selectedMeshes).toHaveLength(2);
+    expect(sm.selectedMeshes).toContain(a);
+    expect(sm.selectedMeshes).toContain(b);
+    // Orange outline added as a child of b.
+    expect(b.children).toHaveLength(1);
+    expect(b.children[0]).toBeInstanceOf(THREE.LineSegments);
+  });
+
+  it('addToSelection ignores the already-primary-selected mesh', () => {
+    const a = makeMesh();
+    sm.select(a);
+    sm.addToSelection(a); // should not double-add
+
+    expect(sm.selectedMeshes).toHaveLength(1);
+    expect(a.children).toHaveLength(1); // only the cyan primary outline
+  });
+
+  it('removeFromSelection removes the mesh and disposes its outline', () => {
+    const a = makeMesh();
+    const b = makeMesh();
+    sm.select(a);
+    sm.addToSelection(b);
+
+    sm.removeFromSelection(b);
+
+    expect(sm.selectedMeshes).toHaveLength(1);
+    expect(b.children).toHaveLength(0);
+  });
+
+  it('clearMultiSelection removes all additional selected meshes', () => {
+    const a = makeMesh();
+    const b = makeMesh();
+    const c = makeMesh();
+    sm.select(a);
+    sm.addToSelection(b);
+    sm.addToSelection(c);
+
+    sm.clearMultiSelection();
+
+    expect(sm.selectedMeshes).toHaveLength(1); // only primary remains
+    expect(sm.selectedMesh).toBe(a);
+    expect(b.children).toHaveLength(0);
+    expect(c.children).toHaveLength(0);
+  });
+
+  it('select() clears multi-selection when a fresh single select is made', () => {
+    const a = makeMesh();
+    const b = makeMesh();
+    const c = makeMesh();
+    sm.select(a);
+    sm.addToSelection(b);
+
+    sm.select(c); // fresh single-select should clear b
+
+    expect(sm.selectedMeshes).toHaveLength(1);
+    expect(sm.selectedMesh).toBe(c);
+    expect(b.children).toHaveLength(0);
+  });
 });

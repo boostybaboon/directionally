@@ -50,6 +50,8 @@ let _groupSeq = 1;
 export class GlueManager {
   private readonly joints: GlueJoint[] = [];
   private readonly assemblyGroups: AssemblyGroup[] = [];
+  /** Ids of AssemblyGroups created by weld (no joint topology). */
+  private readonly weldGroupIds = new Set<string>();
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -190,6 +192,33 @@ export class GlueManager {
   getAssemblyGroups(): readonly AssemblyGroup[] { return this.assemblyGroups; }
 
   /**
+   * Create a weld group from the given parts at their current world positions.
+   * Unlike commitGlue, no face-snap math is performed — parts are grouped as-is.
+   * All parts must be standalone (not already in any group).
+   */
+  createWeldGroup(parts: SketcherPart[]): AssemblyGroup {
+    const ag = this._createGroup(parts);
+    this.weldGroupIds.add(ag.id);
+    return ag;
+  }
+
+  /**
+   * Dissolve a weld group by id. All children are returned to scene root
+   * at their current world positions. No-op if the group is not a weld group.
+   */
+  dissolveWeldGroup(groupId: string, allParts: SketcherPart[]): void {
+    const ag = this.assemblyGroups.find((g) => g.id === groupId);
+    if (!ag || !this.weldGroupIds.has(groupId)) return;
+    this._dissolveGroup(ag, allParts);
+  }
+
+  /** Return true if the part belongs to a weld group (not a glue group). */
+  isWeldGroup(partId: string): boolean {
+    const ag = this.groupForPart(partId);
+    return ag ? this.weldGroupIds.has(ag.id) : false;
+  }
+
+  /**
    * Remove a part from its assembly group without removing any joints.
    * Used after `unglueAll` to clean up residual group membership when
    * the group remained connected (unglue skips group changes in that case).
@@ -231,6 +260,7 @@ export class GlueManager {
     }
     this.joints.length = 0;
     this.assemblyGroups.length = 0;
+    this.weldGroupIds.clear();
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────
@@ -340,6 +370,8 @@ export class GlueManager {
     this.scene.remove(ag.group);
     const idx = this.assemblyGroups.indexOf(ag);
     if (idx !== -1) this.assemblyGroups.splice(idx, 1);
+    // Remove weld marker if present.
+    this.weldGroupIds.delete(ag.id);
   }
 
   /** Partition a set of partIds into connected components using current joints. */

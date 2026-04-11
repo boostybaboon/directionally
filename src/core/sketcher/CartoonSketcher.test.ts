@@ -641,3 +641,84 @@ describe('snapToFloor', () => {
     expect(() => sketcher.snapToFloor('nonexistent')).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// weld / unweld
+// ---------------------------------------------------------------------------
+describe('weld / unweld', () => {
+  let scene: THREE.Scene;
+  let sketcher: CartoonSketcher;
+
+  beforeEach(() => {
+    scene = makeScene();
+    sketcher = new CartoonSketcher(scene, makePerspectiveCamera());
+  });
+
+  it('welds two standalone parts into a weld AssemblyGroup', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+
+    const ag = sketcher.weld([a.id, b.id]);
+
+    expect(ag).not.toBeNull();
+    expect(ag!.partIds).toContain(a.id);
+    expect(ag!.partIds).toContain(b.id);
+    expect(sketcher.glueManager.isWeldGroup(a.id)).toBe(true);
+    expect(sketcher.glueManager.isWeldGroup(b.id)).toBe(true);
+  });
+
+  it('preserves world positions of parts after weld', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    a.mesh.position.set(2, 0, 0);
+    b.mesh.position.set(-2, 0, 0);
+    a.mesh.updateMatrixWorld(true);
+    b.mesh.updateMatrixWorld(true);
+
+    sketcher.weld([a.id, b.id]);
+
+    const posA = new THREE.Vector3();
+    const posB = new THREE.Vector3();
+    a.mesh.getWorldPosition(posA);
+    b.mesh.getWorldPosition(posB);
+    expect(posA.x).toBeCloseTo(2, 5);
+    expect(posB.x).toBeCloseTo(-2, 5);
+  });
+
+  it('returns null if fewer than two part ids are given', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    expect(sketcher.weld([a.id])).toBeNull();
+    expect(sketcher.weld([])).toBeNull();
+  });
+
+  it('returns null if any part is already in an assembly group', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    const c = sketcher.insertPrimitive('box')!;
+    // Weld a and b.
+    sketcher.weld([a.id, b.id]);
+    // Trying to weld a (already grouped) with c should fail.
+    const result = sketcher.weld([a.id, c.id]);
+    expect(result).toBeNull();
+  });
+
+  it('unweld dissolves a weld group and returns parts to scene root', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    sketcher.weld([a.id, b.id]);
+
+    sketcher.unweld(a.id);
+
+    expect(sketcher.glueManager.groupForPart(a.id)).toBeUndefined();
+    expect(sketcher.glueManager.groupForPart(b.id)).toBeUndefined();
+    expect(sketcher.glueManager.isWeldGroup(a.id)).toBe(false);
+    // Parts should now be direct children of the scene.
+    expect(a.mesh.parent).toBe(scene);
+    expect(b.mesh.parent).toBe(scene);
+  });
+
+  it('unweld is a no-op for a part not in a weld group', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    expect(() => sketcher.unweld(a.id)).not.toThrow();
+  });
+});

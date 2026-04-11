@@ -19,6 +19,8 @@
     CommitGlueCommand,
     UnglueAllCommand,
     SnapToFloorCommand,
+    WeldCommand,
+    UnweldCommand,
   } from '../../core/sketcher/sketcherCommands.js';
   import { exportGLB } from '../../core/sketcher/exportGLB.js';
   import * as OPFSCatalogueStore from '../../core/storage/OPFSCatalogueStore.js';
@@ -33,6 +35,10 @@
   let transformMode = $state<'translate' | 'rotate' | 'scale'>('translate');
   let selectedPartId = $state<string | null>(null);
   let selectedColor = $state('#8888cc');
+  // Number of currently selected meshes (primary + multi). Drives the Weld button.
+  let multiSelectedCount = $state(0);
+  // Whether the primary selected part belongs to a weld group (not a glue group).
+  let selectedGroupIsWeld = $state(false);
   // Face paint mode: when true, clicks colour individual faces instead of selecting parts.
   let facePaintMode = $state(false);
   // The materialIndex of the face last hovered/selected when in face paint mode.
@@ -130,6 +136,9 @@
     // ── SelectionManager ─────────────────────────────────────────────────────
     selection = new SelectionManager();
     selection.onSelectionChanged = (mesh) => {
+      // A new primary selection clears multi-select.
+      selection.clearMultiSelection();
+      multiSelectedCount = mesh ? 1 : 0;
       if (mesh) {
         tc.attach(mesh);
         // tc.attach() always sets _root.visible = true internally; re-apply face-paint override.
@@ -139,6 +148,7 @@
         if (part) {
           selectedPartId = part.id;
           selectedColor = '#' + part.color.toString(16).padStart(6, '0');
+          selectedGroupIsWeld = sketcher.glueManager.isWeldGroup(part.id);
         }
       } else {
         tc.detach();
@@ -146,6 +156,7 @@
         selectedPartId = null;
         facePaintMode = false;
         hoveredFaceMaterialIndex = null;
+        selectedGroupIsWeld = false;
         clearFaceHighlight();
         // tc.detach() already sets _root.visible = false; no need to touch it here.
       }
@@ -364,6 +375,35 @@
     if (sketcher.currentPhase === 'idle') {
       const session = sketcher.getSession();
       const meshes = session.parts.map((p) => p.mesh);
+
+      // Shift-click: toggle a part in the multi-selection.
+      // TC is detached during multi-select; the user presses Weld to proceed.
+      if (e.shiftKey && selection.selectedMesh) {
+        const hit = selection.pick(x, y, camera, meshes);
+        if (hit && hit !== selection.selectedMesh) {
+          if (selection.selectedMeshes.includes(hit)) {
+            selection.removeFromSelection(hit);
+          } else {
+            // Reject parts already in any assembly group during multi-select —
+            // only standalone parts can be welded.
+            const hitPart = session.parts.find((p) => p.mesh === hit);
+            if (hitPart && !sketcher.glueManager.groupForPart(hitPart.id)) {
+              // Also reject if the primary selected part is in a group.
+              if (!sketcher.glueManager.groupForPart(selectedPartId ?? '')) {
+                selection.addToSelection(hit);
+              } else {
+                statusMessage = 'Multi-select only works with standalone parts (not in a group).';
+              }
+            } else {
+              statusMessage = 'Multi-select only works with standalone parts (not in a group).';
+            }
+          }
+          multiSelectedCount = selection.selectedMeshes.length;
+          // Detach TC when more than one part is selected.
+          if (multiSelectedCount > 1) tc.detach();
+        }
+        return;
+      }
 
       // In face paint mode, a click on the selected part's mesh paints the hovered face.
       if (facePaintMode && selectedPartId && hoveredFaceMaterialIndex !== null) {
@@ -699,6 +739,40 @@
     statusMessage = 'Session cleared.';
   }
 
+  function weldSelected() {
+    if (!sketcher || !selectedPartId) return;
+    const meshes = selection.selectedMeshes;
+    if (meshes.length < 2) return;
+    const session = sketcher.getSession();
+    const partIds = meshes
+      .map((m) => session.parts.find((p) => p.mesh === m)?.id)
+      .filter((id): id is string => id !== undefined);
+    if (partIds.length < 2) return;
+    selection.clearMultiSelection();
+    selection.deselect();
+    multiSelectedCount = 0;
+    const cmd = new WeldCommand(partIds, sketcher);
+    sketcherDoc.execute(cmd);
+    // Re-select the group so TC attaches to the weld group and the button state updates.
+    const ag = sketcher.glueManager.groupForPart(partIds[0]);
+    const firstPart = sketcher.getSession().parts.find((p) => p.id === partIds[0]);
+    if (ag && firstPart) {
+      selection.select(firstPart.mesh);
+      tc.attach(ag.group);
+      selectedGroupIsWeld = true;
+    }
+    statusMessage = 'Welded. Parts grouped as one rigid unit.';
+  }
+
+  function unweldSelected() {
+    if (!sketcher || !selectedPartId) return;
+    sketcherDoc.execute(new UnweldCommand(selectedPartId, sketcher));
+    const part = sketcher.getSession().parts.find((p) => p.id === selectedPartId);
+    if (part) tc.attach(part.mesh);
+    selectedGroupIsWeld = false;
+    statusMessage = 'Unwelded. Parts returned to scene root.';
+  }
+
   function snapToFloor() {
     if (!selectedPartId) return;
     sketcherDoc.execute(new SnapToFloorCommand(selectedPartId, sketcher));
@@ -746,8 +820,15 @@
     <button onclick={() => insertPrimitive('cone')}>Cone</button>
     <span class="separator"></span>
     <button class="glue-btn" class:active={gluePhase !== null} onclick={startGluePick} title="G">Glue…</button>
+    {#if multiSelectedCount > 1}
+      <button class="glue-btn" onclick={weldSelected} title="Weld selected parts into one rigid group">Weld</button>
+    {/if}
     {#if selectedPartId}
-      <button class="glue-btn" onclick={unglueSelected} title="U">Unglue</button>
+      {#if selectedGroupIsWeld}
+        <button class="glue-btn" onclick={unweldSelected} title="Dissolve weld group">Unweld</button>
+      {:else}
+        <button class="glue-btn" onclick={unglueSelected} title="U">Unglue</button>
+      {/if}
       <button class="glue-btn" onclick={snapToFloor} title="F">⬇ Floor</button>
     {/if}
   </div>
