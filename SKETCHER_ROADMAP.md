@@ -28,8 +28,8 @@ The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop
 **Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a, SA14b, SA15.
 
 **Priority order:**
-1. SA12 — Positioning precision *(absorbs SA10; benefits from stable group model)*
-2. SA9 — Named assemblies *(schema is stable now that SA14/SA15 have settled what "assembly" means)*
+1. SA9 — Named assemblies *(multi-document sketcher; re-open any asset for continued editing)*
+2. SA12 — Positioning precision *(absorbs SA10; benefits from stable group model)*
 
 ---
 
