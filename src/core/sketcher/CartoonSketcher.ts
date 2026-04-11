@@ -8,6 +8,13 @@ const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
 function withFaceGroups(geo: THREE.BufferGeometry, groups: FaceGroupInfo[]): THREE.BufferGeometry {
   geo.userData.faceGroups = groups;
+  // Geometries like SphereGeometry and CapsuleGeometry have no built-in draw
+  // groups. THREE.Mesh renders nothing when given a material array but an empty
+  // groups array, so add one covering group here.
+  if (geo.groups.length === 0) {
+    const indexCount = geo.index ? geo.index.count : geo.attributes.position.count;
+    geo.addGroup(0, indexCount, 0);
+  }
   return geo;
 }
 

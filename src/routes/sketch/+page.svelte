@@ -129,6 +129,8 @@
     selection.onSelectionChanged = (mesh) => {
       if (mesh) {
         tc.attach(mesh);
+        // tc.attach() always sets _root.visible = true internally; re-apply face-paint override.
+        tc.getHelper().visible = !facePaintMode;
         statusMessage = 'W translate · E rotate · R scale · Shift+D duplicate · Delete remove · Esc deselect';
         const part = sketcher.getSession().parts.find((p) => p.mesh === mesh);
         if (part) {
@@ -141,6 +143,8 @@
         selectedPartId = null;
         facePaintMode = false;
         hoveredFaceMaterialIndex = null;
+        clearFaceHighlight();
+        // tc.detach() already sets _root.visible = false; no need to touch it here.
       }
     };
 
@@ -323,7 +327,7 @@
     if (handleDragActive) {
       sketcher.onPointerMove(x, y);
     }
-    if (gluePhase !== null) {
+    if (gluePhase !== null || facePaintMode) {
       updateFaceHighlight(x, y);
     }
   }
@@ -469,9 +473,13 @@
   function updateFaceHighlight(ndcX: number, ndcY: number) {
     const session = sketcher.getSession();
 
-    // Phase 'src': hover over any part. Phase 'target': exclude the src blob's group.
+    // Face-paint: highlight only the selected part's faces.
+    // Glue src: hover over any part. Glue target: exclude the src blob's group.
     let meshesToHit: THREE.Mesh[];
-    if (gluePhase === 'src') {
+    if (facePaintMode && selectedPartId) {
+      const selectedPart = session.parts.find((p) => p.id === selectedPartId);
+      meshesToHit = selectedPart ? [selectedPart.mesh] : [];
+    } else if (gluePhase === 'src') {
       meshesToHit = session.parts.map((p) => p.mesh);
     } else {
       const srcGroup = glueSrcBlob ? sketcher.glueManager.groupForPart(glueSrcBlob.partId) : undefined;
@@ -491,7 +499,8 @@
     hitNormal.transformDirection(hits[0].object.matrixWorld);
     const pos = hits[0].point.clone().addScaledVector(hitNormal, 0.02);
     const geo = new THREE.SphereGeometry(0.07, 8, 6);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffee00, depthTest: false, transparent: true, opacity: 0.9 });
+    const highlightColor = facePaintMode ? 0x44ccaa : 0xffee00;
+    const mat = new THREE.MeshBasicMaterial({ color: highlightColor, depthTest: false, transparent: true, opacity: 0.9 });
     faceHighlight = new THREE.Mesh(geo, mat);
     faceHighlight.position.copy(pos);
     scene.add(faceHighlight);
@@ -753,7 +762,7 @@
         class="face-paint-btn"
         class:active={facePaintMode}
         title="Face paint mode: click a face to colour it individually"
-        onclick={() => { facePaintMode = !facePaintMode; hoveredFaceMaterialIndex = null; }}
+        onclick={() => { facePaintMode = !facePaintMode; hoveredFaceMaterialIndex = null; tc.getHelper().visible = !facePaintMode; if (!facePaintMode) clearFaceHighlight(); }}
       >Face</button>
       {#if facePaintMode}
         <span class="hud-label" style="font-size:9px">
