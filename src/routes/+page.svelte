@@ -1112,6 +1112,7 @@
                 class:active={leftTab === 'catalogue'}
                 onclick={() => (leftTab = 'catalogue')}
               >Catalogue</button>
+              <a href="/sketch" class="tab-btn tab-link">Sketcher ✏</a>
             </div>
             <div class="tab-content">
               {#if leftTab === 'productions'}
@@ -2974,6 +2975,11 @@
 
   .tab-btn:hover {
     color: #bbb;
+  }
+
+  .tab-link {
+    text-decoration: none;
+    margin-left: auto;
   }
 
   .tab-btn.active {

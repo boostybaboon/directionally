@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { goto } from '$app/navigation';
   import * as THREE from 'three';
   import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
   import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
@@ -26,11 +25,6 @@
   import * as OPFSCatalogueStore from '../../core/storage/OPFSCatalogueStore.js';
   import * as SketcherAssemblyStore from '../../core/storage/SketcherAssemblyStore.js';
   import type { AssemblyMeta } from '../../core/storage/SketcherAssemblyStore.js';
-
-  // DEV-only guard – redirect to home in production builds.
-  if (!import.meta.env.DEV) {
-    goto('/');
-  }
 
   let canvas: HTMLCanvasElement;
   let statusMessage = $state('');
@@ -101,6 +95,10 @@
 
   // Snapshot captured at TC drag-start; passed to execute() at drag-end.
   let tcPreDragSnapshot: ReturnType<typeof sketcherDoc.captureSnapshot> | null = null;
+  // Whether the drag started in group-edit member mode or group-level mode.
+  let tcDragMode: 'group' | 'member' = 'group';
+  // Meshes temporarily ghosted while the glue target phase is active.
+  let glueSrcGhostEntries: Array<{ mesh: THREE.Mesh; saved: Array<{ transparent: boolean; opacity: number }> }> = [];
 
   onMount(() => {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -133,12 +131,15 @@
       if (isDragging) {
         // Capture the scene state before the gizmo starts mutating the object.
         tcPreDragSnapshot = sketcherDoc.captureSnapshot();
+        // member-edit: TC is on an individual mesh inside a group.
+        // group-level: TC is on the group itself or a standalone mesh.
+        tcDragMode = groupEditGroupId !== null ? 'member' : 'group';
       } else {
         // Drag ended: record the transform as an undoable entry using the
         // pre-drag snapshot as `before` so it is immune to stale group references.
         if (tcPreDragSnapshot) {
           sketcherDoc.execute(
-            new TransformPartCommand(sketcher, selectedPartId),
+            new TransformPartCommand(sketcher, selectedPartId, tcDragMode),
             tcPreDragSnapshot,
           );
         }
@@ -569,6 +570,7 @@
   }
 
   function cancelGluePick() {
+    restoreGlueSrcGhost();
     gluePhase = null;
     glueSrcBlob = null;
     clearFaceHighlight();
@@ -583,6 +585,18 @@
       }
     }
     statusMessage = '';
+  }
+
+  function restoreGlueSrcGhost() {
+    for (const { mesh, saved } of glueSrcGhostEntries) {
+      const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.MeshStandardMaterial[];
+      mats.forEach((m, i) => {
+        m.transparent = saved[i].transparent;
+        m.opacity = saved[i].opacity;
+        m.needsUpdate = true;
+      });
+    }
+    glueSrcGhostEntries = [];
   }
 
   function clearFaceHighlight() {
@@ -673,6 +687,20 @@
 
     clearFaceHighlight();
     glueSrcBlob = { partId: part.id, localPoint, localNormal, worldPoint: hits[0].point.clone() };
+
+    // Ghost the src entity so it doesn't occlude clicks on parts behind it.
+    const srcGroup = sketcher.glueManager.groupForPart(part.id);
+    const srcPartIds = srcGroup ? srcGroup.partIds : [part.id];
+    glueSrcGhostEntries = [];
+    for (const pid of srcPartIds) {
+      const sp = session.parts.find((x) => x.id === pid);
+      if (!sp) continue;
+      const mats = (Array.isArray(sp.mesh.material) ? sp.mesh.material : [sp.mesh.material]) as THREE.MeshStandardMaterial[];
+      const saved = mats.map((m) => ({ transparent: m.transparent, opacity: m.opacity }));
+      glueSrcGhostEntries.push({ mesh: sp.mesh, saved });
+      for (const m of mats) { m.transparent = true; m.opacity = 0.2; m.needsUpdate = true; }
+    }
+
     gluePhase = 'target';
     statusMessage = 'Now click any surface on a different part to snap it here. Esc cancels.';
   }
@@ -717,12 +745,12 @@
 
     clearFaceHighlight();
     clearGlueBlobMarker();
+    restoreGlueSrcGhost();
     gluePhase = null;
     glueSrcBlob = null;
     statusMessage = 'Glued.';
 
-    // Re-attach TC: after SA15 glue, parts stay at scene root (no glue group).
-    // If targetPart was already welded, remain attached to the weld group.
+    // Re-attach TC to the combined glue group.
     const ag = sketcher.glueManager.groupForPart(targetPart.id);
     if (ag) {
       tc.attach(ag.group);
@@ -979,7 +1007,8 @@
 
   function snapToFloor() {
     if (!selectedPartId) return;
-    sketcherDoc.execute(new SnapToFloorCommand(selectedPartId, sketcher));
+    const mode = groupEditGroupId !== null ? 'member' : 'group';
+    sketcherDoc.execute(new SnapToFloorCommand(selectedPartId, sketcher, mode));
   }
 
   async function exportToCatalogue() {

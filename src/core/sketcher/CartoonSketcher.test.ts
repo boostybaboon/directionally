@@ -483,6 +483,7 @@ describe('toDraft / loadDraft', () => {
     sketcher.glueManager.commitGlue(
       pA, new THREE.Vector3(0.5, 0, 0), new THREE.Vector3(1, 0, 0),
       pB, new THREE.Vector3(-0.5, 0, 0), new THREE.Vector3(-1, 0, 0),
+      [pA, pB],
     );
     expect(sketcher.getSession().joints).toHaveLength(1);
 
@@ -493,9 +494,9 @@ describe('toDraft / loadDraft', () => {
 
     expect(sketcher.getSession().joints).toHaveLength(1);
     expect(sketcher.getSession().parts).toHaveLength(2);
-    // SA15: glue is a live constraint — no group is created on joint restore.
+    // Glue creates a group; after draft round-trip the group is restored.
     const ag = sketcher.glueManager.groupForPart(sketcher.getSession().parts[0].id);
-    expect(ag).toBeUndefined();
+    expect(ag).toBeDefined();
   });
 
   it('loadDraft() on empty draft produces an empty session', () => {
@@ -617,7 +618,6 @@ describe('snapToFloor', () => {
   it('moves the entire assembly group when the part is glued', () => {
     const partA = sketcher.insertPrimitive('box')!;
     const partB = sketcher.insertPrimitive('box')!;
-    // Glue them together (SA15: parts remain at scene root, no group created).
     sketcher.glueManager.commitGlue(
       partA,
       new THREE.Vector3(0, 0.5, 0),
@@ -625,16 +625,17 @@ describe('snapToFloor', () => {
       partB,
       new THREE.Vector3(0, -0.5, 0),
       new THREE.Vector3(0, -1, 0),
+      [partA, partB],
     );
-    // Lift partA (standalone, no group under SA15).
-    partA.mesh.position.y = 10;
-    partA.mesh.updateMatrixWorld(true);
-    // Replay constraints so partB follows.
-    sketcher.glueManager.resolveConstraints([partA.id], sketcher.getSession().parts);
+
+    // Lift the glue group and snap the whole assembly to the floor.
+    const ag = sketcher.glueManager.groupForPart(partA.id)!;
+    ag.group.position.y = 10;
+    ag.group.updateMatrixWorld(true);
 
     sketcher.snapToFloor(partA.id);
 
-    const box = new THREE.Box3().setFromObject(partA.mesh);
+    const box = new THREE.Box3().setFromObject(ag.group);
     expect(box.min.y).toBeCloseTo(0, 4);
   });
 

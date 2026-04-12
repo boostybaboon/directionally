@@ -288,20 +288,30 @@ export class CartoonSketcher {
   }
 
   /**
-   * Translate a part (or its entire glue group) downward so its lowest vertex
-   * sits exactly on y = 0.
+   * Translate a part (or its entire assembly group) downward so its lowest
+   * vertex sits exactly on y = 0.
    *
-   * For a grouped part the bounding box is computed from the THREE.Group so
-   * every part in the assembly contributes, regardless of individual transforms.
-   * For a standalone part the box is computed from the part's mesh directly.
+   * mode 'group' (default): moves the whole group — or the standalone mesh —
+   * so no joint re-evaluation is needed (the entire assembly moved uniformly).
+   *
+   * mode 'member': snaps only this mesh in group-edit mode, then calls
+   * resolveConstraints so glue neighbours re-snap. Correct for non-rotated
+   * groups (the group's Y offset is accounted for by the world-space box).
    */
-  snapToFloor(id: string): void {
+  snapToFloor(id: string, mode: 'group' | 'member' = 'group'): void {
     const part = this.parts.find((p) => p.id === id);
     if (!part) return;
-    const ag = this.glue.groupForPart(id);
-    const root: THREE.Object3D = ag ? ag.group : part.mesh;
-    const box = new THREE.Box3().setFromObject(root);
-    root.position.y -= box.min.y;
+    if (mode === 'member') {
+      const box = new THREE.Box3().setFromObject(part.mesh);
+      part.mesh.position.y -= box.min.y;
+      part.mesh.updateWorldMatrix(false, true);
+      this.glue.resolveConstraints([id], this.parts);
+    } else {
+      const ag = this.glue.groupForPart(id);
+      const root: THREE.Object3D = ag ? ag.group : part.mesh;
+      const box = new THREE.Box3().setFromObject(root);
+      root.position.y -= box.min.y;
+    }
   }
 
   /**
@@ -448,10 +458,9 @@ export class CartoonSketcher {
       localPointB: [j.localPointB.x, j.localPointB.y, j.localPointB.z],
       localNormalB: [j.localNormalB.x, j.localNormalB.y, j.localNormalB.z],
     }));
-    // Capture weld group membership so undo/redo restores the grouped state.
+    // Capture ALL assembly groups (weld and glue) so undo/redo restores grouped state.
     const weldGroups: WeldGroupSnapshot[] = this.glue.getAssemblyGroups()
-      .filter((ag) => ag.partIds.length > 0 && this.glue.isWeldGroup(ag.partIds[0]))
-      .map((ag) => ({ partIds: [...ag.partIds] }));
+      .map((ag) => ({ partIds: [...ag.partIds], isWeld: this.glue.isWeldGroup(ag.partIds[0]) }));
     return { parts, joints, weldGroups };
   }
 
@@ -495,7 +504,7 @@ export class CartoonSketcher {
       this.parts.push(part);
     }
 
-    // Re-register joints without repositioning (merges parts into groups).
+    // Re-register joints (no group creation here — groups are rebuilt below).
     for (const js of snap.joints) {
       const partA = this.parts.find((p) => p.id === js.partAId);
       const partB = this.parts.find((p) => p.id === js.partBId);
@@ -511,16 +520,8 @@ export class CartoonSketcher {
       }
     }
 
-    // Re-create weld groups. Parts are already at their correct world positions
-    // in the scene, so group.attach() will compute correct local transforms.
-    for (const wg of snap.weldGroups ?? []) {
-      const weldParts = wg.partIds
-        .map((id) => this.parts.find((p) => p.id === id))
-        .filter((p): p is SketcherPart => p !== undefined);
-      if (weldParts.length >= 2) {
-        this.glue.createWeldGroup(weldParts);
-      }
-    }
+    // Rebuild all assembly groups from snapshot data (preserves weld/glue types).
+    this.glue.rebuildGroupsFromSnapshot(snap.weldGroups ?? [], this.parts);
   }
 
   /**
@@ -561,6 +562,7 @@ export class CartoonSketcher {
     }));
     const weldGroups: WeldGroupSnapshot[] = this.glue.getAssemblyGroups().map((ag) => ({
       partIds: [...ag.partIds],
+      isWeld: this.glue.isWeldGroup(ag.partIds[0]),
     }));
     return { version: 2, parts, joints, weldGroups };
   }
@@ -633,14 +635,7 @@ export class CartoonSketcher {
       }
     }
 
-    for (const wg of draft.weldGroups ?? []) {
-      const weldParts = wg.partIds
-        .map((id) => this.parts.find((p) => p.id === id))
-        .filter((p): p is SketcherPart => p !== undefined);
-      if (weldParts.length >= 2) {
-        this.glue.createWeldGroup(weldParts);
-      }
-    }
+    this.glue.rebuildGroupsFromSnapshot(draft.weldGroups ?? [], this.parts);
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────

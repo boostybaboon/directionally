@@ -49,6 +49,7 @@ function glueAB(sketcher: CartoonSketcher, pA: NonNullable<ReturnType<CartoonSke
   return sketcher.glueManager.commitGlue(
     pA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
     pB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
+    [pA, pB],
   );
 }
 
@@ -463,7 +464,7 @@ describe('CommitGlueCommand', () => {
     pB.mesh.updateMatrixWorld(true);
   });
 
-  it('execute() records a joint (SA15: no group created)', () => {
+  it('execute() records a joint and creates an assembly group', () => {
     const cmd = new CommitGlueCommand(
       sketcher,
       pA!, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
@@ -471,7 +472,7 @@ describe('CommitGlueCommand', () => {
     );
     cmd.execute();
     expect(sketcher.getSession().joints).toHaveLength(1);
-    expect(sketcher.getSession().assemblyGroups).toHaveLength(0);
+    expect(sketcher.getSession().assemblyGroups).toHaveLength(1);
   });
 
   it('doc.undo() removes the joint', () => {
@@ -486,7 +487,7 @@ describe('CommitGlueCommand', () => {
     expect(sketcher.getSession().assemblyGroups).toHaveLength(0);
   });
 
-  it('doc.redo() re-establishes the joint (SA15: still no group)', () => {
+  it('doc.redo() re-establishes the joint and group', () => {
     const { doc } = makeDoc(sketcher);
     doc.execute(new CommitGlueCommand(
       sketcher,
@@ -496,7 +497,7 @@ describe('CommitGlueCommand', () => {
     doc.undo();
     doc.redo();
     expect(sketcher.getSession().joints).toHaveLength(1);
-    expect(sketcher.getSession().assemblyGroups).toHaveLength(0);
+    expect(sketcher.getSession().assemblyGroups).toHaveLength(1);
   });
 });
 
@@ -516,7 +517,7 @@ describe('UnglueAllCommand', () => {
     expect(sketcher.getSession().assemblyGroups).toHaveLength(0);
   });
 
-  it('doc.undo() re-registers the saved joints (SA15: no groups from glue)', () => {
+  it('doc.undo() re-registers the saved joints and restores the group', () => {
     const { sketcher } = makeSketcher();
     const { doc } = makeDoc(sketcher);
     const pA = sketcher.insertPrimitive('box')!;
@@ -527,7 +528,7 @@ describe('UnglueAllCommand', () => {
     doc.execute(new UnglueAllCommand(pA.id, sketcher));
     doc.undo();
     expect(sketcher.getSession().joints).toHaveLength(1);
-    expect(sketcher.getSession().assemblyGroups).toHaveLength(0);
+    expect(sketcher.getSession().assemblyGroups).toHaveLength(1);
   });
 
   it('doc.redo() removes the joints again', () => {

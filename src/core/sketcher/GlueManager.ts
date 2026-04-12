@@ -37,22 +37,19 @@ let _jointSeq = 1;
 let _groupSeq = 1;
 
 /**
- * Manages the joint list and the weld-group graph.
+ * Manages the joint list and the assembly-group graph.
  *
- * SA15 semantics: glue is a *live positional constraint* between two
- * independent scene entities (standalone meshes or weld groups). Calling
- * commitGlue() snaps the mover to the anchor and records the joint; it does
- * NOT reparent any mesh into a shared group. After every TC commit,
- * resolveConstraints() re-satisfies all joints that involve the moved entity.
- *
- * Weld groups remain structural containers (rigid units moved as one); glue
- * joints are logical constraints between those entities.
+ * Glue creates a structural THREE.Group containing all parts in the connected
+ * component (same as weld), plus records a GlueJoint for member-edit re-snap.
+ * Weld groups are rigid containers with no joint records.
  *
  * Responsibilities:
- *  - commitGlue(): position partB flush to partA face, record the joint.
- *  - resolveConstraints(): re-satisfy all joints touching a set of moved parts.
+ *  - commitGlue(): snap partB to partA face, merge all connected parts into a
+ *    fresh THREE.Group, record the joint.
+ *  - resolveConstraints(): BFS from moved parts, democratically re-snap each
+ *    joint neighbour (the moved part is always the anchor for its direct neighbours).
  *  - replayJoints(): single-part convenience wrapper for resolveConstraints.
- *  - unglue(): remove a joint.
+ *  - unglue(): remove a joint and rebuild groups for the affected component.
  *  - getConnectedIds(): BFS over joints from a part, returns all reachable ids.
  */
 export class GlueManager {
@@ -67,15 +64,15 @@ export class GlueManager {
 
   /**
    * Commit a glue joint: rotate partB so its face (localNormalB) becomes
-   * flush against partA's face (localNormalA), then snap the contact points,
-   * and record the joint.
-   *
-   * SA15: parts remain at their current hierarchy level — no THREE.Group is
-   * created. The joint is a live constraint re-satisfied by resolveConstraints()
-   * after every transform commit.
+   * flush against partA's face (localNormalA), snap the contact points, then
+   * merge all parts in the connected component into a fresh THREE.Group and
+   * record the joint.
    *
    * All four vectors must be in the respective mesh's LOCAL space — typically
    * obtained from the raycast hit's face.normal and matrixWorldInverse.
+   *
+   * allParts is required to look up SketcherPart objects for group members that
+   * are not partA or partB (they may be in the same existing group).
    */
   commitGlue(
     partA: SketcherPart,
@@ -84,6 +81,7 @@ export class GlueManager {
     partB: SketcherPart,
     localPointB: THREE.Vector3,
     localNormalB: THREE.Vector3,
+    allParts: SketcherPart[],
   ): GlueJoint {
     this._applyJointPosition(partA, localPointA, localNormalA, partB, localPointB, localNormalB);
 
@@ -93,32 +91,69 @@ export class GlueManager {
       partBId: partB.id, localPointB: localPointB.clone(), localNormalB: localNormalB.clone(),
     };
     this.joints.push(joint);
-    // SA15: no group merging — parts remain at their current hierarchy level.
+
+    // Merge all parts in the connected component into a single fresh group.
+    // Collect part IDs from each side's existing group (or just the part itself).
+    const compA = this.groupForPart(partA.id)?.partIds ?? [partA.id];
+    const compB = this.groupForPart(partB.id)?.partIds ?? [partB.id];
+    const mergedIds = [...new Set([...compA, ...compB])];
+    // Dissolve existing groups before creating the fresh combined group to
+    // avoid BUG-1 (scale bleed via group.attach on non-uniform-scale parents).
+    const dissolved = new Set<string>();
+    for (const id of mergedIds) {
+      const ag = this.groupForPart(id);
+      if (ag && !dissolved.has(ag.id)) { dissolved.add(ag.id); this._dissolveGroup(ag); }
+    }
+    const partsForGroup = mergedIds
+      .map((id) => allParts.find((p) => p.id === id))
+      .filter((p): p is SketcherPart => p !== undefined);
+    if (partsForGroup.length >= 2) this._createGroup(partsForGroup);
+
     return joint;
   }
 
   /**
-   * Re-satisfy all joints that involve any of the moved parts.
+   * BFS from each moved part through the joint graph, democratically re-snapping
+   * each unvisited neighbour. The moved part is always the anchor for its direct
+   * neighbours; those neighbours propagate further as anchors for their own
+   * neighbours. A visited set prevents cycles and oscillation.
    *
-   * For each joint touching a moved part:
-   *   - If the anchor side (partAId) moved → reposition the mover to follow.
-   *   - If the mover side (partBId) moved independently → snap it back to satisfy
-   *     the constraint (live constraint semantics; the anchor wins).
-   *
-   * When a moved part lives inside a weld group, the whole group is moved by
-   * _applyJointPosition (it picks up groupForPart automatically).
+   * For group-level transport, pass all group member ids so intra-group joints
+   * are pre-visited and skipped. External connections on any member still fire.
    */
   resolveConstraints(movedPartIds: string[], allParts: SketcherPart[]): void {
-    const movedSet = new Set(movedPartIds);
-    for (const joint of this.joints) {
-      if (!movedSet.has(joint.partAId) && !movedSet.has(joint.partBId)) continue;
-      const partA = allParts.find((p) => p.id === joint.partAId);
-      const partB = allParts.find((p) => p.id === joint.partBId);
-      if (partA && partB) {
-        this._applyJointPosition(
-          partA, joint.localPointA, joint.localNormalA,
-          partB, joint.localPointB, joint.localNormalB,
-        );
+    const visited = new Set<string>(movedPartIds);
+    const queue = [...movedPartIds];
+
+    while (queue.length > 0) {
+      const movedId = queue.shift()!;
+      const movedPart = allParts.find((p) => p.id === movedId);
+      if (!movedPart) continue;
+
+      for (const joint of this.joints) {
+        let editedPoint: THREE.Vector3;
+        let editedNormal: THREE.Vector3;
+        let otherPoint: THREE.Vector3;
+        let otherNormal: THREE.Vector3;
+        let otherPart: SketcherPart | undefined;
+
+        if (joint.partAId === movedId) {
+          otherPart = allParts.find((p) => p.id === joint.partBId);
+          editedPoint = joint.localPointA; editedNormal = joint.localNormalA;
+          otherPoint  = joint.localPointB; otherNormal  = joint.localNormalB;
+        } else if (joint.partBId === movedId) {
+          otherPart = allParts.find((p) => p.id === joint.partAId);
+          editedPoint = joint.localPointB; editedNormal = joint.localNormalB;
+          otherPoint  = joint.localPointA; otherNormal  = joint.localNormalA;
+        } else {
+          continue;
+        }
+
+        if (!otherPart || visited.has(otherPart.id)) continue;
+        visited.add(otherPart.id);
+        queue.push(otherPart.id);
+
+        this._applyJointPosition(movedPart, editedPoint, editedNormal, otherPart, otherPoint, otherNormal);
       }
     }
   }
@@ -132,23 +167,33 @@ export class GlueManager {
   }
 
   /**
-   * Remove the joint with the given id. Under SA15, no group topology
-   * changes are needed — joints are purely logical constraints.
+   * Remove the joint with the given id, then rebuild groups for all parts that
+   * were in the affected component (the group may split into sub-components).
    */
-  unglue(jointId: string, _allParts?: SketcherPart[]): void {
+  unglue(jointId: string, allParts: SketcherPart[] = []): void {
     const idx = this.joints.findIndex((j) => j.id === jointId);
-    if (idx !== -1) this.joints.splice(idx, 1);
+    if (idx === -1) return;
+    const joint = this.joints[idx];
+    // Collect all affected part ids before removing the joint.
+    const ag = this.groupForPart(joint.partAId) ?? this.groupForPart(joint.partBId);
+    const affectedIds = ag ? [...ag.partIds] : [joint.partAId, joint.partBId];
+    this.joints.splice(idx, 1);
+    this._rebuildGroupsForParts(affectedIds, allParts);
   }
 
   /**
-   * Remove all joints touching a part. Used by the "Unglue selected" action.
+   * Remove all joints touching a part, then rebuild groups for all parts in
+   * the formerly-connected component.
    */
-  unglueAll(partId: string, _allParts?: SketcherPart[]): void {
+  unglueAll(partId: string, allParts: SketcherPart[] = []): void {
+    const ag = this.groupForPart(partId);
+    const affectedIds = ag ? [...ag.partIds] : [partId];
     for (let i = this.joints.length - 1; i >= 0; i--) {
       if (this.joints[i].partAId === partId || this.joints[i].partBId === partId) {
         this.joints.splice(i, 1);
       }
     }
+    this._rebuildGroupsForParts(affectedIds, allParts);
   }
 
   /** BFS over all joints, returns all part-ids reachable from startId. */
@@ -221,10 +266,10 @@ export class GlueManager {
   }
 
   /**
-   * Record a joint without repositioning partB.
-   * Used by CartoonSketcher.restoreSnapshot() and loadDraft() to rebuild the
-   * joint graph after world-space transforms have already been applied.
-   * SA15: no group merging — parts remain at their current hierarchy level.
+   * Record a joint without repositioning partB or modifying groups.
+   * Used by CartoonSketcher.restoreSnapshot() and loadDraft() when part
+   * world-space transforms have already been applied from snapshot data.
+   * Call rebuildGroupsFromSnapshot() after all joints are registered.
    */
   registerJoint(
     partA: SketcherPart, localPointA: THREE.Vector3, localNormalA: THREE.Vector3,
@@ -236,8 +281,34 @@ export class GlueManager {
       partBId: partB.id, localPointB: localPointB.clone(), localNormalB: localNormalB.clone(),
     };
     this.joints.push(joint);
-    // SA15: no group merging — parts remain at their current hierarchy level.
     return joint;
+  }
+
+  /**
+   * Restore assembly groups directly from snapshot data. Call this after all
+   * joints have been registered (via registerJoint) and all part world
+   * transforms have been set.
+   *
+   * Groups with isWeld === true (or absent, for backward compat) are registered
+   * as weld groups. Others are plain assembly groups (glue groups).
+   */
+  rebuildGroupsFromSnapshot(
+    groups: Array<{ partIds: string[]; isWeld?: boolean }>,
+    allParts: SketcherPart[],
+  ): void {
+    for (const wg of groups) {
+      const parts = wg.partIds
+        .map((id) => allParts.find((p) => p.id === id))
+        .filter((p): p is SketcherPart => p !== undefined);
+      if (parts.length < 2) continue;
+      if (wg.isWeld !== false) {
+        // isWeld absent (legacy) or true → weld group
+        this.createWeldGroup(parts);
+      } else {
+        // Glue group: plain assembly group, not marked as weld
+        this._createGroup(parts);
+      }
+    }
   }
 
   dispose(): void {
@@ -252,45 +323,101 @@ export class GlueManager {
   // ── Private ─────────────────────────────────────────────────────────────────
 
   /**
-   * Rotate partB so its face normal (localNormalB) becomes flush against
-   * partA's face (anti-parallel to localNormalA), then translate to snap
-   * the contact points together.
+   * Rotate `other` so its face normal (otherNormal) becomes anti-parallel to
+   * `edited`'s face normal, then translate to snap their contact points together.
    *
-   * If partB is in a weld group and partA is NOT in the same weld group,
-   * the whole weld group is moved (so all group members travel together).
-   * Otherwise partB's mesh is moved directly.
+   * `edited` is the anchor (its world transform is unchanged).
+   * `other` is the part that moves.
+   *
+   * When both parts are in the SAME assembly group (member-edit mode), `target`
+   * is `other.mesh` — a child of the group. Rotations and translations are
+   * converted from world space to group-local space to avoid applying world-space
+   * deltas to local-space properties.
+   *
+   * When `other` is in a different group or is standalone, `target` is either the
+   * group root or the mesh at scene root — and the direct world-space maths apply.
    */
   private _applyJointPosition(
-    partA: SketcherPart, localPointA: THREE.Vector3, localNormalA: THREE.Vector3,
-    partB: SketcherPart, localPointB: THREE.Vector3, localNormalB: THREE.Vector3,
+    edited: SketcherPart, editedPoint: THREE.Vector3, editedNormal: THREE.Vector3,
+    other: SketcherPart,  otherPoint: THREE.Vector3,  otherNormal: THREE.Vector3,
   ): void {
-    partA.mesh.updateWorldMatrix(true, false);
-    partB.mesh.updateWorldMatrix(true, false);
+    edited.mesh.updateWorldMatrix(true, false);
+    other.mesh.updateWorldMatrix(true, false);
 
-    const groupB = this.groupForPart(partB.id);
-    const groupA = this.groupForPart(partA.id);
+    const groupOther  = this.groupForPart(other.id);
+    const groupEdited = this.groupForPart(edited.id);
+    // Move the whole group only when other is in a DIFFERENT group to edited.
     const target =
-      groupB && (!groupA || groupA.id !== groupB.id)
-        ? groupB.group
-        : partB.mesh;
+      groupOther && (!groupEdited || groupEdited.id !== groupOther.id)
+        ? groupOther.group
+        : other.mesh;
 
-    // Step 1: rotate so B's face normal becomes anti-parallel to A's face normal.
-    const worldNormalA = localNormalA.clone().transformDirection(partA.mesh.matrixWorld).normalize();
-    const worldNormalB = localNormalB.clone().transformDirection(partB.mesh.matrixWorld).normalize();
-    const targetNormal = worldNormalA.clone().negate();
-    if (worldNormalB.dot(targetNormal) < 0.9999) {
-      const rotQ = new THREE.Quaternion().setFromUnitVectors(worldNormalB, targetNormal);
-      target.quaternion.premultiply(rotQ);
+    // Step 1: rotate so other's face normal becomes anti-parallel to edited's face normal.
+    const worldNormalEdited = editedNormal.clone().transformDirection(edited.mesh.matrixWorld).normalize();
+    const worldNormalOther  = otherNormal.clone().transformDirection(other.mesh.matrixWorld).normalize();
+    const targetNormal = worldNormalEdited.clone().negate();
+    if (worldNormalOther.dot(targetNormal) < 0.9999) {
+      const rotQ = new THREE.Quaternion().setFromUnitVectors(worldNormalOther, targetNormal);
+      // Convert world-space rotation to target's parent-local space.
+      // For scene-root targets the parent quaternion is identity, so localRotQ === rotQ.
+      const parentQ = new THREE.Quaternion();
+      target.parent!.getWorldQuaternion(parentQ);
+      const localRotQ = parentQ.clone().invert().multiply(rotQ).multiply(parentQ);
+      target.quaternion.premultiply(localRotQ);
       target.updateWorldMatrix(false, true);
-      partB.mesh.updateWorldMatrix(true, false);
+      other.mesh.updateWorldMatrix(true, false);
     }
 
     // Step 2: translate to snap contact points.
-    const worldPointA = localPointA.clone().applyMatrix4(partA.mesh.matrixWorld);
-    const worldPointB = localPointB.clone().applyMatrix4(partB.mesh.matrixWorld);
-    const delta = worldPointA.clone().sub(worldPointB);
-    target.position.add(delta);
+    const worldPointEdited = editedPoint.clone().applyMatrix4(edited.mesh.matrixWorld);
+    const worldPointOther  = otherPoint.clone().applyMatrix4(other.mesh.matrixWorld);
+    const delta = worldPointEdited.clone().sub(worldPointOther);
+    // Use worldToLocal so the delta is correctly transformed into target's parent space.
+    // For scene-root targets (parent is scene with identity matrix) this is a no-op.
+    const worldOrigin = new THREE.Vector3();
+    target.getWorldPosition(worldOrigin);
+    worldOrigin.add(delta);
+    target.parent!.worldToLocal(worldOrigin);
+    target.position.copy(worldOrigin);
     target.updateWorldMatrix(false, true);
+  }
+
+  /**
+   * After joint removal, dissolve the former group(s) and rebuild new groups
+   * by BFS over the remaining joints. Parts with no joint connections end up
+   * at scene root (standalone). Weld-only groups with no glue joints are NOT
+   * reconstructed here (they are handled by CartoonSketcher.restoreSnapshot).
+   */
+  private _rebuildGroupsForParts(partIds: string[], allParts: SketcherPart[]): void {
+    // Dissolve all existing groups containing these parts.
+    const dissolved = new Set<string>();
+    for (const id of partIds) {
+      const ag = this.groupForPart(id);
+      if (ag && !dissolved.has(ag.id)) { dissolved.add(ag.id); this._dissolveGroup(ag); }
+    }
+    // Find connected components via BFS on remaining joints.
+    const remaining = new Set(partIds);
+    const visited  = new Set<string>();
+    for (const startId of remaining) {
+      if (visited.has(startId)) continue;
+      const component: string[] = [];
+      const q = [startId];
+      while (q.length > 0) {
+        const curr = q.shift()!;
+        if (visited.has(curr)) continue;
+        visited.add(curr); component.push(curr);
+        for (const j of this.joints) {
+          if (j.partAId === curr && remaining.has(j.partBId) && !visited.has(j.partBId)) q.push(j.partBId);
+          else if (j.partBId === curr && remaining.has(j.partAId) && !visited.has(j.partAId)) q.push(j.partAId);
+        }
+      }
+      if (component.length >= 2) {
+        const parts = component
+          .map((id) => allParts.find((p) => p.id === id))
+          .filter((p): p is SketcherPart => p !== undefined);
+        if (parts.length >= 2) this._createGroup(parts);
+      }
+    }
   }
 
   private _createGroup(parts: SketcherPart[]): AssemblyGroup {

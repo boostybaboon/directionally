@@ -25,7 +25,7 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 
 The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → glue parts into assemblies → transform → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 474 tests passing.
 
-**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a, SA14b, SA15, SA9.
+**Completed phases:** S0, S1, S2, S3, S4, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a, SA14b, SA15, SA9.
 
 **Priority order:**
 1. SA12 — Positioning precision *(absorbs SA10; benefits from stable group model)*
@@ -198,10 +198,10 @@ The sketcher is now a multi-document editor backed by OPFS. Each assembly has a 
 
 ---
 
-## Phase S4 — Promote to production *(manual gate)*
+## Phase S4 — Promote to production ✅ COMPLETE
 
-- Remove `import.meta.env.DEV` guard from `/sketch` route and nav link
-- Prerequisite: `OPFSCatalogueStore` (Phase L6) or the Phase I1 server store in place
+- Removed `import.meta.env.DEV` guard from `/sketch` route (and the `goto` import that served only the guard)
+- Added **Sketcher ✏** link in the main app left-panel tab bar, right-justified via `margin-left: auto`
 
 ---
 

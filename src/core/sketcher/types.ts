@@ -108,8 +108,14 @@ export type JointSnapshot = {
  * omitted and restored from the pool by id on demand.
  */
 export type WeldGroupSnapshot = {
-  /** Ordered list of part ids that form the weld group. */
+  /** Ordered list of part ids that form the assembly group. */
   partIds: string[];
+  /**
+   * True when the group was created by a Weld command (pure rigid container,
+   * no glue joints between members). False (or absent in legacy snapshots) means
+   * the group was created by a glue operation.
+   */
+  isWeld?: boolean;
 };
 
 export type SessionSnapshot = {

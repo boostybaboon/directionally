@@ -46,43 +46,48 @@ describe('GlueManager.commitGlue', () => {
     partB = makePart(scene, new THREE.Vector3(5, 0, 0));
   });
 
-  it('records a joint with correct part ids', () => {
-    const joint = glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    expect(joint.partAId).toBe(partA.id);
-    expect(joint.partBId).toBe(partB.id);
+  it('creates an AssemblyGroup for the two glued parts', () => {
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    expect(glue.getAssemblyGroups()).toHaveLength(1);
+    const ag = glue.getAssemblyGroups()[0];
+    expect(ag.partIds).toContain(partA.id);
+    expect(ag.partIds).toContain(partB.id);
   });
 
-  it('stores the joint in getJoints()', () => {
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    expect(glue.getJoints()).toHaveLength(1);
-  });
-
-  it('does not create an AssemblyGroup (SA15: glue is a live constraint)', () => {
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    expect(glue.getAssemblyGroups()).toHaveLength(0);
-  });
-
-  it('does not add a new object to the scene (SA15: no group created)', () => {
+  it('adds one new group object to the scene', () => {
     const childCount = scene.children.length;
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    expect(scene.children.length).toBe(childCount);
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    // The scene gains the group; the two meshes are re-parented inside it.
+    expect(scene.children.length).toBe(childCount - 2 + 1);
   });
 
   it('repositions partB so it is flush with partA face', () => {
     // partA box at origin: top face contact at local (0, 0.5, 0) = world y = 0.5
     // partB contact is its bottom face at local (0, -0.5, 0); after snap world centre y = 1.0
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
     const wp = new THREE.Vector3();
     partB.mesh.getWorldPosition(wp);
     expect(wp.y).toBeCloseTo(1.0, 3);
   });
 
-  it('gluing a third part records a second joint and still no groups', () => {
+  it('records a joint with correct part ids', () => {
+    const joint = glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    expect(joint.partAId).toBe(partA.id);
+    expect(joint.partBId).toBe(partB.id);
+  });
+
+  it('stores the joint in getJoints()', () => {
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    expect(glue.getJoints()).toHaveLength(1);
+  });
+
+  it('gluing a third part into the same component merges into one group', () => {
     const partC = makePart(scene, new THREE.Vector3(-5, 0, 0));
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    glue.commitGlue(partA, new THREE.Vector3(0.5, 0, 0), new THREE.Vector3(1, 0, 0), partC, new THREE.Vector3(-0.5, 0, 0), new THREE.Vector3(-1, 0, 0));
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    glue.commitGlue(partA, new THREE.Vector3(0.5, 0, 0), new THREE.Vector3(1, 0, 0), partC, new THREE.Vector3(-0.5, 0, 0), new THREE.Vector3(-1, 0, 0), [partA, partB, partC]);
     expect(glue.getJoints()).toHaveLength(2);
-    expect(glue.getAssemblyGroups()).toHaveLength(0);
+    expect(glue.getAssemblyGroups()).toHaveLength(1);
+    expect(glue.getAssemblyGroups()[0].partIds).toHaveLength(3);
   });
 });
 
@@ -103,8 +108,8 @@ describe('GlueManager.getConnectedIds', () => {
     const partA = makePart(scene);
     const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
     const partC = makePart(scene, new THREE.Vector3(4, 0, 0));
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    glue.commitGlue(partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    glue.commitGlue(partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB, partC]);
     const ids = glue.getConnectedIds(partA.id);
     expect(ids.sort()).toEqual([partA.id, partB.id, partC.id].sort());
   });
@@ -120,14 +125,15 @@ describe('GlueManager.groupForPart', () => {
     expect(glue.groupForPart(partA.id)).toBeUndefined();
   });
 
-  it('returns undefined after gluing (SA15: glue does not create groups)', () => {
+  it('returns the glue group after gluing', () => {
     const scene = makeScene();
     const glue = new GlueManager(scene);
     const partA = makePart(scene);
     const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    expect(glue.groupForPart(partA.id)).toBeUndefined();
-    expect(glue.groupForPart(partB.id)).toBeUndefined();
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    expect(glue.groupForPart(partA.id)).toBeDefined();
+    expect(glue.groupForPart(partB.id)).toBeDefined();
+    expect(glue.groupForPart(partA.id)!.id).toBe(glue.groupForPart(partB.id)!.id);
   });
 });
 
@@ -139,54 +145,47 @@ describe('GlueManager.unglue', () => {
     const glue = new GlueManager(scene);
     const partA = makePart(scene);
     const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
-    const joint = glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    glue.unglue(joint.id);
+    const joint = glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    glue.unglue(joint.id, [partA, partB]);
     expect(glue.getJoints()).toHaveLength(0);
   });
 
-  it('no group to dissolve: getAssemblyGroups stays empty after unglue (SA15)', () => {
+  it('dissolves the group after unglue: both parts return to standalone', () => {
     const scene = makeScene();
     const glue = new GlueManager(scene);
     const partA = makePart(scene);
     const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
-    const joint = glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    glue.unglue(joint.id);
+    const joint = glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    glue.unglue(joint.id, [partA, partB]);
     expect(glue.getAssemblyGroups()).toHaveLength(0);
-  });
-
-  it('parts remain at scene root before and after unglue (SA15: glue never reparents)', () => {
-    const scene = makeScene();
-    const glue = new GlueManager(scene);
-    const partA = makePart(scene);
-    const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
-    const joint = glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    glue.unglue(joint.id);
     expect(partA.mesh.parent).toBe(scene);
     expect(partB.mesh.parent).toBe(scene);
   });
 
-  it('removing one joint from a 3-part chain leaves the remaining joint intact', () => {
+  it('removing one joint from a 3-part chain splits into two groups', () => {
     const scene = makeScene();
     const glue = new GlueManager(scene);
     const partA = makePart(scene);
     const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
     const partC = makePart(scene, new THREE.Vector3(4, 0, 0));
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    glue.commitGlue(partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    // Remove A-B joint: only B-C joint remains; no groups (SA15)
-    glue.unglue(glue.getJoints()[0].id);
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    glue.commitGlue(partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB, partC]);
+    // Remove A-B joint: A becomes standalone, B-C stay in their own group.
+    glue.unglue(glue.getJoints()[0].id, [partA, partB, partC]);
     expect(glue.getJoints()).toHaveLength(1);
     expect(glue.getJoints()[0].partAId).toBe(partB.id);
-    expect(glue.getAssemblyGroups()).toHaveLength(0);
-    expect(partA.mesh.parent).toBe(scene);
+    expect(glue.getAssemblyGroups()).toHaveLength(1);
+    expect(glue.groupForPart(partA.id)).toBeUndefined();
+    expect(glue.groupForPart(partB.id)).toBeDefined();
+    expect(glue.groupForPart(partC.id)).toBeDefined();
   });
 });
 
 // ── unglueAll ────────────────────────────────────────────────────────────────
 
 describe('GlueManager.unglueAll', () => {
-  it('5-cube line: removing the middle cube removes two joints; remainder intact', () => {
-    // A–B–C–D–E; remove C → joints A-B and D-E survive, B-C and C-D removed. 0 groups.
+  it('5-cube line: removing the middle cube splits into two groups', () => {
+    // A–B–C–D–E; remove C → groups {A,B} and {D,E} survive, C is standalone.
     const scene = makeScene();
     const glue = new GlueManager(scene);
     const [pA, pB, pC, pD, pE] = [0, 2, 4, 6, 8].map(
@@ -196,24 +195,25 @@ describe('GlueManager.unglueAll', () => {
     const nN = new THREE.Vector3(0, -1, 0);
     const pt = new THREE.Vector3(0, 0.5, 0);
     const pb = new THREE.Vector3(0, -0.5, 0);
-    glue.commitGlue(pA, pt, n, pB, pb, nN);
-    glue.commitGlue(pB, pt, n, pC, pb, nN);
-    glue.commitGlue(pC, pt, n, pD, pb, nN);
-    glue.commitGlue(pD, pt, n, pE, pb, nN);
+    const all = [pA, pB, pC, pD, pE];
+    glue.commitGlue(pA, pt, n, pB, pb, nN, all);
+    glue.commitGlue(pB, pt, n, pC, pb, nN, all);
+    glue.commitGlue(pC, pt, n, pD, pb, nN, all);
+    glue.commitGlue(pD, pt, n, pE, pb, nN, all);
 
-    glue.unglueAll(pC.id);
+    glue.unglueAll(pC.id, all);
 
     expect(glue.getJoints()).toHaveLength(2);
-    expect(glue.getAssemblyGroups()).toHaveLength(0);
-    expect(pC.mesh.parent).toBe(scene);
+    expect(glue.getAssemblyGroups()).toHaveLength(2);
+    expect(glue.groupForPart(pC.id)).toBeUndefined();
     // Remaining joints must be A-B and D-E.
     const remainIds = glue.getJoints().map((j) => `${j.partAId}-${j.partBId}`);
     expect(remainIds).toContain(`${pA.id}-${pB.id}`);
     expect(remainIds).toContain(`${pD.id}-${pE.id}`);
   });
 
-  it('3-cube line: removing the middle cube leaves two standalone parts (no groups)', () => {
-    // A–B–C; remove B → A and C at scene root, 0 assembly groups.
+  it('3-cube line: removing the middle cube dissolves the group entirely', () => {
+    // A–B–C; remove B → A and C standalone, 0 assembly groups.
     const scene = makeScene();
     const glue = new GlueManager(scene);
     const [pA, pB, pC] = [0, 2, 4].map(
@@ -223,10 +223,11 @@ describe('GlueManager.unglueAll', () => {
     const nN = new THREE.Vector3(0, -1, 0);
     const pt = new THREE.Vector3(0, 0.5, 0);
     const pb = new THREE.Vector3(0, -0.5, 0);
-    glue.commitGlue(pA, pt, n, pB, pb, nN);
-    glue.commitGlue(pB, pt, n, pC, pb, nN);
+    const all = [pA, pB, pC];
+    glue.commitGlue(pA, pt, n, pB, pb, nN, all);
+    glue.commitGlue(pB, pt, n, pC, pb, nN, all);
 
-    glue.unglueAll(pB.id);
+    glue.unglueAll(pB.id, all);
 
     expect(glue.getAssemblyGroups()).toHaveLength(0);
     expect(pA.mesh.parent).toBe(scene);
@@ -239,22 +240,19 @@ describe('GlueManager.unglueAll', () => {
 
 describe('GlueManager.replayJoints — mover follows when anchor is moved', () => {
   it('produces correct world position when anchor is translated and replayJoints called', () => {
-    // partA is the joint anchor; partB is the mover.
-    // Under SA15 both parts stay at scene root. Moving partA then replaying
-    // should reposition partB so the contact faces stay flush.
     const scene = makeScene();
     const glue = new GlueManager(scene);
     const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
     const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
 
-    // Move partA up by 3 units, then replay.
-    partA.mesh.position.y += 3;
-    partA.mesh.updateMatrixWorld(true);
+    // Move partA up by 3 units via its group, then replay.
+    const ag = glue.groupForPart(partA.id)!;
+    ag.group.position.y += 3;
+    ag.group.updateMatrixWorld(true);
 
     glue.replayJoints(partA, [partA, partB]);
 
-    partB.mesh.updateMatrixWorld(true);
     const wp = new THREE.Vector3();
     partB.mesh.getWorldPosition(wp);
     expect(wp.y).toBeCloseTo(4.0, 3);
@@ -282,15 +280,16 @@ describe('GlueManager.dispose', () => {
 // ── resolveConstraints ────────────────────────────────────────────────────────
 
 describe('GlueManager.resolveConstraints', () => {
-  it('repositions the mover when the anchor id is included in movedPartIds', () => {
+  it('repositions the other part when the anchor id is in movedPartIds', () => {
     const scene = makeScene();
     const glue = new GlueManager(scene);
     const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
     const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
 
-    partA.mesh.position.y += 5;
-    partA.mesh.updateMatrixWorld(true);
+    const ag = glue.groupForPart(partA.id)!;
+    ag.group.position.y += 5;
+    ag.group.updateMatrixWorld(true);
 
     glue.resolveConstraints([partA.id], [partA, partB]);
 
@@ -299,21 +298,28 @@ describe('GlueManager.resolveConstraints', () => {
     expect(wp.y).toBeCloseTo(6.0, 3); // 5 + 1 (partB centre above contact)
   });
 
-  it('snaps mover back when the mover id is included in movedPartIds', () => {
+  it('democratic: anchor follows when the joint partner id is in movedPartIds', () => {
+    // Both parts are in the same group. In member-edit mode, moving partB should
+    // cause partA to re-snap to partB (democratic — moved part is the input).
     const scene = makeScene();
     const glue = new GlueManager(scene);
     const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
     const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
 
-    partB.mesh.position.y = 20;
+    // Displace partB in group-local space (simulates member-edit drag).
+    partB.mesh.position.y += 10;
     partB.mesh.updateMatrixWorld(true);
 
     glue.resolveConstraints([partB.id], [partA, partB]);
 
-    const wp = new THREE.Vector3();
-    partB.mesh.getWorldPosition(wp);
-    expect(wp.y).toBeCloseTo(1.0, 3);
+    // partA should have moved so that its top face meets partB's new bottom face.
+    const wpA = new THREE.Vector3();
+    partA.mesh.getWorldPosition(wpA);
+    const wpB = new THREE.Vector3();
+    partB.mesh.getWorldPosition(wpB);
+    // partB's bottom contact is at wpB.y - 0.5, partA's top must match → partA.y = wpB.y - 1
+    expect(wpA.y).toBeCloseTo(wpB.y - 1.0, 2);
   });
 
   it('skips joints whose parts are not in movedPartIds', () => {
@@ -322,7 +328,7 @@ describe('GlueManager.resolveConstraints', () => {
     const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
     const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
     const partC = makePart(scene, new THREE.Vector3(10, 0, 0));
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
 
     const settled = new THREE.Vector3();
     partB.mesh.getWorldPosition(settled);
@@ -334,82 +340,81 @@ describe('GlueManager.resolveConstraints', () => {
     expect(wpB.y).toBeCloseTo(settled.y, 5);
   });
 
-  it('resolves all joints touching a moved weld group when group member ids are passed', () => {
+  it('BFS chain: resolving A also propagates to C via B (A–B–C)', () => {
+    // In member-edit, moving partA should snap partB (direct joint), then snap
+    // partC via BFS because partB becomes the new anchor for the B–C joint.
     const scene = makeScene();
     const glue = new GlueManager(scene);
     const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
-    const partD = makePart(scene, new THREE.Vector3(1, 0, 0));
     const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
+    const partC = makePart(scene, new THREE.Vector3(10, 0, 0));
 
-    const ag = glue.createWeldGroup([partA, partD]);
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    const initialWp = new THREE.Vector3();
-    partB.mesh.getWorldPosition(initialWp);
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    glue.commitGlue(partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB, partC]);
 
-    ag.group.position.y += 4;
-    ag.group.updateMatrixWorld(true);
+    // Member-edit: displace partA within the combined group.
+    partA.mesh.position.y += 5;
+    partA.mesh.updateMatrixWorld(true);
 
-    glue.resolveConstraints([partA.id, partD.id], [partA, partB, partD]);
+    glue.resolveConstraints([partA.id], [partA, partB, partC]);
 
-    const wp = new THREE.Vector3();
-    partB.mesh.getWorldPosition(wp);
-    expect(wp.y).toBeCloseTo(initialWp.y + 4, 3);
+    const wpA = new THREE.Vector3(); partA.mesh.getWorldPosition(wpA);
+    const wpB = new THREE.Vector3(); partB.mesh.getWorldPosition(wpB);
+    const wpC = new THREE.Vector3(); partC.mesh.getWorldPosition(wpC);
+    expect(wpB.y).toBeCloseTo(wpA.y + 1.0, 2); // partB snapped above partA
+    expect(wpC.y).toBeCloseTo(wpB.y + 1.0, 2); // partC snapped above partB
   });
 });
 
 // ── replayJoints — snap-back and group-move behaviour ────────────────────────
 
-describe('GlueManager.replayJoints — snap-back when partBId is moved independently', () => {
-  it('snaps partB back to the joint position when partB is displaced', () => {
-    // partA is the joint anchor (partAId); partB is the snapped part (partBId).
-    // Moving partB independently then calling replayJoints(partB) must restore the joint.
+describe('GlueManager.replayJoints — democratic: anchor follows the displaced partner', () => {
+  it('partA follows when partB (joint partner) is displaced in member-edit', () => {
     const scene = makeScene();
     const glue = new GlueManager(scene);
     const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
     const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
 
-    // Displace partB away from its joint-satisfying position.
+    // Both are in the same group. Displace partB in group-local space.
     partB.mesh.position.y = 10;
     partB.mesh.updateMatrixWorld(true);
 
     glue.replayJoints(partB, [partA, partB]);
 
-    const wp = new THREE.Vector3();
-    partB.mesh.getWorldPosition(wp);
-    // After snap-back: partB bottom flush with partA top → partB world y = 1.0.
-    expect(wp.y).toBeCloseTo(1.0, 3);
+    const wpA = new THREE.Vector3();
+    const wpB = new THREE.Vector3();
+    partA.mesh.getWorldPosition(wpA);
+    partB.mesh.getWorldPosition(wpB);
+    expect(wpA.y).toBeCloseTo(wpB.y - 1.0, 2);
   });
 });
 
 describe('GlueManager.replayJoints — weld group moves as a whole when anchor is in weld', () => {
-  it('partB follows when partA (in a weld group) is translated and replayJoints is called', () => {
-    // SA15: create a weld group {partA, partD}, then glue partB to partA (anchor).
-    // Translate the weld group → partB must follow.
+  it('member-edit on welded partA snaps glued partB via the joint', () => {
+    // partA and partD are welded: moving partA in member-edit should snap
+    // partB (glue joint A-B) to follow, while partD stays in place.
     const scene = makeScene();
     const glue = new GlueManager(scene);
     const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
     const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
     const partD = makePart(scene, new THREE.Vector3(1, 0, 0));
 
-    // Form a weld group A+D.
-    const ag = glue.createWeldGroup([partA, partD]);
+    glue.createWeldGroup([partA, partD]);
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB, partD]);
 
-    // Glue partB to partA (partA is the anchor).
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
-    partB.mesh.updateMatrixWorld(true);
-    const wpAfterGlue = new THREE.Vector3();
-    partB.mesh.getWorldPosition(wpAfterGlue); // should be y ≈ 1.0
+    const wpBefore = new THREE.Vector3();
+    partB.mesh.getWorldPosition(wpBefore);
 
-    // Move the weld group up.
-    ag.group.position.y += 3;
-    ag.group.updateMatrixWorld(true);
+    // Member-edit: displace partA within the merged group.
+    partA.mesh.position.y += 3;
+    partA.mesh.updateMatrixWorld(true);
 
     glue.replayJoints(partA, [partA, partB, partD]);
 
-    const wpAfterMove = new THREE.Vector3();
-    partB.mesh.getWorldPosition(wpAfterMove);
-    expect(wpAfterMove.y).toBeCloseTo(wpAfterGlue.y + 3, 3);
+    const wpA = new THREE.Vector3(); partA.mesh.getWorldPosition(wpA);
+    const wpB = new THREE.Vector3(); partB.mesh.getWorldPosition(wpB);
+    expect(wpB.y).toBeCloseTo(wpBefore.y + 3, 3); // partB followed partA via glue joint
   });
 });
 
@@ -440,7 +445,7 @@ describe('GlueManager._applyJointPosition — weld group members travel together
     partC.mesh.getWorldPosition(wpCBefore);
 
     // Glue partA-top to partB-bottom. partB's whole weld group must move to snap flush.
-    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB, partC]);
 
     const wpB = new THREE.Vector3();
     const wpC = new THREE.Vector3();

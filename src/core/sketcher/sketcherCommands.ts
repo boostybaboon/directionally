@@ -119,6 +119,11 @@ export class ApplyTextureCommand implements SketcherCommand {
  * by SketcherDocument restoring the before/after SessionSnapshot (which uses
  * world-space transforms and is immune to stale object references).
  *
+ * mode 'group': the whole group moved — pass all group member ids so intra-group
+ * joints are pre-visited and only external connections fire.
+ * mode 'member': only the edited member moved — pass just its id so the BFS
+ * democratically re-snaps all joint neighbours.
+ *
  * Usage in the page:
  *   1. Capture priorSnapshot = sketcherDoc.captureSnapshot() at drag start.
  *   2. At drag end: sketcherDoc.execute(new TransformPartCommand(...), priorSnapshot).
@@ -129,6 +134,7 @@ export class TransformPartCommand implements SketcherCommand {
   constructor(
     private readonly sketcher: CartoonSketcher,
     private readonly movedPartId: string | null,
+    private readonly mode: 'group' | 'member' = 'group',
   ) {}
 
   execute(): void {
@@ -136,10 +142,10 @@ export class TransformPartCommand implements SketcherCommand {
     const session = this.sketcher.getSession();
     const part = session.parts.find((p) => p.id === this.movedPartId);
     if (!part) return;
-    // Resolve constraints for all parts in the moved entity: if the part is
-    // in a weld group, the whole group moved, so resolve for all its members.
     const ag = this.sketcher.glueManager.groupForPart(this.movedPartId);
-    const movedIds = ag ? ag.partIds : [part.id];
+    // group: whole assembly moved — seed BFS with all members so intra-group joints are skipped.
+    // member: only this part moved — BFS propagates to all joint neighbours.
+    const movedIds = this.mode === 'member' ? [part.id] : (ag ? ag.partIds : [part.id]);
     this.sketcher.glueManager.resolveConstraints(movedIds, session.parts);
   }
 }
@@ -160,9 +166,11 @@ export class CommitGlueCommand implements SketcherCommand {
   ) {}
 
   execute(): void {
+    const allParts = this.sketcher.getSession().parts;
     this.sketcher.glueManager.commitGlue(
       this.partA, this.localPointA, this.localNormalA,
       this.partB, this.localPointB, this.localNormalB,
+      allParts,
     );
   }
 }
@@ -191,10 +199,11 @@ export class SnapToFloorCommand implements SketcherCommand {
   constructor(
     private readonly partId: string,
     private readonly sketcher: CartoonSketcher,
+    private readonly mode: 'group' | 'member' = 'group',
   ) {}
 
   execute(): void {
-    this.sketcher.snapToFloor(this.partId);
+    this.sketcher.snapToFloor(this.partId, this.mode);
   }
 }
 
