@@ -559,7 +559,10 @@ export class CartoonSketcher {
       localPointB: [j.localPointB.x, j.localPointB.y, j.localPointB.z],
       localNormalB: [j.localNormalB.x, j.localNormalB.y, j.localNormalB.z],
     }));
-    return { version: 2, parts, joints };
+    const weldGroups: WeldGroupSnapshot[] = this.glue.getAssemblyGroups().map((ag) => ({
+      partIds: [...ag.partIds],
+    }));
+    return { version: 2, parts, joints, weldGroups };
   }
 
   /**
@@ -627,6 +630,15 @@ export class CartoonSketcher {
           new THREE.Vector3(js.localPointB[0], js.localPointB[1], js.localPointB[2]),
           new THREE.Vector3(js.localNormalB[0], js.localNormalB[1], js.localNormalB[2]),
         );
+      }
+    }
+
+    for (const wg of draft.weldGroups ?? []) {
+      const weldParts = wg.partIds
+        .map((id) => this.parts.find((p) => p.id === id))
+        .filter((p): p is SketcherPart => p !== undefined);
+      if (weldParts.length >= 2) {
+        this.glue.createWeldGroup(weldParts);
       }
     }
   }

@@ -23,13 +23,12 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 
 ## Current state — April 2026
 
-The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → glue parts into assemblies → transform → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 456 tests passing.
+The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → glue parts into assemblies → transform → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 474 tests passing.
 
-**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a, SA14b, SA15.
+**Completed phases:** S0, S1, S2, S3, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a, SA14b, SA15, SA9.
 
 **Priority order:**
-1. SA9 — Named assemblies *(multi-document sketcher; re-open any asset for continued editing)*
-2. SA12 — Positioning precision *(absorbs SA10; benefits from stable group model)*
+1. SA12 — Positioning precision *(absorbs SA10; benefits from stable group model)*
 
 ---
 
@@ -128,39 +127,20 @@ Extend the polygon sketcher with rectangle and circle input modes alongside the 
 
 ---
 
-## Phase SA9 — Named assemblies
+## Phase SA9 — Named assemblies ✅ COMPLETE
 
-The Word-style open/save document model for the sketcher. SH2 already keeps a single autosaved draft alive across refreshes; SA9 adds named saves, a list of assemblies, and the ability to open any of them for continued editing.
+The sketcher is now a multi-document editor backed by OPFS. Each assembly has a name, persists across sessions, and can be re-opened for continued editing and re-export.
 
-**Why after SA14/SA15:** SA9's `AssemblySpec` schema must represent both `WeldGroup` membership and `GlueConstraint` records — the split introduced by SA15. SA12's numeric-field commands also finalise the `SketcherSession` shape. Building the schema before both are settled means a migration pass.
+**Changes delivered:**
+- `SketcherDraft` extended with `weldGroups?: WeldGroupSnapshot[]` — drafts now fully round-trip weld group topology
+- `CartoonSketcher.toDraft()` serialises weld groups; `loadDraft()` reconstructs them (mirrors `restoreSnapshot` pattern)
+- New `SketcherAssemblyStore` (`src/core/storage/`) — OPFS-backed store: `list()`, `get()`, `create()`, `save()`, `remove()`; injectable directory provider for testability; metadata in `assemblies-meta.json`, each draft as `{id}.json`
+- `/sketch` route: `localStorage` autosave replaced by OPFS save via `SketcherAssemblyStore`; legacy `sketcher-draft` key migrated to a named OPFS entry on first run
+- Toolbar: assembly name text field (editable, blur/Enter renames) + **New** button + **Open…** toggle panel listing all saved assemblies with delete per-entry
+- **Export to Catalogue** now uses the assembly name as the catalogue label
+- `clearSession()` no longer touches `localStorage`; state management handled by `newAssembly()` / `openAssembly()`
 
-**`AssemblySpec` JSON** — stored in OPFS:
-```ts
-type PartSpec = {
-  id: string;
-  kind: 'sketch' | 'primitive';
-  name: string;                          // 'Box', 'Cylinder', 'Shape', etc.
-  shapePoints?: [number, number][];      // for sketch parts
-  depth?: number;
-  position: [number, number, number];
-  rotation: [number, number, number, number];  // quaternion
-  scale: [number, number, number];
-  color: number;
-  uvMode: 'per-face' | 'wrapped';
-};
-type AssemblySpec = { parts: PartSpec[]; joints: GlueJoint[] };
-```
-
-**Store:** `SketcherAssemblyStore` in `src/core/storage/` — mirrors `ProductionStore` in shape (`list`, `get`, `save`, `create`, `delete`), but backed by OPFS (no size limit for future texture data) instead of `localStorage`.
-
-**UI:**
-- Toolbar: assembly name (editable inline) + **Save** button + **Open…** dropdown listing saved assemblies
-- Autosave on every mutation (upgrades SH2's `localStorage` draft to the named OPFS document once open)
-- **Export to Catalogue** remains a separate explicit action (produces the GLB for use in productions)
-
-**Load path:** `AssemblySpec` → reconstruct Three.js scene using the same geometry-build functions as creation → immediately editable.
-
-> **Note on full parametric history:** `AssemblySpec` achieves the practical need — re-open, adjust, re-export — without a modifier stack. Full history replay deferred indefinitely.
+**Tests:** 474 passing (14 new `SketcherAssemblyStore` tests)
 
 ---
 

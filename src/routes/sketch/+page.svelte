@@ -24,6 +24,8 @@
   } from '../../core/sketcher/sketcherCommands.js';
   import { exportGLB } from '../../core/sketcher/exportGLB.js';
   import * as OPFSCatalogueStore from '../../core/storage/OPFSCatalogueStore.js';
+  import * as SketcherAssemblyStore from '../../core/storage/SketcherAssemblyStore.js';
+  import type { AssemblyMeta } from '../../core/storage/SketcherAssemblyStore.js';
 
   // DEV-only guard – redirect to home in production builds.
   if (!import.meta.env.DEV) {
@@ -52,6 +54,11 @@
   let dragTargetMaterialIndex = $state<number | null>(null);
   let canUndo = $state(false);
   let canRedo = $state(false);
+  // Assembly management (SA9)
+  let assemblyName = $state('Untitled');
+  let currentAssemblyId = $state<string | null>(null);
+  let savedAssemblies = $state<AssemblyMeta[]>([]);
+  let showOpenPanel = $state(false);
   // Glue interaction state
   let gluePhase = $state<'src' | 'target' | null>(null);
   // The anchor blob placed in phase 'src'.
@@ -188,22 +195,53 @@
       canRedo = sketcherDoc.canRedo;
       // Persist the session after every mutation so it survives a page reload.
       if (draftSaveTimer !== null) clearTimeout(draftSaveTimer);
-      draftSaveTimer = setTimeout(() => {
-        localStorage.setItem('sketcher-draft', JSON.stringify(sketcher.toDraft()));
+      draftSaveTimer = setTimeout(async () => {
+        const draft = sketcher.toDraft();
+        if (currentAssemblyId) {
+          await SketcherAssemblyStore.save(currentAssemblyId, assemblyName, draft);
+        } else {
+          const meta = await SketcherAssemblyStore.create(assemblyName, draft);
+          currentAssemblyId = meta.id;
+          localStorage.setItem('sketcher-assembly-id', meta.id);
+          savedAssemblies = await SketcherAssemblyStore.list();
+        }
         draftSaveTimer = null;
       }, 500);
     });
 
-    // Restore draft from a previous session if one was saved.
-    const rawDraft = localStorage.getItem('sketcher-draft');
-    if (rawDraft) {
-      try {
-        const draft = JSON.parse(rawDraft);
-        if (draft?.version === 2) sketcher.loadDraft(draft);
-      } catch {
-        // Corrupt draft — ignore and start fresh.
+    // Restore the last-opened assembly from OPFS, or migrate the legacy localStorage draft.
+    void (async () => {
+      savedAssemblies = await SketcherAssemblyStore.list();
+      const lastId = localStorage.getItem('sketcher-assembly-id');
+    if (lastId) {
+      const draft = await SketcherAssemblyStore.get(lastId);
+      const meta = savedAssemblies.find((a) => a.id === lastId);
+      if (draft && meta) {
+        sketcher.loadDraft(draft);
+        currentAssemblyId = lastId;
+        assemblyName = meta.name;
+      }
+    } else {
+      // Migrate legacy localStorage draft to a named OPFS assembly.
+      const rawDraft = localStorage.getItem('sketcher-draft');
+      if (rawDraft) {
+        try {
+          const draft = JSON.parse(rawDraft);
+          if (draft?.version === 2) {
+            sketcher.loadDraft(draft);
+            const meta = await SketcherAssemblyStore.create('Untitled', draft);
+            currentAssemblyId = meta.id;
+            assemblyName = meta.name;
+            localStorage.setItem('sketcher-assembly-id', meta.id);
+            localStorage.removeItem('sketcher-draft');
+            savedAssemblies = await SketcherAssemblyStore.list();
+          }
+        } catch {
+          // Corrupt legacy draft — ignore and start fresh.
+        }
       }
     }
+    })();
 
     // ── Keyboard shortcuts ───────────────────────────────────────────────────
     const onKey = (e: KeyboardEvent) => {
@@ -791,8 +829,54 @@
     selection.deselect();
     sketcher.clearSession();
     sketcherDoc.clearStack();
-    localStorage.removeItem('sketcher-draft');
     statusMessage = 'Session cleared.';
+  }
+
+  async function newAssembly() {
+    if (currentAssemblyId) {
+      await SketcherAssemblyStore.save(currentAssemblyId, assemblyName, sketcher.toDraft());
+    }
+    clearSession();
+    const meta = await SketcherAssemblyStore.create('Untitled', { version: 2, parts: [], joints: [], weldGroups: [] });
+    currentAssemblyId = meta.id;
+    assemblyName = meta.name;
+    localStorage.setItem('sketcher-assembly-id', meta.id);
+    savedAssemblies = await SketcherAssemblyStore.list();
+    statusMessage = 'New assembly started.';
+  }
+
+  async function openAssembly(id: string) {
+    if (currentAssemblyId) {
+      await SketcherAssemblyStore.save(currentAssemblyId, assemblyName, sketcher.toDraft());
+    }
+    const meta = savedAssemblies.find((a) => a.id === id);
+    const draft = await SketcherAssemblyStore.get(id);
+    if (draft && meta) {
+      clearSession();
+      sketcher.loadDraft(draft);
+      sketcherDoc.clearStack();
+      currentAssemblyId = id;
+      assemblyName = meta.name;
+      localStorage.setItem('sketcher-assembly-id', id);
+      showOpenPanel = false;
+      statusMessage = `Opened "${meta.name}".`;
+    }
+  }
+
+  async function deleteAssembly(id: string) {
+    await SketcherAssemblyStore.remove(id);
+    savedAssemblies = await SketcherAssemblyStore.list();
+    if (currentAssemblyId === id) {
+      currentAssemblyId = null;
+      assemblyName = 'Untitled';
+      localStorage.removeItem('sketcher-assembly-id');
+    }
+  }
+
+  async function renameCurrentAssembly() {
+    if (!currentAssemblyId) return;
+    await SketcherAssemblyStore.save(currentAssemblyId, assemblyName, sketcher.toDraft());
+    savedAssemblies = await SketcherAssemblyStore.list();
   }
 
   // ── Group edit mode ──────────────────────────────────────────────────────────
@@ -905,22 +989,34 @@
       return;
     }
     statusMessage = 'Exporting…';
-    const { blob, filename } = await exportGLB(session);
+    const { blob } = await exportGLB(session);
+    const label = assemblyName.trim() || 'Untitled';
     await OPFSCatalogueStore.add(blob, {
       kind: 'set-piece',
-      label: filename.replace('.glb', ''),
+      label,
     });
-    statusMessage = `Exported "${filename}" to catalogue.`;
+    statusMessage = `Exported "${label}" to catalogue.`;
   }
 </script>
 
 <div class="sketch-page">
   <header class="toolbar">
     <a class="back-link" href="/">← Back</a>
-    <span class="title">Sketcher</span>
+    <div class="assembly-controls">
+      <input
+        class="assembly-name-input"
+        type="text"
+        bind:value={assemblyName}
+        onblur={renameCurrentAssembly}
+        onkeydown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        title="Assembly name"
+        placeholder="Untitled"
+      />
+      <button onclick={newAssembly} title="New assembly">New</button>
+      <button class:active={showOpenPanel} onclick={() => { showOpenPanel = !showOpenPanel; }} title="Open saved assembly">Open…</button>
+    </div>
     <div class="actions">
       <button onclick={newSketch}>New sketch</button>
-      <button onclick={clearSession}>Clear</button>
       <button disabled={!canUndo} onclick={() => { exitGroupEditMode(); sketcherDoc.undo(); }} title="Ctrl+Z">↩ Undo</button>
       <button disabled={!canRedo} onclick={() => { exitGroupEditMode(); sketcherDoc.redo(); }} title="Ctrl+Shift+Z">↪ Redo</button>
       <span class="separator"></span>
@@ -931,6 +1027,30 @@
       <button class="primary" onclick={exportToCatalogue}>Export to Catalogue</button>
     </div>
   </header>
+
+  {#if showOpenPanel}
+    <div class="open-panel">
+      <div class="open-panel-header">
+        <span>Saved assemblies</span>
+        <button class="panel-close" onclick={() => { showOpenPanel = false; }}>✕</button>
+      </div>
+      {#if savedAssemblies.length === 0}
+        <p class="open-panel-empty">No saved assemblies yet.</p>
+      {:else}
+        <ul class="assembly-list">
+          {#each savedAssemblies as a (a.id)}
+            <li class="assembly-item" class:current={a.id === currentAssemblyId}>
+              <button class="assembly-open-btn" onclick={() => openAssembly(a.id)}>
+                <span class="assembly-item-name">{a.name}</span>
+                <span class="assembly-item-date">{new Date(a.modifiedAt).toLocaleDateString()}</span>
+              </button>
+              <button class="assembly-delete-btn" title="Delete" onclick={() => deleteAssembly(a.id)}>✕</button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  {/if}
   <div class="primitives-bar">
     <span class="bar-label">Insert:</span>
     <button onclick={() => insertPrimitive('box')}>Cube</button>
@@ -1033,18 +1153,126 @@
     flex-shrink: 0;
   }
 
+  .assembly-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+  }
+
+  .assembly-name-input {
+    background: #1e1e3a;
+    border: 1px solid #3a3a6a;
+    border-radius: 4px;
+    color: #e0e0ff;
+    font-size: 13px;
+    padding: 3px 8px;
+    width: 160px;
+  }
+  .assembly-name-input:focus {
+    outline: none;
+    border-color: #6050c8;
+  }
+
+  .open-panel {
+    position: absolute;
+    top: 36px;
+    left: 52px;
+    z-index: 100;
+    background: #1a1a36;
+    border: 1px solid #3a3a6a;
+    border-radius: 6px;
+    min-width: 280px;
+    max-height: 320px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 4px 16px #0008;
+  }
+
+  .open-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #8888cc;
+    border-bottom: 1px solid #2a2a4a;
+  }
+
+  .panel-close {
+    background: none;
+    border: none;
+    color: #6666aa;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px;
+  }
+  .panel-close:hover { color: #e0e0ff; }
+
+  .open-panel-empty {
+    padding: 16px 12px;
+    font-size: 12px;
+    color: #5555a0;
+    margin: 0;
+  }
+
+  .assembly-list {
+    list-style: none;
+    margin: 0;
+    padding: 4px 0;
+    overflow-y: auto;
+  }
+
+  .assembly-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+  }
+  .assembly-item.current { background: #25254a; }
+
+  .assembly-open-btn {
+    flex: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    padding: 6px 4px;
+    border-radius: 3px;
+    color: #d0d0f0;
+  }
+  .assembly-open-btn:hover { background: #2a2a50; }
+
+  .assembly-item-name {
+    font-size: 13px;
+    flex: 1;
+  }
+
+  .assembly-item-date {
+    font-size: 11px;
+    color: #5555a0;
+  }
+
+  .assembly-delete-btn {
+    background: none;
+    border: none;
+    color: #5555a0;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 6px;
+  }
+  .assembly-delete-btn:hover { color: #cc4444; }
+
   .back-link {
     color: #8888cc;
     text-decoration: none;
     font-size: 13px;
   }
   .back-link:hover { color: #aaaae8; }
-
-  .title {
-    font-size: 14px;
-    font-weight: 600;
-    flex: 1;
-  }
 
   .actions {
     display: flex;

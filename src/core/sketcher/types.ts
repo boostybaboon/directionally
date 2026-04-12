@@ -145,4 +145,5 @@ export type SketcherDraft = {
   version: 2;
   parts: PartDraft[];
   joints: JointSnapshot[];
+  weldGroups?: WeldGroupSnapshot[];
 };
