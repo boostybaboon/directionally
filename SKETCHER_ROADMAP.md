@@ -127,6 +127,60 @@ Extend the polygon sketcher with rectangle and circle input modes alongside the 
 
 ---
 
+## Phase SA16 — Torus primitive and partial angle sweeps
+
+**Torus** is `THREE.TorusGeometry(radius, tube, radialSegments, tubularSegments, arc)` — a single-line addition to the insert bar. **Partial angle sweeps** expose the existing `arc` (torus), `thetaLength` (sphere), and `phiLength`/`thetaLength` (cylinder, cone) constructor parameters that Three.js already accepts; no geometry work is required to produce the shape.
+
+**Open-shell trade-off:** Partial geometry leaves cut edges open — Three.js does not auto-cap partial sweeps. For cartoon work viewed at a distance the gap is usually invisible, but close inspection shows the hollow interior. These are deferred as **SA16b** so the torus and visible angle control ship first without holding the phase.
+
+*SA16b cap geometry notes:*
+- **Hemisphere (partial theta):** open edge is the equator ring at `y = 0`; cap is a flat disc — fan from `(0, 0, 0)` to consecutive equator ring vertices. Straightforward.
+- **Sphere phi wedge (partial phi, e.g. 90° pie slice):** each open edge runs pole-to-pole along the sphere surface — a curved arc in 3D. Each cap is a half-disk. The straight edge of that half-disk is the Y-axis chord from north to south pole; the curved edge is the sphere-surface arc. Triangulated as a fan from the sphere origin `(0, 0, 0)`, which is the midpoint of the straight edge. One extra vertex (the origin) is all that is needed.
+- **Torus partial arc:** each open face is a tube cross-section ring; each cap is a flat disc fanned from that ring's centre point. Equivalent to the hemisphere disc case.
+- **Cylinder/cone partial phi:** open edges are straight lines (height of the cylinder); cap is a planar, straight-sided sector — two triangles.
+
+**UI dependency:** A torus insert button and its `arc` field can ship immediately. Angle parameters for *existing* primitives need an inspector field, which is only ergonomic after SA12's properties panel lands. Angle editing on sphere/cylinder/cone should therefore be gated behind SA12 rather than added as raw toolbar controls now.
+
+**Scope:**
+- Torus insert button; `arc` editable via properties panel (SA12 dependency)
+- `GeometryConfig` union extended with `{ kind: 'Torus', radius, tube, arc, radialSegments, tubularSegments }`
+- Existing primitive configs extended with their angle fields (`phiLength`, `thetaLength`) as optional; defaults preserve current behaviour
+- SA16b (cap generation) deferred
+
+---
+
+## Phase SA17 — Shape holes (extrude with holes)
+
+Three.js `THREE.Shape` natively supports holes via `shape.holes: THREE.Path[]`. `ExtrudeGeometry` respects them using the standard SVG fill winding rule — you push a counter-clockwise inner path onto `shape.holes` and the extrusion produces a clean hollow cross-section (D-shapes, rings, frames, letter outlines). **No custom geometry kernel work is required.**
+
+**UI work is the substance of this phase:**
+- After the outer polygon is closed, an **Add hole** button appears in the sketch HUD; activating it restarts the vertex-click flow for an inner path
+- The inner path flows through the same close-near-first-point mechanic as the outer shape
+- Closing the inner path adds it to `shape.holes`; the extrude preview updates immediately
+- A bounding-box pre-check guards against holes that obviously extend outside the outer shape (full topological validation is out of scope)
+- Multiple holes are supported by the API but limited to one per shape initially; multiple holes can extend the phase
+
+**Serialisation:** `PolygonPartDraft` gains `holes?: { x: number; y: number }[][]` — array of hole paths, each an array of 2D points. Drafts without the field are valid (no holes).
+
+---
+
+## Phase SA18 — Lathe / revolve geometry
+
+`THREE.LatheGeometry(points, segments, phiStart, phiLength)` creates a surface of revolution by spinning a 2D profile curve around the Y axis. The `phiStart`/`phiLength` parameters support partial sweeps. The cartoon use cases are obvious: vases, bottles, goblets, chess pieces, barrels, cartoon wheels — shapes that are hard to approximate convincingly from extruded polygons.
+
+**Proposed integration:** reuse the polygon vertex-click flow but offer **Revolve** as a second operation alongside **Extrude** once the profile is closed. The profile is drawn in a *front* (XY plane) view rather than the current floor (XZ plane) view, which requires a drawing-plane toggle for the sketch session (top → front). The camera would reposition to an orthographic-style front view while drawing.
+
+**Partial-angle caps:** a `phiLength < 2π` leaves two flat radial faces open. Each cap is a fan of triangles from the axis through the profile points at `phiStart` and `phiStart + phiLength` — straightforward to generate as a `BufferGeometry` merged with the lathe mesh before the result is treated as a single part. This is simpler than sphere/torus caps (SA16b) because the cross-section is always a planar polygon matching the profile silhouette.
+
+**Risks and constraints:**
+- The front-view drawing mode is the largest UX change here — camera positioning, grid orientation, and the raycasting draw plane all need to switch. This is significantly more complex than SA17.
+- Profile points should have `x >= 0` for a full revolution (negative x produces inside-out geometry); a visual indicator or clamp is needed.
+- Simpler alternative if the view-flip proves painful: keep the floor drawing plane and revolve around the Z axis instead of Y. Breaks the intuitive "profile = vertical cross-section" mental model but avoids the camera work entirely. Decide at implementation time.
+
+**Serialisation:** new `LathedPartDraft` type: `{ kind: 'Lathed', points: { x: number; y: number }[], phiStart: number, phiLength: number, segments: number }`.
+
+---
+
 ## Phase SA9 — Named assemblies ✅ COMPLETE
 
 The sketcher is now a multi-document editor backed by OPFS. Each assembly has a name, persists across sessions, and can be re-opened for continued editing and re-export.
