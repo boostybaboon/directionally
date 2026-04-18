@@ -255,3 +255,43 @@ We clear these and rebuild: wall edge i → `materialIndex` i (group of 6 indice
 - Also fixed `unglueSelected()` null guard (`if (!selectedPartId) return`) — pre-existing type error now caught by svelte-check.
 
 **Tests:** 438 total passing (9 new tests: 5 `CartoonSketcher` unit tests for `setFaceTexture`, 1 `toDraft/loadDraft` texture round-trip, 3 `ApplyTextureCommand` undo/redo tests in `SketcherDocument`). Added `beforeAll` mock for `THREE.TextureLoader.prototype.load` in both test files (returns bare `THREE.Texture` without DOM).
+
+---
+
+## Phase SA15 — Glue as structural group with live constraint ✅ COMPLETE
+
+Glue creates a `THREE.Group` (same as weld) containing all parts in the connected component, plus records a `GlueJoint` as a geometric recipe for member-edit re-snap. This is "Option A": the group gives the TC gizmo something to grab and respects floor-snap, while the joint enables joint-aware BFS re-snap during member-edit mode.
+
+**Earlier experiment:** SA15 was first implemented as a "live constraint only" model (no group). Three bugs surfaced in testing: (1) TC had no group to attach to, so glued pairs couldn't be moved as a unit; (2) `snapToFloor` found no group root, so it only snapped the single clicked part; (3) during two-click glue pick, the source mesh occluded the second raycast. All three are fixed by restoring the explicit group.
+
+**Changes delivered:**
+
+*`GlueManager.ts`*
+- `commitGlue(partA, lpA, lnA, partB, lpB, lnB, allParts)` — snaps partB to partA, dissolves both sides' existing groups, calls `_createGroup(mergedIds)`, records the `GlueJoint`
+- `resolveConstraints(movedPartIds, allParts)` — democratic BFS: every `movedPartId` is pre-seeded into the visited set; BFS propagates outward, treating the moved part as the anchor for each directly-connected unvisited neighbour; group-level drag pre-seeds *all* group member IDs so intra-group joints are skipped
+- `_applyJointPosition(edited, editedPoint, editedNormal, other, otherPoint, otherNormal)` — symmetric; target = `other.mesh` if same group, else group root; rotation via quaternion conjugation (`parentQ⁻¹ · rotQ · parentQ`); translation via `worldToLocal` for grouped targets — fixes the BUG-1 matrix-inversion failure for non-uniform-scale parents
+- `unglue(jointId, allParts)` / `unglueAll(partId, allParts)` — remove joints then call `_rebuildGroupsForParts` (BFS-based group reconstruction for remaining connected components)
+- `rebuildGroupsFromSnapshot(groups, allParts)` — public method for snapshot restore; `isWeld !== false` → `createWeldGroup`; else → `_createGroup` (no joint re-derivation needed on undo/redo)
+- `_rebuildGroupsForParts(partIds, allParts)` — dissolves all groups containing affected parts, BFS over remaining joints, creates new groups for each component of size ≥ 2, returns singletons to scene root
+- `registerJoint` unchanged (no group creation; used only by snapshot restore)
+
+*`types.ts`* — `WeldGroupSnapshot` gains `isWeld?: boolean`; absent = weld (backward-compat)
+
+*`CartoonSketcher.ts`*
+- `snapToFloor(id, mode: 'group'|'member')` — `'group'` moves the group root; `'member'` moves the mesh and calls `resolveConstraints`
+- `takeSnapshot()` / `toDraft()` — all assembly groups (weld + glue) captured with `isWeld` flag
+- `restoreSnapshot()` / `loadDraft()` — calls `glue.rebuildGroupsFromSnapshot()` to recreate groups without BFS re-derivation
+
+*`sketcherCommands.ts`*
+- `CommitGlueCommand.execute()` — passes `sketcher.getSession().parts` as `allParts`
+- `TransformPartCommand(sketcher, movedPartId, mode: 'group'|'member')` — `'group'` mode seeds all group member IDs into `resolveConstraints`; `'member'` seeds only the dragged part
+- `SnapToFloorCommand(partId, sketcher, mode: 'group'|'member')` — mode forwarded to `snapToFloor`
+
+*`+page.svelte`*
+- `tcDragMode: 'group'|'member'` — set from `groupEditGroupId` at drag start
+- `glueSrcGhostEntries` — ephemeral ghost state for the glue source mesh during two-click pick; source made semi-transparent to unblock second raycast (fixes bug 3); restored on commit or cancel
+- `snapToFloor()` — passes mode from `groupEditGroupId`
+
+**Tests:** 473 passing (GlueManager: 31 tests; SketcherDocument: updated SA15 semantics throughout)
+
+---

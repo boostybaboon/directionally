@@ -23,7 +23,7 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 
 ## Current state — April 2026
 
-The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → glue parts into assemblies → transform → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 474 tests passing.
+The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → glue parts into assemblies (structural group + live joint) → transform (group-level and member-edit) → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 473 tests passing.
 
 **Completed phases:** S0, S1, S2, S3, S4, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a, SA14b, SA15, SA9.
 
@@ -74,20 +74,9 @@ After welding, users occasionally need to tweak one member's position without di
 
 ---
 
-## Phase SA15 — Glue as live constraint ✅ COMPLETE
+## Phase SA15 — Glue as structural group with live constraint ✅ COMPLETE
 
-Glue was upgraded from a merge-based mechanism (wrapping parts in a `THREE.Group`) to a *live positional constraint* between two independent entities (weld groups or standalone parts). Parts now stay at scene root or in their weld group; a `GlueJoint` record is a pure constraint re-satisfied by `resolveConstraints()` after every TC commit.
-
-**Changes delivered:**
-- `GlueManager.commitGlue` / `registerJoint` no longer call `_mergeIntoGroup` — no group is created from a glue operation
-- New `resolveConstraints(movedPartIds, allParts)` single-pass method — iterates all joints touching any moved part and calls `_applyJointPosition` to re-satisfy each constraint
-- `replayJoints` delegates to `resolveConstraints`; `unglue` / `unglueAll` simplified to pure joint removal
-- `_mergeIntoGroup` and `_connectedComponents` removed (dead code)
-- `TransformPartCommand.execute()` uses all parts of the moved entity (weld group members or singleton) when calling `resolveConstraints`
-- `+page.svelte`: new `selectedPartHasGlue` state; Unweld and Unglue toolbar buttons are now independent conditions; status message simplified; `unglueSelected` TC re-attachment handles weld-group case
-- BUG-1 (scale bleed on glue-into-scaled-group) resolved as side-effect — no more matrix inversion across non-uniform scales
-
-**Tests:** 460 passing (32 in GlueManager, 44 in SketcherDocument — all updated for SA15 semantics)
+See [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHER_ROADMAP_ARCHIVE.md) for full details.
 
 ---
 
@@ -95,23 +84,43 @@ Glue was upgraded from a merge-based mechanism (wrapping parts in a `THREE.Group
 
 *(Absorbs the former SA10 uniform-scale toggle, which is a sub-item here.)*
 
-Currently all positioning is by mouse drag — hard to place table legs at exact coordinates before gluing. This is the largest feature in the active queue; it benefits from SA13 being in place so that all numeric edits are undoable.
+Currently all positioning is by mouse drag — hard to place table legs at exact coordinates before gluing. This phase adds numeric input everywhere a measurement matters. It benefits from SA13 (all edits undoable) and from SA15's stable group model.
 
-**Transform precision**
-- When an object is selected, show world-space position / rotation / scale as editable numeric fields in the properties panel. Tab between X/Y/Z; Enter to confirm. Each confirmed edit issues a `TransformPartCommand`.
-- Uniform scale toggle: **Scale XYZ** | **Scale uniform** (locks TransformControls scale axis to `'XYZ'`). Sufficiently small that it belongs here rather than as a standalone phase.
+### Sub-items and implementation plan
 
-**Sketch points**
-- Expose grid snap size as an editable field (currently hardcoded at 0.1)
-- Numeric coordinate entry: click a vertex or handle → XYZ input panel
+**SA12a — Transform inspector (position / rotation / scale fields)**
 
-**Extrusion depth**
-- Numeric depth field in the extrude HUD overlay alongside the grab handle
+The existing `PropertiesPanel.svelte` shows colour and material info. Extend it with a numeric transform section, shown whenever a part or group is selected.
 
-**Glue precision**
-- *Midpoint mode:* toggle that snaps the glue source pick to face-centre automatically, without requiring precise hover — equivalent to `(0.5, 0.5)` in face UV space
-- Free-mouse glue stays available as the alternative
-- *Glue point editor:* select a joint → inspector showing UV position on each face + twist angle (`alpha`); edits reposition the joint live.
+- **Data flow:** on every `selection-changed` and after every TC drag-end, read the selected object's world matrix and display `position.x/y/z` (3 dp), `rotation` in degrees (1 dp), and `scale.x/y/z` (3 dp) as `<input type="number">` fields
+- **Write-back:** blur or Enter on any field constructs a `TransformPartCommand` with mode `'group'` or `'member'` as appropriate, and calls `doc.execute(cmd)`. No TC drag emitted — transform applied directly to `position`/`quaternion`/`scale` then world matrix forced via `updateMatrixWorld(false, true)`
+- **Euler order:** YXZ (Three.js default). Display in degrees; store via `THREE.MathUtils.degToRad`
+- **Uniform scale toggle:** lock icon beside the scale row. When locked, editing any axis scales all three. `TransformPartCommand` gains an optional `uniform?: boolean` flag; applies `object.scale.setScalar(v)` when true
+- **Files:** `PropertiesPanel.svelte` (new transform section), `sketcherCommands.ts` (`TransformPartCommand` extended), `+page.svelte` (selection → panel refresh, TC drag-end → panel refresh)
+
+**SA12b — Grid snap size field**
+
+- `<input type="number" min="0.01" step="0.01">` in the sketch toolbar, default `0.1`
+- `PolygonSketcher.snapSize` is already a settable property; this only exposes it in the UI
+- Persisted in `localStorage` as a workspace preference (not per draft)
+
+**SA12c — Extrusion depth field**
+
+- Live `<input type="number">` in the toolbar during the extrusion phase (alongside / replacing the depth HUD overlay)
+- `isExtruding` and `extrusionDepth` state already exist in `+page.svelte`; bind the field to `extrusionDepth` and add `ExtrusionHandle.setDepth(d)` to apply programmatically
+
+**SA12d — Glue midpoint mode**
+
+- **⊕ Centre snap** toggle button in the toolbar, shown during glue source-pick phase
+- When active, the glue source point is forced to the face-centre regardless of where the user clicks (equivalent to UV `(0.5, 0.5)` in each face group's local frame)
+- Face centre computable from `faceGroups` normals: mesh centroid + `normal × halfExtent`
+- Free-mouse glue remains the default; midpoint mode is opt-in
+
+### Sequencing
+
+SA12a is highest-value — enables "place a table leg at `x = 1.5`". SA12b and SA12c are small and can go in the same PR. SA12d follows SA12a.
+
+*Glue point editor (UV position + twist angle `alpha` on a selected joint) deferred as SA12e — low priority until users hit the need.*
 
 ---
 
@@ -227,20 +236,6 @@ interface OPFSCatalogueStore {
 **Tests via mocked `navigator.storage.getDirectory()`:** add → list, remove → absent, metadata persists across re-instantiation.
 
 ---
-
-## Known bugs
-
-### BUG-1 — Glue into scaled group produces misaligned contact points and scale bleed
-
-**Reproduction:** (1) insert two parts and glue them; (2) scale the resulting assembly group using the TC gizmo; (3) insert a third standalone (unscaled) part; (4) start a glue operation — place the anchor blob on a face of a part *inside the scaled group*, then click a face of the unscaled standalone part as the mover.
-
-**Observed:** The two picked surface points are not coincident after the snap, and the mover appears to inherit the group's scale (i.e. it shrinks or grows to match the scaled group's coordinate space rather than preserving its original world size).
-
-**Root cause:** `_applyJointPosition` applies the rotation and translation to `target` (= the mover mesh, still at scene root) in world space, then `_mergeIntoGroup` calls `group.attach(moverMesh)` to re-parent it. `THREE.Object3D.attach` is supposed to preserve world transform by decomposing `parentWorldInverse * moverMatrixWorld` into the new local matrix. When the parent group carries a non-identity scale (from the TC gizmo), this decomposition must invert a matrix that has rotation **and** scale simultaneously — `Matrix4.decompose` is only exact for orthogonal matrices; combined rotation + non-uniform scale produces incorrect quaternion/scale extraction, meaning the attach lands the mover at the wrong world position and with a spurious scale component.
-
-**Fix approach:** Before calling `group.attach(moverMesh)`, strip the group's scale out of the decomposition path, or pre-apply the group's world-space inverse transform manually (multiply mover's world matrix by `group.matrixWorld.clone().invert()`, then decompose). Alternatively, factor the group's scale into `_applyJointPosition` so the mover is placed in the group's local coordinate frame (not world space) before `attach` is called.
-
-**Niche-ness:** Requires a deliberate group-scale step between gluing the first pair and gluing the third part. Most "primitives at default scale + glue" workflows are unaffected. Low priority; record here until a regression test can be written.
 
 ---
 
