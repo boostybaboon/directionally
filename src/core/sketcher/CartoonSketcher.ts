@@ -1,8 +1,9 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle, buildExtrusionGeometry } from './ExtrusionHandle.js';
 import { GlueManager } from './GlueManager.js';
-import type { FaceGroupInfo, PartSnapshot, JointSnapshot, WeldGroupSnapshot, PartDraft, SessionSnapshot, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup } from './types.js';
+import type { FaceGroupInfo, PartSnapshot, JointSnapshot, WeldGroupSnapshot, PartDraft, SessionSnapshot, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
@@ -62,6 +63,12 @@ const PRIMITIVE_PRESETS: PrimitivePreset[] = [
       { normal: V(0, -1, 0), label: 'Bottom cap', materialIndex: 2 },
     ]),
   },
+  {
+    name: 'Torus',
+    geometry: () => withFaceGroups(new THREE.TorusGeometry(0.5, 0.2, 12, 24), [
+      { normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 },
+    ]),
+  },
 ];
 
 /** Lookup by lowercase name for the UI insert action. */
@@ -69,15 +76,92 @@ const PRESET_BY_NAME = new Map(PRIMITIVE_PRESETS.map((p) => [p.name.toLowerCase(
 
 const DEFAULT_COLOR = 0x8888cc;
 
+/**
+ * Build a flat cap polygon for a partial-angle lathe geometry.
+ * Profile points are (r, h) 2D coords; phi is the sweep angle where the cap sits.
+ * Cap at phi=0: no winding flip — CCW (r,h) winding produces outward normal (-1,0,0).
+ * Cap at phi=phiLength: flip winding — produces outward normal (cos φ, 0, −sin φ).
+ */
+function buildCapGeometry(profilePts: THREE.Vector2[], phi: number, flipWinding: boolean): THREE.BufferGeometry {
+  const sinPhi = Math.sin(phi);
+  const cosPhi = Math.cos(phi);
+  const positions: number[] = [];
+  for (const p of profilePts) {
+    positions.push(p.x * sinPhi, p.y, p.x * cosPhi);
+  }
+  const indices2d = THREE.ShapeUtils.triangulateShape(profilePts, []);
+  const indexArray: number[] = [];
+  for (const [a, b, c] of indices2d) {
+    if (flipWinding) {
+      indexArray.push(a, c, b);
+    } else {
+      indexArray.push(a, b, c);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  // Dummy UVs so mergeGeometries can combine with LatheGeometry (which has UVs).
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(profilePts.length * 2).fill(0), 2));
+  geo.setIndex(indexArray);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Build a LatheGeometry from a centroid-relative profile (clamps negative x to 0).
+ * The profile is revolved around the Y axis; x=radial distance, y=height along Y.
+ * For phiLength < 2π, two flat end caps are merged in as separate draw groups.
+ */
+function buildLatheGeometry(profilePoints: [number, number][], phiLength = Math.PI * 2): THREE.BufferGeometry {
+  // Clamp negative radii to 0, remove leading closing duplicate.
+  let pts = profilePoints.map(([x, y]) => new THREE.Vector2(Math.max(0, x), y));
+  if (pts.length > 1) {
+    const first = pts[0];
+    const last = pts[pts.length - 1];
+    if (Math.abs(first.x - last.x) < 1e-6 && Math.abs(first.y - last.y) < 1e-6) pts = pts.slice(0, -1);
+  }
+  // Remove consecutive duplicates produced by clamping.
+  const deduped: THREE.Vector2[] = [];
+  for (const p of pts) {
+    const prev = deduped[deduped.length - 1];
+    if (!prev || Math.abs(p.x - prev.x) >= 1e-6 || Math.abs(p.y - prev.y) >= 1e-6) deduped.push(p);
+  }
+  if (deduped.length < 2) {
+    return withFaceGroups(new THREE.CylinderGeometry(0.1, 0.1, 1, 32), [
+      { normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 },
+    ]);
+  }
+  const latheGeo = new THREE.LatheGeometry(deduped, 32, 0, phiLength);
+  if (phiLength >= Math.PI * 2 - 1e-6) {
+    // Full 360°: profile segments close the solid; no caps needed.
+    return withFaceGroups(latheGeo, [
+      { normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 },
+    ]);
+  }
+  // Partial sweep: add a flat cap at each cut face.
+  const cap0 = buildCapGeometry(deduped, 0, false);
+  const capEnd = buildCapGeometry(deduped, phiLength, true);
+  latheGeo.addGroup(0, latheGeo.index!.count, 0);
+  const merged = mergeGeometries([latheGeo, cap0, capEnd], true);
+  if (!merged) {
+    return withFaceGroups(latheGeo, [{ normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 }]);
+  }
+  return withFaceGroups(merged, [
+    { normal: V(0, 1, 0),                                     label: 'Surface',   materialIndex: 0 },
+    { normal: V(-1, 0, 0),                                    label: 'Cap start', materialIndex: 1 },
+    { normal: V(Math.cos(phiLength), 0, -Math.sin(phiLength)), label: 'Cap end',  materialIndex: 2 },
+  ]);
+}
+
 /** Create one MeshStandardMaterial per draw group, covering all materialIndex values in geometry.groups. */
-function buildMaterials(geo: THREE.BufferGeometry, color: number): THREE.MeshStandardMaterial[] {
+function buildMaterials(geo: THREE.BufferGeometry, color: number, side: THREE.Side = THREE.FrontSide): THREE.MeshStandardMaterial[] {
   const count = geo.groups.length > 0
     ? Math.max(...geo.groups.map((g) => g.materialIndex ?? 0)) + 1
     : 1;
-  return Array.from({ length: count }, () => new THREE.MeshStandardMaterial({ color }));
+  return Array.from({ length: count }, () => new THREE.MeshStandardMaterial({ color, side }));
 }
 
-type Phase = 'idle' | 'drawing' | 'extruding';
+type Phase = 'idle' | 'drawing' | 'pending-holes' | 'hole-drawing' | 'extruding' | 'revolve-drawing' | 'pending-revolve';
 
 /**
  * Wires the PolygonSketcher → ExtrusionHandle pipeline into a complete
@@ -95,6 +179,7 @@ type Phase = 'idle' | 'drawing' | 'extruding';
 export class CartoonSketcher {
   private phase: Phase = 'idle';
   private readonly parts: SketcherPart[] = [];
+  private _gridSnapSize = 0.1;
   /**
    * All parts ever created in this session, including those currently absent
    * from the scene (removed via removePart). Geometry and material are kept
@@ -104,6 +189,8 @@ export class CartoonSketcher {
   private readonly allParts = new Map<string, SketcherPart>();
   private polygonSketcher: PolygonSketcher | null = null;
   private extrusionHandle: ExtrusionHandle | null = null;
+  private pendingShape: THREE.Shape | null = null;
+  private pendingCentroid: THREE.Vector3 | null = null;
   private nextId = 1;
   private readonly glue: GlueManager;
 
@@ -111,6 +198,10 @@ export class CartoonSketcher {
   onExtrusionDepthChanged?: (depth: number) => void;
   /** Called when a polygon is closed and the extrusion phase begins. */
   onExtrusionStarted?: () => void;
+  /** Called when the outer polygon is closed and the shape is ready for optional holes. */
+  onShapeReadyForHoles?: () => void;
+  /** Called when the revolve profile polygon is closed and ready to commit. */
+  onRevolveReady?: () => void;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -121,17 +212,65 @@ export class CartoonSketcher {
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
-  /** Begin a new polygon-drawing stroke. */
-  startNewSketch(): void {
+  /**
+   * Begin a new polygon-drawing stroke.
+   * @param mode   Drawing mode: 'polygon', 'rectangle', or 'circle'.
+   * @param circleSegments  N-gon approximation quality for circle mode (default 32).
+   */
+  startNewSketch(mode: SketchMode = 'polygon', circleSegments = 32): void {
     this._endCurrentSketch();
     this.phase = 'drawing';
     this.polygonSketcher = new PolygonSketcher();
+    this.polygonSketcher.snapSize = this._gridSnapSize;
+    this.polygonSketcher.mode = mode;
+    this.polygonSketcher.circleSegments = circleSegments;
     this.polygonSketcher.onShapeClosed = (shape, centroid) => {
-      this._beginExtrusion(shape, centroid);
+      this._outerShapeClosed(shape, centroid);
     };
     this.scene.add(this.polygonSketcher.line);
     this.scene.add(this.polygonSketcher.rubberBand);
     this.scene.add(this.polygonSketcher.closureMarker);
+  }
+
+  /**
+   * Begin a revolve-profile drawing stroke on the XY plane.
+   * The Y axis (x=0) is the revolution axis. After the polygon closes,
+   * onRevolveReady fires and the phase becomes 'pending-revolve'.
+   * Call confirmLathe to commit the part or cancelPendingRevolve to discard.
+   */
+  startRevolveSketch(): void {
+    this._endCurrentSketch();
+    this.phase = 'revolve-drawing';
+    this.polygonSketcher = new PolygonSketcher();
+    this.polygonSketcher.snapSize = this._gridSnapSize;
+    this.polygonSketcher.drawPlane = 'xy';
+    this.polygonSketcher.onShapeClosed = (shape, centroid) => {
+      this._revolutionShapeClosed(shape, centroid);
+    };
+    this.scene.add(this.polygonSketcher.line);
+    this.scene.add(this.polygonSketcher.rubberBand);
+    this.scene.add(this.polygonSketcher.closureMarker);
+  }
+
+  /**
+   * Cancel an in-progress revolve sketch and return to idle.
+   * No-op if not currently in the revolve-drawing phase.
+   */
+  cancelRevolveSketch(): void {
+    if (this.phase !== 'revolve-drawing') return;
+    this._endCurrentSketch();
+    this.phase = 'idle';
+  }
+
+  /**
+   * Cancel the pending revolve profile and return to idle.
+   * No-op unless in pending-revolve phase.
+   */
+  cancelPendingRevolve(): void {
+    if (this.phase !== 'pending-revolve') return;
+    this.pendingShape = null;
+    this.pendingCentroid = null;
+    this.phase = 'idle';
   }
 
   /**
@@ -141,6 +280,104 @@ export class CartoonSketcher {
   cancelSketch(): void {
     if (this.phase !== 'drawing') return;
     this._endCurrentSketch();
+    this.phase = 'idle';
+  }
+
+  /**
+   * Begin drawing a hole polygon for the currently-pending outer shape.
+   * No-op unless in pending-holes phase.
+   */
+  addHole(): void {
+    if (this.phase !== 'pending-holes') return;
+    const holeSketcher = new PolygonSketcher();
+    holeSketcher.snapSize = this._gridSnapSize;
+    holeSketcher.onShapeClosed = (holeShape, holeCentroid) => {
+      this._holeClosed(holeShape, holeCentroid);
+    };
+    this.polygonSketcher = holeSketcher;
+    this.scene.add(holeSketcher.line);
+    this.scene.add(holeSketcher.rubberBand);
+    this.scene.add(holeSketcher.closureMarker);
+    this.phase = 'hole-drawing';
+  }
+
+  /**
+   * Confirm the pending outer shape (with any holes added so far) and enter
+   * the extrusion phase. No-op unless in pending-holes phase.
+   */
+  confirmShape(): void {
+    if (this.phase !== 'pending-holes' || !this.pendingShape || !this.pendingCentroid) return;
+    const shape = this.pendingShape;
+    const centroid = this.pendingCentroid;
+    this.pendingShape = null;
+    this.pendingCentroid = null;
+    this._beginExtrusion(shape, centroid);
+  }
+
+  /**
+   * Confirm the pending revolve profile as a solid of revolution.
+   * Immediately commits a part — no depth-drag step. The profile drawn in
+   * XY mode already has x=radial distance, y=height, so no rotation is applied.
+   * No-op unless in pending-revolve phase.
+   * @param phiLengthDeg Sweep angle in degrees (1–360). Default 360 = full revolution.
+   */
+  confirmLathe(phiLengthDeg = 360): void {
+    if (this.phase !== 'pending-revolve' || !this.pendingShape || !this.pendingCentroid) return;
+    const shape = this.pendingShape;
+    const centroid = this.pendingCentroid;
+    this.pendingShape = null;
+    this.pendingCentroid = null;
+    this.phase = 'idle';
+
+    const phiLength = Math.max(1, Math.min(360, phiLengthDeg)) * Math.PI / 180;
+    const profilePoints: [number, number][] = shape.getPoints().map((p) => [p.x, p.y]);
+    const geo = buildLatheGeometry(profilePoints, phiLength);
+    // centroid is (0,0,0) for XY-plane profiles; floor-snap on Y only.
+    geo.computeBoundingBox();
+    const minY = geo.boundingBox!.min.y;
+    const materials = buildMaterials(geo, DEFAULT_COLOR, THREE.DoubleSide);
+    const faceColors = Array<number>(geo.groups.length).fill(DEFAULT_COLOR);
+    const faceTextures = Array<null>(geo.groups.length).fill(null);
+    const mesh = new THREE.Mesh(geo, materials);
+    mesh.position.set(centroid.x, -minY, centroid.z);
+    this.scene.add(mesh);
+    const part: SketcherPart = {
+      id: `part-${this.nextId++}`,
+      mesh,
+      depth: 0,
+      centroid: centroid.clone(),
+      name: 'Lathe',
+      color: DEFAULT_COLOR,
+      shapePoints: null,
+      holes: null,
+      lathePoints: profilePoints,
+      lathePhiLength: phiLength,
+      faceColors,
+      faceTextures,
+    };
+    this.parts.push(part);
+    this.allParts.set(part.id, part);
+  }
+
+  /**
+   * Cancel the current hole drawing and return to the pending-holes state.
+   * No-op unless in hole-drawing phase.
+   */
+  cancelHole(): void {
+    if (this.phase !== 'hole-drawing') return;
+    this._endHoleSketcher();
+    this.phase = 'pending-holes';
+    this.onShapeReadyForHoles?.();
+  }
+
+  /**
+   * Discard the pending outer shape and return to idle.
+   * No-op unless in pending-holes phase.
+   */
+  cancelPendingShape(): void {
+    if (this.phase !== 'pending-holes') return;
+    this.pendingShape = null;
+    this.pendingCentroid = null;
     this.phase = 'idle';
   }
 
@@ -182,6 +419,9 @@ export class CartoonSketcher {
       name: preset.name,
       color: DEFAULT_COLOR,
       shapePoints: null,
+      holes: null,
+      lathePoints: null,
+      lathePhiLength: null,
       faceColors: materials.map(() => DEFAULT_COLOR),
       faceTextures: materials.map(() => null),
     };
@@ -260,6 +500,9 @@ export class CartoonSketcher {
       name: src.name,
       color: src.color,
       shapePoints: src.shapePoints,
+      holes: src.holes,
+      lathePoints: src.lathePoints,
+      lathePhiLength: src.lathePhiLength,
       faceColors: [...src.faceColors],
       faceTextures: [...src.faceTextures],
     };
@@ -365,16 +608,46 @@ export class CartoonSketcher {
     return this.phase;
   }
 
+  /** Number of holes added to the pending shape so far. 0 when not in pending-holes state. */
+  get pendingHoleCount(): number {
+    return this.pendingShape?.holes.length ?? 0;
+  }
+
+  /**
+   * Set the grid snap size used by the polygon sketcher.
+   * Takes effect on the current sketch (if active) and all future sketches.
+   */
+  set gridSnapSize(n: number) {
+    this._gridSnapSize = n;
+    if (this.polygonSketcher) this.polygonSketcher.snapSize = n;
+  }
+
+  get gridSnapSize(): number {
+    return this._gridSnapSize;
+  }
+
+  /**
+   * Programmatically set the extrusion depth (e.g. from a numeric input).
+   * No-op when not in the extruding phase.
+   */
+  setExtrusionDepth(d: number): void {
+    if (!this.extrusionHandle || this.phase !== 'extruding') return;
+    const oldMesh = this.extrusionHandle.mesh;
+    const newMesh = this.extrusionHandle.setDepth(d);
+    this.scene.remove(oldMesh);
+    this.scene.add(newMesh);
+  }
+
   // ── Mouse event handlers (NDC coords) ──────────────────────────────────────
 
   onMouseMove(ndcX: number, ndcY: number): void {
-    if (this.phase === 'drawing') {
+    if (this.phase === 'drawing' || this.phase === 'hole-drawing' || this.phase === 'revolve-drawing') {
       this.polygonSketcher?.onMouseMove(ndcX, ndcY, this.camera);
     }
   }
 
   onClick(ndcX: number, ndcY: number): void {
-    if (this.phase === 'drawing') {
+    if (this.phase === 'drawing' || this.phase === 'hole-drawing' || this.phase === 'revolve-drawing') {
       this.polygonSketcher?.onClick(ndcX, ndcY, this.camera);
     }
   }
@@ -537,7 +810,7 @@ export class CartoonSketcher {
       p.mesh.matrixWorld.decompose(wp, wq, ws);
       const draft: PartDraft = {
         id: p.id,
-        kind: p.shapePoints !== null ? 'sketch' : 'primitive',
+        kind: p.shapePoints !== null ? 'sketch' : (p.lathePoints !== null ? 'lathed' : 'primitive'),
         name: p.name,
         position: [wp.x, wp.y, wp.z],
         quaternion: [wq.x, wq.y, wq.z, wq.w],
@@ -549,6 +822,13 @@ export class CartoonSketcher {
       if (p.shapePoints !== null) {
         draft.shapePoints = p.shapePoints;
         draft.depth = p.depth;
+        if (p.holes && p.holes.length > 0) draft.holes = p.holes;
+      }
+      if (p.lathePoints !== null) {
+        draft.lathePoints = p.lathePoints;
+        if (p.lathePhiLength !== null && p.lathePhiLength < Math.PI * 2 - 1e-6) {
+          draft.phiLength = p.lathePhiLength;
+        }
       }
       return draft;
     });
@@ -579,6 +859,8 @@ export class CartoonSketcher {
     for (const pd of draft.parts) {
       let geometry: THREE.BufferGeometry;
       let shapePoints: [number, number][] | null = null;
+      let lathePoints: [number, number][] | null = null;
+      let lathePhiLength: number | null = null;
       let depth = 0;
       let centroid = new THREE.Vector3();
 
@@ -586,16 +868,26 @@ export class CartoonSketcher {
         const preset = PRESET_BY_NAME.get(pd.name.toLowerCase());
         if (!preset) continue;
         geometry = preset.geometry();
+      } else if (pd.kind === 'lathed') {
+        if (!pd.lathePoints) continue;
+        lathePoints = pd.lathePoints;
+        lathePhiLength = pd.phiLength ?? Math.PI * 2;
+        geometry = buildLatheGeometry(pd.lathePoints, lathePhiLength);
       } else {
         if (!pd.shapePoints || !pd.depth) continue;
         shapePoints = pd.shapePoints;
         depth = pd.depth;
         const pts = pd.shapePoints.map(([x, y]) => new THREE.Vector2(x, y));
         const shape = new THREE.Shape(pts);
+        if (pd.holes) {
+          for (const holePts of pd.holes) {
+            shape.holes.push(new THREE.Path(holePts.map(([x, y]) => new THREE.Vector2(x, y))));
+          }
+        }
         geometry = buildExtrusionGeometry(shape, depth);
       }
 
-      const materials = buildMaterials(geometry, pd.color);
+      const materials = buildMaterials(geometry, pd.color, lathePoints !== null ? THREE.DoubleSide : THREE.FrontSide);
       const faceColors = pd.faceColors ? [...pd.faceColors] : materials.map(() => pd.color);
       faceColors.forEach((c, i) => { if (i < materials.length) materials[i].color.setHex(c); });
       const faceTextures = pd.faceTextures ? [...pd.faceTextures] : materials.map(() => null);
@@ -611,7 +903,7 @@ export class CartoonSketcher {
       mesh.scale.set(pd.scale[0], pd.scale[1], pd.scale[2]);
       mesh.updateWorldMatrix(false, true);
 
-      const part: SketcherPart = { id: pd.id, mesh, depth, centroid, name: pd.name, color: pd.color, shapePoints, faceColors, faceTextures };
+      const part: SketcherPart = { id: pd.id, mesh, depth, centroid, name: pd.name, color: pd.color, shapePoints, holes: pd.holes ? pd.holes : null, lathePoints, lathePhiLength, faceColors, faceTextures };
       this.scene.add(mesh);
       this.parts.push(part);
       this.allParts.set(part.id, part);
@@ -651,9 +943,10 @@ export class CartoonSketcher {
 
     this.phase = 'extruding';
     const shapePoints: [number, number][] = shape.getPoints().map((v) => [v.x, v.y]);
+    const holePoints: [number, number][][] = shape.holes.map((h) => h.getPoints().map((v) => [v.x, v.y]));
     const handle = new ExtrusionHandle(shape, centroid);
     handle.onExtrusionComplete = (mesh, depth) => {
-      this._commitPart(mesh, depth, centroid, shapePoints);
+      this._commitPart(mesh, depth, centroid, shapePoints, holePoints);
     };
     handle.onDepthChanged = (depth) => { this.onExtrusionDepthChanged?.(depth); };
     this.extrusionHandle = handle;
@@ -662,7 +955,7 @@ export class CartoonSketcher {
     this.onExtrusionStarted?.();
   }
 
-  private _commitPart(mesh: THREE.Mesh, depth: number, centroid: THREE.Vector3, shapePoints: [number, number][]): void {
+  private _commitPart(mesh: THREE.Mesh, depth: number, centroid: THREE.Vector3, shapePoints: [number, number][], holes: [number, number][][] = []): void {
     if (this.extrusionHandle) {
       this.scene.remove(this.extrusionHandle.handle);
       this.extrusionHandle.handle.geometry.dispose();
@@ -672,7 +965,7 @@ export class CartoonSketcher {
     }
     const faceColors = Array<number>(mesh.geometry.groups.length).fill(DEFAULT_COLOR);
     const faceTextures = Array<null>(mesh.geometry.groups.length).fill(null);
-    this.parts.push({ id: `part-${this.nextId++}`, mesh, depth, centroid: centroid.clone(), name: 'Shape', color: DEFAULT_COLOR, shapePoints, faceColors, faceTextures });
+    this.parts.push({ id: `part-${this.nextId++}`, mesh, depth, centroid: centroid.clone(), name: 'Shape', color: DEFAULT_COLOR, shapePoints, holes: holes.length > 0 ? holes : null, lathePoints: null, lathePhiLength: null, faceColors, faceTextures });
     const part = this.parts[this.parts.length - 1];
     this.allParts.set(part.id, part);
     this.phase = 'idle';
@@ -692,5 +985,87 @@ export class CartoonSketcher {
       this.extrusionHandle.dispose();
       this.extrusionHandle = null;
     }
+    this.pendingShape = null;
+    this.pendingCentroid = null;
+  }
+
+  private _endHoleSketcher(): void {
+    if (this.polygonSketcher) {
+      this.scene.remove(this.polygonSketcher.line);
+      this.scene.remove(this.polygonSketcher.rubberBand);
+      this.scene.remove(this.polygonSketcher.closureMarker);
+      this.polygonSketcher.dispose();
+      this.polygonSketcher = null;
+    }
+  }
+
+  private _revolutionShapeClosed(shape: THREE.Shape, centroid: THREE.Vector3): void {
+    if (this.polygonSketcher) {
+      this.scene.remove(this.polygonSketcher.line);
+      this.scene.remove(this.polygonSketcher.rubberBand);
+      this.scene.remove(this.polygonSketcher.closureMarker);
+      this.polygonSketcher.dispose();
+      this.polygonSketcher = null;
+    }
+    this.pendingShape = shape;
+    this.pendingCentroid = centroid;
+    this.phase = 'pending-revolve';
+    this.onRevolveReady?.();
+  }
+
+  private _outerShapeClosed(shape: THREE.Shape, centroid: THREE.Vector3): void {
+    // Dispose the outer polygon sketcher helpers — they're no longer needed.
+    if (this.polygonSketcher) {
+      this.scene.remove(this.polygonSketcher.line);
+      this.scene.remove(this.polygonSketcher.rubberBand);
+      this.scene.remove(this.polygonSketcher.closureMarker);
+      this.polygonSketcher.dispose();
+      this.polygonSketcher = null;
+    }
+    this.pendingShape = shape;
+    this.pendingCentroid = centroid;
+    this.phase = 'pending-holes';
+    this.onShapeReadyForHoles?.();
+  }
+
+  private _holeClosed(holeShape: THREE.Shape, holeCentroid: THREE.Vector3): void {
+    this._endHoleSketcher();
+    this.phase = 'pending-holes';
+
+    if (!this.pendingShape || !this.pendingCentroid) {
+      this.onShapeReadyForHoles?.();
+      return;
+    }
+
+    // Translate hole points from hole-centroid-relative space to outer-centroid-relative space.
+    // _closeShape maps: shape.x = world.x - cx, shape.y = cz - world.z
+    // So hole.x + (hcx - cx) and hole.y + (cz - hcz) gives outer space.
+    const cx = this.pendingCentroid.x;
+    const cz = this.pendingCentroid.z;
+    const hcx = holeCentroid.x;
+    const hcz = holeCentroid.z;
+    const dx = hcx - cx;
+    const dy = cz - hcz;
+    const translatedPts = holeShape.getPoints().map((p) => new THREE.Vector2(p.x + dx, p.y + dy));
+
+    // Bounding-box pre-check: skip holes that obviously extend outside the outer shape.
+    const outerPts = this.pendingShape.getPoints();
+    const outerMinX = Math.min(...outerPts.map((p) => p.x));
+    const outerMaxX = Math.max(...outerPts.map((p) => p.x));
+    const outerMinY = Math.min(...outerPts.map((p) => p.y));
+    const outerMaxY = Math.max(...outerPts.map((p) => p.y));
+    const holeMinX = Math.min(...translatedPts.map((p) => p.x));
+    const holeMaxX = Math.max(...translatedPts.map((p) => p.x));
+    const holeMinY = Math.min(...translatedPts.map((p) => p.y));
+    const holeMaxY = Math.max(...translatedPts.map((p) => p.y));
+    if (holeMinX < outerMinX || holeMaxX > outerMaxX || holeMinY < outerMinY || holeMaxY > outerMaxY) {
+      // Hole extends outside the outer shape; discard silently.
+      this.onShapeReadyForHoles?.();
+      return;
+    }
+
+    const holePath = new THREE.Path(translatedPts);
+    this.pendingShape.holes.push(holePath);
+    this.onShapeReadyForHoles?.();
   }
 }

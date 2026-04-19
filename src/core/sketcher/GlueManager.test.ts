@@ -26,6 +26,9 @@ function makePart(scene: THREE.Scene, position = new THREE.Vector3()): SketcherP
     name: 'Box',
     color: 0x8888cc,
     shapePoints: null,
+    holes: null,
+    lathePoints: null,
+    lathePhiLength: null,
     faceColors: [0x8888cc],
     faceTextures: [null],
   };

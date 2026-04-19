@@ -91,7 +91,36 @@
   let handleDragActive = false;
   let extrusionDepth = $state(1);
   let isExtruding = $state(false);
+  let isDrawing = $state(false);
+  // True while the outer shape has been closed and the user may add holes before confirming extrusion.
+  let isHolePending = $state(false);
+  // True while a revolve profile has closed and is awaiting confirmation.
+  let isRevolvePending = $state(false);
+  // Sweep angle (degrees) for the pending revolve. Shown as a slider in the revolve HUD.
+  let revolveAngleDeg = $state(360);
+  // Saved camera state to restore on revolve-mode exit.
+  let revolveAxisLine: THREE.Line | null = null;
+  let revolveGhostedMeshes: Array<{ mesh: THREE.Mesh; origTransparent: boolean[]; origOpacity: number[] }> = [];
+  let savedRevolveCamera: { position: THREE.Vector3; target: THREE.Vector3 } | null = null;
   let extrusionBeforeSnapshot: ReturnType<typeof sketcherDoc.captureSnapshot> | null = null;
+
+  // SA12b: grid snap size for the polygon sketcher (default 0.1, persisted in localStorage)
+  const _savedGridSnap = typeof localStorage !== 'undefined' ? parseFloat(localStorage.getItem('sketcher-grid-snap') ?? '0.1') : 0.1;
+  let gridSnap = $state(isNaN(_savedGridSnap) ? 0.1 : _savedGridSnap);
+
+  // SA6: sketch drawing mode and circle segments.
+  let sketchMode = $state<'polygon' | 'rectangle' | 'circle'>('polygon');
+  let circleSegments = $state(32);
+
+  // SA12d: when true, glue src-pick snaps to the face-group centroid instead of the exact hit point.
+  let glueMidpointMode = $state(false);
+
+  // SA12a: transform inspector fields (world-space, shown when something is selected).
+  let inspX = $state('0.000'); let inspY = $state('0.000'); let inspZ = $state('0.000');
+  let inspRX = $state('0.0'); let inspRY = $state('0.0'); let inspRZ = $state('0.0');
+  let inspSX = $state('1.000'); let inspSY = $state('1.000'); let inspSZ = $state('1.000');
+  let uniformScale = $state(false);
+  let inspectorFocused = false; // not reactive — only used to gate refreshInspector()
 
   // Snapshot captured at TC drag-start; passed to execute() at drag-end.
   let tcPreDragSnapshot: ReturnType<typeof sketcherDoc.captureSnapshot> | null = null;
@@ -144,6 +173,7 @@
           );
         }
         tcPreDragSnapshot = null;
+        refreshInspector();
       }
     });
 
@@ -169,6 +199,7 @@
           selectedPartHasGlue = sketcher.glueManager.getJoints().some(
             (j) => j.partAId === part.id || j.partBId === part.id,
           );
+          refreshInspector();
         }
       } else {
         // Deselection — if in group edit mode, clean up dimming before TC detaches.
@@ -189,8 +220,22 @@
     };
 
     sketcher = new CartoonSketcher(scene, camera);
-    sketcher.onExtrusionStarted = () => { isExtruding = true; extrusionDepth = 1; };
+    sketcher.onExtrusionStarted = () => { isDrawing = false; isExtruding = true; isHolePending = false; extrusionDepth = 1; };
     sketcher.onExtrusionDepthChanged = (d) => { extrusionDepth = d; };
+    sketcher.onShapeReadyForHoles = () => {
+      isDrawing = false;
+      isHolePending = true;
+      orbit.enabled = true;
+      const holeCount = sketcher.pendingHoleCount;
+      statusMessage = holeCount > 0
+        ? `${holeCount} hole${holeCount > 1 ? 's' : ''} added. Add another hole or confirm to extrude.`
+        : 'Shape closed. Click \u201cAdd hole\u201d to cut a hole through the extrusion, or \u201cConfirm\u201d to extrude.';
+    };
+    sketcher.onRevolveReady = () => {
+      isDrawing = false;
+      isRevolvePending = true;
+      statusMessage = 'Profile closed. Click \u201cRevolve\u201d to sweep it around the Y axis, or \u201cCancel\u201d to discard.';
+    };
     sketcherDoc = new SketcherDocument(sketcher, () => {
       canUndo = sketcherDoc.canUndo;
       canRedo = sketcherDoc.canRedo;
@@ -252,16 +297,19 @@
         case 'e': case 'E': setTransformMode('rotate'); break;
         case 'r': case 'R': setTransformMode('scale'); break;
         case 'z': case 'Z':
-          if (e.ctrlKey && e.shiftKey) { exitGroupEditMode(); sketcherDoc.redo(); e.preventDefault(); }
-          else if (e.ctrlKey) { exitGroupEditMode(); sketcherDoc.undo(); e.preventDefault(); }
+          if (e.ctrlKey && e.shiftKey) { exitGroupEditMode(); sketcherDoc.redo(); refreshInspector(); e.preventDefault(); }
+          else if (e.ctrlKey) { exitGroupEditMode(); sketcherDoc.undo(); refreshInspector(); e.preventDefault(); }
           break;
         case 'y': case 'Y':
-          if (e.ctrlKey) { exitGroupEditMode(); sketcherDoc.redo(); e.preventDefault(); }
+          if (e.ctrlKey) { exitGroupEditMode(); sketcherDoc.redo(); refreshInspector(); e.preventDefault(); }
           break;
         case 'Escape':
           if (groupEditGroupId !== null) { exitGroupEditMode(); }
           else if (gluePhase !== null) { cancelGluePick(); }
-          else if (sketcher.currentPhase === 'drawing') { sketcher.cancelSketch(); orbit.enabled = true; }
+          else if (sketcher.currentPhase === 'drawing') { isDrawing = false; sketcher.cancelSketch(); orbit.enabled = true; }
+          else if (sketcher.currentPhase === 'hole-drawing') { isDrawing = false; sketcher.cancelHole(); }
+          else if (sketcher.currentPhase === 'pending-holes') { isHolePending = false; sketcher.cancelPendingShape(); orbit.enabled = true; }
+          else if (sketcher.currentPhase === 'revolve-drawing' || sketcher.currentPhase === 'pending-revolve') { cancelRevolve(); }
           else { selection.deselect(); }
           break;
         case 'Delete': case 'Backspace': deleteSelected(); break;
@@ -326,6 +374,85 @@
   function setTransformMode(mode: 'translate' | 'rotate' | 'scale') {
     transformMode = mode;
     tc?.setMode(mode);
+  }
+
+  // ── SA12a: Transform inspector ───────────────────────────────────────────────
+
+  /**
+   * Read the current world-space transform of the selected object and update
+   * the inspector input fields. Called on selection change and after TC drag-end.
+   * Skipped when inspectorFocused=true so active typing isn't interrupted.
+   */
+  function refreshInspector() {
+    if (!selectedPartId || inspectorFocused || !sketcher) return;
+    const session = sketcher.getSession();
+    const part = session.parts.find((p) => p.id === selectedPartId);
+    if (!part) return;
+    const ag = sketcher.glueManager.groupForPart(selectedPartId);
+    // In member-edit mode TC is on the mesh; in group-level mode TC is on the group.
+    const target: THREE.Object3D =
+      groupEditGroupId !== null ? part.mesh : (ag ? ag.group : part.mesh);
+    const pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    target.getWorldPosition(pos);
+    target.getWorldQuaternion(quat);
+    target.getWorldScale(scale);
+    const euler = new THREE.Euler().setFromQuaternion(quat, 'YXZ');
+    const toDeg = THREE.MathUtils.radToDeg;
+    inspX = pos.x.toFixed(3); inspY = pos.y.toFixed(3); inspZ = pos.z.toFixed(3);
+    inspRX = toDeg(euler.x).toFixed(1); inspRY = toDeg(euler.y).toFixed(1); inspRZ = toDeg(euler.z).toFixed(1);
+    inspSX = scale.x.toFixed(3); inspSY = scale.y.toFixed(3); inspSZ = scale.z.toFixed(3);
+  }
+
+  /**
+   * Apply a desired world-space transform to a Three.js object, converting to
+   * local space when the object has a non-scene parent (i.e. is inside a group).
+   */
+  function applyWorldTransform(
+    target: THREE.Object3D,
+    pos: THREE.Vector3,
+    quat: THREE.Quaternion,
+    scale: THREE.Vector3,
+  ): void {
+    const worldMatrix = new THREE.Matrix4().compose(pos, quat, scale);
+    if (target.parent && target.parent.type !== 'Scene') {
+      target.parent.updateWorldMatrix(true, false);
+      const localMatrix = target.parent.matrixWorld.clone().invert().multiply(worldMatrix);
+      localMatrix.decompose(target.position, target.quaternion, target.scale);
+    } else {
+      target.position.copy(pos);
+      target.quaternion.copy(quat);
+      target.scale.copy(scale);
+    }
+    target.updateMatrixWorld(true);
+  }
+
+  /**
+   * Apply the current inspector field values as a transform to the selected
+   * object, recording an undoable history entry.
+   */
+  function commitInspectorTransform() {
+    if (!selectedPartId) return;
+    const pos = new THREE.Vector3(parseFloat(inspX), parseFloat(inspY), parseFloat(inspZ));
+    const euler = new THREE.Euler(
+      THREE.MathUtils.degToRad(parseFloat(inspRX)),
+      THREE.MathUtils.degToRad(parseFloat(inspRY)),
+      THREE.MathUtils.degToRad(parseFloat(inspRZ)),
+      'YXZ',
+    );
+    const scale = new THREE.Vector3(parseFloat(inspSX), parseFloat(inspSY), parseFloat(inspSZ));
+    if ([pos.x, pos.y, pos.z, euler.x, euler.y, euler.z, scale.x, scale.y, scale.z].some(isNaN)) return;
+    const session = sketcher.getSession();
+    const part = session.parts.find((p) => p.id === selectedPartId);
+    if (!part) return;
+    const ag = sketcher.glueManager.groupForPart(selectedPartId);
+    const mode: 'group' | 'member' = groupEditGroupId !== null ? 'member' : 'group';
+    const target: THREE.Object3D = (mode === 'group' && ag) ? ag.group : part.mesh;
+    const before = sketcherDoc.captureSnapshot();
+    applyWorldTransform(target, pos, new THREE.Quaternion().setFromEuler(euler), scale);
+    sketcherDoc.execute(new TransformPartCommand(sketcher, selectedPartId, mode), before);
+    refreshInspector();
   }
 
   // ── Selection + delete ──────────────────────────────────────────────────────
@@ -573,6 +700,7 @@
     restoreGlueSrcGhost();
     gluePhase = null;
     glueSrcBlob = null;
+    glueMidpointMode = false;
     clearFaceHighlight();
     clearGlueBlobMarker();
     // Restore the gizmo to whatever is currently selected.
@@ -653,6 +781,30 @@
     scene.add(faceHighlight);
   }
 
+  // ── SA12d: Glue face-group centroid helper ────────────────────────────────
+
+  /**
+   * Compute the centroid (average vertex position) of a draw group in a
+   * geometry, in the geometry's local space. Used for midpoint-mode glue.
+   */
+  function computeGroupCentreLocal(
+    geo: THREE.BufferGeometry,
+    materialIndex: number,
+  ): THREE.Vector3 {
+    const grp = geo.groups.find((g) => g.materialIndex === materialIndex);
+    if (!grp) return new THREE.Vector3();
+    const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+    const index = geo.index;
+    let cx = 0, cy = 0, cz = 0, count = 0;
+    for (let i = grp.start; i < grp.start + grp.count; i++) {
+      const vi = index ? index.getX(i) : i;
+      cx += pos.getX(vi); cy += pos.getY(vi); cz += pos.getZ(vi);
+      count++;
+    }
+    if (count === 0) return new THREE.Vector3();
+    return new THREE.Vector3(cx / count, cy / count, cz / count);
+  }
+
   /**
    * Phase 'src' click: place the anchor blob on the clicked surface.
    * The anchor part stays put; the second click's part will move to meet it.
@@ -672,7 +824,11 @@
 
     // Store hit point and face normal in the mesh's local space.
     hitMesh.updateWorldMatrix(true, false);
-    const localPoint = hits[0].point.clone().applyMatrix4(hitMesh.matrixWorld.clone().invert());
+    const matInv = hitMesh.matrixWorld.clone().invert();
+    // In midpoint mode, snap the pick to the draw-group centroid instead of the exact cursor position.
+    const localPoint = glueMidpointMode
+      ? computeGroupCentreLocal(hitMesh.geometry, hits[0].face?.materialIndex ?? 0)
+      : hits[0].point.clone().applyMatrix4(matInv);
     const localNormal = (hits[0].face?.normal ?? new THREE.Vector3(0, 1, 0)).clone();
 
     // Pink blob at the chosen surface point as anchor marker.
@@ -847,9 +1003,116 @@
 
   function newSketch() {
     selection.deselect();
-    sketcher.startNewSketch();
-    orbit.enabled = false; // orbit suppressed during polygon drawing; hold Alt to orbit temporarily
-    statusMessage = 'Click to place polygon vertices. Click near the first vertex to close the shape. Hold Alt to orbit.';
+    isDrawing = true;
+    sketcher.gridSnapSize = gridSnap;
+    sketcher.startNewSketch(sketchMode, circleSegments);
+    orbit.enabled = false;
+    if (sketchMode === 'rectangle') {
+      statusMessage = 'Click to set one corner of the rectangle, then click the opposite corner. Hold Alt to orbit.';
+    } else if (sketchMode === 'circle') {
+      statusMessage = 'Click to set the circle centre, then click to set the radius. Hold Alt to orbit.';
+    } else {
+      statusMessage = 'Click to place polygon vertices. Click near the first vertex to close the shape. Hold Alt to orbit.';
+    }
+  }
+
+  function addHole() {
+    isHolePending = false;
+    isDrawing = true;
+    orbit.enabled = false;
+    sketcher.addHole();
+    statusMessage = 'Click to draw the hole boundary. Click near the first vertex to close. Hold Alt to orbit.';
+  }
+
+  function confirmShape() {
+    isHolePending = false;
+    sketcher.confirmShape();
+  }
+
+  function revolveShape() {
+    isRevolvePending = false;
+    sketcher.confirmLathe(revolveAngleDeg);
+    exitRevolveEnvironment();
+    statusMessage = 'Revolved shape added. Move with gizmo or start a new sketch.';
+  }
+
+  function cancelRevolve() {
+    isRevolvePending = false;
+    isDrawing = false;
+    if (sketcher.currentPhase === 'revolve-drawing') {
+      sketcher.cancelRevolveSketch();
+    } else {
+      sketcher.cancelPendingRevolve();
+    }
+    exitRevolveEnvironment();
+    statusMessage = '';
+  }
+
+  function enterRevolveEnvironment() {
+    // Save camera state and pivot to front view (XY plane face-on).
+    savedRevolveCamera = { position: camera.position.clone(), target: orbit.target.clone() };
+    camera.position.set(0, 2, 15);
+    orbit.target.set(0, 2, 0);
+    orbit.enableRotate = false;
+    orbit.update();
+
+    // Ghost all existing parts so the profile is easy to read.
+    revolveGhostedMeshes = [];
+    for (const part of sketcher.getSession().parts) {
+      const mats = part.mesh.material as THREE.MeshStandardMaterial[];
+      revolveGhostedMeshes.push({
+        mesh: part.mesh,
+        origTransparent: mats.map((m) => m.transparent),
+        origOpacity: mats.map((m) => m.opacity),
+      });
+      mats.forEach((m) => { m.transparent = true; m.opacity = 0.15; m.needsUpdate = true; });
+    }
+
+    // Y-axis revolution indicator line.
+    const axisGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, -20, 0),
+      new THREE.Vector3(0, 20, 0),
+    ]);
+    const axisMat = new THREE.LineBasicMaterial({ color: 0xff4400, depthTest: false });
+    revolveAxisLine = new THREE.Line(axisGeo, axisMat);
+    revolveAxisLine.renderOrder = 999;
+    scene.add(revolveAxisLine);
+  }
+
+  function exitRevolveEnvironment() {
+    // Restore camera.
+    if (savedRevolveCamera) {
+      camera.position.copy(savedRevolveCamera.position);
+      orbit.target.copy(savedRevolveCamera.target);
+      orbit.enableRotate = true;
+      orbit.update();
+      savedRevolveCamera = null;
+    }
+    // Un-ghost parts.
+    for (const entry of revolveGhostedMeshes) {
+      const mats = entry.mesh.material as THREE.MeshStandardMaterial[];
+      mats.forEach((m, i) => {
+        m.transparent = entry.origTransparent[i];
+        m.opacity = entry.origOpacity[i];
+        m.needsUpdate = true;
+      });
+    }
+    revolveGhostedMeshes = [];
+    // Remove axis indicator.
+    if (revolveAxisLine) {
+      scene.remove(revolveAxisLine);
+      revolveAxisLine.geometry.dispose();
+      (revolveAxisLine.material as THREE.Material).dispose();
+      revolveAxisLine = null;
+    }
+  }
+
+  function startRevolveMode() {
+    enterRevolveEnvironment();
+    isDrawing = true;
+    isRevolvePending = false;
+    sketcher.startRevolveSketch();
+    statusMessage = 'Draw the half-profile against the Y axis (left edge = revolution axis, Y = height). Click near the first vertex to close.';
   }
 
   function clearSession() {
@@ -1045,9 +1308,30 @@
       <button class:active={showOpenPanel} onclick={() => { showOpenPanel = !showOpenPanel; }} title="Open saved assembly">Open…</button>
     </div>
     <div class="actions">
+      <select
+        class="sketch-mode-select"
+        bind:value={sketchMode}
+        title="Sketch drawing mode"
+        disabled={isDrawing || isExtruding}
+      >
+        <option value="polygon">Poly</option>
+        <option value="rectangle">Rect</option>
+        <option value="circle">Circle</option>
+      </select>
+      {#if sketchMode === 'circle'}
+        <input
+          type="number"
+          class="segments-input"
+          min="6" max="128" step="1"
+          bind:value={circleSegments}
+          disabled={isDrawing || isExtruding}
+          title="Circle segments (N-gon approximation quality)"
+        />
+      {/if}
       <button onclick={newSketch}>New sketch</button>
-      <button disabled={!canUndo} onclick={() => { exitGroupEditMode(); sketcherDoc.undo(); }} title="Ctrl+Z">↩ Undo</button>
-      <button disabled={!canRedo} onclick={() => { exitGroupEditMode(); sketcherDoc.redo(); }} title="Ctrl+Shift+Z">↪ Redo</button>
+      <button onclick={startRevolveMode} disabled={isDrawing || isExtruding || isRevolvePending} title="Draw a half-profile to revolve around the Y axis">Revolve…</button>
+      <button disabled={!canUndo} onclick={() => { exitGroupEditMode(); sketcherDoc.undo(); refreshInspector(); }} title="Ctrl+Z">↩ Undo</button>
+      <button disabled={!canRedo} onclick={() => { exitGroupEditMode(); sketcherDoc.redo(); refreshInspector(); }} title="Ctrl+Shift+Z">↪ Redo</button>
       <span class="separator"></span>
       <button class:active={transformMode === 'translate'} onclick={() => setTransformMode('translate')} title="W">Move</button>
       <button class:active={transformMode === 'rotate'} onclick={() => setTransformMode('rotate')} title="E">Rotate</button>
@@ -1087,8 +1371,17 @@
     <button onclick={() => insertPrimitive('cylinder')}>Cylinder</button>
     <button onclick={() => insertPrimitive('capsule')}>Capsule</button>
     <button onclick={() => insertPrimitive('cone')}>Cone</button>
+    <button onclick={() => insertPrimitive('torus')}>Torus</button>
     <span class="separator"></span>
     <button class="glue-btn" class:active={gluePhase !== null} onclick={startGluePick} title="G">Glue…</button>
+    {#if gluePhase !== null}
+      <button
+        class="glue-btn"
+        class:active={glueMidpointMode}
+        title="Snap glue anchor to face-group centroid"
+        onclick={() => { glueMidpointMode = !glueMidpointMode; }}
+      >⊕ Centre</button>
+    {/if}
     {#if groupEditGroupId !== null}
       <button class="glue-btn" onclick={exitGroupEditMode} title="Esc">Exit group edit</button>
     {/if}
@@ -1103,6 +1396,27 @@
         <button class="glue-btn" onclick={unglueSelected} title="U">Unglue</button>
       {/if}
       <button class="glue-btn" onclick={snapToFloor} title="F">⬇ Floor</button>
+    {/if}
+    {#if isDrawing}
+      <span class="separator"></span>
+      <label class="snap-label" title="Grid snap size in world units">
+        Snap
+        <input
+          type="number"
+          class="snap-input"
+          min="0.01" max="2" step="0.05"
+          value={gridSnap}
+          oninput={(e) => {
+            const v = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(v) && v > 0) {
+              gridSnap = v;
+              sketcher.gridSnapSize = v;
+              localStorage.setItem('sketcher-grid-snap', String(v));
+            }
+          }}
+        />
+        m
+      </label>
     {/if}
   </div>
 
@@ -1139,6 +1453,89 @@
     </div>
   {/if}
 
+  {#if selectedPartId && !isExtruding && !isDrawing}
+    <div class="transform-inspector">
+      <div class="insp-row">
+        <span class="insp-label">Pos</span>
+        <label>X<input type="number" step="0.01" class="insp-field" value={inspX}
+          onfocus={() => { inspectorFocused = true; }}
+          onblur={(e) => { inspectorFocused = false; inspX = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
+          onkeydown={(e) => { if (e.key === 'Enter') { inspX = (e.target as HTMLInputElement).value; commitInspectorTransform(); (e.target as HTMLInputElement).blur(); } }}
+        /></label>
+        <label>Y<input type="number" step="0.01" class="insp-field" value={inspY}
+          onfocus={() => { inspectorFocused = true; }}
+          onblur={(e) => { inspectorFocused = false; inspY = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
+          onkeydown={(e) => { if (e.key === 'Enter') { inspY = (e.target as HTMLInputElement).value; commitInspectorTransform(); (e.target as HTMLInputElement).blur(); } }}
+        /></label>
+        <label>Z<input type="number" step="0.01" class="insp-field" value={inspZ}
+          onfocus={() => { inspectorFocused = true; }}
+          onblur={(e) => { inspectorFocused = false; inspZ = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
+          onkeydown={(e) => { if (e.key === 'Enter') { inspZ = (e.target as HTMLInputElement).value; commitInspectorTransform(); (e.target as HTMLInputElement).blur(); } }}
+        /></label>
+      </div>
+      <div class="insp-row">
+        <span class="insp-label">Rot°</span>
+        <label>X<input type="number" step="1" class="insp-field" value={inspRX}
+          onfocus={() => { inspectorFocused = true; }}
+          onblur={(e) => { inspectorFocused = false; inspRX = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
+          onkeydown={(e) => { if (e.key === 'Enter') { inspRX = (e.target as HTMLInputElement).value; commitInspectorTransform(); (e.target as HTMLInputElement).blur(); } }}
+        /></label>
+        <label>Y<input type="number" step="1" class="insp-field" value={inspRY}
+          onfocus={() => { inspectorFocused = true; }}
+          onblur={(e) => { inspectorFocused = false; inspRY = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
+          onkeydown={(e) => { if (e.key === 'Enter') { inspRY = (e.target as HTMLInputElement).value; commitInspectorTransform(); (e.target as HTMLInputElement).blur(); } }}
+        /></label>
+        <label>Z<input type="number" step="1" class="insp-field" value={inspRZ}
+          onfocus={() => { inspectorFocused = true; }}
+          onblur={(e) => { inspectorFocused = false; inspRZ = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
+          onkeydown={(e) => { if (e.key === 'Enter') { inspRZ = (e.target as HTMLInputElement).value; commitInspectorTransform(); (e.target as HTMLInputElement).blur(); } }}
+        /></label>
+      </div>
+      <div class="insp-row">
+        <span class="insp-label">Scale</span>
+        <label>X<input type="number" step="0.01" min="0.001" class="insp-field" value={inspSX}
+          onfocus={() => { inspectorFocused = true; }}
+          onblur={(e) => {
+            inspectorFocused = false;
+            const v = (e.target as HTMLInputElement).value;
+            if (uniformScale) { const ratio = parseFloat(v) / parseFloat(inspSX); inspSX = v; inspSY = (parseFloat(inspSY) * ratio).toFixed(3); inspSZ = (parseFloat(inspSZ) * ratio).toFixed(3); }
+            else { inspSX = v; }
+            commitInspectorTransform();
+          }}
+          onkeydown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } }}
+        /></label>
+        <label>Y<input type="number" step="0.01" min="0.001" class="insp-field" value={inspSY}
+          onfocus={() => { inspectorFocused = true; }}
+          onblur={(e) => {
+            inspectorFocused = false;
+            const v = (e.target as HTMLInputElement).value;
+            if (uniformScale) { const ratio = parseFloat(v) / parseFloat(inspSY); inspSY = v; inspSX = (parseFloat(inspSX) * ratio).toFixed(3); inspSZ = (parseFloat(inspSZ) * ratio).toFixed(3); }
+            else { inspSY = v; }
+            commitInspectorTransform();
+          }}
+          onkeydown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } }}
+        /></label>
+        <label>Z<input type="number" step="0.01" min="0.001" class="insp-field" value={inspSZ}
+          onfocus={() => { inspectorFocused = true; }}
+          onblur={(e) => {
+            inspectorFocused = false;
+            const v = (e.target as HTMLInputElement).value;
+            if (uniformScale) { const ratio = parseFloat(v) / parseFloat(inspSZ); inspSZ = v; inspSX = (parseFloat(inspSX) * ratio).toFixed(3); inspSY = (parseFloat(inspSY) * ratio).toFixed(3); }
+            else { inspSZ = v; }
+            commitInspectorTransform();
+          }}
+          onkeydown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } }}
+        /></label>
+        <button
+          class="insp-lock"
+          class:active={uniformScale}
+          title="Lock uniform scale"
+          onclick={() => { uniformScale = !uniformScale; }}
+        >{uniformScale ? '🔒' : '🔓'}</button>
+      </div>
+    </div>
+  {/if}
+
   <canvas
     bind:this={canvas}
     class="sketch-canvas"
@@ -1155,8 +1552,45 @@
   {#if statusMessage}
     <div class="sketch-hint">{statusMessage}</div>
   {/if}
+  {#if isHolePending}
+    <div class="hole-hud">
+      <button class="hole-btn" onclick={addHole}>Add hole</button>
+      <button class="hole-btn confirm-btn" onclick={confirmShape}>Extrude</button>
+    </div>
+  {/if}
+  {#if isRevolvePending}
+    <div class="hole-hud revolve-hud">
+      <label class="angle-label">
+        Angle
+        <input
+          type="range"
+          class="angle-slider"
+          min="5" max="360" step="5"
+          bind:value={revolveAngleDeg}
+        />
+        {revolveAngleDeg}°
+      </label>
+      <button class="hole-btn revolve-btn" onclick={revolveShape}>Revolve</button>
+      <button class="hole-btn cancel-btn" onclick={cancelRevolve}>Cancel</button>
+    </div>
+  {/if}
   {#if isExtruding}
-    <div class="depth-hud">Depth: {extrusionDepth.toFixed(2)}</div>
+    <div class="depth-hud">
+      <label class="depth-label">
+        Depth
+        <input
+          class="depth-input"
+          type="number"
+          min="0.05" step="0.05"
+          value={extrusionDepth.toFixed(2)}
+          oninput={(e) => {
+            const d = parseFloat((e.target as HTMLInputElement).value);
+            if (!isNaN(d) && d >= 0.05) sketcher.setExtrusionDepth(d);
+          }}
+        />
+        m
+      </label>
+    </div>
   {/if}
   <div class="diag-hud">{hoverInfo}</div>
 </div>
@@ -1365,6 +1799,60 @@
     z-index: 5;
   }
 
+  .hole-hud {
+    position: absolute;
+    top: 56px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    pointer-events: all;
+    z-index: 5;
+  }
+
+  .hole-btn {
+    background: #1e1e40;
+    border: 1px solid #3a3a6a;
+    color: #c0c0e0;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 5px 14px;
+    cursor: pointer;
+  }
+  .hole-btn:hover { background: #2a2a58; }
+
+  .confirm-btn {
+    background: #1a3a1a;
+    border-color: #3a6a3a;
+    color: #a0e0a0;
+  }
+  .confirm-btn:hover { background: #244224; }
+
+  .revolve-btn {
+    background: #1a2a3a;
+    border-color: #3a5a7a;
+    color: #a0c0e0;
+  }
+  .revolve-btn:hover { background: #223244; }
+
+  .cancel-btn {
+    background: #2a1a1a;
+    border-color: #6a3a3a;
+    color: #d0a0a0;
+  }
+  .cancel-btn:hover { background: #3a2020; }
+
+  .angle-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #b0c0d8;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .angle-slider { width: 100px; cursor: pointer; }
+
   .depth-hud {
     position: absolute;
     top: 56px;
@@ -1375,9 +1863,148 @@
     background: rgba(15, 15, 26, 0.8);
     padding: 4px 10px;
     border-radius: 4px;
-    pointer-events: none;
+    pointer-events: all;
     z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
+
+  .depth-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #ffdd00;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .depth-input {
+    width: 62px;
+    background: rgba(30, 30, 60, 0.9);
+    border: 1px solid #cc9900;
+    color: #ffdd00;
+    border-radius: 3px;
+    font-size: 13px;
+    padding: 1px 4px;
+    text-align: right;
+  }
+
+  .transform-inspector {
+    position: absolute;
+    top: 80px;
+    left: 12px;
+    background: #12122a;
+    border: 1px solid #2a2a4a;
+    border-radius: 6px;
+    padding: 8px 10px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 220px;
+  }
+
+  .insp-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .insp-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #6060a0;
+    width: 32px;
+    flex-shrink: 0;
+  }
+
+  .insp-row label {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 10px;
+    color: #8080b0;
+    flex: 1;
+  }
+
+  .insp-field {
+    width: 52px;
+    background: rgba(20, 20, 50, 0.9);
+    border: 1px solid #3a3a6a;
+    color: #c0c0e0;
+    border-radius: 3px;
+    font-size: 11px;
+    padding: 1px 3px;
+    text-align: right;
+  }
+
+  .insp-field:focus {
+    outline: none;
+    border-color: #6050c8;
+    color: #ffffff;
+  }
+
+  .insp-lock {
+    padding: 1px 4px;
+    font-size: 11px;
+    border: 1px solid #3a3a6a;
+    background: #1a1a38;
+    border-radius: 3px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .insp-lock.active {
+    background: #1e1e4a;
+    border-color: #6050c8;
+  }
+
+  .snap-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: #8080b0;
+  }
+
+  .snap-input {
+    width: 52px;
+    background: rgba(20, 20, 50, 0.9);
+    border: 1px solid #3a3a6a;
+    color: #c0c0e0;
+    border-radius: 3px;
+    font-size: 11px;
+    padding: 1px 3px;
+    text-align: right;
+  }
+  .snap-input:focus {
+    outline: none;
+    border-color: #6050c8;
+  }
+
+  .sketch-mode-select {
+    background: #1e1e40;
+    border: 1px solid #3a3a6a;
+    color: #c0c0e0;
+    border-radius: 4px;
+    font-size: 12px;
+    padding: 3px 6px;
+    cursor: pointer;
+  }
+  .sketch-mode-select:disabled { opacity: 0.5; cursor: default; }
+
+  .segments-input {
+    width: 44px;
+    background: rgba(20, 20, 50, 0.9);
+    border: 1px solid #3a3a6a;
+    color: #c0c0e0;
+    border-radius: 3px;
+    font-size: 11px;
+    padding: 1px 3px;
+    text-align: right;
+  }
+  .segments-input:disabled { opacity: 0.5; }
 
   .sketch-canvas {
     flex: 1;

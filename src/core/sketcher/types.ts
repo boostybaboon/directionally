@@ -15,6 +15,21 @@ export type SketcherPart = {
    * a page reload.
    */
   shapePoints: [number, number][] | null;
+  /**
+   * Hole paths for sketch parts (centroid-relative, same space as shapePoints).
+   * Null for primitives and shapes with no holes.
+   */
+  holes: [number, number][][] | null;
+  /**
+   * Profile points for lathed parts (centroid-relative shape space: x=radial, y=depth).
+   * Null for non-lathe parts. Set by confirmLathe(); required for draft reconstruction.
+   */
+  lathePoints: [number, number][] | null;
+  /**
+   * Sweep angle in radians for lathed parts. Math.PI * 2 = full 360° revolution.
+   * Null for non-lathe parts.
+   */
+  lathePhiLength: number | null;
   /** Per-draw-group colour array. Length matches mesh.material[]. */
   faceColors: number[];
   /**
@@ -135,9 +150,13 @@ export type SessionSnapshot = {
  */
 export type PartDraft = {
   id: string;
-  kind: 'primitive' | 'sketch';
+  kind: 'primitive' | 'sketch' | 'lathed';
   name: string;
   shapePoints?: [number, number][];
+  holes?: [number, number][][];
+  lathePoints?: [number, number][];
+  /** Sweep angle in radians; absent means full 360° (Math.PI * 2). */
+  phiLength?: number;
   depth?: number;
   position: [number, number, number];
   quaternion: [number, number, number, number];
@@ -153,3 +172,6 @@ export type SketcherDraft = {
   joints: JointSnapshot[];
   weldGroups?: WeldGroupSnapshot[];
 };
+
+/** Drawing mode for the polygon sketcher. */
+export type SketchMode = 'polygon' | 'rectangle' | 'circle';

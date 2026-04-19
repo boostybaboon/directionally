@@ -4,6 +4,63 @@ All phases below are ✅ complete. Active work lives in [SKETCHER_ROADMAP.md](SK
 
 ---
 
+## Phase SA18 — Lathe / revolve geometry (floor-plane) ⚠ SUPERSEDED by SA18a
+
+Initial implementation explored a floor-plane (XZ) profile approach. Code was merged and tests pass (490), but the UX is fundamentally broken: `PolygonSketcher._closeShape` subtracts the polygon centroid from every point, so after centering the left half of any profile ends up at `x<0` and is silently clamped. The revolution axis lands at the centroid of whatever the user drew — impossible to predict or control. Superseded by SA18a (dedicated XY-plane revolve mode with no centroid offset). Code artefacts below are partially reused by SA18a.
+
+**Changes delivered (partially reused by SA18a):**
+- `SketcherPart.lathePoints: [number, number][] | null` — reused
+- `PartDraft.kind` extended to `'primitive' | 'sketch' | 'lathed'`; `PartDraft.lathePoints?` added — reused
+- `buildLatheGeometry(profilePoints)` helper: clamps x≥0, deduplicates — reused
+- `CartoonSketcher.confirmLathe(uprighted)` public method — reworked by SA18a to source from 'pending-revolve' phase
+- `toDraft`/`loadDraft` handle `kind='lathed'` — reused unchanged
+- `duplicatePart` copies `lathePoints` — reused unchanged
+- `/sketch` route: `revolveUprighted` state, `revolveShape()` function, Revolve + Upright in hole HUD — reworked by SA18a
+
+**Tests:** 490 passing (8 SA18 tests; updated by SA18a)
+
+---
+
+`THREE.Shape.holes` + `ExtrudeGeometry` produce a clean hollow cross-section with no custom geometry kernel work.
+
+**Changes delivered:**
+- Two-step extrusion flow: outer polygon closes → `'pending-holes'` phase (shape stored in `pendingShape`) → user optionally presses **Add hole** one or more times → closes inner polygon → `confirmShape()` → `'extruding'` phase
+- `CartoonSketcher` gains new phases `'pending-holes'` and `'hole-drawing'`; reuses the existing `polygonSketcher` field for hole drawing
+- New public API: `addHole()`, `confirmShape()`, `cancelHole()`, `cancelPendingShape()`; getter `pendingHoleCount`; callback `onShapeReadyForHoles`
+- Hole coordinate translation: hole-centroid-relative points mapped to outer-centroid-relative space via `dx = hcx - cx, dy = cz - hcz`
+- AABB pre-check silently discards holes whose bounding box extends outside the outer shape bbox
+- `SketcherPart.holes: [number, number][][] | null` and `PartDraft.holes?: [number, number][][]` added; `toDraft`/`loadDraft` round-trip fully preserves holes
+- `/sketch` route: `isHolePending` state, **Add hole** / **Confirm shape** HUD buttons, Escape exits hole-drawing or cancels pending shape
+
+**Tests:** 482 passing (9 new SA17 tests)
+
+---
+
+## Phase SA6 — Sketch shape presets ✅ COMPLETE
+
+Extends the polygon sketcher with **Rectangle** and **Circle** drawing modes alongside the existing free-polygon mode.
+
+- `SketchMode = 'polygon' | 'rectangle' | 'circle'` type added to `types.ts`.
+- `PolygonSketcher` gains public `mode: SketchMode` and `circleSegments: number` fields (both survive `reset()`).
+- **Rectangle:** two-click flow — first click anchors one corner, mouse preview shows a closed 4-point outline, second click closes the shape and hands it to the extrusion pipeline unchanged.
+- **Circle:** two-click flow — first click sets the centre, mouse preview shows a closed N-gon, second click bakes the N-gon via `_buildCirclePoints(centre, radius)` and closes the shape.
+- `startNewSketch(mode, circleSegments)` on `CartoonSketcher` forwards both params to the polygon sketcher.
+- Toolbar shows a `<select>` (Poly / Rect / Circle) and a segment-count `<input>` (circle mode only), both gated to disabled while a sketch or extrusion is in progress.
+
+**Files:** `src/core/sketcher/types.ts`, `src/core/sketcher/PolygonSketcher.ts`, `src/core/sketcher/CartoonSketcher.ts`, `src/routes/sketch/+page.svelte`.
+
+---
+
+## Phase SA16 — Torus primitive ✅ COMPLETE
+
+Adds a **Torus** insert button to the primitives bar. `THREE.TorusGeometry(0.5, 0.2, 12, 24)` produces a ring with a single `'Surface'` face group (the existing `withFaceGroups` helper auto-adds the draw group).  Draft serialisation and `loadDraft` round-trip correctly via the existing `PRESET_BY_NAME` lookup.
+
+Partial-angle sweep controls and cap geometry (SA16b) remain deferred — no geometry re-parametrisation infrastructure exists yet.
+
+**Files:** `src/core/sketcher/CartoonSketcher.ts`, `src/routes/sketch/+page.svelte`.
+
+---
+
 ## Phase SA11 — Snap to floor ✅ COMPLETE
 
 One-click "⬇ Floor" button in the primitives bar snaps the selected part (or its entire glue group) to `y = 0`.
@@ -255,6 +312,38 @@ We clear these and rebuild: wall edge i → `materialIndex` i (group of 6 indice
 - Also fixed `unglueSelected()` null guard (`if (!selectedPartId) return`) — pre-existing type error now caught by svelte-check.
 
 **Tests:** 438 total passing (9 new tests: 5 `CartoonSketcher` unit tests for `setFaceTexture`, 1 `toDraft/loadDraft` texture round-trip, 3 `ApplyTextureCommand` undo/redo tests in `SketcherDocument`). Added `beforeAll` mock for `THREE.TextureLoader.prototype.load` in both test files (returns bare `THREE.Texture` without DOM).
+
+---
+
+## Phase SA12 — Positioning precision ✅ COMPLETE
+
+Numeric input everywhere a measurement matters. Absorbed the former SA10 uniform-scale toggle.
+
+**SA12a — Transform inspector (position / rotation / scale fields)**
+- World-space position (3 dp), rotation in degrees YXZ order (1 dp), and scale (3 dp) shown as `<input type="number">` fields in a left-side HUD panel (`transform-inspector`) whenever a part or group is selected.
+- Data flow: refreshed on selection change, after every TC drag-end, and after undo/redo. Gated on `inspectorFocused` plain boolean so active typing is never interrupted by a reactive refresh.
+- Write-back: blur or Enter commits via the existing `TransformPartCommand` pattern — `applyWorldTransform()` applies the desired world matrix (converted to local space for group members via `parentMatrixWorldInverse × desiredMatrix`), then `sketcherDoc.execute(new TransformPartCommand(...), beforeSnapshot)`. Fully undoable.
+- Uniform scale lock button: when active, editing any scale axis mirrors the ratio to the other two axes.
+- Inspector hidden during drawing and extrusion phases.
+
+**SA12b — Grid snap size field**
+- `PolygonSketcher.snapSize` promoted from a module-level `const GRID_SNAP = 0.1` to an instance property `snapSize = DEFAULT_GRID_SNAP`.
+- `CartoonSketcher.gridSnapSize` setter propagates the value to the current and all future `PolygonSketcher` instances.
+- Number input appears in the primitives bar while drawing; persisted in `localStorage` as `sketcher-grid-snap`.
+
+**SA12c — Extrusion depth numeric input**
+- Read-only depth HUD replaced with an editable `<input type="number">` during the extrusion phase.
+- `ExtrusionHandle.setDepth(d)` added: rebuilds the mesh programmatically (like `onDrag` without the drag-active gate or throttle), fires `onDepthChanged`, returns the new mesh for scene swap.
+- `CartoonSketcher.setExtrusionDepth(d)` wraps the handle call with scene `remove`/`add`.
+
+**SA12d — Glue midpoint mode**
+- "⊕ Centre" toggle button in the primitives bar shown during the glue source-pick phase.
+- When active, `commitSrcFacePick()` snaps the glue anchor to the face-group centroid (`computeGroupCentreLocal()` — vertex-average over the draw group's index range) instead of the exact cursor-hit point.
+- `glueMidpointMode` reset to `false` when glue pick is cancelled.
+
+**Files changed:** `PolygonSketcher.ts`, `ExtrusionHandle.ts`, `CartoonSketcher.ts`, `src/routes/sketch/+page.svelte`
+
+**Tests:** 473 passing (no behavioural regressions; SA12 logic is UI-layer only and untested at unit level).
 
 ---
 

@@ -175,7 +175,9 @@ describe('CartoonSketcher', () => {
     sketcher.onClick(0, 0);       // p0
     sketcher.onClick(0.1, 0);     // p1
     sketcher.onClick(0, 0.1);     // p2
-    sketcher.onClick(0, 0);       // close → fires onShapeClosed → ExtrusionHandle created
+    sketcher.onClick(0, 0);       // close → pending-holes
+    expect(sketcher.currentPhase).toBe('pending-holes');
+    sketcher.confirmShape();      // → ExtrusionHandle created
     expect(sketcher.currentPhase).toBe('extruding');
 
     // Simulate pointer interactions to commit the extrusion
@@ -191,6 +193,7 @@ describe('CartoonSketcher', () => {
     sketcher.onClick(0.1, 0);
     sketcher.onClick(0, 0.1);
     sketcher.onClick(0, 0);
+    sketcher.confirmShape();
     sketcher.onPointerDown(0, 0);
     sketcher.onPointerUp();
     expect(sketcher.getSession().parts).toHaveLength(1);
@@ -206,6 +209,7 @@ describe('CartoonSketcher', () => {
     sketcher.onClick(0.1, 0);
     sketcher.onClick(0, 0.1);
     sketcher.onClick(0, 0);
+    sketcher.confirmShape();
     sketcher.onPointerDown(0, 0);
     sketcher.onPointerUp();
     const part = sketcher.getSession().parts[0];
@@ -220,10 +224,147 @@ describe('CartoonSketcher', () => {
       sketcher.onClick(0.1, 0);
       sketcher.onClick(0, 0.1);
       sketcher.onClick(0, 0);
+      sketcher.confirmShape();
       sketcher.onPointerDown(0, 0);
       sketcher.onPointerUp();
     }
     expect(sketcher.getSession().parts).toHaveLength(2);
+  });
+
+  // ── Hole drawing ────────────────────────────────────────────────────────────
+
+  it('closing outer polygon enters pending-holes phase', () => {
+    sketcher.startNewSketch();
+    sketcher.onClick(0, 0);
+    sketcher.onClick(0.1, 0);
+    sketcher.onClick(0, 0.1);
+    sketcher.onClick(0, 0); // close
+    expect(sketcher.currentPhase).toBe('pending-holes');
+    expect(sketcher.pendingHoleCount).toBe(0);
+  });
+
+  it('onShapeReadyForHoles callback fires when outer polygon closes', () => {
+    const cb = vi.fn();
+    sketcher.onShapeReadyForHoles = cb;
+    sketcher.startNewSketch();
+    sketcher.onClick(0, 0);
+    sketcher.onClick(0.1, 0);
+    sketcher.onClick(0, 0.1);
+    sketcher.onClick(0, 0);
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancelPendingShape() returns to idle', () => {
+    sketcher.startNewSketch();
+    sketcher.onClick(0, 0); sketcher.onClick(0.1, 0); sketcher.onClick(0, 0.1); sketcher.onClick(0, 0);
+    expect(sketcher.currentPhase).toBe('pending-holes');
+    sketcher.cancelPendingShape();
+    expect(sketcher.currentPhase).toBe('idle');
+    expect(sketcher.pendingHoleCount).toBe(0);
+  });
+
+  it('addHole() enters hole-drawing phase', () => {
+    sketcher.startNewSketch();
+    sketcher.onClick(0, 0); sketcher.onClick(0.2, 0); sketcher.onClick(0, 0.2); sketcher.onClick(0, 0);
+    sketcher.addHole();
+    expect(sketcher.currentPhase).toBe('hole-drawing');
+  });
+
+  it('cancelHole() returns to pending-holes and fires onShapeReadyForHoles', () => {
+    const cb = vi.fn();
+    sketcher.onShapeReadyForHoles = cb;
+    sketcher.startNewSketch();
+    sketcher.onClick(0, 0); sketcher.onClick(0.2, 0); sketcher.onClick(0, 0.2); sketcher.onClick(0, 0);
+    cb.mockClear();
+    sketcher.addHole();
+    sketcher.cancelHole();
+    expect(sketcher.currentPhase).toBe('pending-holes');
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('closing a hole inside the outer shape increments pendingHoleCount', () => {
+    sketcher.startNewSketch();
+    // Outer: large square (-0.5 .. +0.5 in shape space after centroid shift)
+    sketcher.onClick(-0.5, -0.5);
+    sketcher.onClick(0.5, -0.5);
+    sketcher.onClick(0.5, 0.5);
+    sketcher.onClick(-0.5, 0.5);
+    sketcher.onClick(-0.5, -0.5); // close outer
+    expect(sketcher.pendingHoleCount).toBe(0);
+
+    sketcher.addHole();
+    // Draw a small hole centred at world (0,0,0) — inside the outer shape.
+    sketcher.onClick(0, 0);
+    sketcher.onClick(0.05, 0);
+    sketcher.onClick(0, 0.05);
+    sketcher.onClick(0, 0); // close hole
+    expect(sketcher.currentPhase).toBe('pending-holes');
+    expect(sketcher.pendingHoleCount).toBe(1);
+  });
+
+  it('confirmShape() with a hole produces a mesh with vertices', () => {
+    sketcher.startNewSketch();
+    sketcher.onClick(-0.5, -0.5);
+    sketcher.onClick(0.5, -0.5);
+    sketcher.onClick(0.5, 0.5);
+    sketcher.onClick(-0.5, 0.5);
+    sketcher.onClick(-0.5, -0.5);
+    sketcher.addHole();
+    sketcher.onClick(0, 0);
+    sketcher.onClick(0.05, 0);
+    sketcher.onClick(0, 0.05);
+    sketcher.onClick(0, 0);
+    sketcher.confirmShape();
+    sketcher.onPointerDown(0, 0);
+    sketcher.onPointerUp();
+    expect(sketcher.getSession().parts).toHaveLength(1);
+    const count = sketcher.getSession().parts[0].mesh.geometry.attributes.position?.count ?? 0;
+    expect(count).toBeGreaterThan(0);
+    expect(sketcher.getSession().parts[0].holes).not.toBeNull();
+    expect(sketcher.getSession().parts[0].holes!.length).toBe(1);
+  });
+
+  it('toDraft() round-trip preserves holes', () => {
+    sketcher.startNewSketch();
+    sketcher.onClick(-0.5, -0.5);
+    sketcher.onClick(0.5, -0.5);
+    sketcher.onClick(0.5, 0.5);
+    sketcher.onClick(-0.5, 0.5);
+    sketcher.onClick(-0.5, -0.5);
+    sketcher.addHole();
+    sketcher.onClick(0, 0);
+    sketcher.onClick(0.05, 0);
+    sketcher.onClick(0, 0.05);
+    sketcher.onClick(0, 0);
+    sketcher.confirmShape();
+    sketcher.onPointerDown(0, 0);
+    sketcher.onPointerUp();
+
+    const draft = sketcher.toDraft();
+    expect(draft.parts[0].holes).toBeDefined();
+    expect(draft.parts[0].holes!.length).toBe(1);
+
+    sketcher.loadDraft(draft);
+    const restored = sketcher.getSession().parts[0];
+    expect(restored.holes).not.toBeNull();
+    expect(restored.holes!.length).toBe(1);
+    expect(restored.mesh.geometry.attributes.position.count).toBeGreaterThan(0);
+  });
+
+  it('hole outside the outer shape bbox is silently discarded', () => {
+    sketcher.startNewSketch();
+    sketcher.onClick(-0.5, -0.5);
+    sketcher.onClick(0.5, -0.5);
+    sketcher.onClick(0.5, 0.5);
+    sketcher.onClick(-0.5, 0.5);
+    sketcher.onClick(-0.5, -0.5);
+    sketcher.addHole();
+    // Hole clearly outside outer shape (world coords far away)
+    sketcher.onClick(5, 5);
+    sketcher.onClick(5.1, 5);
+    sketcher.onClick(5, 5.1);
+    sketcher.onClick(5, 5);
+    expect(sketcher.pendingHoleCount).toBe(0); // discarded
   });
 
   it('insertPrimitive() adds a part and returns it', () => {
@@ -353,7 +494,7 @@ describe('exportGLB', () => {
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial());
 
     const session: SketcherSession = {
-      parts: [{ id: 'part-1', mesh, depth: 1, centroid, name: 'Shape', color: 0x8888cc, shapePoints: null, faceColors: [0x8888cc], faceTextures: [null] }],
+      parts: [{ id: 'part-1', mesh, depth: 1, centroid, name: 'Shape', color: 0x8888cc, shapePoints: null, holes: null, lathePoints: null, lathePhiLength: null, faceColors: [0x8888cc], faceTextures: [null] }],
       joints: [],
       assemblyGroups: [],
     };
@@ -438,7 +579,8 @@ describe('toDraft / loadDraft', () => {
     sketcher.onClick(0, 0);
     sketcher.onClick(0.1, 0);
     sketcher.onClick(0, 0.1);
-    sketcher.onClick(0, 0);       // close
+    sketcher.onClick(0, 0);       // close → pending-holes
+    sketcher.confirmShape();
     sketcher.onPointerDown(0, 0);
     sketcher.onPointerUp();       // commit
 
@@ -528,7 +670,8 @@ describe('ExtrusionHandle via CartoonSketcher', () => {
     sketcher.onClick(0.5, -0.5);
     sketcher.onClick(0.5, 0.5);
     sketcher.onClick(-0.5, 0.5);
-    sketcher.onClick(-0.5, -0.5); // close
+    sketcher.onClick(-0.5, -0.5); // close → pending-holes
+    sketcher.confirmShape();      // → ExtrusionHandle created
     // commit at default depth (no drag)
     sketcher.onPointerDown(0, 0);
     sketcher.onPointerUp();
@@ -556,7 +699,8 @@ describe('ExtrusionHandle via CartoonSketcher', () => {
     sketcher.onClick(0.5, -0.5);
     sketcher.onClick(0.5, 0.5);
     sketcher.onClick(-0.5, 0.5);
-    sketcher.onClick(-0.5, -0.5); // close → enters extruding phase
+    sketcher.onClick(-0.5, -0.5); // close → pending-holes
+    sketcher.confirmShape();      // → enters extruding phase
 
     // Simulate two drag updates — should not accumulate meshes
     sketcher.onPointerDown(0, 0);
@@ -792,5 +936,325 @@ describe('snapshot weld group round-trip', () => {
     expect(() => sketcher.restoreSnapshot(oldSnap)).not.toThrow();
     expect(sketcher.getSession().parts).toHaveLength(1);
     expect(sketcher.getSession().parts[0].id).toBe(a.id);
+  });
+});
+
+// ── SA18a: dedicated revolve sketch mode ──────────────────────────────────────
+
+describe('CartoonSketcher lathe / revolve (SA18a)', () => {
+  let scene: THREE.Scene;
+  let camera: THREE.Camera;
+  let sketcher: CartoonSketcher;
+
+  function drawAndCloseProfile() {
+    sketcher.startRevolveSketch();
+    sketcher.onClick(0, 0);
+    sketcher.onClick(0.3, 0);
+    sketcher.onClick(0, 0.3);
+    sketcher.onClick(0, 0); // close → pending-revolve
+  }
+
+  beforeEach(() => {
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera();
+    sketcher = new CartoonSketcher(scene, camera);
+  });
+
+  it('startRevolveSketch transitions to revolve-drawing phase', () => {
+    sketcher.startRevolveSketch();
+    expect(sketcher.currentPhase).toBe('revolve-drawing');
+  });
+
+  it('closing the profile fires onRevolveReady and transitions to pending-revolve', () => {
+    let fired = false;
+    sketcher.onRevolveReady = () => { fired = true; };
+    drawAndCloseProfile();
+    expect(fired).toBe(true);
+    expect(sketcher.currentPhase).toBe('pending-revolve');
+  });
+
+  it('confirmLathe() transitions from pending-revolve to idle and commits a part', () => {
+    drawAndCloseProfile();
+    expect(sketcher.currentPhase).toBe('pending-revolve');
+    sketcher.confirmLathe();
+    expect(sketcher.currentPhase).toBe('idle');
+    expect(sketcher.getSession().parts).toHaveLength(1);
+  });
+
+  it('confirmLathe() is a no-op if not in pending-revolve phase', () => {
+    sketcher.confirmLathe();
+    expect(sketcher.getSession().parts).toHaveLength(0);
+    expect(sketcher.currentPhase).toBe('idle');
+  });
+
+  it('cancelRevolveSketch returns to idle from revolve-drawing', () => {
+    sketcher.startRevolveSketch();
+    sketcher.cancelRevolveSketch();
+    expect(sketcher.currentPhase).toBe('idle');
+  });
+
+  it('cancelPendingRevolve returns to idle from pending-revolve', () => {
+    drawAndCloseProfile();
+    expect(sketcher.currentPhase).toBe('pending-revolve');
+    sketcher.cancelPendingRevolve();
+    expect(sketcher.currentPhase).toBe('idle');
+    expect(sketcher.getSession().parts).toHaveLength(0);
+  });
+
+  it('lathed part has lathePoints set and shapePoints null', () => {
+    drawAndCloseProfile();
+    sketcher.confirmLathe();
+    const part = sketcher.getSession().parts[0];
+    expect(part.lathePoints).not.toBeNull();
+    expect(part.lathePoints!.length).toBeGreaterThan(0);
+    expect(part.shapePoints).toBeNull();
+    expect(part.name).toBe('Lathe');
+  });
+
+  it('lathed part mesh is added to the scene with non-zero vertices', () => {
+    drawAndCloseProfile();
+    sketcher.confirmLathe();
+    const part = sketcher.getSession().parts[0];
+    expect(scene.children).toContain(part.mesh);
+    const count = part.mesh.geometry.attributes.position?.count ?? 0;
+    expect(count).toBeGreaterThan(0);
+  });
+
+  it('lathed part mesh sits on the floor (position.y >= 0)', () => {
+    drawAndCloseProfile();
+    sketcher.confirmLathe();
+    const part = sketcher.getSession().parts[0];
+    expect(part.mesh.position.y).toBeGreaterThanOrEqual(0);
+  });
+
+  it('duplicatePart copies lathePoints to the clone', () => {
+    drawAndCloseProfile();
+    sketcher.confirmLathe();
+    const part = sketcher.getSession().parts[0];
+    const clone = sketcher.duplicatePart(part.id)!;
+    expect(clone.lathePoints).not.toBeNull();
+    expect(clone.lathePoints).toEqual(part.lathePoints);
+  });
+
+  it('toDraft / loadDraft round-trip preserves kind=lathed and lathePoints', () => {
+    drawAndCloseProfile();
+    sketcher.confirmLathe();
+    const draft = sketcher.toDraft();
+    expect(draft.parts[0].kind).toBe('lathed');
+    expect(draft.parts[0].lathePoints).toBeDefined();
+    expect(draft.parts[0].lathePoints!.length).toBeGreaterThan(0);
+
+    sketcher.loadDraft(draft);
+    const restored = sketcher.getSession().parts[0];
+    expect(restored.lathePoints).not.toBeNull();
+    expect(restored.lathePoints!.length).toBeGreaterThan(0);
+    expect(restored.mesh.geometry.attributes.position?.count ?? 0).toBeGreaterThan(0);
+  });
+});
+
+// ── SA18b: partial-angle sweeps ───────────────────────────────────────────────
+
+describe('CartoonSketcher partial-angle revolve (SA18b)', () => {
+  let scene: THREE.Scene;
+  let camera: THREE.PerspectiveCamera;
+  let sketcher: CartoonSketcher;
+
+  // Camera at (0,0,10) looking at origin. XY-mode raycasts hit z=0 plane and
+  // produce non-degenerate profile points for NDC coords in [0.1, 0.3].
+  function makeFrontCam(): THREE.PerspectiveCamera {
+    const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+    cam.position.set(0, 0, 10);
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
+    return cam;
+  }
+
+  function drawAndCloseProfile() {
+    sketcher.startRevolveSketch();
+    sketcher.onClick(0.1, 0.0);
+    sketcher.onClick(0.2, 0.0);
+    sketcher.onClick(0.1, 0.1);
+    sketcher.onClick(0.1, 0.0); // close
+  }
+
+  beforeEach(() => {
+    scene = new THREE.Scene();
+    camera = makeFrontCam();
+    sketcher = new CartoonSketcher(scene, camera);
+  });
+
+  it('confirmLathe(90) produces a part with 3 draw groups (surface + 2 caps)', () => {
+    drawAndCloseProfile();
+    sketcher.confirmLathe(90);
+    const part = sketcher.getSession().parts[0];
+    expect(part.mesh.geometry.groups.length).toBe(3);
+  });
+
+  it('confirmLathe(180) stores phiLength as π', () => {
+    drawAndCloseProfile();
+    sketcher.confirmLathe(180);
+    const part = sketcher.getSession().parts[0];
+    expect(part.lathePhiLength).toBeCloseTo(Math.PI);
+  });
+
+  it('confirmLathe(360) produces a full-revolution part with 1 draw group', () => {
+    drawAndCloseProfile();
+    sketcher.confirmLathe(360);
+    const part = sketcher.getSession().parts[0];
+    expect(part.mesh.geometry.groups.length).toBe(1);
+  });
+
+  it('confirmLathe(360) stores lathePhiLength of 2π', () => {
+    drawAndCloseProfile();
+    sketcher.confirmLathe(360);
+    const part = sketcher.getSession().parts[0];
+    expect(part.lathePhiLength).toBeCloseTo(Math.PI * 2);
+  });
+
+  it('toDraft writes phiLength for partial sweep, omits it for full', () => {
+    drawAndCloseProfile();
+    sketcher.confirmLathe(90);
+    const draft = sketcher.toDraft();
+    expect(draft.parts[0].phiLength).toBeCloseTo(Math.PI / 2);
+
+    drawAndCloseProfile();
+    sketcher.confirmLathe(360);
+    const draft2 = sketcher.toDraft();
+    expect(draft2.parts[1].phiLength).toBeUndefined();
+  });
+
+  it('loadDraft round-trip preserves partial phiLength and group count', () => {
+    drawAndCloseProfile();
+    sketcher.confirmLathe(90);
+    const draft = sketcher.toDraft();
+
+    sketcher.loadDraft(draft);
+    const restored = sketcher.getSession().parts[0];
+    expect(restored.lathePhiLength).toBeCloseTo(Math.PI / 2);
+    expect(restored.mesh.geometry.groups.length).toBe(3);
+  });
+
+  it('loadDraft round-trip defaults to full revolution when phiLength absent', () => {
+    drawAndCloseProfile();
+    sketcher.confirmLathe(360);
+    const draft = sketcher.toDraft();
+    expect(draft.parts[0].phiLength).toBeUndefined();
+
+    sketcher.loadDraft(draft);
+    const restored = sketcher.getSession().parts[0];
+    expect(restored.lathePhiLength).toBeCloseTo(Math.PI * 2);
+    expect(restored.mesh.geometry.groups.length).toBe(1);
+  });
+
+  it('non-lathed parts have lathePhiLength null', () => {
+    sketcher.insertPrimitive('box');
+    const part = sketcher.getSession().parts[0];
+    expect(part.lathePhiLength).toBeNull();
+  });
+
+  it('duplicatePart copies lathePhiLength', () => {
+    drawAndCloseProfile();
+    sketcher.confirmLathe(180);
+    const orig = sketcher.getSession().parts[0];
+    const clone = sketcher.duplicatePart(orig.id)!;
+    expect(clone.lathePhiLength).toBeCloseTo(Math.PI);
+  });
+});
+
+// ── PolygonSketcher drawPlane='xy' ────────────────────────────────────────────
+
+describe('PolygonSketcher drawPlane xy', () => {
+  // Camera at (0, 0, 10) looking toward origin along -Z.
+  // Rays for NDC (x, y) intersect the z=0 plane at approximately (x*scale, y*scale, 0).
+  function makeFrontCamera(): THREE.PerspectiveCamera {
+    const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+    cam.position.set(0, 0, 10);
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
+    return cam;
+  }
+
+  it('drawPlane defaults to xz', () => {
+    const ps = new PolygonSketcher();
+    expect(ps.drawPlane).toBe('xz');
+  });
+
+  it('drawPlane=xy: _closeShape passes world XY coords with no centroid offset', () => {
+    const cam = makeFrontCamera();
+    const ps = new PolygonSketcher();
+    ps.drawPlane = 'xy';
+    ps.snapSize = 0.01; // fine snap so test coords are not heavily quantised
+
+    let capturedShape: THREE.Shape | null = null;
+    let capturedCentroid: THREE.Vector3 | null = null;
+    ps.onShapeClosed = (shape, centroid) => {
+      capturedShape = shape;
+      capturedCentroid = centroid;
+    };
+
+    // Click three distinct NDC positions. With camera at z=10, fov=50,
+    // the visible frustum half-width at z=0 ≈ 10*tan(25°) ≈ 4.66.
+    // NDC (0.1, 0.2) → world ≈ (0.466, 0.932, 0) before snap.
+    ps.onClick(0.0, 0.0, cam); // → snapped near (0, 0, 0)
+    ps.onClick(0.1, 0.0, cam); // → snapped to some (rx, 0, 0)
+    ps.onClick(0.0, 0.1, cam); // → snapped to some (0, ry, 0)
+    ps.onClick(0.0, 0.0, cam); // close
+
+    expect(capturedShape).not.toBeNull();
+    expect(capturedCentroid).not.toBeNull();
+    // Centroid must be (0, 0, 0) — no offset applied in XY mode.
+    expect(capturedCentroid!.x).toBeCloseTo(0);
+    expect(capturedCentroid!.y).toBeCloseTo(0);
+    expect(capturedCentroid!.z).toBeCloseTo(0);
+    // Shape points should have z=0 (they live in XY plane).
+    const pts = capturedShape!.getPoints();
+    for (const p of pts) {
+      // shape is THREE.Shape so points are Vector2; only x and y matter
+      expect(typeof p.x).toBe('number');
+      expect(typeof p.y).toBe('number');
+    }
+  });
+
+  it('drawPlane=xy: shape points have positive x for positive-x world clicks', () => {
+    const cam = makeFrontCamera();
+    const ps = new PolygonSketcher();
+    ps.drawPlane = 'xy';
+    ps.snapSize = 0.01;
+
+    let capturedShape: THREE.Shape | null = null;
+    ps.onShapeClosed = (shape) => { capturedShape = shape; };
+
+    // All clicks at positive NDC x (right of centre → positive world x)
+    ps.onClick(0.1, 0.0, cam);
+    ps.onClick(0.2, 0.0, cam);
+    ps.onClick(0.1, 0.1, cam);
+    ps.onClick(0.1, 0.0, cam); // close
+
+    expect(capturedShape).not.toBeNull();
+    const pts = capturedShape!.getPoints();
+    // Every shape point should have positive x (radial distance from axis > 0)
+    for (const p of pts) {
+      expect(p.x).toBeGreaterThan(0);
+    }
+  });
+
+  it('drawPlane=xz: _closeShape applies centroid offset (unchanged behaviour)', () => {
+    const cam = new THREE.PerspectiveCamera();
+    const ps = new PolygonSketcher();
+    // drawPlane remains 'xz' (default)
+
+    let capturedCentroid: THREE.Vector3 | null = null;
+    ps.onShapeClosed = (_, centroid) => { capturedCentroid = centroid; };
+
+    // Three clicks producing points all at origin (camera at (0,0,0)).
+    ps.onClick(0, 0, cam);
+    ps.onClick(0.3, 0, cam);
+    ps.onClick(0, 0.3, cam);
+    ps.onClick(0, 0, cam); // close
+
+    expect(capturedCentroid).not.toBeNull();
+    // In XZ mode the centroid carries the world offset; all points were (0,0,0)
+    // so centroid is (0, 0, 0) but the contract is it IS the average of the points.
+    expect(capturedCentroid!.y).toBeCloseTo(0); // centroid.y is always 0 in XZ mode
   });
 });

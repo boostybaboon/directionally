@@ -1,13 +1,9 @@
 import * as THREE from 'three';
+import type { SketchMode } from './types.js';
 
-const GRID_SNAP = 0.1;
-const CLOSURE_THRESHOLD = GRID_SNAP * 2;
+const DEFAULT_GRID_SNAP = 0.1;
 const MARKER_COLOR_NORMAL = 0x00ffff;
 const MARKER_COLOR_HOT    = 0xffdd00;
-
-function snap(v: number): number {
-  return Math.round(v / GRID_SNAP) * GRID_SNAP;
-}
 
 /**
  * Handles the polygon-drawing phase of the sketcher.
@@ -19,7 +15,22 @@ function snap(v: number): number {
  * so this class has no browser/renderer dependency and is easily unit-tested.
  */
 export class PolygonSketcher {
+  /** Grid snap size in world units. Change at any time to adjust snapping. */
+  snapSize = DEFAULT_GRID_SNAP;
+  /** Drawing mode: polygon (multi-click), rectangle (two-click diagonal), or circle (two-click centre+radius). */
+  mode: SketchMode = 'polygon';
+  /** Number of sides for circle approximation. */
+  circleSegments = 32;
+  /**
+   * Drawing plane: 'xz' (default, floor plane) for extrusion sketches;
+   * 'xy' (front face of scene) for revolve sketches.
+   * In 'xy' mode raycasts hit the z=0 plane, shape.x = world.x, shape.y = world.y
+   * with no centroid offset — the Y axis at x=0 is the revolution axis directly.
+   */
+  drawPlane: 'xz' | 'xy' = 'xz';
+
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private readonly xyPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
   private points: THREE.Vector3[] = [];
   private previewPoint: THREE.Vector3 | null = null;
 
@@ -65,16 +76,60 @@ export class PolygonSketcher {
 
   /**
    * Feed a mouse-click event (NDC coords + camera).
-   * Adds a point, or closes the shape when the click is within GRID_SNAP of the first point.
+   * - Polygon: adds a vertex; closes the shape when clicked near the first point (≥3 points).
+   * - Rectangle: first click sets anchor corner; second click sets opposite corner and closes.
+   * - Circle: first click sets centre; second click sets radius and closes as an N-gon.
    */
   onClick(ndcX: number, ndcY: number, camera: THREE.Camera): void {
     const hit = this._raycast(ndcX, ndcY, camera);
     if (!hit) return;
 
+    if (this.mode === 'rectangle') {
+      if (this.points.length === 0) {
+        this.points.push(hit);
+        this._updateLine();
+      } else {
+        const a = this.points[0];
+        if (this.drawPlane === 'xy') {
+          this.points = [
+            new THREE.Vector3(a.x, a.y, 0),
+            new THREE.Vector3(hit.x, a.y, 0),
+            new THREE.Vector3(hit.x, hit.y, 0),
+            new THREE.Vector3(a.x, hit.y, 0),
+          ];
+        } else {
+          this.points = [
+            new THREE.Vector3(a.x, 0, a.z),
+            new THREE.Vector3(hit.x, 0, a.z),
+            new THREE.Vector3(hit.x, 0, hit.z),
+            new THREE.Vector3(a.x, 0, hit.z),
+          ];
+        }
+        this._closeShape();
+      }
+      return;
+    }
+
+    if (this.mode === 'circle') {
+      if (this.points.length === 0) {
+        this.points.push(hit);
+        this._updateLine();
+      } else {
+        const centre = this.points[0];
+        const radius = this.drawPlane === 'xy'
+          ? new THREE.Vector2(hit.x - centre.x, hit.y - centre.y).length()
+          : new THREE.Vector2(hit.x - centre.x, hit.z - centre.z).length();
+        if (radius < 0.01) return;
+        this.points = this._buildCirclePoints(centre, radius);
+        this._closeShape();
+      }
+      return;
+    }
+
     // Close when click is within closure threshold of the first point (≥3 points placed).
     if (this.points.length >= 3) {
       const first = this.points[0];
-      if (hit.distanceTo(first) <= CLOSURE_THRESHOLD) {
+      if (hit.distanceTo(first) <= this.snapSize * 2) {
         this._closeShape();
         return;
       }
@@ -108,12 +163,39 @@ export class PolygonSketcher {
     (this.closureMarker.material as THREE.Material).dispose();
   }
 
+  private _snap(v: number): number {
+    return Math.round(v / this.snapSize) * this.snapSize;
+  }
+
+  /** Build an N-gon approximating a circle of the given radius centred at `centre`. */
+  private _buildCirclePoints(centre: THREE.Vector3, radius: number): THREE.Vector3[] {
+    return Array.from({ length: this.circleSegments }, (_, i) => {
+      const angle = (i / this.circleSegments) * Math.PI * 2;
+      if (this.drawPlane === 'xy') {
+        return new THREE.Vector3(
+          centre.x + Math.cos(angle) * radius,
+          centre.y + Math.sin(angle) * radius,
+          0,
+        );
+      }
+      return new THREE.Vector3(
+        centre.x + Math.cos(angle) * radius,
+        0,
+        centre.z + Math.sin(angle) * radius,
+      );
+    });
+  }
+
   private _raycast(ndcX: number, ndcY: number, camera: THREE.Camera): THREE.Vector3 | null {
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
     const hit = new THREE.Vector3();
+    if (this.drawPlane === 'xy') {
+      if (!raycaster.ray.intersectPlane(this.xyPlane, hit)) return null;
+      return new THREE.Vector3(this._snap(hit.x), this._snap(hit.y), 0);
+    }
     if (!raycaster.ray.intersectPlane(this.groundPlane, hit)) return null;
-    return new THREE.Vector3(snap(hit.x), 0, snap(hit.z));
+    return new THREE.Vector3(this._snap(hit.x), 0, this._snap(hit.z));
   }
 
   private _updateLine(): void {
@@ -122,16 +204,23 @@ export class PolygonSketcher {
       'position',
       new THREE.BufferAttribute(new Float32Array(positions), 3),
     );
-    // Keep closure marker on the first vertex.
-    if (this.points.length > 0) {
+    // Closure marker: polygon mode only — rect/circle have no close-near-first mechanic.
+    if (this.mode === 'polygon' && this.points.length > 0) {
       const first = this.points[0];
-      this.closureMarker.position.set(first.x, first.y + 0.02, first.z);
+      if (this.drawPlane === 'xy') {
+        // Offset slightly toward the camera (+Z) so it sits in front of the line.
+        this.closureMarker.position.set(first.x, first.y, 0.02);
+      } else {
+        this.closureMarker.position.set(first.x, first.y + 0.02, first.z);
+      }
       this.closureMarker.visible = true;
+    } else {
+      this.closureMarker.visible = false;
     }
   }
 
   private _updateClosureHot(cursor: THREE.Vector3): void {
-    const hot = this.points.length >= 3 && cursor.distanceTo(this.points[0]) <= CLOSURE_THRESHOLD;
+    const hot = this.points.length >= 3 && cursor.distanceTo(this.points[0]) <= this.snapSize * 2;
     if (hot === this.closureHot) return;
     this.closureHot = hot;
     (this.closureMarker.material as THREE.MeshBasicMaterial).color.setHex(
@@ -144,6 +233,43 @@ export class PolygonSketcher {
       this.rubberBand.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
       return;
     }
+
+    // Rectangle: after first click, show the full 4-corner outline as preview.
+    if (this.mode === 'rectangle' && this.points.length === 1) {
+      const a = this.points[0];
+      const b = this.previewPoint;
+      let pts: Float32Array;
+      if (this.drawPlane === 'xy') {
+        pts = new Float32Array([
+          a.x, a.y, 0,  b.x, a.y, 0,  b.x, b.y, 0,  a.x, b.y, 0,  a.x, a.y, 0,
+        ]);
+      } else {
+        pts = new Float32Array([
+          a.x, 0, a.z,  b.x, 0, a.z,  b.x, 0, b.z,  a.x, 0, b.z,  a.x, 0, a.z,
+        ]);
+      }
+      this.rubberBand.geometry.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+      return;
+    }
+
+    // Circle: after first click, show the N-gon outline as preview.
+    if (this.mode === 'circle' && this.points.length === 1) {
+      const centre = this.points[0];
+      const radius = this.drawPlane === 'xy'
+        ? new THREE.Vector2(this.previewPoint.x - centre.x, this.previewPoint.y - centre.y).length()
+        : new THREE.Vector2(this.previewPoint.x - centre.x, this.previewPoint.z - centre.z).length();
+      if (radius < 0.001) {
+        this.rubberBand.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+        return;
+      }
+      const circlePts = this._buildCirclePoints(centre, radius);
+      // Close the loop by repeating the first point.
+      const flat = [...circlePts.flatMap((p) => [p.x, p.y, p.z]), circlePts[0].x, circlePts[0].y, circlePts[0].z];
+      this.rubberBand.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(flat), 3));
+      return;
+    }
+
+    // Polygon: single rubber-band segment from last committed point to cursor.
     const last = this.points[this.points.length - 1];
     const positions = [last.x, last.y, last.z, this.previewPoint.x, this.previewPoint.y, this.previewPoint.z];
     this.rubberBand.geometry.setAttribute(
@@ -155,6 +281,19 @@ export class PolygonSketcher {
   private _closeShape(): void {
     if (this.points.length < 3) return;
 
+    if (this.drawPlane === 'xy') {
+      // In XY mode the Y axis (x=0) is the revolution axis for LatheGeometry.
+      // Pass world XY coords directly — no centroid offset — so lathePoints[i][0]
+      // is the true radial distance from the Y axis and lathePoints[i][1] is height.
+      const shape = new THREE.Shape(
+        this.points.map((p) => new THREE.Vector2(p.x, p.y)),
+      );
+      this.onShapeClosed?.(shape, new THREE.Vector3(0, 0, 0));
+      this.reset();
+      return;
+    }
+
+    // XZ floor-plane mode (extrusion sketches).
     // Centroid: average of all points.
     const cx = this.points.reduce((s, p) => s + p.x, 0) / this.points.length;
     const cz = this.points.reduce((s, p) => s + p.z, 0) / this.points.length;

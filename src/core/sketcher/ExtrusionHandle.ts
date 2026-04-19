@@ -159,6 +159,23 @@ export class ExtrusionHandle {
     return this.depth;
   }
 
+  /**
+   * Programmatically set the extrusion depth (e.g. from a numeric input field).
+   * Rebuilds the mesh and fires onDepthChanged.
+   * Returns the new mesh so the caller can update the scene.
+   */
+  setDepth(d: number): THREE.Mesh {
+    d = Math.max(0.05, d);
+    this.depth = d;
+    this.handle.position.y = d;
+    this.onDepthChanged?.(d);
+    const newMesh = this._buildMesh(d);
+    this.mesh.geometry.dispose();
+    disposeMaterials(this.mesh.material);
+    this.mesh = newMesh;
+    return newMesh;
+  }
+
   dispose(): void {
     this.handle.geometry.dispose();
     this.handle.children.forEach((c) => (c as THREE.Mesh).geometry?.dispose());
