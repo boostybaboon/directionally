@@ -39,10 +39,17 @@
   let selectedPartHasGlue = $state(false);
   // When non-null, we are in group edit mode — editing a single member of this weld group id.
   let groupEditGroupId = $state<string | null>(null);
-  // Face paint mode: when true, clicks colour individual faces instead of selecting parts.
+  // Face paint mode: when true, clicks lock and colour individual faces instead of selecting parts.
   let facePaintMode = $state(false);
-  // The materialIndex of the face last hovered/selected when in face paint mode.
+  // The materialIndex of the face currently under the cursor (drives yellow highlight only).
   let hoveredFaceMaterialIndex = $state<number | null>(null);
+  // True when the hovered face has an active texture.
+  let hoveredFaceHasTexture = $state(false);
+  // The materialIndex locked for editing by the last click in face paint mode.
+  // All HUD actions (swatches, ↺ col, ✕ tex) target this face, not the hover face.
+  let lockedFaceMaterialIndex = $state<number | null>(null);
+  // True when the locked face has an active texture.
+  let lockedFaceHasTexture = $state(false);
   // Id of the part under the cursor during a drag-over (for texture drop targeting).
   let dragTargetPartId = $state<string | null>(null);
   let dragTargetMaterialIndex = $state<number | null>(null);
@@ -231,6 +238,9 @@
         selectedPartId = null;
         facePaintMode = false;
         hoveredFaceMaterialIndex = null;
+        hoveredFaceHasTexture = false;
+        lockedFaceMaterialIndex = null;
+        lockedFaceHasTexture = false;
         selectedGroupIsWeld = false;
         selectedPartHasGlue = false;
         clearFaceHighlight();
@@ -504,8 +514,11 @@
   function applyColor(hex: string) {
     selectedColor = hex;
     if (!selectedPartId) return;
-    if (facePaintMode && hoveredFaceMaterialIndex !== null) {
-      sketcherDoc.execute(new ChangeFaceColorCommand(selectedPartId, hoveredFaceMaterialIndex, parseInt(hex.replace('#', ''), 16), sketcher));
+    if (facePaintMode && lockedFaceMaterialIndex !== null) {
+      sketcherDoc.execute(new ChangeFaceColorCommand(selectedPartId, lockedFaceMaterialIndex, parseInt(hex.replace('#', ''), 16), sketcher));
+      // Keep lockedFaceHasTexture accurate after a colour change (texture stays, but re-check).
+      const part = sketcher.getSession().parts.find((p) => p.id === selectedPartId);
+      lockedFaceHasTexture = !!part?.faceTextures[lockedFaceMaterialIndex];
     } else if (!facePaintMode) {
       sketcherDoc.execute(new ChangeColorCommand(selectedPartId, parseInt(hex.replace('#', ''), 16), sketcher));
     }
@@ -521,7 +534,7 @@
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
     const hits = raycaster.intersectObjects(meshes, false);
-    if (!hits.length) { hoverInfo = '—'; hoveredFaceMaterialIndex = null; return; }
+    if (!hits.length) { hoverInfo = '—'; hoveredFaceMaterialIndex = null; hoveredFaceHasTexture = false; return; }
     const hit = hits[0];
     const hitMesh = hit.object as THREE.Mesh;
     const part = session.parts.find((p) => p.mesh === hitMesh);
@@ -532,9 +545,12 @@
     hoverInfo = `${part?.name ?? '?'} · ${label} · uv ${uv}`;
     // Track which material index is under the cursor so face paint clicks know which slot to update.
     if (facePaintMode && part?.id === selectedPartId) {
-      hoveredFaceMaterialIndex = hit.face?.materialIndex ?? null;
+      const idx = hit.face?.materialIndex ?? null;
+      hoveredFaceMaterialIndex = idx;
+      hoveredFaceHasTexture = idx !== null ? !!part?.faceTextures[idx] : false;
     } else {
       hoveredFaceMaterialIndex = null;
+      hoveredFaceHasTexture = false;
     }
   }
 
@@ -612,18 +628,25 @@
       }
 
       // In face paint mode, a click on the selected part's mesh paints the hovered face.
-      if (facePaintMode && selectedPartId && hoveredFaceMaterialIndex !== null) {
+      if (facePaintMode && selectedPartId) {
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
         const hits = raycaster.intersectObjects(meshes, false);
         if (hits.length) {
           const hitPart = session.parts.find((p) => p.mesh === hits[0].object);
           if (hitPart?.id === selectedPartId) {
-            const mi = hits[0].face?.materialIndex ?? hoveredFaceMaterialIndex;
+            const mi = hits[0].face?.materialIndex ?? 0;
+            // Lock this face for editing and apply the current colour.
+            lockedFaceMaterialIndex = mi;
+            lockedFaceHasTexture = !!hitPart.faceTextures[mi];
             sketcherDoc.execute(new ChangeFaceColorCommand(selectedPartId, mi, parseInt(selectedColor.replace('#', ''), 16), sketcher));
             return;
           }
         }
+        // Clicked canvas but missed the part — clear the lock.
+        lockedFaceMaterialIndex = null;
+        lockedFaceHasTexture = false;
+        return;
       }
 
       const hit = selection.pick(x, y, camera, meshes);
@@ -1484,12 +1507,44 @@
         class="face-paint-btn"
         class:active={facePaintMode}
         title="Face paint mode: click a face to colour it individually"
-        onclick={() => { facePaintMode = !facePaintMode; hoveredFaceMaterialIndex = null; tc.getHelper().visible = !facePaintMode; if (!facePaintMode) clearFaceHighlight(); }}
+        onclick={() => { facePaintMode = !facePaintMode; hoveredFaceMaterialIndex = null; hoveredFaceHasTexture = false; lockedFaceMaterialIndex = null; lockedFaceHasTexture = false; tc.getHelper().visible = !facePaintMode; if (!facePaintMode) clearFaceHighlight(); }}
       >Face</button>
       {#if facePaintMode}
         <span class="hud-label" style="font-size:9px">
-          {hoveredFaceMaterialIndex !== null ? `face ${hoveredFaceMaterialIndex}` : 'hover a face'}
+          {lockedFaceMaterialIndex !== null ? `face ${lockedFaceMaterialIndex}` : 'click a face'}
         </span>
+        {#if lockedFaceMaterialIndex !== null}
+          <button
+            class="hud-action-btn"
+            title="Reset this face to the body colour"
+            onclick={() => {
+              const part = sketcher.getSession().parts.find((p) => p.id === selectedPartId);
+              if (part && lockedFaceMaterialIndex !== null)
+                sketcherDoc.execute(new ChangeFaceColorCommand(selectedPartId!, lockedFaceMaterialIndex, part.color, sketcher));
+            }}
+          >↺ col</button>
+        {/if}
+        {#if lockedFaceHasTexture && lockedFaceMaterialIndex !== null}
+          <button
+            class="hud-action-btn"
+            title="Remove texture from this face"
+            onclick={() => {
+              if (selectedPartId !== null && lockedFaceMaterialIndex !== null) {
+                sketcherDoc.execute(new ApplyTextureCommand(selectedPartId, lockedFaceMaterialIndex, null, sketcher));
+                lockedFaceHasTexture = false;
+              }
+            }}
+          >✕ tex</button>
+        {/if}
+      {:else}
+        <button
+          class="hud-action-btn"
+          title="Reset all face colours to the body colour"
+          onclick={() => {
+            const part = sketcher.getSession().parts.find((p) => p.id === selectedPartId);
+            if (part) sketcherDoc.execute(new ChangeColorCommand(selectedPartId!, part.color, sketcher));
+          }}
+        >↺ col</button>
       {/if}
       <button class="dup-btn" onclick={duplicateSelected} title="Shift+D">Duplicate</button>
     </div>
@@ -2119,6 +2174,15 @@
     background: #1a3a2a;
     border-color: #44cc88;
     color: #88ffcc;
+  }
+
+  .hud-action-btn {
+    font-size: 10px;
+    padding: 2px 5px;
+    opacity: 0.75;
+  }
+  .hud-action-btn:hover {
+    opacity: 1;
   }
 
   .glue-btn {

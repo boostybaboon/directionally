@@ -50,12 +50,15 @@ Select a **Cube** first.
 |:----:|--------|----------|:------:|-------|
 | 1 | Click a swatch in the colour HUD | Entire part changes to that colour | OK | |
 | 2 | Type a hex value in the colour input | Part updates live | OK | |
-| 3 | Click the **⬜ Face paint** button (it highlights) | Face paint mode active; TC gizmo hides | OK | |
-| 4 | Hover over different faces of the cube | Yellow highlight tracks the hovered face | OK | |
-| 5 | Click a face while hovering | That face changes to the selected colour; other faces unchanged | OK | |
-| 6 | Pick a different swatch and click another face | Second face gets the new colour | OK | |
-| 7 | Click **Face paint** again to toggle off | TC gizmo reappears; hover highlight clears | OK | |
-| 8 | Ctrl+Z twice | Both per-face colour changes undo | OK | |
+| 3 | Click the **⬜ Face paint** button (it highlights) | Face paint mode active; TC gizmo hides; HUD shows "click a face" | OK | |
+| 4 | Hover over different faces of the cube | Yellow highlight dot tracks the hovered face | OK | |
+| 5 | Click a face | That face paints with the selected colour; HUD label updates to "face N"; **↺ col** button appears | — | |
+| 6 | Click a different colour swatch | Colour applies immediately to the locked face; no second click needed | — | |
+| 7 | Click **↺ col** | Locked face resets to the body colour; undoable with Ctrl+Z | — | |
+| 8 | Click a second face | New face locks and paints; label updates to new face number | — | |
+| 9 | Click empty canvas area (not on the part) | Lock clears; HUD returns to "click a face" | — | |
+| 10 | Click **Face paint** again to toggle off | TC gizmo reappears; hover highlight clears | OK | |
+| 11 | Ctrl+Z to undo face colour changes | Per-face colour changes undo in order | — | |
 
 ---
 
@@ -67,10 +70,13 @@ Requires an image file on disk (any JPG/PNG).
 |:----:|--------|----------|:------:|-------|
 | 1 | Select a cube | Cube selected | OK | |
 | 2 | Drag an image file from the OS file manager over the canvas | Hover highlight follows the face under the cursor | OK | |
-| 3 | Drop the image onto a specific face | Face shows the texture unmodified (no colour tint from the part colour); status "Texture applied." | — | |
-| 4 | Verify the texture-bearing face looks the same regardless of the part's painted colour | Texture appears identical on a red part vs. a blue part | — | |
-| 5 | Ctrl+Z | Texture removed; face reverts to its previous painted colour (not a default) | — | |
+| 3 | Drop the image onto a specific face | Face shows the texture unmodified (no colour tint from the part colour); status "Texture applied." | OK | |
+| 4 | Change the part colour via the colour HUD | Texture-bearing face is unaffected; texture remains unmodified | OK | |
+| 5 | Ctrl+Z | Texture removed; face reverts to its previous painted colour (not a default) | OK | |
 | 6 | Drop on a different face | Only that face gets the texture; other faces show their solid colour unchanged | OK | |
+| 7 | Enable **Face paint**; click the textured face to lock it | HUD shows "face N"; **↺ col** and **✕ tex** buttons both appear | OK | |
+| 8 | Click **✕ tex** | Texture removed; face shows its solid colour; **✕ tex** button disappears | OK | |
+| 9 | Ctrl+Z | Texture restored to that face | OK | |
 
 ---
 

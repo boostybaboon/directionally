@@ -443,7 +443,10 @@ export class CartoonSketcher {
     if (!part) return;
     part.color = color;
     part.faceColors.fill(color);
-    (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m) => m.color.setHex(color));
+    // Skip faces with an active texture — their material colour must stay white (colour × map = map).
+    (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m, i) => {
+      if (!part.faceTextures[i]) m.color.setHex(color);
+    });
   }
 
   /** Update the colour of a single draw group. Does not change part.color. */
@@ -452,7 +455,10 @@ export class CartoonSketcher {
     if (!part) return;
     if (materialIndex < 0 || materialIndex >= part.faceColors.length) return;
     part.faceColors[materialIndex] = color;
-    (part.mesh.material as THREE.MeshStandardMaterial[])[materialIndex].color.setHex(color);
+    // Skip if a texture is active on this slot — material colour must stay white.
+    if (!part.faceTextures[materialIndex]) {
+      (part.mesh.material as THREE.MeshStandardMaterial[])[materialIndex].color.setHex(color);
+    }
   }
 
   /**
@@ -773,10 +779,14 @@ export class CartoonSketcher {
       part.faceColors = [...ps.faceColors];
       part.faceTextures = [...ps.faceTextures];
       (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m, i) => {
-        m.color.setHex(ps.faceColors[i] ?? ps.color);
         if (m.map) { m.map.dispose(); m.map = null; }
         const url = ps.faceTextures[i] ?? null;
-        if (url) { m.map = new THREE.TextureLoader().load(url); }
+        if (url) {
+          m.map = new THREE.TextureLoader().load(url);
+          m.color.set(0xffffff);
+        } else {
+          m.color.setHex(ps.faceColors[i] ?? ps.color);
+        }
         m.needsUpdate = true;
       });
       this.scene.add(part.mesh);
