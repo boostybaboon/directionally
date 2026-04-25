@@ -189,6 +189,7 @@ export class CartoonSketcher {
   private readonly allParts = new Map<string, SketcherPart>();
   private polygonSketcher: PolygonSketcher | null = null;
   private extrusionHandle: ExtrusionHandle | null = null;
+  private outerOutline: THREE.Line | null = null;
   private pendingShape: THREE.Shape | null = null;
   private pendingCentroid: THREE.Vector3 | null = null;
   private nextId = 1;
@@ -468,6 +469,11 @@ export class CartoonSketcher {
     part.faceTextures[materialIndex] = dataUrl;
     if (dataUrl) {
       mat.map = new THREE.TextureLoader().load(dataUrl);
+      // Set color to white so the texture displays unmodified (MeshStandardMaterial multiplies color × map).
+      mat.color.set(0xffffff);
+    } else {
+      // Restore the face's solid color when the texture is removed.
+      mat.color.setHex(part.faceColors[materialIndex]);
     }
     mat.needsUpdate = true;
   }
@@ -979,6 +985,12 @@ export class CartoonSketcher {
       this.polygonSketcher.dispose();
       this.polygonSketcher = null;
     }
+    if (this.outerOutline) {
+      this.scene.remove(this.outerOutline);
+      this.outerOutline.geometry.dispose();
+      (this.outerOutline.material as THREE.Material).dispose();
+      this.outerOutline = null;
+    }
     if (this.extrusionHandle) {
       this.scene.remove(this.extrusionHandle.handle);
       this.scene.remove(this.extrusionHandle.mesh);
@@ -1014,12 +1026,16 @@ export class CartoonSketcher {
   }
 
   private _outerShapeClosed(shape: THREE.Shape, centroid: THREE.Vector3): void {
-    // Dispose the outer polygon sketcher helpers — they're no longer needed.
+    // Keep the closed outline visible as a context guide during hole drawing.
     if (this.polygonSketcher) {
-      this.scene.remove(this.polygonSketcher.line);
       this.scene.remove(this.polygonSketcher.rubberBand);
       this.scene.remove(this.polygonSketcher.closureMarker);
-      this.polygonSketcher.dispose();
+      // Hold a reference to the line so we can remove it later; dispose only the other resources.
+      this.outerOutline = this.polygonSketcher.line;
+      this.polygonSketcher.rubberBand.geometry.dispose();
+      this.polygonSketcher.closureMarker.geometry.dispose();
+      (this.polygonSketcher.rubberBand.material as THREE.Material).dispose();
+      (this.polygonSketcher.closureMarker.material as THREE.Material).dispose();
       this.polygonSketcher = null;
     }
     this.pendingShape = shape;

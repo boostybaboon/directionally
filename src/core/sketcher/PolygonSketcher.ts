@@ -130,11 +130,12 @@ export class PolygonSketcher {
     if (this.points.length >= 3) {
       const first = this.points[0];
       if (hit.distanceTo(first) <= this.snapSize * 2) {
-        this._closeShape();
+        if (!this._wouldCloseIntersect()) this._closeShape();
         return;
       }
     }
 
+    if (this._wouldSelfIntersect(hit)) return;
     this.points.push(hit);
     this._updateLine();
   }
@@ -161,6 +162,58 @@ export class PolygonSketcher {
     (this.line.material as THREE.Material).dispose();
     (this.rubberBand.material as THREE.Material).dispose();
     (this.closureMarker.material as THREE.Material).dispose();
+  }
+
+  private _get2D(v: THREE.Vector3): [number, number] {
+    return this.drawPlane === 'xy' ? [v.x, v.y] : [v.x, v.z];
+  }
+
+  private _segIntersect2D(
+    ax: number, ay: number, bx: number, by: number,
+    cx: number, cy: number, dx: number, dy: number,
+  ): boolean {
+    const d1x = bx - ax, d1y = by - ay;
+    const d2x = dx - cx, d2y = dy - cy;
+    const cross = d1x * d2y - d1y * d2x;
+    if (Math.abs(cross) < 1e-10) return false;
+    const ex = cx - ax, ey = cy - ay;
+    const t = (ex * d2y - ey * d2x) / cross;
+    const u = (ex * d1y - ey * d1x) / cross;
+    return t > 1e-10 && t < 1 - 1e-10 && u > 1e-10 && u < 1 - 1e-10;
+  }
+
+  /**
+   * Returns true if the segment from the last committed point to `newPoint`
+   * would cross any non-adjacent existing edge of the polygon.
+   */
+  private _wouldSelfIntersect(newPoint: THREE.Vector3): boolean {
+    const n = this.points.length;
+    if (n < 3) return false;
+    const [lx, ly] = this._get2D(this.points[n - 1]);
+    const [nx, ny] = this._get2D(newPoint);
+    for (let i = 0; i < n - 2; i++) {
+      const [ax, ay] = this._get2D(this.points[i]);
+      const [bx, by] = this._get2D(this.points[i + 1]);
+      if (this._segIntersect2D(lx, ly, nx, ny, ax, ay, bx, by)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Returns true if closing the polygon (last point → first point) would cross
+   * any non-adjacent interior edge.
+   */
+  private _wouldCloseIntersect(): boolean {
+    const n = this.points.length;
+    if (n < 4) return false;
+    const [lx, ly] = this._get2D(this.points[n - 1]);
+    const [fx, fy] = this._get2D(this.points[0]);
+    for (let i = 1; i < n - 2; i++) {
+      const [ax, ay] = this._get2D(this.points[i]);
+      const [bx, by] = this._get2D(this.points[i + 1]);
+      if (this._segIntersect2D(lx, ly, fx, fy, ax, ay, bx, by)) return true;
+    }
+    return false;
   }
 
   private _snap(v: number): number {

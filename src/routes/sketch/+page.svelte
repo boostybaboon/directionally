@@ -126,6 +126,10 @@
   let tcPreDragSnapshot: ReturnType<typeof sketcherDoc.captureSnapshot> | null = null;
   // Whether the drag started in group-edit member mode or group-level mode.
   let tcDragMode: 'group' | 'member' = 'group';
+  // Scale at TC drag-start; used to apply uniform scale during scale-mode drag.
+  let tcDragStartScale: THREE.Vector3 | null = null;
+  // Fine grid shown during polygon drawing; null when not drawing.
+  let snapGrid: THREE.GridHelper | null = null;
   // Meshes temporarily ghosted while the glue target phase is active.
   let glueSrcGhostEntries: Array<{ mesh: THREE.Mesh; saved: Array<{ transparent: boolean; opacity: number }> }> = [];
 
@@ -163,6 +167,8 @@
         // member-edit: TC is on an individual mesh inside a group.
         // group-level: TC is on the group itself or a standalone mesh.
         tcDragMode = groupEditGroupId !== null ? 'member' : 'group';
+        // Capture scale so the objectChange handler can apply uniform scaling relative to start.
+        tcDragStartScale = (transformMode === 'scale' && tc.object) ? tc.object.scale.clone() : null;
       } else {
         // Drag ended: record the transform as an undoable entry using the
         // pre-drag snapshot as `before` so it is immune to stale group references.
@@ -173,8 +179,21 @@
           );
         }
         tcPreDragSnapshot = null;
+        tcDragStartScale = null;
         refreshInspector();
       }
+    });
+
+    tc.addEventListener('objectChange', () => {
+      if (transformMode !== 'scale' || !uniformScale || !tc.object || !tcDragStartScale) return;
+      const s = tc.object.scale;
+      const s0 = tcDragStartScale;
+      const rx = s0.x > 1e-10 ? s.x / s0.x : 1;
+      const ry = s0.y > 1e-10 ? s.y / s0.y : 1;
+      const rz = s0.z > 1e-10 ? s.z / s0.z : 1;
+      // Use the ratio of the axis dragged most (furthest from 1) and apply it uniformly.
+      const ratio = [rx, ry, rz].reduce((a, b) => Math.abs(b - 1) > Math.abs(a - 1) ? b : a, 1);
+      s.set(s0.x * ratio, s0.y * ratio, s0.z * ratio);
     });
 
     // ── SelectionManager ─────────────────────────────────────────────────────
@@ -220,10 +239,11 @@
     };
 
     sketcher = new CartoonSketcher(scene, camera);
-    sketcher.onExtrusionStarted = () => { isDrawing = false; isExtruding = true; isHolePending = false; extrusionDepth = 1; };
+    sketcher.onExtrusionStarted = () => { isDrawing = false; hideSnapGrid(); isExtruding = true; isHolePending = false; extrusionDepth = 1; };
     sketcher.onExtrusionDepthChanged = (d) => { extrusionDepth = d; };
     sketcher.onShapeReadyForHoles = () => {
       isDrawing = false;
+      hideSnapGrid();
       isHolePending = true;
       orbit.enabled = true;
       const holeCount = sketcher.pendingHoleCount;
@@ -233,6 +253,7 @@
     };
     sketcher.onRevolveReady = () => {
       isDrawing = false;
+      hideSnapGrid();
       isRevolvePending = true;
       statusMessage = 'Profile closed. Click \u201cRevolve\u201d to sweep it around the Y axis, or \u201cCancel\u201d to discard.';
     };
@@ -306,8 +327,8 @@
         case 'Escape':
           if (groupEditGroupId !== null) { exitGroupEditMode(); }
           else if (gluePhase !== null) { cancelGluePick(); }
-          else if (sketcher.currentPhase === 'drawing') { isDrawing = false; sketcher.cancelSketch(); orbit.enabled = true; }
-          else if (sketcher.currentPhase === 'hole-drawing') { isDrawing = false; sketcher.cancelHole(); }
+          else if (sketcher.currentPhase === 'drawing') { isDrawing = false; hideSnapGrid(); sketcher.cancelSketch(); orbit.enabled = true; }
+          else if (sketcher.currentPhase === 'hole-drawing') { isDrawing = false; hideSnapGrid(); sketcher.cancelHole(); }
           else if (sketcher.currentPhase === 'pending-holes') { isHolePending = false; sketcher.cancelPendingShape(); orbit.enabled = true; }
           else if (sketcher.currentPhase === 'revolve-drawing' || sketcher.currentPhase === 'pending-revolve') { cancelRevolve(); }
           else { selection.deselect(); }
@@ -520,7 +541,7 @@
   function onMouseMove(e: MouseEvent) {
     const [x, y] = toNDC(e);
     updateDiagnosticHover(x, y);
-    if (sketcher.currentPhase === 'drawing') {
+    if (isDrawing) {
       sketcher.onMouseMove(x, y);
       // Alt held → let the user orbit mid-sketch without placing a point
       orbit.enabled = e.altKey;
@@ -538,11 +559,11 @@
     if (handleDragActive) return;
     const [x, y] = toNDC(e);
 
-    if (sketcher.currentPhase === 'drawing') {
+    if (isDrawing) {
       if (e.altKey) return; // Alt held — user is orbiting, not placing a vertex
       sketcher.onClick(x, y);
-      // Re-enable orbit when the polygon closes and extrusion phase starts
-      if (sketcher.currentPhase !== 'drawing') orbit.enabled = true;
+      // Re-enable orbit when all drawing phases complete
+      if (!isDrawing) orbit.enabled = true;
       return;
     }
 
@@ -1001,9 +1022,28 @@
     }
   }
 
+  function showSnapGrid() {
+    hideSnapGrid();
+    const size = 10;
+    const divisions = Math.min(Math.round(size / gridSnap), 200);
+    snapGrid = new THREE.GridHelper(size, divisions, 0x667799, 0x445566);
+    scene.add(snapGrid);
+  }
+
+  function hideSnapGrid() {
+    if (snapGrid) {
+      scene.remove(snapGrid);
+      snapGrid.geometry.dispose();
+      const m = snapGrid.material;
+      Array.isArray(m) ? m.forEach((mat) => mat.dispose()) : m.dispose();
+      snapGrid = null;
+    }
+  }
+
   function newSketch() {
     selection.deselect();
     isDrawing = true;
+    showSnapGrid();
     sketcher.gridSnapSize = gridSnap;
     sketcher.startNewSketch(sketchMode, circleSegments);
     orbit.enabled = false;
@@ -1019,6 +1059,7 @@
   function addHole() {
     isHolePending = false;
     isDrawing = true;
+    showSnapGrid();
     orbit.enabled = false;
     sketcher.addHole();
     statusMessage = 'Click to draw the hole boundary. Click near the first vertex to close. Hold Alt to orbit.';
@@ -1039,6 +1080,7 @@
   function cancelRevolve() {
     isRevolvePending = false;
     isDrawing = false;
+    hideSnapGrid();
     if (sketcher.currentPhase === 'revolve-drawing') {
       sketcher.cancelRevolveSketch();
     } else {

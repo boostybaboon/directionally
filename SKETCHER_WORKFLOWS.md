@@ -12,11 +12,11 @@ Manual test scenarios for the `/sketch` route. Run after any change to the sketc
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Click **Cube** in the Insert bar | Cube appears at origin, auto-selected; TC gizmo visible | — | |
-| 2 | Click **Sphere** | Sphere appears, auto-selected | — | |
-| 3 | Click **Cylinder**, **Capsule**, **Cone** in turn | Each inserts and auto-selects | — | |
-| 4 | Click empty space | Parts deselect; TC gizmo disappears | — | |
-| 5 | Click any part | That part re-selects; status bar shows shortcut hint | — | |
+| 1 | Click **Cube** in the Insert bar | Cube appears at origin, auto-selected; TC gizmo visible | OK | |
+| 2 | Click **Sphere** | Sphere appears, auto-selected | OK | |
+| 3 | Click **Cylinder**, **Capsule**, **Cone** in turn | Each inserts and auto-selects | OK | |
+| 4 | Click empty space | Parts deselect; TC gizmo disappears | OK | |
+| 5 | Click any part | That part re-selects; status bar shows shortcut hint | OK | |
 
 ---
 
@@ -26,13 +26,19 @@ Select any primitive first.
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Press **W** (or click **Move** in toolbar) | TC switches to translate arrows | — | |
-| 2 | Drag the X axis arrow | Part moves along world X; other parts unaffected | — | |
-| 3 | Press **E** / click **Rotate** | TC ring gizmo | — | |
-| 4 | Drag the Y ring | Part rotates around Y | — | |
-| 5 | Press **R** / click **Scale** | TC scale gizmo | — | |
-| 6 | Drag the X scale handle | Part scales on X only | — | |
-| 7 | Press **Esc** | Part deselects | — | |
+| 1 | Press **W** (or click **Move** in toolbar) | TC switches to translate arrows | OK | |
+| 2 | Drag the X axis arrow | Part moves along world X; other parts unaffected | OK | |
+| 3 | Press **E** / click **Rotate** | TC ring gizmo | OK | |
+| 4 | Drag the Y ring | Part rotates around Y | OK | |
+| 5 | Press **R** / click **Scale** | TC scale gizmo | OK | |
+| 6 | Drag the X scale handle | Part scales on X only; Y and Z unchanged | OK | |
+| 7 | Look at the inspector panel; confirm Pos/Rot/Scale rows reflect world-space values | Inspector shows correct position, rotation (degrees), scale | OK | |
+| 8 | Type a new value in inspector Pos X; press Enter | Part moves to that X; inspector updates | OK | |
+| 9 | Type a new value in inspector Scale X; press Enter | Part scales on X only (lock off); other axes unchanged | OK | |
+| 10 | Click the 🔓 button in the Scale row | Button shows 🔒; uniform lock active | OK | |
+| 11 | Drag any TC scale handle with 🔒 on | All three axes scale by the same ratio | OK | |
+| 12 | With 🔒 on, type a new Scale X in inspector; press Enter | Y and Z fields update proportionally; part scales uniformly | OK | |
+| 13 | Press **Esc** | Part deselects | OK | |
 
 ---
 
@@ -42,14 +48,14 @@ Select a **Cube** first.
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Click a swatch in the colour HUD | Entire part changes to that colour | — | |
-| 2 | Type a hex value in the colour input | Part updates live | — | |
-| 3 | Click the **⬜ Face paint** button (it highlights) | Face paint mode active; TC gizmo hides | — | |
-| 4 | Hover over different faces of the cube | Yellow highlight tracks the hovered face | — | |
-| 5 | Click a face while hovering | That face changes to the selected colour; other faces unchanged | — | |
-| 6 | Pick a different swatch and click another face | Second face gets the new colour | — | |
-| 7 | Click **Face paint** again to toggle off | TC gizmo reappears; hover highlight clears | — | |
-| 8 | Ctrl+Z twice | Both per-face colour changes undo | — | |
+| 1 | Click a swatch in the colour HUD | Entire part changes to that colour | OK | |
+| 2 | Type a hex value in the colour input | Part updates live | OK | |
+| 3 | Click the **⬜ Face paint** button (it highlights) | Face paint mode active; TC gizmo hides | OK | |
+| 4 | Hover over different faces of the cube | Yellow highlight tracks the hovered face | OK | |
+| 5 | Click a face while hovering | That face changes to the selected colour; other faces unchanged | OK | |
+| 6 | Pick a different swatch and click another face | Second face gets the new colour | OK | |
+| 7 | Click **Face paint** again to toggle off | TC gizmo reappears; hover highlight clears | OK | |
+| 8 | Ctrl+Z twice | Both per-face colour changes undo | OK | |
 
 ---
 
@@ -59,11 +65,12 @@ Requires an image file on disk (any JPG/PNG).
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Select a cube | — | — | |
-| 2 | Drag an image file from the OS file manager over the canvas | Hover highlight follows the face under the cursor | — | |
-| 3 | Drop the image onto a specific face | Face shows the texture; status "Texture applied." | — | |
-| 4 | Ctrl+Z | Texture removed; face reverts to solid colour | — | |
-| 5 | Drop on a different face | Only that face gets the texture; other faces unchanged | — | |
+| 1 | Select a cube | Cube selected | OK | |
+| 2 | Drag an image file from the OS file manager over the canvas | Hover highlight follows the face under the cursor | OK | |
+| 3 | Drop the image onto a specific face | Face shows the texture unmodified (no colour tint from the part colour); status "Texture applied." | — | |
+| 4 | Verify the texture-bearing face looks the same regardless of the part's painted colour | Texture appears identical on a red part vs. a blue part | — | |
+| 5 | Ctrl+Z | Texture removed; face reverts to its previous painted colour (not a default) | — | |
+| 6 | Drop on a different face | Only that face gets the texture; other faces show their solid colour unchanged | OK | |
 
 ---
 
@@ -71,13 +78,38 @@ Requires an image file on disk (any JPG/PNG).
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Click **New sketch** in the toolbar | Status "Click to place polygon vertices. Click near the first vertex to close the shape. Hold Alt to orbit." | — | |
-| 2 | Click five or six points in the viewport | Green dots appear at each vertex; rubber-band preview visible | — | |
-| 3 | Move cursor near the first dot until it snaps | Closure marker enlarges | — | |
-| 4 | Click to close the polygon | Extrusion handle appears; flat shape visible | — | |
-| 5 | Drag the extrusion handle upward | Shape extrudes; depth updates live | — | |
-| 6 | Release; click the extruded part | Part selects; TC gizmo attaches | — | |
-| 7 | Hold **Alt** + drag during polygon drawing | Camera orbits without placing a vertex | — | |
+| 1 | Click **New sketch** in the toolbar | Status "Click to place polygon vertices…"; a fine grid appears over the floor plane | — | |
+| 2 | Click five or six points in the viewport | Vertices snap to the visible grid; line connects them; rubber-band preview tracks cursor | — | |
+| 3 | Try to click a point that would make a crossing edge | Click is silently rejected; no new vertex placed | — | |
+| 4 | Move cursor near the first dot until it turns yellow | Closure marker highlights | — | |
+| 5 | Click to close the polygon | Snap grid disappears; extrusion handle appears; flat shape visible; outer outline remains | — | |
+| 6 | Drag the extrusion handle upward | Shape extrudes; depth value updates live | — | |
+| 7 | Type a value in the **Depth** numeric field in the HUD | Extrusion jumps to that depth | — | |
+| 8 | Release the handle; click the extruded part | Part selects; TC gizmo attaches | OK | |
+| 9 | Hold **Alt** + drag during polygon drawing | Camera orbits without placing a vertex | OK | |
+
+### T05b — Extrusion with holes
+
+| Step | Action | Expected | Status | Notes |
+|:----:|--------|----------|:------:|-------|
+| 1 | Click **New sketch**; draw and close a large polygon | Snap grid disappears; outer shape outline stays visible; **Add hole** and **Extrude** buttons appear | — | |
+| 2 | Click **Add hole** | Snap grid reappears; status prompts to draw hole boundary | — | |
+| 3 | Draw a smaller closed polygon inside the outer shape | Rubber-band preview and closure marker work normally; outer outline still visible as reference | — | |
+| 4 | Close the hole | Snap grid disappears; hole outline added; **Add hole** and **Extrude** buttons return | — | |
+| 5 | Click **Add hole** again; draw a second hole; close it | Second hole outline added | — | |
+| 6 | Click **Extrude** | Part appears with both holes punched through; outer outline removed | — | |
+| 7 | Press **Esc** after closing outer shape (before adding holes) | Drawing cancelled; outlines cleared; orbit re-enabled | — | |
+
+### T05c — Revolve sketch
+
+| Step | Action | Expected | Status | Notes |
+|:----:|--------|----------|:------:|-------|
+| 1 | Click **Revolve…** in the toolbar | Camera pivots to front (XY) view; orbit locked; existing parts ghosted; red Y-axis line visible; snap grid appears | — | |
+| 2 | Click several points for a half-profile to the right of the Y axis | Vertices snap to grid; line preview visible | — | |
+| 3 | Close the profile | Snap grid disappears; angle slider and **Revolve** / **Cancel** buttons appear | — | |
+| 4 | Drag the angle slider to ~180° | Preview updates if available; slider shows 180° | — | |
+| 5 | Click **Revolve** | Lathed part appears in the scene; camera restores; existing parts un-ghost | — | |
+| 6 | Click **Cancel** on a fresh revolve (before confirming) | Drawing discarded; camera restores; parts un-ghost; no part added | — | |
 
 ---
 
@@ -272,9 +304,6 @@ Repeat of T14 using only extruded polygon shapes.
 
 | Feature | Phase |
 |---|---|
-| Numeric position / rotation / scale fields in properties panel | SA12 |
-| Extrusion depth numeric input | SA12 |
-| Uniform scale lock (X/Y/Z together) | SA12 |
-| Rectangle and circle sketch presets | SA6 |
+| Extrusion depth numeric input (already in HUD — verify in T05 step 7) | SA12 |
 | Nominated-face floor snap (mark a specific face as the floor contact) | SA11b |
 | Glue point editor (adjust contact point position and twist on an existing joint) | SA12 |
