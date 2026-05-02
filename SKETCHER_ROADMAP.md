@@ -193,6 +193,18 @@ Notes:
 
 ---
 
+## Known issues — Lathe / revolve geometry
+
+### UV fan-slice on axis-touching faces
+
+**Symptom:** On a revolve shape where the profile touches the Y axis (r = 0) — e.g. a solid cylinder's top cap face, or a nearly-flat top face like `(0,10)→(10,9.5)` — a texture applied to that face appears to radiate outward in 32 wedges instead of projecting flatly. The seam repeats every ≈0.03 U units.
+
+**Root cause:** `THREE.LatheGeometry` assigns `U = columnIndex / segments` — a cylindrical UV projection based purely on sweep angle. For a disc-like face the inner ring of vertices all sit at the same world position `(0, y, 0)` but carry different U values (`0/32, 1/32, 2/32, ...`). Each triangle on that face has a wildly different U at its centre vertex, producing 32 radial texture wedges.
+
+**Fix required:** A separate draw group for each axis-touching profile segment, with a planar (XZ) UV projection applied post-geometry instead of the cylindrical default. This needs per-face UV remapping after `LatheGeometry` construction, which is non-trivial. Deferred.
+
+---
+
 ## Phase SA9 — Named assemblies ✅ COMPLETE
 
 The sketcher is now a multi-document editor backed by OPFS. Each assembly has a name, persists across sessions, and can be re-opened for continued editing and re-export.

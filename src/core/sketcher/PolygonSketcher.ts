@@ -45,6 +45,8 @@ export class PolygonSketcher {
    * Visible only after the first point is placed.
    */
   readonly closureMarker: THREE.Mesh;
+  /** Cyan point cloud marking every committed vertex. Child of `line`. */
+  readonly vertexDots: THREE.Points;
 
   /** True when the cursor is within closure distance of the first vertex (≥3 points). */
   closureHot = false;
@@ -57,6 +59,12 @@ export class PolygonSketcher {
     this.rubberBand = new THREE.Line(new THREE.BufferGeometry(), mat.clone());
     this.line.renderOrder       = 999;
     this.rubberBand.renderOrder = 999;
+
+    // Cyan dots at each committed vertex — child of line so they move with it automatically.
+    const dotsMat = new THREE.PointsMaterial({ color: MARKER_COLOR_NORMAL, size: 0.12, sizeAttenuation: true, depthTest: false });
+    this.vertexDots = new THREE.Points(new THREE.BufferGeometry(), dotsMat);
+    this.vertexDots.renderOrder = 999;
+    this.line.add(this.vertexDots);
 
     const markerGeo = new THREE.SphereGeometry(0.07, 10, 7);
     const markerMat = new THREE.MeshBasicMaterial({ color: MARKER_COLOR_NORMAL, depthTest: false });
@@ -159,9 +167,11 @@ export class PolygonSketcher {
     this.line.geometry.dispose();
     this.rubberBand.geometry.dispose();
     this.closureMarker.geometry.dispose();
+    this.vertexDots.geometry.dispose();
     (this.line.material as THREE.Material).dispose();
     (this.rubberBand.material as THREE.Material).dispose();
     (this.closureMarker.material as THREE.Material).dispose();
+    (this.vertexDots.material as THREE.Material).dispose();
   }
 
   private _get2D(v: THREE.Vector3): [number, number] {
@@ -245,7 +255,7 @@ export class PolygonSketcher {
     const hit = new THREE.Vector3();
     if (this.drawPlane === 'xy') {
       if (!raycaster.ray.intersectPlane(this.xyPlane, hit)) return null;
-      return new THREE.Vector3(this._snap(hit.x), this._snap(hit.y), 0);
+      return new THREE.Vector3(Math.max(0, this._snap(hit.x)), this._snap(hit.y), 0);
     }
     if (!raycaster.ray.intersectPlane(this.groundPlane, hit)) return null;
     return new THREE.Vector3(this._snap(hit.x), 0, this._snap(hit.z));
@@ -254,6 +264,10 @@ export class PolygonSketcher {
   private _updateLine(): void {
     const positions = this.points.flatMap((p) => [p.x, p.y, p.z]);
     this.line.geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array(positions), 3),
+    );
+    this.vertexDots.geometry.setAttribute(
       'position',
       new THREE.BufferAttribute(new Float32Array(positions), 3),
     );

@@ -44,6 +44,8 @@ export class SketcherDocument {
 
   get canUndo(): boolean { return this.cursor >= 0; }
   get canRedo(): boolean { return this.cursor < this.stack.length - 1; }
+  get undoLabel(): string | null { return this.cursor >= 0 ? this.stack[this.cursor].label : null; }
+  get redoLabel(): string | null { return this.cursor < this.stack.length - 1 ? this.stack[this.cursor + 1].label : null; }
 
   /**
    * Snapshot the current session for use as a `priorSnapshot` argument.
@@ -97,6 +99,18 @@ export class SketcherDocument {
     this.stack.push({ before, after, label });
     this.cursor++;
     this.onChange?.();
+  }
+
+  /**
+   * Replace the `after` snapshot of the most-recent history entry without
+   * pushing a new one. Used by the inspector spinner to merge all auto-repeat
+   * steps into a single undoable operation.
+   */
+  amendLastEntry(after: SessionSnapshot): void {
+    if (this.cursor >= 0) {
+      this.stack[this.cursor].after = after;
+      this.onChange?.();
+    }
   }
 
   /** Reset the history stack. Call when clearing the entire session. */

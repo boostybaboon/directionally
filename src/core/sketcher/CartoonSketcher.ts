@@ -82,6 +82,24 @@ const DEFAULT_COLOR = 0x8888cc;
  * Cap at phi=0: no winding flip — CCW (r,h) winding produces outward normal (-1,0,0).
  * Cap at phi=phiLength: flip winding — produces outward normal (cos φ, 0, −sin φ).
  */
+/** Rewrite the V channel of LatheGeometry UVs so V = (world.y - yMin) / yRange.
+ *  LatheGeometry assigns V = profilePointIndex / (numPoints - 1), which flips when the
+ *  profile is drawn top-to-bottom. Normalising to world Y makes V always 0 at the bottom
+ *  and 1 at the top, matching the cap UV convention. */
+function _normalizeLatheV(geo: THREE.BufferGeometry): void {
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const uv = geo.attributes.uv as THREE.BufferAttribute;
+  let yMin = Infinity, yMax = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    if (y < yMin) yMin = y;
+    if (y > yMax) yMax = y;
+  }
+  const yRange = yMax - yMin || 1;
+  for (let i = 0; i < uv.count; i++) uv.setY(i, (pos.getY(i) - yMin) / yRange);
+  uv.needsUpdate = true;
+}
+
 function buildCapGeometry(profilePts: THREE.Vector2[], phi: number, flipWinding: boolean): THREE.BufferGeometry {
   const sinPhi = Math.sin(phi);
   const cosPhi = Math.cos(phi);
@@ -98,10 +116,22 @@ function buildCapGeometry(profilePts: THREE.Vector2[], phi: number, flipWinding:
       indexArray.push(a, b, c);
     }
   }
+  // Planar UVs: U = radial distance normalised to [0,1], V = height normalised to [0,1].
+  // Both caps use the same profile bounding box so V is consistent with the lathe surface.
+  let xMax = 0, yMin = Infinity, yMax = -Infinity;
+  for (const p of profilePts) {
+    if (p.x > xMax) xMax = p.x;
+    if (p.y < yMin) yMin = p.y;
+    if (p.y > yMax) yMax = p.y;
+  }
+  const xRange = xMax || 1;
+  const yRange = yMax - yMin || 1;
+  const uvArray: number[] = [];
+  for (const p of profilePts) uvArray.push(p.x / xRange, (p.y - yMin) / yRange);
+
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  // Dummy UVs so mergeGeometries can combine with LatheGeometry (which has UVs).
-  geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(profilePts.length * 2).fill(0), 2));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvArray, 2));
   geo.setIndex(indexArray);
   geo.computeVertexNormals();
   return geo;
@@ -113,13 +143,8 @@ function buildCapGeometry(profilePts: THREE.Vector2[], phi: number, flipWinding:
  * For phiLength < 2π, two flat end caps are merged in as separate draw groups.
  */
 function buildLatheGeometry(profilePoints: [number, number][], phiLength = Math.PI * 2): THREE.BufferGeometry {
-  // Clamp negative radii to 0, remove leading closing duplicate.
+  // Clamp negative radii to 0.
   let pts = profilePoints.map(([x, y]) => new THREE.Vector2(Math.max(0, x), y));
-  if (pts.length > 1) {
-    const first = pts[0];
-    const last = pts[pts.length - 1];
-    if (Math.abs(first.x - last.x) < 1e-6 && Math.abs(first.y - last.y) < 1e-6) pts = pts.slice(0, -1);
-  }
   // Remove consecutive duplicates produced by clamping.
   const deduped: THREE.Vector2[] = [];
   for (const p of pts) {
@@ -131,14 +156,33 @@ function buildLatheGeometry(profilePoints: [number, number][], phiLength = Math.
       { normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 },
     ]);
   }
-  const latheGeo = new THREE.LatheGeometry(deduped, 32, 0, phiLength);
+
+  // Build a separate point list for LatheGeometry that explicitly closes the
+  // profile when both endpoints have positive radius (hollow shape away from the
+  // axis). THREE.Shape.getPoints() never includes a closing duplicate, so without
+  // this LatheGeometry misses the inner-wall segment.
+  // We do NOT mutate `deduped` — caps receive the open profile to avoid passing
+  // a duplicate endpoint to ShapeUtils.triangulateShape (which produces NaN UVs).
+  const lathePts = [...deduped];
+  if (lathePts.length > 1) {
+    const first = lathePts[0], last = lathePts[lathePts.length - 1];
+    const alreadyClosed = Math.abs(first.x - last.x) < 1e-6 && Math.abs(first.y - last.y) < 1e-6;
+    if (!alreadyClosed && first.x > 1e-4 && last.x > 1e-4) {
+      lathePts.push(first.clone());
+    }
+  }
+
+  const latheGeo = new THREE.LatheGeometry(lathePts, 32, 0, phiLength);
+  // Normalise V so it always runs 0 (bottom) → 1 (top) regardless of sketch draw direction.
+  _normalizeLatheV(latheGeo);
   if (phiLength >= Math.PI * 2 - 1e-6) {
     // Full 360°: profile segments close the solid; no caps needed.
     return withFaceGroups(latheGeo, [
       { normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 },
     ]);
   }
-  // Partial sweep: add a flat cap at each cut face.
+  // Partial sweep: caps use the open profile (deduped, not lathePts) so
+  // ShapeUtils.triangulateShape never receives a duplicate closing vertex.
   const cap0 = buildCapGeometry(deduped, 0, false);
   const capEnd = buildCapGeometry(deduped, phiLength, true);
   latheGeo.addGroup(0, latheGeo.index!.count, 0);
@@ -154,11 +198,16 @@ function buildLatheGeometry(profilePoints: [number, number][], phiLength = Math.
 }
 
 /** Create one MeshStandardMaterial per draw group, covering all materialIndex values in geometry.groups. */
-function buildMaterials(geo: THREE.BufferGeometry, color: number, side: THREE.Side = THREE.FrontSide): THREE.MeshStandardMaterial[] {
+function buildMaterials(geo: THREE.BufferGeometry, color: number, defaultSide: THREE.Side = THREE.FrontSide): THREE.MeshStandardMaterial[] {
+  const holeStart: number = geo.userData.holeWallMaterialStart ?? Infinity;
+  const holeEnd: number = geo.userData.holeWallMaterialEnd ?? -1;
   const count = geo.groups.length > 0
     ? Math.max(...geo.groups.map((g) => g.materialIndex ?? 0)) + 1
     : 1;
-  return Array.from({ length: count }, () => new THREE.MeshStandardMaterial({ color, side }));
+  return Array.from({ length: count }, (_, i) => {
+    const side = (i >= holeStart && i <= holeEnd) ? THREE.DoubleSide : defaultSide;
+    return new THREE.MeshStandardMaterial({ color, side });
+  });
 }
 
 type Phase = 'idle' | 'drawing' | 'pending-holes' | 'hole-drawing' | 'extruding' | 'revolve-drawing' | 'pending-revolve';
@@ -190,6 +239,7 @@ export class CartoonSketcher {
   private polygonSketcher: PolygonSketcher | null = null;
   private extrusionHandle: ExtrusionHandle | null = null;
   private outerOutline: THREE.Line | null = null;
+  private readonly holeOutlines: THREE.Line[] = [];
   private pendingShape: THREE.Shape | null = null;
   private pendingCentroid: THREE.Vector3 | null = null;
   private nextId = 1;
@@ -269,6 +319,12 @@ export class CartoonSketcher {
    */
   cancelPendingRevolve(): void {
     if (this.phase !== 'pending-revolve') return;
+    if (this.outerOutline) {
+      this.scene.remove(this.outerOutline);
+      this.outerOutline.geometry.dispose();
+      (this.outerOutline.material as THREE.Material).dispose();
+      this.outerOutline = null;
+    }
     this.pendingShape = null;
     this.pendingCentroid = null;
     this.phase = 'idle';
@@ -324,6 +380,12 @@ export class CartoonSketcher {
    */
   confirmLathe(phiLengthDeg = 360): void {
     if (this.phase !== 'pending-revolve' || !this.pendingShape || !this.pendingCentroid) return;
+    if (this.outerOutline) {
+      this.scene.remove(this.outerOutline);
+      this.outerOutline.geometry.dispose();
+      (this.outerOutline.material as THREE.Material).dispose();
+      this.outerOutline = null;
+    }
     const shape = this.pendingShape;
     const centroid = this.pendingCentroid;
     this.pendingShape = null;
@@ -377,6 +439,13 @@ export class CartoonSketcher {
    */
   cancelPendingShape(): void {
     if (this.phase !== 'pending-holes') return;
+    if (this.outerOutline) {
+      this.scene.remove(this.outerOutline);
+      this.outerOutline.geometry.dispose();
+      (this.outerOutline.material as THREE.Material).dispose();
+      this.outerOutline = null;
+    }
+    this._disposeHoleOutlines();
     this.pendingShape = null;
     this.pendingCentroid = null;
     this.phase = 'idle';
@@ -956,6 +1025,13 @@ export class CartoonSketcher {
       this.polygonSketcher.dispose();
       this.polygonSketcher = null;
     }
+    if (this.outerOutline) {
+      this.scene.remove(this.outerOutline);
+      this.outerOutline.geometry.dispose();
+      (this.outerOutline.material as THREE.Material).dispose();
+      this.outerOutline = null;
+    }
+    this._disposeHoleOutlines();
 
     this.phase = 'extruding';
     const shapePoints: [number, number][] = shape.getPoints().map((v) => [v.x, v.y]);
@@ -987,6 +1063,15 @@ export class CartoonSketcher {
     this.phase = 'idle';
   }
 
+  private _disposeHoleOutlines(): void {
+    for (const line of this.holeOutlines) {
+      this.scene.remove(line);
+      line.geometry.dispose();
+      (line.material as THREE.Material).dispose();
+    }
+    this.holeOutlines.length = 0;
+  }
+
   private _endCurrentSketch(): void {
     if (this.polygonSketcher) {
       this.scene.remove(this.polygonSketcher.line);
@@ -1001,6 +1086,7 @@ export class CartoonSketcher {
       (this.outerOutline.material as THREE.Material).dispose();
       this.outerOutline = null;
     }
+    this._disposeHoleOutlines();
     if (this.extrusionHandle) {
       this.scene.remove(this.extrusionHandle.handle);
       this.scene.remove(this.extrusionHandle.mesh);
@@ -1022,6 +1108,8 @@ export class CartoonSketcher {
   }
 
   private _revolutionShapeClosed(shape: THREE.Shape, centroid: THREE.Vector3): void {
+    // PolygonSketcher.reset() clears its line in-place immediately after firing
+    // onShapeClosed, so build a fresh outline from the shape points here.
     if (this.polygonSketcher) {
       this.scene.remove(this.polygonSketcher.line);
       this.scene.remove(this.polygonSketcher.rubberBand);
@@ -1029,6 +1117,16 @@ export class CartoonSketcher {
       this.polygonSketcher.dispose();
       this.polygonSketcher = null;
     }
+    // Revolve profile lives in the XY plane: shape.x = world X, shape.y = world Y.
+    const pts = shape.getPoints();
+    const worldPts = pts.map((p) => new THREE.Vector3(p.x, p.y, 0));
+    worldPts.push(worldPts[0].clone()); // close the loop
+    const geo = new THREE.BufferGeometry().setFromPoints(worldPts);
+    const mat = new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false });
+    this.outerOutline = new THREE.Line(geo, mat);
+    this.outerOutline.renderOrder = 999;
+    this.scene.add(this.outerOutline);
+
     this.pendingShape = shape;
     this.pendingCentroid = centroid;
     this.phase = 'pending-revolve';
@@ -1037,17 +1135,28 @@ export class CartoonSketcher {
 
   private _outerShapeClosed(shape: THREE.Shape, centroid: THREE.Vector3): void {
     // Keep the closed outline visible as a context guide during hole drawing.
+    // The PolygonSketcher resets its own line geometry immediately after firing
+    // onShapeClosed, so we build a fresh line from the shape points here rather
+    // than saving the now-empty sketcher line.
     if (this.polygonSketcher) {
+      this.scene.remove(this.polygonSketcher.line);
       this.scene.remove(this.polygonSketcher.rubberBand);
       this.scene.remove(this.polygonSketcher.closureMarker);
-      // Hold a reference to the line so we can remove it later; dispose only the other resources.
-      this.outerOutline = this.polygonSketcher.line;
       this.polygonSketcher.rubberBand.geometry.dispose();
       this.polygonSketcher.closureMarker.geometry.dispose();
       (this.polygonSketcher.rubberBand.material as THREE.Material).dispose();
       (this.polygonSketcher.closureMarker.material as THREE.Material).dispose();
       this.polygonSketcher = null;
     }
+    const cx = centroid.x;
+    const cz = centroid.z;
+    const worldPts = shape.getPoints().map((p) => new THREE.Vector3(p.x + cx, 0, cz - p.y));
+    worldPts.push(worldPts[0].clone());
+    const outlineGeo = new THREE.BufferGeometry().setFromPoints(worldPts);
+    const outlineMat = new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false });
+    this.outerOutline = new THREE.Line(outlineGeo, outlineMat);
+    this.outerOutline.renderOrder = 999;
+    this.scene.add(this.outerOutline);
     this.pendingShape = shape;
     this.pendingCentroid = centroid;
     this.phase = 'pending-holes';
@@ -1092,6 +1201,20 @@ export class CartoonSketcher {
 
     const holePath = new THREE.Path(translatedPts);
     this.pendingShape.holes.push(holePath);
+
+    // Build a fresh line outline for the accepted hole so the user can see where
+    // prior holes are while drawing subsequent ones.
+    const worldPts = translatedPts.map((p) => {
+      return new THREE.Vector3(p.x + cx, 0, cz - p.y);
+    });
+    worldPts.push(worldPts[0].clone());
+    const holeGeo = new THREE.BufferGeometry().setFromPoints(worldPts);
+    const holeMat = new THREE.LineBasicMaterial({ color: 0xffaa00, depthTest: false });
+    const holeLine = new THREE.Line(holeGeo, holeMat);
+    holeLine.renderOrder = 999;
+    this.scene.add(holeLine);
+    this.holeOutlines.push(holeLine);
+
     this.onShapeReadyForHoles?.();
   }
 }

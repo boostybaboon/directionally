@@ -3,9 +3,12 @@ import * as THREE from 'three';
 /**
  * Manages part selection in the assembly tool.
  *
- * Selection state is indicated by a cyan EdgesGeometry outline added as a
- * direct child of the selected mesh — it follows TransformControls drags
- * automatically without any extra update calls.
+ * Standalone part selection: cyan EdgesGeometry outline added as a child of
+ * the selected mesh — follows TransformControls drags automatically.
+ *
+ * Weld group selection: a single amber BoxHelper around the THREE.Group
+ * replaces per-mesh outlines entirely, making it unambiguous that the group
+ * is the selected entity rather than any individual mesh.
  *
  * Multi-select: shift-click via addToSelection() adds further meshes with an
  * orange outline. The primary selection (cyan) is the last single-clicked mesh.
@@ -15,6 +18,10 @@ export class SelectionManager {
   private _selected: THREE.Mesh | null = null;
   private outline: THREE.LineSegments | null = null;
   private _multiSelected: Map<THREE.Mesh, THREE.LineSegments> = new Map();
+
+  // Weld group selection state — mutually exclusive with per-mesh outline.
+  private _groupBox: THREE.LineSegments | null = null;
+  private _groupBoxParent: THREE.Group | null = null;
 
   onSelectionChanged?: (mesh: THREE.Mesh | null) => void;
 
@@ -42,10 +49,11 @@ export class SelectionManager {
     return hits.length > 0 ? (hits[0].object as THREE.Mesh) : null;
   }
 
-  /** Select a mesh (or pass null to deselect). Clears any multi-selection. */
+  /** Select a mesh (or pass null to deselect). Clears any multi-selection and group box. */
   select(mesh: THREE.Mesh | null): void {
     // Clear multi-selection whenever a fresh single select is made.
     this.clearMultiSelection();
+    this.clearGroupBox();
 
     // Remove outline from the previously selected mesh.
     if (this.outline && this._selected) {
@@ -72,6 +80,69 @@ export class SelectionManager {
     }
 
     this.onSelectionChanged?.(mesh);
+  }
+
+  /**
+   * Select a weld group as a unit.
+   *
+   * Shows a single amber BoxHelper around the THREE.Group instead of per-mesh
+   * outlines. The representative mesh is stored as the primary selection so
+   * that existing callers (selectedPartId, TC attachment, etc.) continue to
+   * work — but no cyan outline is added to that mesh.
+   */
+  selectGroup(representativeMesh: THREE.Mesh, group: THREE.Group): void {
+    this.clearMultiSelection();
+    this.clearGroupBox();
+
+    // Remove any existing per-mesh outline.
+    if (this.outline && this._selected) {
+      this._selected.remove(this.outline);
+      this.outline.geometry.dispose();
+      (this.outline.material as THREE.Material).dispose();
+      this.outline = null;
+    }
+
+    this._selected = representativeMesh;
+
+    // Compute AABB in group-local space so the Box3Helper (added as a group
+    // child) inherits the group's world transform without double-applying it.
+    // BoxHelper computes in world space, causing incorrect positioning when
+    // added as a child — Box3Helper with a local-space box avoids that.
+    group.updateWorldMatrix(true, false);
+    const invGroupWorld = new THREE.Matrix4().copy(group.matrixWorld).invert();
+    const localBox = new THREE.Box3();
+    group.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.geometry) {
+        child.geometry.computeBoundingBox();
+        if (child.geometry.boundingBox) {
+          const childBox = child.geometry.boundingBox.clone();
+          const meshToLocal = new THREE.Matrix4().multiplyMatrices(invGroupWorld, child.matrixWorld);
+          childBox.applyMatrix4(meshToLocal);
+          localBox.union(childBox);
+        }
+      }
+    });
+    const box = new THREE.Box3Helper(localBox, 0xffaa00);
+    box.renderOrder = 999;
+    (box.material as THREE.LineBasicMaterial).depthTest = false;
+    (box.material as THREE.LineBasicMaterial).transparent = true;
+    (box.material as THREE.LineBasicMaterial).opacity = 0.85;
+    group.add(box);
+    this._groupBox = box;
+    this._groupBoxParent = group;
+
+    this.onSelectionChanged?.(representativeMesh);
+  }
+
+  /** Remove the weld group bounding box if one is shown. */
+  clearGroupBox(): void {
+    if (this._groupBox && this._groupBoxParent) {
+      this._groupBoxParent.remove(this._groupBox);
+      this._groupBox.geometry.dispose();
+      (this._groupBox.material as THREE.Material).dispose();
+      this._groupBox = null;
+      this._groupBoxParent = null;
+    }
   }
 
   /** Deselect whatever is currently selected. */

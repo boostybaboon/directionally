@@ -84,13 +84,13 @@ Requires an image file on disk (any JPG/PNG).
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Click **New sketch** in the toolbar | Status "Click to place polygon vertices…"; a fine grid appears over the floor plane | — | |
-| 2 | Click five or six points in the viewport | Vertices snap to the visible grid; line connects them; rubber-band preview tracks cursor | — | |
-| 3 | Try to click a point that would make a crossing edge | Click is silently rejected; no new vertex placed | — | |
-| 4 | Move cursor near the first dot until it turns yellow | Closure marker highlights | — | |
-| 5 | Click to close the polygon | Snap grid disappears; extrusion handle appears; flat shape visible; outer outline remains | — | |
-| 6 | Drag the extrusion handle upward | Shape extrudes; depth value updates live | — | |
-| 7 | Type a value in the **Depth** numeric field in the HUD | Extrusion jumps to that depth | — | |
+| 1 | Click **New sketch** in the toolbar | Status "Click to place polygon vertices…"; a fine grid appears over the floor plane | Partial | Z-fighting from fine grid overprinting the main grid |
+| 2 | Click five or six points in the viewport | Vertices snap to the visible grid; line connects them; rubber-band preview tracks cursor | OK | |
+| 3 | Try to click a point that would make a crossing edge | Click is silently rejected; no new vertex placed | OK | |
+| 4 | Move cursor near the first dot until it turns yellow | Closure marker highlights | OK | |
+| 5 | Click to close the polygon | Snap grid disappears; extrusion handle appears; flat shape visible; outer outline remains | OK | |
+| 6 | Drag the extrusion handle upward | Shape extrudes; depth value updates live | OK | |
+| 7 | Type a value in the **Depth** numeric field in the HUD | Extrusion jumps to that depth | OK | |
 | 8 | Release the handle; click the extruded part | Part selects; TC gizmo attaches | OK | |
 | 9 | Hold **Alt** + drag during polygon drawing | Camera orbits without placing a vertex | OK | |
 
@@ -98,24 +98,24 @@ Requires an image file on disk (any JPG/PNG).
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Click **New sketch**; draw and close a large polygon | Snap grid disappears; outer shape outline stays visible; **Add hole** and **Extrude** buttons appear | — | |
-| 2 | Click **Add hole** | Snap grid reappears; status prompts to draw hole boundary | — | |
-| 3 | Draw a smaller closed polygon inside the outer shape | Rubber-band preview and closure marker work normally; outer outline still visible as reference | — | |
-| 4 | Close the hole | Snap grid disappears; hole outline added; **Add hole** and **Extrude** buttons return | — | |
-| 5 | Click **Add hole** again; draw a second hole; close it | Second hole outline added | — | |
-| 6 | Click **Extrude** | Part appears with both holes punched through; outer outline removed | — | |
-| 7 | Press **Esc** after closing outer shape (before adding holes) | Drawing cancelled; outlines cleared; orbit re-enabled | — | |
+| 1 | Click **New sketch**; draw and close a large polygon | Snap grid disappears; outer shape outline stays visible; **Add hole** and **Extrude** buttons appear | OK | |
+| 2 | Click **Add hole** | Snap grid reappears; status prompts to draw hole boundary | OK | |
+| 3 | Draw a smaller closed polygon inside the outer shape | Rubber-band preview and closure marker work normally; outer outline still visible as reference | OK | |
+| 4 | Close the hole | Snap grid disappears; hole outline added; **Add hole** and **Extrude** buttons return | OK | |
+| 5 | Click **Add hole** again; draw a second hole; close it | Second hole outline added | OK | |
+| 6 | Click **Extrude** | Part appears with both holes punched through; outer outline removed | OK | |
+| 7 | Press **Esc** after closing outer shape (before adding holes) | Drawing cancelled; outlines cleared; orbit re-enabled | OK | |
 
 ### T05c — Revolve sketch
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Click **Revolve…** in the toolbar | Camera pivots to front (XY) view; orbit locked; existing parts ghosted; red Y-axis line visible; snap grid appears | — | |
-| 2 | Click several points for a half-profile to the right of the Y axis | Vertices snap to grid; line preview visible | — | |
-| 3 | Close the profile | Snap grid disappears; angle slider and **Revolve** / **Cancel** buttons appear | — | |
+| 1 | Click **Revolve…** in the toolbar | Camera pivots to front (XY) view; orbit locked; existing parts ghosted; red Y-axis line visible; snap grid appears | OK | |
+| 2 | Click several points for a half-profile to the right of the Y axis | Vertices snap to grid; line preview visible | OK | |
+| 3 | Close the profile | Snap grid disappears; angle slider and **Revolve** / **Cancel** buttons appear | OK | |
 | 4 | Drag the angle slider to ~180° | Preview updates if available; slider shows 180° | — | |
-| 5 | Click **Revolve** | Lathed part appears in the scene; camera restores; existing parts un-ghost | — | |
-| 6 | Click **Cancel** on a fresh revolve (before confirming) | Drawing discarded; camera restores; parts un-ghost; no part added | — | |
+| 5 | Click **Revolve** | Lathed part appears in the scene; camera restores; existing parts un-ghost | OK | |
+| 6 | Click **Cancel** on a fresh revolve (before confirming) | Drawing discarded; camera restores; parts un-ghost; no part added | OK | |
 
 ---
 
@@ -123,13 +123,13 @@ Requires an image file on disk (any JPG/PNG).
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Select a part | TC gizmo visible | — | |
-| 2 | Press **Shift+D** or click **Duplicate** | Copy appears, auto-selected; status "Duplicated. Reposition with gizmo." | — | |
-| 3 | Move the copy to a different position | Original stays put | — | |
-| 4 | Ctrl+Z | Duplicate disappears; original re-selects | — | |
-| 5 | Ctrl+Shift+Z | Duplicate reappears at the moved position | — | |
-| 6 | **Delete** while a part is selected | Part removed | — | |
-| 7 | Ctrl+Z | Part restored | — | |
+| 1 | Select a part | TC gizmo visible | OK | |
+| 2 | Press **Shift+D** or click **Duplicate** | Copy appears, auto-selected; status "Duplicated. Reposition with gizmo." | OK | |
+| 3 | Move the copy to a different position | Original stays put | OK | |
+| 4 | Ctrl+Z | Duplicate disappears; original re-selects | OK | |
+| 5 | Ctrl+Shift+Z | Duplicate reappears at the moved position | OK | |
+| 6 | **Delete** while a part is selected | Part removed | OK | |
+| 7 | Ctrl+Z | Part restored | OK | |
 
 ---
 
@@ -137,10 +137,10 @@ Requires an image file on disk (any JPG/PNG).
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Select a part and move it above `y = 0` with translate gizmo | — | — | |
-| 2 | Press **F** or click **⬇ Floor** in the primitives bar | Part translates so its lowest vertex sits at `y = 0`; orientation unchanged | — | |
-| 3 | Select a rotated part (~30° tilt) and press **F** | Part settles with its lowest point at `y = 0` | — | |
-| 4 | Ctrl+Z | Part returns to pre-snap position | — | |
+| 1 | Select a part and move it above `y = 0` with translate gizmo | — | OK | |
+| 2 | Press **F** or click **⬇ Floor** in the primitives bar | Part translates so its lowest vertex sits at `y = 0`; orientation unchanged | OK | |
+| 3 | Select a rotated part (~30° tilt) and press **F** | Part settles with its lowest point at `y = 0` | OK | |
+| 4 | Ctrl+Z | Part returns to pre-snap position | OK | |
 
 ---
 
@@ -150,15 +150,15 @@ Weld fuses selected parts into a rigid THREE.Group that moves and scales as one 
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Insert a **Cube** and a **Cylinder**; position them side by side | — | — | |
-| 2 | Click the cube; **Shift+click** the cylinder | Both highlighted; **Weld** button appears | — | |
-| 3 | Click **Weld** | Status "Welded. Parts grouped as one rigid unit."; TC attaches to group centroid | — | |
-| 4 | Drag the TC gizmo | Both parts move together | — | |
-| 5 | Press **R** and scale the weld group | Both parts scale together | — | |
-| 6 | Click any member of the group | Whole group selects; **Unweld** button appears | — | |
-| 7 | Click **Unweld** | Status "Unwelded. Parts returned to scene root."; TC attaches to the clicked mesh | — | |
-| 8 | Drag the cube alone | Cylinder stays in place | — | |
-| 9 | Ctrl+Z twice | Unweld and Weld both undo; group restored | — | |
+| 1 | Insert a **Cube** and a **Cylinder**; position them side by side | — | OK | |
+| 2 | Click the cube; **Shift+click** the cylinder | Both highlighted; **Weld** button appears | OK | |
+| 3 | Click **Weld** | Status "Welded. Parts grouped as one rigid unit."; TC attaches to group centroid | OK | |
+| 4 | Drag the TC gizmo | Both parts move together | OK | |
+| 5 | Press **R** and scale the weld group | Both parts scale together | OK | |
+| 6 | Click any member of the group | Whole group selects; **Unweld** button appears | OK | |
+| 7 | Click **Unweld** | Status "Unwelded. Parts returned to scene root."; TC attaches to the clicked mesh | OK | |
+| 8 | Drag the cube alone | Cylinder stays in place | OK | |
+| 9 | Ctrl+Z twice | Unweld and Weld both undo; group restored | OK | |
 
 ---
 
@@ -168,13 +168,13 @@ Requires a weld group from T08 (or create one).
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Click the weld group to select it | TC at group centroid | — | |
-| 2 | **Double-click** one member | Group edit mode: TC attaches to that mesh; other members dim to ~20% opacity; **Exit group edit** button appears | — | |
-| 3 | Drag the TC gizmo | Only that member moves | — | |
-| 4 | Single-click a different member inside the group | TC switches to the new member | — | |
-| 5 | Press **Esc** | Group edit mode exits; TC snaps back to group centroid; dimming clears | — | |
-| 6 | Double-click again; move a member; Ctrl+Z | Member's local move undoes | — | |
-| 7 | Click outside the group | Deselects and exits group edit mode | — | |
+| 1 | Click the weld group to select it | TC at group centroid | OK | |
+| 2 | **Double-click** one member | Group edit mode: TC attaches to that mesh; other members dim to ~20% opacity; **Exit group edit** button appears | OK | |
+| 3 | Drag the TC gizmo | Only that member moves | OK | |
+| 4 | Single-click a different member inside the group | TC switches to the new member | OK | |
+| 5 | Press **Esc** | Group edit mode exits; TC snaps back to group centroid; dimming clears | OK | |
+| 6 | Double-click again; move a member; Ctrl+Z | Member's local move undoes | OK | |
+| 7 | Click outside the group | Deselects and exits group edit mode | OK | |
 
 ---
 

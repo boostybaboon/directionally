@@ -131,6 +131,12 @@
 
   // Snapshot captured at TC drag-start; passed to execute() at drag-end.
   let tcPreDragSnapshot: ReturnType<typeof sketcherDoc.captureSnapshot> | null = null;
+  // Snapshot captured when an inspector field is focused; enables spinner steps to collapse
+  // to a single undo entry (mirrors TC drag-start snapshot pattern).
+  let inspPreFocusSnapshot: ReturnType<typeof sketcherDoc.captureSnapshot> | null = null;
+  // True once the first oninput step of a focus session has pushed an entry;
+  // subsequent steps amend rather than push.
+  let inspSpinnerActive = false;
   // Whether the drag started in group-edit member mode or group-level mode.
   let tcDragMode: 'group' | 'member' = 'group';
   // Scale at TC drag-start; used to apply uniform scale during scale-mode drag.
@@ -192,15 +198,17 @@
     });
 
     tc.addEventListener('objectChange', () => {
-      if (transformMode !== 'scale' || !uniformScale || !tc.object || !tcDragStartScale) return;
-      const s = tc.object.scale;
-      const s0 = tcDragStartScale;
-      const rx = s0.x > 1e-10 ? s.x / s0.x : 1;
-      const ry = s0.y > 1e-10 ? s.y / s0.y : 1;
-      const rz = s0.z > 1e-10 ? s.z / s0.z : 1;
-      // Use the ratio of the axis dragged most (furthest from 1) and apply it uniformly.
-      const ratio = [rx, ry, rz].reduce((a, b) => Math.abs(b - 1) > Math.abs(a - 1) ? b : a, 1);
-      s.set(s0.x * ratio, s0.y * ratio, s0.z * ratio);
+      if (transformMode === 'scale' && uniformScale && tc.object && tcDragStartScale) {
+        const s = tc.object.scale;
+        const s0 = tcDragStartScale;
+        const rx = s0.x > 1e-10 ? s.x / s0.x : 1;
+        const ry = s0.y > 1e-10 ? s.y / s0.y : 1;
+        const rz = s0.z > 1e-10 ? s.z / s0.z : 1;
+        // Use the ratio of the axis dragged most (furthest from 1) and apply it uniformly.
+        const ratio = [rx, ry, rz].reduce((a, b) => Math.abs(b - 1) > Math.abs(a - 1) ? b : a, 1);
+        s.set(s0.x * ratio, s0.y * ratio, s0.z * ratio);
+      }
+      refreshInspector();
     });
 
     // ── SelectionManager ─────────────────────────────────────────────────────
@@ -328,11 +336,11 @@
         case 'e': case 'E': setTransformMode('rotate'); break;
         case 'r': case 'R': setTransformMode('scale'); break;
         case 'z': case 'Z':
-          if (e.ctrlKey && e.shiftKey) { exitGroupEditMode(); sketcherDoc.redo(); refreshInspector(); e.preventDefault(); }
-          else if (e.ctrlKey) { exitGroupEditMode(); sketcherDoc.undo(); refreshInspector(); e.preventDefault(); }
+          if (e.ctrlKey && e.shiftKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); refreshInspector(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
+          else if (e.ctrlKey) { const lbl = sketcherDoc.undoLabel; exitGroupEditMode(); sketcherDoc.undo(); refreshInspector(); statusMessage = lbl ? `Undid: ${lbl}` : 'Undone.'; e.preventDefault(); }
           break;
         case 'y': case 'Y':
-          if (e.ctrlKey) { exitGroupEditMode(); sketcherDoc.redo(); refreshInspector(); e.preventDefault(); }
+          if (e.ctrlKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); refreshInspector(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
           break;
         case 'Escape':
           if (groupEditGroupId !== null) { exitGroupEditMode(); }
@@ -460,11 +468,18 @@
   }
 
   /**
-   * Apply the current inspector field values as a transform to the selected
-   * object, recording an undoable history entry.
+   * Resolve the Three.js target object and parsed transform values from the
+   * current inspector fields. Returns null if fields are invalid or nothing
+   * is selected. Used by both live preview and commit.
    */
-  function commitInspectorTransform() {
-    if (!selectedPartId) return;
+  function resolveInspectorTransform(): {
+    target: THREE.Object3D;
+    pos: THREE.Vector3;
+    quat: THREE.Quaternion;
+    scale: THREE.Vector3;
+    mode: 'group' | 'member';
+  } | null {
+    if (!selectedPartId) return null;
     const pos = new THREE.Vector3(parseFloat(inspX), parseFloat(inspY), parseFloat(inspZ));
     const euler = new THREE.Euler(
       THREE.MathUtils.degToRad(parseFloat(inspRX)),
@@ -473,16 +488,61 @@
       'YXZ',
     );
     const scale = new THREE.Vector3(parseFloat(inspSX), parseFloat(inspSY), parseFloat(inspSZ));
-    if ([pos.x, pos.y, pos.z, euler.x, euler.y, euler.z, scale.x, scale.y, scale.z].some(isNaN)) return;
+    if ([pos.x, pos.y, pos.z, euler.x, euler.y, euler.z, scale.x, scale.y, scale.z].some(isNaN)) return null;
     const session = sketcher.getSession();
     const part = session.parts.find((p) => p.id === selectedPartId);
-    if (!part) return;
+    if (!part) return null;
     const ag = sketcher.glueManager.groupForPart(selectedPartId);
     const mode: 'group' | 'member' = groupEditGroupId !== null ? 'member' : 'group';
     const target: THREE.Object3D = (mode === 'group' && ag) ? ag.group : part.mesh;
-    const before = sketcherDoc.captureSnapshot();
-    applyWorldTransform(target, pos, new THREE.Quaternion().setFromEuler(euler), scale);
-    sketcherDoc.execute(new TransformPartCommand(sketcher, selectedPartId, mode), before);
+    return { target, pos, quat: new THREE.Quaternion().setFromEuler(euler), scale, mode };
+  }
+
+  /**
+   * Called on every oninput: applies the transform to Three.js AND commits to
+   * the undo stack, collapsing the whole spinner session into one entry.
+   *
+   * First call in a focus session: executes normally (pushes entry with
+   * inspPreFocusSnapshot as `before`). Subsequent calls amend the top entry
+   * (`after` snapshot replaced) so Ctrl+Z after N spinner steps undoes the
+   * whole session in one keystroke.
+   */
+  function stepInspectorTransform() {
+    const resolved = resolveInspectorTransform();
+    if (!resolved) return;
+    // Guard: if onfocus somehow didn't fire first, capture the pre-move state now.
+    if (!inspPreFocusSnapshot) inspPreFocusSnapshot = sketcherDoc.captureSnapshot();
+    applyWorldTransform(resolved.target, resolved.pos, resolved.quat, resolved.scale);
+    const cmd = new TransformPartCommand(sketcher, selectedPartId, resolved.mode);
+    if (!inspSpinnerActive) {
+      sketcherDoc.execute(cmd, inspPreFocusSnapshot);
+      inspSpinnerActive = true;
+    } else {
+      cmd.execute(); // resolveConstraints
+      sketcherDoc.amendLastEntry(sketcherDoc.captureSnapshot());
+    }
+  }
+
+  /**
+   * Finalize the current inspector edit on blur or Enter.
+   *
+   * If a spinner session was active, amend the top entry with the final state.
+   * Otherwise execute a fresh commit.
+   */
+  function commitInspectorTransform() {
+    const resolved = resolveInspectorTransform();
+    if (!resolved) return;
+    applyWorldTransform(resolved.target, resolved.pos, resolved.quat, resolved.scale);
+    const cmd = new TransformPartCommand(sketcher, selectedPartId, resolved.mode);
+    if (inspSpinnerActive) {
+      cmd.execute();
+      sketcherDoc.amendLastEntry(sketcherDoc.captureSnapshot());
+    } else {
+      const before = inspPreFocusSnapshot ?? sketcherDoc.captureSnapshot();
+      sketcherDoc.execute(cmd, before);
+    }
+    inspPreFocusSnapshot = null;
+    inspSpinnerActive = false;
     refreshInspector();
   }
 
@@ -494,9 +554,18 @@
     const session = sketcher.getSession();
     const part = session.parts.find((p) => p.mesh === mesh);
     if (!part) return;
+    const ag = sketcher.glueManager.groupForPart(part.id);
     selection.deselect();
-    sketcherDoc.execute(new DeletePartCommand(part.id, sketcher));
-    statusMessage = 'Part deleted.';
+    if (ag) {
+      // Delete all members of the weld group as one undoable action.
+      const before = sketcherDoc.captureSnapshot();
+      for (const pid of [...ag.partIds]) sketcher.removePart(pid);
+      sketcherDoc.record(before, sketcherDoc.captureSnapshot(), 'Delete group');
+      statusMessage = 'Group deleted.';
+    } else {
+      sketcherDoc.execute(new DeletePartCommand(part.id, sketcher));
+      statusMessage = 'Part deleted.';
+    }
   }
 
   function duplicateSelected() {
@@ -542,7 +611,9 @@
     const group = faceGroupFromNormal(hitMesh, localNormal);
     const label = faceGroupLabel(hitMesh.geometry, group);
     const uv = hit.uv ? `(${hit.uv.x.toFixed(2)}, ${hit.uv.y.toFixed(2)})` : 'n/a';
-    hoverInfo = `${part?.name ?? '?'} · ${label} · uv ${uv}`;
+    const inWeldGroup = part ? sketcher.glueManager.isWeldGroup(part.id) : false;
+    const partLabel = inWeldGroup ? `${part?.name ?? '?'} (weld group — click to select group)` : (part?.name ?? '?');
+    hoverInfo = `${partLabel} · ${label} · uv ${uv}`;
     // Track which material index is under the cursor so face paint clicks know which slot to update.
     if (facePaintMode && part?.id === selectedPartId) {
       const idx = hit.face?.materialIndex ?? null;
@@ -598,30 +669,25 @@
       const session = sketcher.getSession();
       const meshes = session.parts.map((p) => p.mesh);
 
-      // Shift-click: toggle a part in the multi-selection.
-      // TC is detached during multi-select; the user presses Weld to proceed.
+      // Shift-click: toggle a standalone part in the multi-selection.
+      // Weld groups are treated as atomic — shift-clicking any member of a
+      // group that is already selected does nothing (the group is already
+      // selected as a unit). TC is detached during multi-select.
       if (e.shiftKey && selection.selectedMesh) {
         const hit = selection.pick(x, y, camera, meshes);
         if (hit && hit !== selection.selectedMesh) {
-          if (selection.selectedMeshes.includes(hit)) {
+          const hitPart = session.parts.find((p) => p.mesh === hit);
+          const hitInGroup = hitPart ? sketcher.glueManager.groupForPart(hitPart.id) : undefined;
+          const primaryInGroup = sketcher.glueManager.groupForPart(selectedPartId ?? '');
+          if (hitInGroup || primaryInGroup) {
+            // Groups are atomic — can't be mixed into a standalone multi-select.
+            statusMessage = 'Multi-select only works with standalone parts (not in a group).';
+          } else if (selection.selectedMeshes.includes(hit)) {
             selection.removeFromSelection(hit);
           } else {
-            // Reject parts already in any assembly group during multi-select —
-            // only standalone parts can be welded.
-            const hitPart = session.parts.find((p) => p.mesh === hit);
-            if (hitPart && !sketcher.glueManager.groupForPart(hitPart.id)) {
-              // Also reject if the primary selected part is in a group.
-              if (!sketcher.glueManager.groupForPart(selectedPartId ?? '')) {
-                selection.addToSelection(hit);
-              } else {
-                statusMessage = 'Multi-select only works with standalone parts (not in a group).';
-              }
-            } else {
-              statusMessage = 'Multi-select only works with standalone parts (not in a group).';
-            }
+            selection.addToSelection(hit);
           }
           multiSelectedCount = selection.selectedMeshes.length;
-          // Detach TC when more than one part is selected.
           if (multiSelectedCount > 1) tc.detach();
         }
         return;
@@ -666,7 +732,7 @@
             const newHitPart = session.parts.find((p) => p.mesh === hit);
             const newAg = newHitPart ? sketcher.glueManager.groupForPart(newHitPart.id) : undefined;
             if (newAg) {
-              selection.select(hit);
+              selection.selectGroup(hit, newAg.group);
               tc.attach(newAg.group);
               statusMessage = 'Group selected. W/E/R transform · G=glue edit · U=unglue · double-click to edit a member';
             } else {
@@ -685,9 +751,8 @@
         const hitPart = session.parts.find((p) => p.mesh === hit);
         const ag = hitPart ? sketcher.glueManager.groupForPart(hitPart.id) : undefined;
         if (ag) {
-          // Fire onSelectionChanged first (sets selectedPartId / selectedColor),
-          // then override TC to the group so the group moves as a unit.
-          selection.select(hit);
+          // Amber bounding box on the group instead of per-mesh outlines.
+          selection.selectGroup(hit, ag.group);
           tc.attach(ag.group);
           statusMessage = 'Group selected. W/E/R transform · G=glue edit · U=unglue · double-click to edit a member';
           return;
@@ -953,6 +1018,7 @@
     // Re-attach TC to the combined glue group.
     const ag = sketcher.glueManager.groupForPart(targetPart.id);
     if (ag) {
+      selection.selectGroup(targetPart.mesh, ag.group);
       tc.attach(ag.group);
     } else {
       tc.attach(targetPart.mesh);
@@ -1045,11 +1111,16 @@
     }
   }
 
-  function showSnapGrid() {
+  function showSnapGrid(vertical = false) {
     hideSnapGrid();
     const size = 10;
     const divisions = Math.min(Math.round(size / gridSnap), 200);
     snapGrid = new THREE.GridHelper(size, divisions, 0x667799, 0x445566);
+    if (vertical) {
+      // Revolve mode: rotate grid from XZ floor plane into the XY vertical plane.
+      snapGrid.rotation.x = Math.PI / 2;
+      snapGrid.position.set(size / 2, size / 2, 0);
+    }
     scene.add(snapGrid);
   }
 
@@ -1095,6 +1166,7 @@
 
   function revolveShape() {
     isRevolvePending = false;
+    hideSnapGrid();
     sketcher.confirmLathe(revolveAngleDeg);
     exitRevolveEnvironment();
     statusMessage = 'Revolved shape added. Move with gizmo or start a new sketch.';
@@ -1176,6 +1248,8 @@
     enterRevolveEnvironment();
     isDrawing = true;
     isRevolvePending = false;
+    showSnapGrid(true);
+    sketcher.gridSnapSize = gridSnap;
     sketcher.startRevolveSketch();
     statusMessage = 'Draw the half-profile against the Y axis (left edge = revolution axis, Y = height). Click near the first vertex to close.';
   }
@@ -1276,7 +1350,8 @@
     groupEditGroupId = null;
     const ag = sketcher.glueManager.getAssemblyGroups().find((g) => g.id === prevGroupId);
     if (ag && selection.selectedMesh) {
-      // Re-attach TC to the group; selection outline stays on the last-active member.
+      // Switch from per-mesh outline back to amber group bounding box.
+      selection.selectGroup(selection.selectedMesh, ag.group);
       tc.attach(ag.group);
       statusMessage = 'Group selected. W/E/R transform · double-click to edit a member · U=unweld';
     } else {
@@ -1301,7 +1376,7 @@
     const ag = sketcher.glueManager.groupForPart(partIds[0]);
     const firstPart = sketcher.getSession().parts.find((p) => p.id === partIds[0]);
     if (ag && firstPart) {
-      selection.select(firstPart.mesh);
+      selection.selectGroup(firstPart.mesh, ag.group);
       tc.attach(ag.group);
       selectedGroupIsWeld = true;
     }
@@ -1395,8 +1470,8 @@
       {/if}
       <button onclick={newSketch}>New sketch</button>
       <button onclick={startRevolveMode} disabled={isDrawing || isExtruding || isRevolvePending} title="Draw a half-profile to revolve around the Y axis">Revolve…</button>
-      <button disabled={!canUndo} onclick={() => { exitGroupEditMode(); sketcherDoc.undo(); refreshInspector(); }} title="Ctrl+Z">↩ Undo</button>
-      <button disabled={!canRedo} onclick={() => { exitGroupEditMode(); sketcherDoc.redo(); refreshInspector(); }} title="Ctrl+Shift+Z">↪ Redo</button>
+      <button disabled={!canUndo} onclick={() => { const lbl = sketcherDoc.undoLabel; exitGroupEditMode(); sketcherDoc.undo(); refreshInspector(); statusMessage = lbl ? `Undid: ${lbl}` : 'Undone.'; }} title="Ctrl+Z">↩ Undo</button>
+      <button disabled={!canRedo} onclick={() => { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); refreshInspector(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; }} title="Ctrl+Shift+Z">↪ Redo</button>
       <span class="separator"></span>
       <button class:active={transformMode === 'translate'} onclick={() => setTransformMode('translate')} title="W">Move</button>
       <button class:active={transformMode === 'rotate'} onclick={() => setTransformMode('rotate')} title="E">Rotate</button>
@@ -1555,17 +1630,20 @@
       <div class="insp-row">
         <span class="insp-label">Pos</span>
         <label>X<input type="number" step="0.01" class="insp-field" value={inspX}
-          onfocus={() => { inspectorFocused = true; }}
+          onfocus={() => { inspectorFocused = true; inspSpinnerActive = false; inspPreFocusSnapshot = sketcherDoc.captureSnapshot(); }}
+          oninput={(e) => { inspX = (e.target as HTMLInputElement).value; stepInspectorTransform(); }}
           onblur={(e) => { inspectorFocused = false; inspX = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
           onkeydown={(e) => { if (e.key === 'Enter') { inspX = (e.target as HTMLInputElement).value; commitInspectorTransform(); (e.target as HTMLInputElement).blur(); } }}
         /></label>
         <label>Y<input type="number" step="0.01" class="insp-field" value={inspY}
-          onfocus={() => { inspectorFocused = true; }}
+          onfocus={() => { inspectorFocused = true; inspSpinnerActive = false; inspPreFocusSnapshot = sketcherDoc.captureSnapshot(); }}
+          oninput={(e) => { inspY = (e.target as HTMLInputElement).value; stepInspectorTransform(); }}
           onblur={(e) => { inspectorFocused = false; inspY = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
           onkeydown={(e) => { if (e.key === 'Enter') { inspY = (e.target as HTMLInputElement).value; commitInspectorTransform(); (e.target as HTMLInputElement).blur(); } }}
         /></label>
         <label>Z<input type="number" step="0.01" class="insp-field" value={inspZ}
-          onfocus={() => { inspectorFocused = true; }}
+          onfocus={() => { inspectorFocused = true; inspSpinnerActive = false; inspPreFocusSnapshot = sketcherDoc.captureSnapshot(); }}
+          oninput={(e) => { inspZ = (e.target as HTMLInputElement).value; stepInspectorTransform(); }}
           onblur={(e) => { inspectorFocused = false; inspZ = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
           onkeydown={(e) => { if (e.key === 'Enter') { inspZ = (e.target as HTMLInputElement).value; commitInspectorTransform(); (e.target as HTMLInputElement).blur(); } }}
         /></label>
@@ -1573,17 +1651,20 @@
       <div class="insp-row">
         <span class="insp-label">Rot°</span>
         <label>X<input type="number" step="1" class="insp-field" value={inspRX}
-          onfocus={() => { inspectorFocused = true; }}
+          onfocus={() => { inspectorFocused = true; inspSpinnerActive = false; inspPreFocusSnapshot = sketcherDoc.captureSnapshot(); }}
+          oninput={(e) => { inspRX = (e.target as HTMLInputElement).value; stepInspectorTransform(); }}
           onblur={(e) => { inspectorFocused = false; inspRX = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
           onkeydown={(e) => { if (e.key === 'Enter') { inspRX = (e.target as HTMLInputElement).value; commitInspectorTransform(); (e.target as HTMLInputElement).blur(); } }}
         /></label>
         <label>Y<input type="number" step="1" class="insp-field" value={inspRY}
-          onfocus={() => { inspectorFocused = true; }}
+          onfocus={() => { inspectorFocused = true; inspSpinnerActive = false; inspPreFocusSnapshot = sketcherDoc.captureSnapshot(); }}
+          oninput={(e) => { inspRY = (e.target as HTMLInputElement).value; stepInspectorTransform(); }}
           onblur={(e) => { inspectorFocused = false; inspRY = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
           onkeydown={(e) => { if (e.key === 'Enter') { inspRY = (e.target as HTMLInputElement).value; commitInspectorTransform(); (e.target as HTMLInputElement).blur(); } }}
         /></label>
         <label>Z<input type="number" step="1" class="insp-field" value={inspRZ}
-          onfocus={() => { inspectorFocused = true; }}
+          onfocus={() => { inspectorFocused = true; inspSpinnerActive = false; inspPreFocusSnapshot = sketcherDoc.captureSnapshot(); }}
+          oninput={(e) => { inspRZ = (e.target as HTMLInputElement).value; stepInspectorTransform(); }}
           onblur={(e) => { inspectorFocused = false; inspRZ = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
           onkeydown={(e) => { if (e.key === 'Enter') { inspRZ = (e.target as HTMLInputElement).value; commitInspectorTransform(); (e.target as HTMLInputElement).blur(); } }}
         /></label>
@@ -1591,36 +1672,36 @@
       <div class="insp-row">
         <span class="insp-label">Scale</span>
         <label>X<input type="number" step="0.01" min="0.001" class="insp-field" value={inspSX}
-          onfocus={() => { inspectorFocused = true; }}
-          onblur={(e) => {
-            inspectorFocused = false;
+          onfocus={() => { inspectorFocused = true; inspSpinnerActive = false; inspPreFocusSnapshot = sketcherDoc.captureSnapshot(); }}
+          oninput={(e) => {
             const v = (e.target as HTMLInputElement).value;
-            if (uniformScale) { const ratio = parseFloat(v) / parseFloat(inspSX); inspSX = v; inspSY = (parseFloat(inspSY) * ratio).toFixed(3); inspSZ = (parseFloat(inspSZ) * ratio).toFixed(3); }
+            if (uniformScale && inspSX) { const ratio = parseFloat(v) / parseFloat(inspSX); inspSX = v; inspSY = (parseFloat(inspSY) * ratio).toFixed(3); inspSZ = (parseFloat(inspSZ) * ratio).toFixed(3); }
             else { inspSX = v; }
-            commitInspectorTransform();
+            stepInspectorTransform();
           }}
+          onblur={(e) => { inspectorFocused = false; inspSX = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
           onkeydown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } }}
         /></label>
         <label>Y<input type="number" step="0.01" min="0.001" class="insp-field" value={inspSY}
-          onfocus={() => { inspectorFocused = true; }}
-          onblur={(e) => {
-            inspectorFocused = false;
+          onfocus={() => { inspectorFocused = true; inspSpinnerActive = false; inspPreFocusSnapshot = sketcherDoc.captureSnapshot(); }}
+          oninput={(e) => {
             const v = (e.target as HTMLInputElement).value;
-            if (uniformScale) { const ratio = parseFloat(v) / parseFloat(inspSY); inspSY = v; inspSX = (parseFloat(inspSX) * ratio).toFixed(3); inspSZ = (parseFloat(inspSZ) * ratio).toFixed(3); }
+            if (uniformScale && inspSY) { const ratio = parseFloat(v) / parseFloat(inspSY); inspSY = v; inspSX = (parseFloat(inspSX) * ratio).toFixed(3); inspSZ = (parseFloat(inspSZ) * ratio).toFixed(3); }
             else { inspSY = v; }
-            commitInspectorTransform();
+            stepInspectorTransform();
           }}
+          onblur={(e) => { inspectorFocused = false; inspSY = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
           onkeydown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } }}
         /></label>
         <label>Z<input type="number" step="0.01" min="0.001" class="insp-field" value={inspSZ}
-          onfocus={() => { inspectorFocused = true; }}
-          onblur={(e) => {
-            inspectorFocused = false;
+          onfocus={() => { inspectorFocused = true; inspSpinnerActive = false; inspPreFocusSnapshot = sketcherDoc.captureSnapshot(); }}
+          oninput={(e) => {
             const v = (e.target as HTMLInputElement).value;
-            if (uniformScale) { const ratio = parseFloat(v) / parseFloat(inspSZ); inspSZ = v; inspSX = (parseFloat(inspSX) * ratio).toFixed(3); inspSY = (parseFloat(inspSY) * ratio).toFixed(3); }
+            if (uniformScale && inspSZ) { const ratio = parseFloat(v) / parseFloat(inspSZ); inspSZ = v; inspSX = (parseFloat(inspSX) * ratio).toFixed(3); inspSY = (parseFloat(inspSY) * ratio).toFixed(3); }
             else { inspSZ = v; }
-            commitInspectorTransform();
+            stepInspectorTransform();
           }}
+          onblur={(e) => { inspectorFocused = false; inspSZ = (e.target as HTMLInputElement).value; commitInspectorTransform(); }}
           onkeydown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } }}
         /></label>
         <button

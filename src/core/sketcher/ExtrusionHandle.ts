@@ -31,22 +31,35 @@ export function buildExtrusionGeometry(shape: THREE.Shape, depth: number): THREE
   const N = pts.length;
 
   // Capture the two default group ranges before clearing.
-  // group 0 = caps (bottom+top, count = 2*(N-2)*3)
-  // group 1 = walls (count = N*6, 6 indices per edge)
+  // With holes, ExtrudeGeometry still produces exactly 2 groups:
+  //   group 0: caps (both caps, triangulated including hole regions)
+  //   group 1: all wall faces — outer N edges then each hole's M_i edges, 6 indices each
   const capsStart = geo.groups[0].start;  // = 0
   const capsCount = geo.groups[0].count;
   const wallStart = geo.groups[1].start;  // = capsCount
 
+  // Collect hole edge arrays so we can assign per-edge wall groups for them too.
+  const holePtArrays = shape.holes.map((h) => h.getPoints());
+
   geo.clearGroups();
-  // Per-edge walls: materialIndex 0…N-1
+  // Per-edge walls for outer shape: materialIndex 0…N-1
   for (let i = 0; i < N; i++) {
     geo.addGroup(wallStart + i * 6, 6, i);
   }
-  // Combined caps (bottom+top): materialIndex N
-  geo.addGroup(capsStart, capsCount, N);
+  // Per-edge walls for each hole: materialIndex N, N+1, …
+  let edgeOffset = N;
+  for (const holePts of holePtArrays) {
+    const M = holePts.length;
+    for (let i = 0; i < M; i++) {
+      geo.addGroup(wallStart + (edgeOffset + i) * 6, 6, edgeOffset + i);
+    }
+    edgeOffset += M;
+  }
+  // Combined caps (bottom+top): materialIndex = total wall-edge count
+  const totalWallEdges = edgeOffset;
+  geo.addGroup(capsStart, capsCount, totalWallEdges);
 
-  // Per-edge side normals. With centroid-relative Z-corrected shape coords,
-  // dz = b.y - a.y = -(world Z diff), so outward normal = (-dz/len, 0, -dx/len).
+  // Per-edge side normals for outer shape.
   const faceGroups: FaceGroupInfo[] = pts.map((a, i) => {
     const b = pts[(i + 1) % N];
     const dx = b.x - a.x;
@@ -54,9 +67,109 @@ export function buildExtrusionGeometry(shape: THREE.Shape, depth: number): THREE
     const len = Math.sqrt(dx * dx + dz * dz) || 1;
     return { normal: new THREE.Vector3(-dz / len, 0, -dx / len), label: `side-${i}`, materialIndex: i };
   });
-  faceGroups.push({ normal: new THREE.Vector3(0, 1, 0), label: 'caps', materialIndex: N });
+  // Per-edge side normals for each hole (inner walls face inward).
+  let holeMatIdx = N;
+  for (const holePts of holePtArrays) {
+    const M = holePts.length;
+    for (let i = 0; i < M; i++) {
+      const a = holePts[i];
+      const b = holePts[(i + 1) % M];
+      const dx = b.x - a.x;
+      const dz = b.y - a.y;
+      const len = Math.sqrt(dx * dx + dz * dz) || 1;
+      faceGroups.push({ normal: new THREE.Vector3(dz / len, 0, dx / len), label: `hole-side-${holeMatIdx - N}-${i}`, materialIndex: holeMatIdx });
+      holeMatIdx++;
+    }
+  }
+  faceGroups.push({ normal: new THREE.Vector3(0, 1, 0), label: 'caps', materialIndex: totalWallEdges });
   geo.userData.faceGroups = faceGroups;
+  // Hole wall material index range — used by mesh builders to apply DoubleSide
+  // to these faces so they are visible from inside the hole tunnel.
+  geo.userData.holeWallMaterialStart = N;
+  geo.userData.holeWallMaterialEnd = totalWallEdges - 1;
+
+  // Replace Three.js default UVs (raw shape coords) with predictable [0,1] UVs:
+  //   Wall faces:  U = 0→1 along the edge (a→b order), V = 0 (bottom) → 1 (top, Y up).
+  //   Cap faces:   U,V normalised to [0,1] over the outer shape bounding box.
+  _recomputeUVs(geo, pts, holePtArrays, depth, wallStart, capsStart, capsCount);
   return geo;
+}
+
+/**
+ * After rotateX(-π/2) + translate(0, -depth/2, 0) the coordinate mapping is:
+ *   world.x = shape.x,  world.y = z_extrude − depth/2,  world.z = −shape.y
+ *
+ * Wall faces (6 non-indexed verts per edge quad):
+ *   V = (world.y + depth/2) / depth  → 0 at floor, 1 at ceiling, Y up.
+ *   U = projection onto edge direction, normalised so 0 = vertex a, 1 = vertex b.
+ *
+ * Cap faces: U,V normalised to [0,1] over the outer shape's XZ bounding box.
+ * Bottom and top caps share the same UV (both use the same x/z columns of verts).
+ */
+function _recomputeUVs(
+  geo: THREE.BufferGeometry,
+  outerPts: THREE.Vector2[],
+  holePtArrays: THREE.Vector2[][],
+  depth: number,
+  wallStart: number,
+  capsStart: number,
+  capsCount: number,
+): void {
+  const uvAttr = geo.attributes.uv as THREE.BufferAttribute;
+  const posAttr = geo.attributes.position as THREE.BufferAttribute;
+
+  // Build flat edge list: outer edges then each hole's edges (must match group order).
+  type Edge = { ax: number; az: number; eDx: number; eDz: number; lenSq: number };
+  const allEdges: Edge[] = [];
+  const addEdges = (edgePts: THREE.Vector2[]): void => {
+    const M = edgePts.length;
+    for (let i = 0; i < M; i++) {
+      const a = edgePts[i], b = edgePts[(i + 1) % M];
+      const eDx = b.x - a.x;
+      // world Z of shape point p = −p.y, so Δworld.z along edge = −b.y − (−a.y) = a.y − b.y
+      const eDz = a.y - b.y;
+      allEdges.push({ ax: a.x, az: -a.y, eDx, eDz, lenSq: eDx * eDx + eDz * eDz || 1 });
+    }
+  };
+  addEdges(outerPts);
+  for (const hp of holePtArrays) addEdges(hp);
+
+  // Hole wall edges have normals pointing inward, so Three.js renders them as
+  // backfaces (DoubleSide). Backface rendering mirrors U on screen; pre-flip U
+  // for hole edges so the double-flip cancels and the texture reads naturally.
+  const firstHoleEdge = outerPts.length;
+
+  // Wall UVs
+  for (let edgeIdx = 0; edgeIdx < allEdges.length; edgeIdx++) {
+    const { ax, az, eDx, eDz, lenSq } = allEdges[edgeIdx];
+    const isHoleEdge = edgeIdx >= firstHoleEdge;
+    const base = wallStart + edgeIdx * 6;
+    for (let vi = base; vi < base + 6; vi++) {
+      const v = (posAttr.getY(vi) + depth / 2) / depth;
+      const u = ((posAttr.getX(vi) - ax) * eDx + (posAttr.getZ(vi) - az) * eDz) / lenSq;
+      uvAttr.setXY(vi, isHoleEdge ? 1 - u : u, v);
+    }
+  }
+
+  // Cap UVs — normalise over outer shape bounding box
+  let xMin = Infinity, xMax = -Infinity, zMin = Infinity, zMax = -Infinity;
+  for (const p of outerPts) {
+    if (p.x < xMin) xMin = p.x;
+    if (p.x > xMax) xMax = p.x;
+    const wz = -p.y;
+    if (wz < zMin) zMin = wz;
+    if (wz > zMax) zMax = wz;
+  }
+  const xRange = xMax - xMin || 1;
+  const zRange = zMax - zMin || 1;
+  for (let vi = capsStart; vi < capsStart + capsCount; vi++) {
+    uvAttr.setXY(vi,
+      (posAttr.getX(vi) - xMin) / xRange,
+      (posAttr.getZ(vi) - zMin) / zRange,
+    );
+  }
+
+  uvAttr.needsUpdate = true;
 }
 
 /**
@@ -186,8 +299,13 @@ export class ExtrusionHandle {
 
   private _buildMesh(depth: number): THREE.Mesh {
     const geo = buildExtrusionGeometry(this.shape, depth);
-    const materials = Array.from({ length: geo.groups.length }, () =>
-      new THREE.MeshStandardMaterial({ color: 0x8888cc, metalness: 0.1, roughness: 0.6 })
+    const holeStart: number = geo.userData.holeWallMaterialStart ?? Infinity;
+    const holeEnd: number = geo.userData.holeWallMaterialEnd ?? -1;
+    const materials = Array.from({ length: geo.groups.length }, (_, i) =>
+      new THREE.MeshStandardMaterial({
+        color: 0x8888cc, metalness: 0.1, roughness: 0.6,
+        side: (i >= holeStart && i <= holeEnd) ? THREE.DoubleSide : THREE.FrontSide,
+      })
     );
     const mesh = new THREE.Mesh(geo, materials);
     // Place the mesh at the world centroid so geometry vertices land at the
