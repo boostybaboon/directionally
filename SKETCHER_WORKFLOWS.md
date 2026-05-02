@@ -184,16 +184,16 @@ Glue attaches the *mover*'s face flush to the *anchor*'s face contact point. Mov
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Insert a **Cylinder** and a **Cube**; position them apart | — | — | |
-| 2 | Press **G** or click **Glue…** | Status "Click any surface to place the anchor blob. Esc cancels." | — | |
-| 3 | Hover a face on the cylinder | Yellow dot tracks the surface | — | |
-| 4 | Click to set the anchor | Pink blob appears on the cylinder; status "Now click any surface on a different part to snap it here. Esc cancels." | — | |
-| 5 | Hover a face of the cube | Yellow dot tracks the cube; cylinder already excluded from second pick | — | |
-| 6 | Click the cube face | Cube rotates face-flush and snaps its contact point to the pink blob; status "Glued." | — | |
-| 7 | Select the cylinder and translate it | Cube follows, maintaining the joint offset | — | |
-| 8 | Click the cube (mover) | **Unglue** button appears | — | |
-| 9 | Press **U** or click **Unglue** | Status "Unglued."; cube stays at current position; cylinder ignores it | — | |
-| 10 | Ctrl+Z to undo the glue | Both parts return to pre-glue positions; joint removed | — | |
+| 1 | Insert a **Cylinder** and a **Cube**; position them apart | — | OK | |
+| 2 | Press **G** or click **Glue…** | Status "Click any surface to place the anchor blob. Esc cancels." | OK | |
+| 3 | Hover a face on the cylinder | Yellow dot tracks the surface | OK | |
+| 4 | Click to set the anchor | Pink blob appears on the cylinder; status "Now click any surface on a different part to snap it here. Esc cancels." | OK | |
+| 5 | Hover a face of the cube | Yellow dot tracks the cube; cylinder already excluded from second pick | OK | |
+| 6 | Click the cube face | Cube rotates face-flush and snaps its contact point to the pink blob; status "Glued." | OK | |
+| 7 | Select the cylinder and translate it | Cube follows, maintaining the joint offset | OK | |
+| 8 | Click the cube (mover) | **Unglue** button appears | OK | |
+| 9 | Press **U** or click **Unglue** | Status "Unglued."; cube stays at current position; cylinder ignores it | OK | |
+| 10 | Ctrl+Z to undo the glue | Both parts return to pre-glue positions; joint removed | OK | |
 
 ---
 

@@ -136,8 +136,12 @@ export class SelectionManager {
 
   /** Remove the weld group bounding box if one is shown. */
   clearGroupBox(): void {
-    if (this._groupBox && this._groupBoxParent) {
-      this._groupBoxParent.remove(this._groupBox);
+    if (this._groupBox) {
+      // Use removeFromParent() rather than _groupBoxParent.remove() because
+      // GlueManager._dissolveGroup() re-parents group children to the scene
+      // via scene.attach(), making _groupBoxParent stale. removeFromParent()
+      // works regardless of what the current parent is.
+      this._groupBox.removeFromParent();
       this._groupBox.geometry.dispose();
       (this._groupBox.material as THREE.Material).dispose();
       this._groupBox = null;

@@ -336,11 +336,11 @@
         case 'e': case 'E': setTransformMode('rotate'); break;
         case 'r': case 'R': setTransformMode('scale'); break;
         case 'z': case 'Z':
-          if (e.ctrlKey && e.shiftKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); refreshInspector(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
-          else if (e.ctrlKey) { const lbl = sketcherDoc.undoLabel; exitGroupEditMode(); sketcherDoc.undo(); refreshInspector(); statusMessage = lbl ? `Undid: ${lbl}` : 'Undone.'; e.preventDefault(); }
+          if (e.ctrlKey && e.shiftKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); resyncSelectionAfterUndoRedo(); refreshInspector(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
+          else if (e.ctrlKey) { const lbl = sketcherDoc.undoLabel; exitGroupEditMode(); sketcherDoc.undo(); resyncSelectionAfterUndoRedo(); refreshInspector(); statusMessage = lbl ? `Undid: ${lbl}` : 'Undone.'; e.preventDefault(); }
           break;
         case 'y': case 'Y':
-          if (e.ctrlKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); refreshInspector(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
+          if (e.ctrlKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); resyncSelectionAfterUndoRedo(); refreshInspector(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
           break;
         case 'Escape':
           if (groupEditGroupId !== null) { exitGroupEditMode(); }
@@ -416,6 +416,36 @@
   }
 
   // ── SA12a: Transform inspector ───────────────────────────────────────────────
+
+  /**
+   * After undo/redo, re-establish the correct selection visual and TC target.
+   *
+   * The snapshot restore replaces Three.js groups with new instances, so
+   * SelectionManager's cached group box and TC attachment both become stale.
+   * This function clears the stale box and re-selects based on the current
+   * session state for `selectedPartId`.
+   */
+  function resyncSelectionAfterUndoRedo() {
+    selection.clearGroupBox();
+    if (!selectedPartId) return;
+    const session = sketcher.getSession();
+    const part = session.parts.find((p) => p.id === selectedPartId);
+    if (!part) {
+      // Part no longer exists after undo (e.g. undo of add-part).
+      selection.deselect();
+      selectedPartId = null;
+      tc.detach();
+      return;
+    }
+    const ag = sketcher.glueManager.groupForPart(selectedPartId);
+    if (ag) {
+      selection.selectGroup(part.mesh, ag.group);
+      tc.attach(ag.group);
+    } else {
+      selection.select(part.mesh);
+      tc.attach(part.mesh);
+    }
+  }
 
   /**
    * Read the current world-space transform of the selected object and update
@@ -878,10 +908,15 @@
     clearFaceHighlight();
     if (!hits.length) return;
 
-    // Place the dot at the exact hit point, nudged slightly along the face normal.
+    // Place the dot at the hit point (or face centroid in midpoint mode), nudged along the face normal.
     const hitNormal = hits[0].face?.normal?.clone() ?? new THREE.Vector3(0, 1, 0);
     hitNormal.transformDirection(hits[0].object.matrixWorld);
-    const pos = hits[0].point.clone().addScaledVector(hitNormal, 0.02);
+    const hitMeshForHighlight = hits[0].object as THREE.Mesh;
+    const dotWorldPos = (glueMidpointMode && !facePaintMode)
+      ? computeGroupCentreLocal(hitMeshForHighlight.geometry, hits[0].face?.materialIndex ?? 0)
+          .applyMatrix4(hitMeshForHighlight.matrixWorld)
+      : hits[0].point.clone();
+    const pos = dotWorldPos.addScaledVector(hitNormal, 0.02);
     const geo = new THREE.SphereGeometry(0.07, 8, 6);
     const highlightColor = facePaintMode ? 0x44ccaa : 0xffee00;
     const mat = new THREE.MeshBasicMaterial({ color: highlightColor, depthTest: false, transparent: true, opacity: 0.9 });
@@ -940,9 +975,13 @@
       : hits[0].point.clone().applyMatrix4(matInv);
     const localNormal = (hits[0].face?.normal ?? new THREE.Vector3(0, 1, 0)).clone();
 
-    // Pink blob at the chosen surface point as anchor marker.
+    // Pink blob at the anchor point. In midpoint mode, convert the local centroid
+    // back to world space so the blob appears at the snapped position, not the click point.
     const hitNormal = localNormal.clone().transformDirection(hitMesh.matrixWorld);
-    const blobPos = hits[0].point.clone().addScaledVector(hitNormal, 0.04);
+    const anchorWorldPos = glueMidpointMode
+      ? localPoint.clone().applyMatrix4(hitMesh.matrixWorld)
+      : hits[0].point.clone();
+    const blobPos = anchorWorldPos.clone().addScaledVector(hitNormal, 0.04);
     clearGlueBlobMarker();
     const geo = new THREE.SphereGeometry(0.12, 10, 8);
     const mat = new THREE.MeshBasicMaterial({ color: 0xff44aa, depthTest: false, transparent: true, opacity: 0.85 });
@@ -951,7 +990,7 @@
     scene.add(glueBlobMarker);
 
     clearFaceHighlight();
-    glueSrcBlob = { partId: part.id, localPoint, localNormal, worldPoint: hits[0].point.clone() };
+    glueSrcBlob = { partId: part.id, localPoint, localNormal, worldPoint: anchorWorldPos.clone() };
 
     // Ghost the src entity so it doesn't occlude clicks on parts behind it.
     const srcGroup = sketcher.glueManager.groupForPart(part.id);
@@ -998,7 +1037,11 @@
     if (!targetPart) return;
 
     hitMesh.updateWorldMatrix(true, false);
-    const localPointTarget = hits[0].point.clone().applyMatrix4(hitMesh.matrixWorld.clone().invert());
+    // In midpoint mode, snap the target anchor to the face centroid so both
+    // contact points are centred on their respective faces.
+    const localPointTarget = glueMidpointMode
+      ? computeGroupCentreLocal(hitMesh.geometry, hits[0].face?.materialIndex ?? 0)
+      : hits[0].point.clone().applyMatrix4(hitMesh.matrixWorld.clone().invert());
     const localNormalTarget = (hits[0].face?.normal ?? new THREE.Vector3(0, 1, 0)).clone();
 
     // Anchor (A) stays; mover (B) rotates to face-align then snaps to meet the anchor point.
@@ -1028,13 +1071,22 @@
 
   function unglueSelected() {
     if (!selectedPartId) return;
+    // Clear the amber group box before the command dissolves the group.
+    // _dissolveGroup re-parents group children to the scene via scene.attach(),
+    // which would leave the box as a visible ghost if not removed first.
+    selection.clearGroupBox();
     sketcherDoc.execute(new UnglueAllCommand(selectedPartId, sketcher));
-    // Re-attach TC. Under SA15 parts are never reparented by glue, so the
-    // part stays at scene root (or inside its weld group if it has one).
+    // Re-attach TC and restore per-mesh selection outline.
     const part = sketcher.getSession().parts.find((p) => p.id === selectedPartId);
     if (part) {
       const ag = sketcher.glueManager.groupForPart(part.id);
-      tc.attach(ag ? ag.group : part.mesh);
+      if (ag) {
+        selection.selectGroup(part.mesh, ag.group);
+        tc.attach(ag.group);
+      } else {
+        selection.select(part.mesh);
+        tc.attach(part.mesh);
+      }
     }
     selectedPartHasGlue = false;
     statusMessage = 'Unglued.';
@@ -1470,8 +1522,8 @@
       {/if}
       <button onclick={newSketch}>New sketch</button>
       <button onclick={startRevolveMode} disabled={isDrawing || isExtruding || isRevolvePending} title="Draw a half-profile to revolve around the Y axis">Revolve…</button>
-      <button disabled={!canUndo} onclick={() => { const lbl = sketcherDoc.undoLabel; exitGroupEditMode(); sketcherDoc.undo(); refreshInspector(); statusMessage = lbl ? `Undid: ${lbl}` : 'Undone.'; }} title="Ctrl+Z">↩ Undo</button>
-      <button disabled={!canRedo} onclick={() => { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); refreshInspector(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; }} title="Ctrl+Shift+Z">↪ Redo</button>
+      <button disabled={!canUndo} onclick={() => { const lbl = sketcherDoc.undoLabel; exitGroupEditMode(); sketcherDoc.undo(); resyncSelectionAfterUndoRedo(); refreshInspector(); statusMessage = lbl ? `Undid: ${lbl}` : 'Undone.'; }} title="Ctrl+Z">↩ Undo</button>
+      <button disabled={!canRedo} onclick={() => { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); resyncSelectionAfterUndoRedo(); refreshInspector(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; }} title="Ctrl+Shift+Z">↪ Redo</button>
       <span class="separator"></span>
       <button class:active={transformMode === 'translate'} onclick={() => setTransformMode('translate')} title="W">Move</button>
       <button class:active={transformMode === 'rotate'} onclick={() => setTransformMode('rotate')} title="E">Rotate</button>
