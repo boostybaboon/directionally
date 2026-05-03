@@ -294,33 +294,33 @@ Confirms you can enter group-edit mode on any member of a mixed assembly and swi
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | On a fresh session, insert a primitive | Assembly auto-saves after ~500 ms (no error in console) | — | |
-| 2 | Click the name field ("Untitled") and type "My Robot"; press Enter or click away | Name updates; autosave fires | — | |
-| 3 | Reload the page | "My Robot" loads back with the same parts; name field shows "My Robot" | — | |
+| 1 | On a fresh session, insert a primitive | Assembly auto-saves after ~500 ms (no error in console) | OK | |
+| 2 | Click the name field ("Untitled") and type "My Robot"; press Enter or click away | Name updates; autosave fires | OK | |
+| 3 | Reload the page | "My Robot" loads back with the same parts; name field shows "My Robot" | OK | |
 
 ### T12b — New assembly
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | With "My Robot" loaded, click **New** in the toolbar | Session clears; name resets to "Untitled"; empty viewport | — | |
-| 2 | Insert a Sphere and rename to "Alien Eye" | — | — | |
-| 3 | Reload | "Alien Eye" restores | — | |
+| 1 | With "My Robot" loaded, click **New** in the toolbar | Session clears; name resets to "Untitled"; empty viewport | OK | |
+| 2 | Insert a Sphere and rename to "Alien Eye" | — | OK | |
+| 3 | Reload | "Alien Eye" restores | OK | |
 
 ### T12c — Open panel
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Click **Open…** | Panel appears listing "My Robot" and "Alien Eye" with dates | — | |
-| 2 | Click "My Robot" in the list | "My Robot" loads | — | |
-| 3 | Open the panel again | "My Robot" entry highlighted (current) | — | |
-| 4 | Click **✕** next to "Alien Eye" | "Alien Eye" disappears from the list | — | |
-| 5 | Press **Esc** or click the panel close button | Panel closes | — | |
+| 1 | Click **Open…** | Panel appears listing "My Robot" and "Alien Eye" with dates | OK | |
+| 2 | Click "My Robot" in the list | "My Robot" loads | OK | |
+| 3 | Open the panel again | "My Robot" entry highlighted (current) | OK | |
+| 4 | Click **✕** next to "Alien Eye" | "Alien Eye" disappears from the list | OK | |
+| 5 | Press **Esc** or click the panel close button | Panel closes | OK | |
 
 ### T12d — Weld groups survive round-trip
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Load "My Robot"; weld two parts together; rename to "Weld Test"; reload | Weld group reconstructed; clicking any member selects the group | — | |
+| 1 | Load "My Robot"; weld two parts together; rename to "Weld Test"; reload | Weld group reconstructed; clicking any member selects the group | OK | |
 
 ---
 
@@ -328,11 +328,11 @@ Confirms you can enter group-edit mode on any member of a mixed assembly and swi
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Name the assembly; ensure it has at least one part | — | — | |
-| 2 | Click **Export to Catalogue** | Status "Exporting…" then success message using the assembly name | — | |
-| 3 | Navigate to `http://localhost:5173/` | Main app loads | — | |
-| 4 | Open the **Catalogue** tab; scroll to Set Pieces | The exported entry is visible under the assembly's name | — | |
-| 5 | Drag the entry into a scene | 3D model loads in the viewport | — | |
+| 1 | Name the assembly; ensure it has at least one part | — | OK | |
+| 2 | Click **Export to Catalogue** | Status "Exporting…" then success message using the assembly name | OK | |
+| 3 | Navigate to `http://localhost:5173/` | Main app loads | OK | |
+| 4 | Open the **Catalogue** tab; scroll to Set Pieces | The exported entry is visible under the assembly's name | OK | |
+| 5 | Drag the entry into a scene | 3D model loads in the viewport | OK | |
 
 ---
 

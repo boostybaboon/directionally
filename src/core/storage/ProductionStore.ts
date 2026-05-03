@@ -40,8 +40,11 @@ function openDB(): Promise<IDBDatabase> {
 
 function idbPut(db: IDBDatabase, production: StoredProduction): Promise<void> {
   return new Promise((resolve, reject) => {
+    // Svelte 5 reactive state objects are Proxy instances that the structured
+    // clone algorithm cannot serialise. JSON round-trip strips the proxy wrapper.
+    const plain: StoredProduction = JSON.parse(JSON.stringify(production));
     const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(production);
+    tx.objectStore(STORE_NAME).put(plain);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });

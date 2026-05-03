@@ -88,7 +88,7 @@
   ];
 
   function modelFromProduction(prod: StoredProduction) {
-    return storedSceneToModel(getActiveScene(prod) ?? starterSceneShell(), prod.actors ?? []);
+    return storedSceneToModel(getActiveScene(prod) ?? starterSceneShell(), prod.actors ?? [], userCatalogueEntries);
   }
 
   let presenter: Presenter | undefined = $state();
@@ -487,10 +487,16 @@
     if (scenes.length === 0) return;
     prePresentationSceneId = docSnapshot.activeSceneId;
     presentationQueue = scenes.slice(1).map((s) => s.id);
-    activeDoc.execute(new SwitchSceneCommand(scenes[0].id));
-    // loadModel(model, 0) fires via onChange (sceneChanged=true); ondidload → presenter.play()
     presentationMode = true;
     editMode = false;
+    if (scenes[0].id !== docSnapshot.activeSceneId) {
+      // onChange will fire with sceneChanged=true → loadModel(model, 0) → ondidload → play()
+      activeDoc.execute(new SwitchSceneCommand(scenes[0].id));
+    } else {
+      // Already on the first scene — SwitchSceneCommand would be a no-op or not trigger
+      // a sceneChanged reload, so force the rewind + load explicitly.
+      presenter?.loadModel(modelFromProduction(activeDoc.current), 0);
+    }
     void document.documentElement.requestFullscreen?.();
     if ('wakeLock' in navigator) {
       void navigator.wakeLock.request('screen').then((s) => { wakeLock = s; }).catch(() => {});
@@ -718,6 +724,7 @@
         name,
         geometry: entry.geometry,
         material: entry.material,
+        ...(entry.gltfPath ? { gltfPath: 'opfs://' + entry.id } : {}),
         ...(entry.defaultRotation ? { rotation: entry.defaultRotation } : {}),
       };
       activeDoc.execute(new AddSetPieceCommand(piece));
@@ -925,6 +932,20 @@
       CATALOGUE_SET_PIECES = getSetPieces([...CATALOGUE_ENTRIES, ...userEntries]);
     });
 
+    // Refresh catalogue and reload the active scene when Sketcher re-exports an assembly.
+    const catalogueChannel = new BroadcastChannel('directionally-catalogue');
+    catalogueChannel.onmessage = (e: MessageEvent) => {
+      if (e.data?.type !== 'catalogue-updated') return;
+      void OPFSCatalogueStore.list().then((userEntries) => {
+        userCatalogueEntries = userEntries;
+        CATALOGUE_CHARACTERS = getCharacters([...CATALOGUE_ENTRIES, ...userEntries]);
+        CATALOGUE_SET_PIECES = getSetPieces([...CATALOGUE_ENTRIES, ...userEntries]);
+        if (activeDoc) {
+          presenter?.loadModel(modelFromProduction(activeDoc.current));
+        }
+      });
+    };
+
     const mq = window.matchMedia('(max-width: 640px)');
     isMobile = mq.matches;
     // Right panel takes up too much space on phone; default it closed.
@@ -985,6 +1006,7 @@
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('pointerdown', handleWindowPointerdown);
+      catalogueChannel.close();
     };
   });
 </script>

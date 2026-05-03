@@ -5,6 +5,8 @@ import {
   list,
   add,
   remove,
+  update,
+  findByAssemblyId,
 } from './OPFSCatalogueStore';
 
 // ── In-memory OPFS mock ───────────────────────────────────────────────────────
@@ -163,5 +165,65 @@ describe('OPFSCatalogueStore – metadata persistence', () => {
     mockDir.files.delete(`${entry.id}.glb`);
     const listed = await list();
     expect(listed).toHaveLength(0);
+  });
+});
+
+describe('OPFSCatalogueStore – sourceAssemblyId', () => {
+  it('add() with sourceAssemblyId round-trips through list()', async () => {
+    await add(new Blob(['data']), { kind: 'set-piece', label: 'Chair' }, 'asm-001');
+    const listed = await list();
+    expect(listed[0].sourceAssemblyId).toBe('asm-001');
+  });
+
+  it('findByAssemblyId() returns the matching entry', async () => {
+    await add(new Blob(['data']), { kind: 'set-piece', label: 'Lamp' }, 'asm-002');
+    const found = await findByAssemblyId('asm-002');
+    expect(found).not.toBeNull();
+    expect(found!.label).toBe('Lamp');
+    expect(found!.sourceAssemblyId).toBe('asm-002');
+  });
+
+  it('findByAssemblyId() returns null when no entry matches', async () => {
+    await add(new Blob(['data']), { kind: 'set-piece', label: 'Table' }, 'asm-003');
+    expect(await findByAssemblyId('asm-unknown')).toBeNull();
+  });
+
+  it('add() without sourceAssemblyId leaves sourceAssemblyId undefined', async () => {
+    await add(new Blob(['data']), { kind: 'set-piece', label: 'Box' });
+    const listed = await list();
+    expect(listed[0].sourceAssemblyId).toBeUndefined();
+  });
+});
+
+describe('OPFSCatalogueStore – update', () => {
+  it('update() overwrites the GLB and returns the updated entry', async () => {
+    const entry = await add(new Blob(['v1']), { kind: 'set-piece', label: 'Chair' }, 'asm-004');
+    vi.mocked(URL.createObjectURL).mockReturnValue('blob:updated-url');
+
+    const updated = await update(entry.id, new Blob(['v2']));
+    expect(updated).not.toBeNull();
+    expect(updated!.gltfPath).toBe('blob:updated-url');
+    expect(updated!.label).toBe('Chair'); // label unchanged when not provided
+  });
+
+  it('update() with a new label updates it in metadata', async () => {
+    const entry = await add(new Blob(['v1']), { kind: 'set-piece', label: 'Old Name' });
+    await update(entry.id, new Blob(['v2']), 'New Name');
+    const listed = await list();
+    expect(listed[0].label).toBe('New Name');
+  });
+
+  it('update() preserves sourceAssemblyId', async () => {
+    const entry = await add(new Blob(['v1']), { kind: 'set-piece', label: 'Chair' }, 'asm-005');
+    await update(entry.id, new Blob(['v2']));
+    const listed = await list();
+    expect(listed[0].sourceAssemblyId).toBe('asm-005');
+  });
+
+  it('update() with unknown id returns null without changing the store', async () => {
+    await add(new Blob(['data']), { kind: 'set-piece', label: 'Keep' });
+    const result = await update('non-existent-id', new Blob(['new']));
+    expect(result).toBeNull();
+    expect(await list()).toHaveLength(1);
   });
 });

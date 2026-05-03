@@ -97,6 +97,37 @@ describe('storedSceneToModel – set pieces', () => {
     expect(model.meshes[0].rotation.x).toBeCloseTo(0);
     expect(model.meshes[0].rotation.y).toBeCloseTo(1);
   });
+
+  it('resolves opfs:// set piece gltfPath to the session blob URL from userEntries', () => {
+    const scene = baseScene({
+      set: [{
+        name: 'my-chair',
+        gltfPath: 'opfs://user-entry-abc',
+        geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 },
+        material: { color: 0x000000, metalness: 0, roughness: 1 },
+      }],
+    });
+    const userEntries = [{ id: 'user-entry-abc', gltfPath: 'blob:http://localhost/fake-url' }];
+    const model = storedSceneToModel(scene, [], userEntries);
+    expect(model.gltfs).toHaveLength(1);
+    expect(model.gltfs[0].name).toBe('my-chair');
+    expect(model.meshes).toHaveLength(0);
+  });
+
+  it('leaves opfs:// gltfPath unresolved (no mesh) when userEntries is empty', () => {
+    const scene = baseScene({
+      set: [{
+        name: 'my-chair',
+        gltfPath: 'opfs://user-entry-abc',
+        geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 },
+        material: { color: 0x000000, metalness: 0, roughness: 1 },
+      }],
+    });
+    // No userEntries — the opfs:// reference cannot be resolved; falls back to mesh.
+    const model = storedSceneToModel(scene, [], []);
+    expect(model.gltfs).toHaveLength(0);
+    expect(model.meshes).toHaveLength(1);
+  });
 });
 
 // ── Staged actors ─────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@
   import { getCharacters, getLights, getSetPieces, getEnvironments } from '../core/catalogue/catalogue.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
   import type { CatalogueEntry } from '../core/catalogue/types.js';
+  import type { UserCatalogueEntry } from '../core/storage/OPFSCatalogueStore.js';
   import PreviewRenderer from './PreviewRenderer.svelte';
 
   interface Props {
@@ -13,7 +14,7 @@
     /** The environmentMap id currently set on the active scene, for display. */
     activeEnvironmentId?: string;
     /** User-added entries from OPFSCatalogueStore, merged with bundled entries. */
-    userEntries?: CatalogueEntry[];
+    userEntries?: (CatalogueEntry | UserCatalogueEntry)[];
   }
 
   let { onadd, onapplyenvironment, activeEnvironmentId, userEntries = [] }: Props = $props();
@@ -88,6 +89,7 @@
     {:else}
       <ul class="catalogue-list">
         {#each setPieces as entry (entry.id)}
+          {@const userEntry = userEntries.find((u) => u.id === entry.id) as UserCatalogueEntry | undefined}
           <li class="setpiece-row">
             <button
               type="button"
@@ -105,9 +107,19 @@
               <span class="item-label">{entry.label}</span>
               <span class="item-meta">{GEOMETRY_LABELS[entry.geometry.type] ?? entry.geometry.type}</span>
             </button>
-            {#if onadd}
-              <button class="add-inline-btn" onclick={() => onadd('setpiece', entry.id)} title="Add {entry.label} to scene" aria-label="Add {entry.label} to scene">+</button>
-            {/if}
+            <div class="setpiece-actions">
+              {#if userEntry?.sourceAssemblyId}
+                <a
+                  class="edit-in-sketcher-btn"
+                  href="/sketch?assemblyId={userEntry.sourceAssemblyId}"
+                  title="Edit {entry.label} in Sketcher"
+                  aria-label="Edit {entry.label} in Sketcher"
+                >✎</a>
+              {/if}
+              {#if onadd}
+                <button class="add-inline-btn" onclick={() => onadd('setpiece', entry.id)} title="Add {entry.label} to scene" aria-label="Add {entry.label} to scene">+</button>
+              {/if}
+            </div>
           </li>
         {/each}
       </ul>
@@ -345,6 +357,29 @@
     flex: 1;
     min-width: 0;
   }
+  .setpiece-actions {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .edit-in-sketcher-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 32px;
+    margin-right: 2px;
+    background: none;
+    color: #8899aa;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .edit-in-sketcher-btn:hover { color: #4a9eff; background: #1a2a3a; }
 
   .add-inline-btn {
     flex-shrink: 0;

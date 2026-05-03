@@ -297,7 +297,9 @@
     // Restore the last-opened assembly from OPFS, or migrate the legacy localStorage draft.
     void (async () => {
       savedAssemblies = await SketcherAssemblyStore.list();
-      const lastId = localStorage.getItem('sketcher-assembly-id');
+      // Allow deep-linking to a specific assembly via ?assemblyId=<id> (e.g. "Edit in Sketcher").
+      const urlAssemblyId = new URLSearchParams(window.location.search).get('assemblyId');
+      const lastId = urlAssemblyId ?? localStorage.getItem('sketcher-assembly-id');
     if (lastId) {
       const draft = await SketcherAssemblyStore.get(lastId);
       const meta = savedAssemblies.find((a) => a.id === lastId);
@@ -305,6 +307,7 @@
         sketcher.loadDraft(draft);
         currentAssemblyId = lastId;
         assemblyName = meta.name;
+        localStorage.setItem('sketcher-assembly-id', lastId);
       }
     } else {
       // Migrate legacy localStorage draft to a named OPFS assembly.
@@ -1543,12 +1546,25 @@
       return;
     }
     statusMessage = 'Exporting…';
+    // Clear any mesh highlight so the exported GLB has no selection overlay.
+    selection?.deselect();
     const { blob } = await exportGLB(session);
     const label = assemblyName.trim() || 'Untitled';
-    await OPFSCatalogueStore.add(blob, {
-      kind: 'set-piece',
-      label,
-    });
+
+    // Re-export path: update the existing catalogue entry in place.
+    if (currentAssemblyId) {
+      const existing = await OPFSCatalogueStore.findByAssemblyId(currentAssemblyId);
+      if (existing) {
+        await OPFSCatalogueStore.update(existing.id, blob, label);
+        new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
+        statusMessage = `Updated "${label}" in catalogue.`;
+        return;
+      }
+    }
+
+    // First export: create a new catalogue entry linked to this assembly.
+    await OPFSCatalogueStore.add(blob, { kind: 'set-piece', label }, currentAssemblyId ?? undefined);
+    new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
     statusMessage = `Exported "${label}" to catalogue.`;
   }
 </script>

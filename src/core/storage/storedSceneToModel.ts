@@ -4,7 +4,7 @@ import { getById } from '../catalogue/catalogue.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
 import { actorBlockToTracks, lightBlockToTracks, setPieceBlockToTracks, cameraBlockToTracks } from '../domain/blockCompiler.js';
 import type { Actor } from '../domain/Production.js';
-import type { ActorVoice, ActorBlock, LightBlock, SetPieceBlock, CameraBlock, Vec3, SceneAction } from '../domain/types.js';
+import type { ActorVoice, ActorBlock, LightBlock, SetPieceBlock, CameraBlock, Vec3, SceneAction, SetPiece } from '../domain/types.js';
 import type { Model } from '../../lib/Model.js';
 import type { StoredScene, StoredActor } from './types.js';
 
@@ -30,6 +30,25 @@ function defaultVoice(index: number): ActorVoice {
 }
 
 /**
+ * Resolve an `opfs://<id>` gltfPath reference to the current session blob URL.
+ * Returns the piece unchanged if the gltfPath is absent or not an opfs:// ref.
+ * Strips gltfPath when the entry cannot be resolved so SceneBridge falls back
+ * to the placeholder mesh geometry rather than attempting a broken URL load.
+ */
+function resolveOpfsGltfPath(
+  piece: SetPiece,
+  userEntries: Array<{ id: string; gltfPath?: string }>,
+): SetPiece {
+  if (!piece.gltfPath?.startsWith('opfs://')) return piece;
+  const entryId = piece.gltfPath.slice('opfs://'.length);
+  const entry = userEntries.find((e) => e.id === entryId);
+  if (entry?.gltfPath) return { ...piece, gltfPath: entry.gltfPath };
+  // Entry not found — remove gltfPath so SceneBridge uses the placeholder geometry.
+  const { gltfPath: _dropped, ...rest } = piece;
+  return rest as SetPiece;
+}
+
+/**
  * Deserialise a `StoredScene` + cast into a renderable `Model`.
  *
  * Resolves each `StoredActor` against the bundled catalogue to obtain its
@@ -38,8 +57,15 @@ function defaultVoice(index: number): ActorVoice {
  *
  * Actor IDs in `StoredScene.stagedActors` and `StoredScene.actions` must
  * match `StoredActor.id` — the IDs are not remapped.
+ *
+ * Pass `userEntries` to resolve `opfs://<id>` gltfPath references in set
+ * pieces to the current session blob URLs produced by OPFSCatalogueStore.
  */
-export function storedSceneToModel(storedScene: StoredScene, storedActors: StoredActor[]): Model {
+export function storedSceneToModel(
+  storedScene: StoredScene,
+  storedActors: StoredActor[],
+  userEntries: Array<{ id: string; gltfPath?: string }> = [],
+): Model {
   // Resolve stored actors into domain Actor objects.
   // The domain Actor's id must equal StoredActor.id so that all scene
   // references (stagedActors, actions) continue to resolve correctly.
@@ -72,7 +98,7 @@ export function storedSceneToModel(storedScene: StoredScene, storedActors: Store
     scene.addLight(light);
   }
   for (const piece of storedScene.set) {
-    scene.addSetPiece(piece);
+    scene.addSetPiece(resolveOpfsGltfPath(piece, userEntries));
   }
   for (const staged of storedScene.stagedActors) {
     const { actorId, ...opts } = staged;

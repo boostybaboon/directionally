@@ -6,6 +6,8 @@ import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 export type UserCatalogueEntry = (CharacterEntry | SetPieceEntry) & {
   userAdded: true;
   addedAt: number;
+  /** Set when this entry was exported from a Sketcher assembly — enables round-trip editing. */
+  sourceAssemblyId?: string;
 };
 
 /** Caller-provided metadata when adding a new asset (id, addedAt, and gltfPath are generated). */
@@ -30,6 +32,8 @@ type StoredEntry = {
   defaultAnimation?: string;
   geometry?: GeometryConfig;
   material?: MaterialConfig;
+  /** ID of the SketcherAssemblyStore entry that produced this asset. */
+  sourceAssemblyId?: string;
 };
 
 // ── Placeholder for GLB set-pieces without explicit procedural geometry ───────
@@ -90,6 +94,7 @@ function toUserEntry(s: StoredEntry, gltfPath: string): UserCatalogueEntry {
       defaultRotation: s.defaultRotation,
       userAdded: true,
       addedAt: s.addedAt,
+      sourceAssemblyId: s.sourceAssemblyId,
     };
   } else {
     return {
@@ -102,6 +107,7 @@ function toUserEntry(s: StoredEntry, gltfPath: string): UserCatalogueEntry {
       defaultRotation: s.defaultRotation,
       userAdded: true,
       addedAt: s.addedAt,
+      sourceAssemblyId: s.sourceAssemblyId,
     };
   }
 }
@@ -132,8 +138,15 @@ export async function list(): Promise<UserCatalogueEntry[]> {
 /**
  * Store a GLB blob to OPFS and register it in the metadata index.
  * Returns the new catalogue entry with a fresh gltfPath object URL.
+ *
+ * Pass `sourceAssemblyId` to record which SketcherAssemblyStore entry
+ * produced this asset — enables "Edit in Sketcher" and in-place re-export.
  */
-export async function add(blob: Blob, meta: NewAssetMeta): Promise<UserCatalogueEntry> {
+export async function add(
+  blob: Blob,
+  meta: NewAssetMeta,
+  sourceAssemblyId?: string,
+): Promise<UserCatalogueEntry> {
   const id = crypto.randomUUID();
   const filename = `${id}.glb`;
   const addedAt = Date.now();
@@ -161,6 +174,7 @@ export async function add(blob: Blob, meta: NewAssetMeta): Promise<UserCatalogue
           geometry: (meta as NewSetPieceMeta).geometry,
           material: (meta as NewSetPieceMeta).material,
         }),
+    ...(sourceAssemblyId ? { sourceAssemblyId } : {}),
   };
 
   const stored = await readMeta(dir);
@@ -168,6 +182,49 @@ export async function add(blob: Blob, meta: NewAssetMeta): Promise<UserCatalogue
   await writeMeta(dir, stored);
 
   return toUserEntry(entry, URL.createObjectURL(blob));
+}
+
+/**
+ * Overwrite the GLB for an existing entry in place, optionally updating the label.
+ * Returns the updated entry, or null if the id is not found.
+ */
+export async function update(
+  id: string,
+  blob: Blob,
+  label?: string,
+): Promise<UserCatalogueEntry | null> {
+  const dir = await _getDir();
+  const stored = await readMeta(dir);
+  const idx = stored.findIndex((e) => e.id === id);
+  if (idx === -1) return null;
+
+  const fh = await dir.getFileHandle(stored[idx].filename, { create: true });
+  const writable = await fh.createWritable();
+  await writable.write(blob);
+  await writable.close();
+
+  if (label !== undefined) stored[idx] = { ...stored[idx], label };
+  await writeMeta(dir, stored);
+
+  return toUserEntry(stored[idx], URL.createObjectURL(blob));
+}
+
+/**
+ * Find the catalogue entry whose `sourceAssemblyId` matches the given assembly id.
+ * Returns null when no entry has been exported from that assembly yet.
+ */
+export async function findByAssemblyId(assemblyId: string): Promise<UserCatalogueEntry | null> {
+  const dir = await _getDir();
+  const stored = await readMeta(dir);
+  const entry = stored.find((e) => e.sourceAssemblyId === assemblyId);
+  if (!entry) return null;
+  try {
+    const fh = await dir.getFileHandle(entry.filename);
+    const file = await fh.getFile();
+    return toUserEntry(entry, URL.createObjectURL(file));
+  } catch {
+    return null;
+  }
 }
 
 /**
