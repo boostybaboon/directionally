@@ -23,7 +23,7 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 
 ## Current state — April 2026
 
-The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → glue parts into assemblies (structural group + live joint) → transform (group-level and member-edit) → numeric transform inspector → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 473 tests passing.
+The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → attach parts into assemblies (structural group + live joint) → transform (group-level and member-edit) → numeric transform inspector → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 473 tests passing.
 
 **Completed phases:** S0, S1, S2, S3, S4, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a, SA14b, SA15, SA9, SA12, SA6, SA16, SA17, SA18.
 
@@ -31,49 +31,49 @@ No phases with open obligations remain. The items below are enhancements.
 
 ---
 
-## Phase SA14a — Multi-select and Weld/Unweld ✅ COMPLETE
+## Phase SA14a — Multi-select and Group/Ungroup ✅ COMPLETE
 
-Users frequently position several parts visually then want to treat them as one rigid unit for transport, scaling, and export. Weld achieves this without face-snap math — it captures current world transforms only.
+Users frequently position several parts visually then want to treat them as one rigid unit for transport, scaling, and export. Group achieves this without face-snap math — it captures current world transforms only.
 
 **Multi-select**
-- Shift-click adds a part (or weld group) to the selection; `SelectionManager` gains `selectedIds: Set<string>` alongside the existing primary `selectedId`
+- Shift-click adds a part (or group) to the selection; `SelectionManager` gains `selectedIds: Set<string>` alongside the existing primary `selectedId`
 - All selected parts receive a highlight outline
 - Clicking empty space or a single part clears the multi-selection
 
-**Weld**
+**Group**
 - Available when `selectedIds.size > 1`
 - Creates a new `THREE.Group` positioned at the centroid of the selection
 - Calls `group.attach(mesh)` for each selected part — Three.js decomposes `parentWorldInverse × meshMatrixWorld` into the correct local transform, preserving every part's current world position/rotation/scale
-- Registers the result as a `WeldGroup` in `GlueManager` (same `AssemblyGroup` type; weld groups have no `GlueJoint` records)
+- Registers the result as a group in `AttachManager` (same `AssemblyGroup` type; pure groups have no `AttachJoint` records)
 - TC gizmo attaches to the group; clicking any member selects the whole group, not the individual mesh
-- `WeldCommand` — snapshot-based undo/redo via `SketcherDocument.execute()`
+- `GroupCommand` — snapshot-based undo/redo via `SketcherDocument.execute()`
 
-**Unweld**
-- Available when the selected entity is a weld group
+**Ungroup**
+- Available when the selected entity is a group
 - Detaches all children, calls `scene.attach(mesh)` to restore each mesh's world transform at scene root, removes the `THREE.Group`
-- `UnweldCommand` — snapshot-based
+- `UngroupCommand` — snapshot-based
 
-**Constraint:** within a weld group the TC gizmo operates on the group only. To reposition a single member, use SA14b enter-group edit mode, or Unweld → reposition → Weld.
+**Constraint:** within a group the TC gizmo operates on the group only. To reposition a single member, use SA14b enter-group edit mode, or Ungroup → reposition → Group.
 
 ---
 
 ## Phase SA14b — Enter-group edit mode ✅ COMPLETE
 
-After welding, users occasionally need to tweak one member's position without dissolving the whole group (e.g. nudge a capsule eye slightly forward). Double-clicking a weld group enters edit mode for that group.
+After grouping, users occasionally need to tweak one member's position without dissolving the whole group (e.g. nudge a capsule eye slightly forward). Double-clicking a group enters edit mode for that group.
 
 **Behaviour**
-- Double-click a weld group → enters edit mode; subsequent single-click selects individual members inside the group
+- Double-click a group → enters edit mode; subsequent single-click selects individual members inside the group
 - TC, colour, texture, and snap-to-floor operations all target the active member in edit mode
 - The active member is highlighted; other group members are dimmed
 - Clicking outside the group, pressing Escape, or clicking "Exit group" in the toolbar returns to group-level selection
-- Edit mode is non-destructive — the weld group is not dissolved; the member's local transform within the group is updated in place
+- Edit mode is non-destructive — the group is not dissolved; the member's local transform within the group is updated in place
 - All transforms issued in edit mode are individually undoable
 
-**Why before unweld-as-last-resort:** most "I need to reposition an eye" operations don't need the group dissolved permanently. Enter-group → nudge → exit is faster and keeps the assembly intact.
+**Why before ungroup-as-last-resort:** most "I need to reposition an eye" operations don't need the group dissolved permanently. Enter-group → nudge → exit is faster and keeps the assembly intact.
 
 ---
 
-## Phase SA15 — Glue as structural group with live constraint ✅ COMPLETE
+## Phase SA15 — Attach as structural group with live constraint ✅ COMPLETE
 
 See [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHER_ROADMAP_ARCHIVE.md) for full details.
 
@@ -210,8 +210,8 @@ Notes:
 The sketcher is now a multi-document editor backed by OPFS. Each assembly has a name, persists across sessions, and can be re-opened for continued editing and re-export.
 
 **Changes delivered:**
-- `SketcherDraft` extended with `weldGroups?: WeldGroupSnapshot[]` — drafts now fully round-trip weld group topology
-- `CartoonSketcher.toDraft()` serialises weld groups; `loadDraft()` reconstructs them (mirrors `restoreSnapshot` pattern)
+- `SketcherDraft` extended with `groups?: GroupSnapshot[]` — drafts now fully round-trip group topology
+- `CartoonSketcher.toDraft()` serialises groups; `loadDraft()` reconstructs them (mirrors `restoreSnapshot` pattern)
 - New `SketcherAssemblyStore` (`src/core/storage/`) — OPFS-backed store: `list()`, `get()`, `create()`, `save()`, `remove()`; injectable directory provider for testability; metadata in `assemblies-meta.json`, each draft as `{id}.json`
 - `/sketch` route: `localStorage` autosave replaced by OPFS save via `SketcherAssemblyStore`; legacy `sketcher-draft` key migrated to a named OPFS entry on first run
 - Toolbar: assembly name text field (editable, blur/Enter renames) + **New** button + **Open…** toggle panel listing all saved assemblies with delete per-entry
@@ -254,37 +254,37 @@ interface OPFSCatalogueStore {
 
 ---
 
-## Phase SA19 — Precise glue point placement
+## Phase SA19 — Precise attach point placement
 
-The current glue system has two positioning modes: **free** (blob placed at exact click point) and **centre** (blob snapped to the face-group centroid). Neither is sufficient for precise assembly work, e.g. attaching four table legs at symmetric positions on the underside of a tabletop.
+The current attach system has two positioning modes: **free** (blob placed at exact click point) and **centre** (blob snapped to the face-group centroid). Neither is sufficient for precise assembly work, e.g. attaching four table legs at symmetric positions on the underside of a tabletop.
 
 ### Core concept: face tangent frame
 
 Every flat face (and, by extension, every face-group centroid on a curved surface) defines a local 2D coordinate system:
 
-- `n` — face normal, in mesh-local space (already stored as `GlueJoint.localNormalA`)
+- `n` — face normal, in mesh-local space (already stored as `AttachJoint.localNormalA`)
 - `t` — tangent: a stable vector perpendicular to `n` (e.g. derived via `Quaternion.setFromUnitVectors(worldY, n)`)
 - `b` — bitangent: `cross(n, t)`, completing the orthonormal frame
 
-A glue point is then expressed as:
+An attach point is then expressed as:
 
 ```
 localPoint = faceCentroid_local + dx·t + dy·b + dz·n
 ```
 
-`dx`, `dy` are the in-plane offset from the face centroid; `dz` is the normal-direction offset (see below). All three are in mesh-local units. `localPoint` is what gets stored in `GlueJoint.localPointA/B` — this is **already** how the data model works, so this phase is entirely additive UI.
+`dx`, `dy` are the in-plane offset from the face centroid; `dz` is the normal-direction offset (see below). All three are in mesh-local units. `localPoint` is what gets stored in `AttachJoint.localPointA/B` — this is **already** how the data model works, so this phase is entirely additive UI.
 
 Because `localPoint` is in mesh-local space, it survives arbitrary world-space rotation, translation, and uniform scaling of the part with no changes. To re-edit, the `dx`/`dy`/`dz` values are recovered by projecting `localPoint - faceCentroid_local` onto `t`, `b`, `n`.
 
 ### Normal-direction offset (`dz`)
 
-Without a non-zero `dz`, two curved surfaces that meet at a point (e.g. a cylinder glued into a sphere's side) produce a visual z-fighting artefact — the cylinder end cap and sphere surface overlap at the contact circle. A small inward `dz` offset (negative along the anchor's normal) sinks the appendage slightly into the anchor surface, producing a natural "embedded" look.
+Without a non-zero `dz`, two curved surfaces that meet at a point (e.g. a cylinder attached into a sphere's side) produce a visual z-fighting artefact — the cylinder end cap and sphere surface overlap at the contact circle. A small inward `dz` offset (negative along the anchor's normal) sinks the appendage slightly into the anchor surface, producing a natural "embedded" look.
 
 This is a per-joint property. A default of `dz = 0` preserves current behaviour. For the cylinder-into-sphere case a user would set e.g. `dz = -0.1` (push the cylinder 0.1 units into the sphere), which `resolveConstraints` honours by translating the result of `_applyJointPosition` an additional `dz` along the anchor normal.
 
 ### Proposed UX — "precise" placement mode
 
-A third toggle alongside the existing free / centre modes. When active, the glue pick becomes a three-sub-step flow:
+A third toggle alongside the existing free / centre modes. When active, the attach pick becomes a three-sub-step flow:
 
 1. **Face pick** — click selects the face as now; blob appears at face centroid (`centre` mode baseline).
 2. **Offset input** — a compact inline HUD appears with three fields: `dx`, `dy`, `dz` (all defaulting to 0). The blob marker updates live as the user types. Enter (or a Confirm button) locks the position and advances to the target phase.
@@ -294,14 +294,14 @@ For the table-leg workflow: anchor on tabletop underside → enter `(-0.7, -0.7,
 
 ### Editing existing joints
 
-The dream is a fully positionable glue system: select an existing assembled joint, open a properties panel that shows the anchor face, current `dx`/`dy`/`dz` values, and allows live editing. On change, `resolveConstraints` reruns and the assembly reflows immediately.
+The dream is a fully positionable attach system: select an existing assembled joint, open a properties panel that shows the anchor face, current `dx`/`dy`/`dz` values, and allows live editing. On change, `resolveConstraints` reruns and the assembly reflows immediately.
 
 The UX challenge is joint selection — an assembled part may be involved in multiple joints (e.g. a central hub with four spokes). The face-highlight hover logic already identifies which face-group was clicked, and each joint stores which face-group it uses (via the `localNormal` direction). These two can be correlated to identify the specific joint the user intends to edit.
 
 ### Implementation notes
 
-- `GlueJoint` type needs no schema change: `localPointA` already encodes any `dx`/`dy`/`dz` offset implicitly.
-- `_applyJointPosition` in `GlueManager` needs a small extension to apply the `dz` normal offset on top of the face-flush snap. Currently it snaps the target face flush with the anchor — a `dz` offset shifts the target an additional `dz · anchorWorldNormal` after snapping.
+- `AttachJoint` type needs no schema change: `localPointA` already encodes any `dx`/`dy`/`dz` offset implicitly.
+- `_applyJointPosition` in `AttachManager` needs a small extension to apply the `dz` normal offset on top of the face-flush snap. Currently it snaps the target face flush with the anchor — a `dz` offset shifts the target an additional `dz · anchorWorldNormal` after snapping.
 - The tangent-frame derivation is a pure utility function (no Three.js state): `(normal: THREE.Vector3) → { t, b }`. Deterministic so the same frame is reconstructed for round-trip editing.
 - Non-uniform scaling of a part after gluing will shift the stored `localPoint` proportionally in the scaled axis — the same limitation as every node-based CAD tool. Discourage non-uniform scaling of assembled parts.
 

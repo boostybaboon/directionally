@@ -5,7 +5,7 @@
   import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
   import { CartoonSketcher } from '../../core/sketcher/CartoonSketcher.js';
   import { SelectionManager } from '../../core/sketcher/SelectionManager.js';
-  import { faceGroupFromNormal, faceGroupLabel } from '../../core/sketcher/GlueManager.js';
+  import { faceGroupFromNormal, faceGroupLabel } from '../../core/sketcher/AttachManager.js';
   import { SketcherDocument } from '../../core/sketcher/SketcherDocument.js';
   import {
     InsertPartCommand,
@@ -15,11 +15,11 @@
     ChangeFaceColorCommand,
     ApplyTextureCommand,
     TransformPartCommand,
-    CommitGlueCommand,
-    UnglueAllCommand,
+    CommitAttachCommand,
+    DetachAllCommand,
     SnapToFloorCommand,
-    WeldCommand,
-    UnweldCommand,
+    GroupCommand,
+    UngroupCommand,
   } from '../../core/sketcher/sketcherCommands.js';
   import { exportGLB } from '../../core/sketcher/exportGLB.js';
   import * as OPFSCatalogueStore from '../../core/storage/OPFSCatalogueStore.js';
@@ -31,13 +31,13 @@
   let transformMode = $state<'translate' | 'rotate' | 'scale'>('translate');
   let selectedPartId = $state<string | null>(null);
   let selectedColor = $state('#8888cc');
-  // Number of currently selected meshes (primary + multi). Drives the Weld button.
+  // Number of currently selected meshes (primary + multi). Drives the Group button.
   let multiSelectedCount = $state(0);
-  // Whether the primary selected part belongs to a weld group (not a glue group).
-  let selectedGroupIsWeld = $state(false);
-  // Whether the primary selected part has any active glue joints.
-  let selectedPartHasGlue = $state(false);
-  // When non-null, we are in group edit mode — editing a single member of this weld group id.
+  // Whether the primary selected part belongs to a group (not attached).
+  let selectedGroupIsGrouped = $state(false);
+  // Whether the primary selected part has any active attach joints.
+  let selectedPartIsAttached = $state(false);
+  // When non-null, we are in group edit mode — editing a single member of this group id.
   let groupEditGroupId = $state<string | null>(null);
   // Face paint mode: when true, clicks lock and colour individual faces instead of selecting parts.
   let facePaintMode = $state(false);
@@ -60,10 +60,10 @@
   let currentAssemblyId = $state<string | null>(null);
   let savedAssemblies = $state<AssemblyMeta[]>([]);
   let showOpenPanel = $state(false);
-  // Glue interaction state
-  let gluePhase = $state<'src' | 'target' | null>(null);
+  // Attach interaction state
+  let attachPhase = $state<'src' | 'target' | null>(null);
   // The anchor blob placed in phase 'src'.
-  let glueSrcBlob = $state<{ partId: string; localPoint: THREE.Vector3; localNormal: THREE.Vector3; worldPoint: THREE.Vector3 } | null>(null);
+  let attachSrcBlob = $state<{ partId: string; localPoint: THREE.Vector3; localNormal: THREE.Vector3; worldPoint: THREE.Vector3 } | null>(null);
   // Diagnostic HUD: always shows what face + UV is under the mouse.
   let hoverInfo = $state('—');
 
@@ -83,10 +83,10 @@
   let animId: number;
   let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Yellow hover highlight shown over the hovered face during glue-pick.
+  // Yellow hover highlight shown over the hovered face during attach-pick.
   let faceHighlight: THREE.Mesh | null = null;
-  // Pink blob placed at the chosen src face to confirm the glue point.
-  let glueBlobMarker: THREE.Mesh | null = null;
+  // Pink blob placed at the chosen src face to confirm the attach point.
+  let attachBlobMarker: THREE.Mesh | null = null;
   // Original material properties for meshes dimmed during group edit mode.
   let dimmedMeshes: Array<{ mesh: THREE.Mesh; origTransparent: boolean[]; origOpacity: number[] }> = [];
 
@@ -119,8 +119,8 @@
   let sketchMode = $state<'polygon' | 'rectangle' | 'circle'>('polygon');
   let circleSegments = $state(32);
 
-  // SA12d: when true, glue src-pick snaps to the face-group centroid instead of the exact hit point.
-  let glueMidpointMode = $state(false);
+  // SA12d: when true, attach src-pick snaps to the face-group centroid instead of the exact hit point.
+  let attachMidpointMode = $state(false);
 
   // SA12a: transform inspector fields (world-space, shown when something is selected).
   let inspX = $state('0.000'); let inspY = $state('0.000'); let inspZ = $state('0.000');
@@ -143,8 +143,8 @@
   let tcDragStartScale: THREE.Vector3 | null = null;
   // Fine grid shown during polygon drawing; null when not drawing.
   let snapGrid: THREE.GridHelper | null = null;
-  // Meshes temporarily ghosted while the glue target phase is active.
-  let glueSrcGhostEntries: Array<{ mesh: THREE.Mesh; saved: Array<{ transparent: boolean; opacity: number }> }> = [];
+  // Meshes temporarily ghosted while the attach target phase is active.
+  let attachSrcGhostEntries: Array<{ mesh: THREE.Mesh; saved: Array<{ transparent: boolean; opacity: number }> }> = [];
 
   onMount(() => {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -229,8 +229,8 @@
         if (part) {
           selectedPartId = part.id;
           selectedColor = '#' + part.color.toString(16).padStart(6, '0');
-          selectedGroupIsWeld = sketcher.glueManager.isWeldGroup(part.id) || sketcher.glueManager.isInWeldComponent(part.id);
-          selectedPartHasGlue = sketcher.glueManager.getJoints().some(
+          selectedGroupIsGrouped = sketcher.attachManager.isGroup(part.id) || sketcher.attachManager.isInGroupComponent(part.id);
+          selectedPartIsAttached = sketcher.attachManager.getJoints().some(
             (j) => j.partAId === part.id || j.partBId === part.id,
           );
           refreshInspector();
@@ -249,8 +249,8 @@
         hoveredFaceHasTexture = false;
         lockedFaceMaterialIndex = null;
         lockedFaceHasTexture = false;
-        selectedGroupIsWeld = false;
-        selectedPartHasGlue = false;
+        selectedGroupIsGrouped = false;
+        selectedPartIsAttached = false;
         clearFaceHighlight();
         // tc.detach() already sets _root.visible = false; no need to touch it here.
       }
@@ -347,7 +347,7 @@
           break;
         case 'Escape':
           if (groupEditGroupId !== null) { exitGroupEditMode(); }
-          else if (gluePhase !== null) { cancelGluePick(); }
+          else if (attachPhase !== null) { cancelAttachPick(); }
           else if (sketcher.currentPhase === 'drawing') { isDrawing = false; hideSnapGrid(); sketcher.cancelSketch(); orbit.enabled = true; }
           else if (sketcher.currentPhase === 'hole-drawing') { isDrawing = false; hideSnapGrid(); sketcher.cancelHole(); }
           else if (sketcher.currentPhase === 'pending-holes') { isHolePending = false; sketcher.cancelPendingShape(); orbit.enabled = true; }
@@ -359,12 +359,12 @@
           if (e.shiftKey) { duplicateSelected(); }
           break;
         case 'g': case 'G':
-          if (gluePhase === null) startGluePick();
+          if (attachPhase === null) startAttachPick();
           break;
         case 'u': case 'U':
           if (selectedPartId) {
-            if (selectedPartHasGlue) unglueSelected();
-            else if (selectedGroupIsWeld) unweldSelected();
+            if (selectedPartIsAttached) detachSelected();
+            else if (selectedGroupIsGrouped) ungroupSelected();
           }
           break;
       }
@@ -396,7 +396,7 @@
   onDestroy(() => {
     cancelAnimationFrame(animId);
     clearFaceHighlight();
-    clearGlueBlobMarker();
+    clearAttachBlobMarker();
     selection?.dispose();
     tc?.dispose();
     sketcher?.dispose();
@@ -443,7 +443,7 @@
       tc.detach();
       return;
     }
-    const ag = sketcher.glueManager.groupForPart(selectedPartId);
+    const ag = sketcher.attachManager.groupForPart(selectedPartId);
     if (ag) {
       selection.selectGroup(part.mesh, ag.group);
       tc.attach(ag.group);
@@ -463,7 +463,7 @@
     const session = sketcher.getSession();
     const part = session.parts.find((p) => p.id === selectedPartId);
     if (!part) return;
-    const ag = sketcher.glueManager.groupForPart(selectedPartId);
+    const ag = sketcher.attachManager.groupForPart(selectedPartId);
     // In member-edit mode TC is on the mesh; in group-level mode TC is on the group.
     const target: THREE.Object3D =
       groupEditGroupId !== null ? part.mesh : (ag ? ag.group : part.mesh);
@@ -528,7 +528,7 @@
     const session = sketcher.getSession();
     const part = session.parts.find((p) => p.id === selectedPartId);
     if (!part) return null;
-    const ag = sketcher.glueManager.groupForPart(selectedPartId);
+    const ag = sketcher.attachManager.groupForPart(selectedPartId);
     const mode: 'group' | 'member' = groupEditGroupId !== null ? 'member' : 'group';
     const target: THREE.Object3D = (mode === 'group' && ag) ? ag.group : part.mesh;
     return { target, pos, quat: new THREE.Quaternion().setFromEuler(euler), scale, mode };
@@ -590,10 +590,10 @@
     const session = sketcher.getSession();
     const part = session.parts.find((p) => p.mesh === mesh);
     if (!part) return;
-    const ag = sketcher.glueManager.groupForPart(part.id);
+    const ag = sketcher.attachManager.groupForPart(part.id);
     selection.deselect();
     if (ag) {
-      // Delete all members of the weld group as one undoable action.
+      // Delete all members of the group as one undoable action.
       const before = sketcherDoc.captureSnapshot();
       for (const pid of [...ag.partIds]) sketcher.removePart(pid);
       sketcherDoc.record(before, sketcherDoc.captureSnapshot(), 'Delete group');
@@ -647,8 +647,8 @@
     const group = faceGroupFromNormal(hitMesh, localNormal);
     const label = faceGroupLabel(hitMesh.geometry, group);
     const uv = hit.uv ? `(${hit.uv.x.toFixed(2)}, ${hit.uv.y.toFixed(2)})` : 'n/a';
-    const inWeldGroup = part ? sketcher.glueManager.isWeldGroup(part.id) : false;
-    const partLabel = inWeldGroup ? `${part?.name ?? '?'} (weld group — click to select group)` : (part?.name ?? '?');
+    const inGroup = part ? sketcher.attachManager.isGroup(part.id) : false;
+    const partLabel = inGroup ? `${part?.name ?? '?'} (group — click to select group)` : (part?.name ?? '?');
     hoverInfo = `${partLabel} · ${label} · uv ${uv}`;
     // Track which material index is under the cursor so face paint clicks know which slot to update.
     if (facePaintMode && part?.id === selectedPartId) {
@@ -672,7 +672,7 @@
     if (handleDragActive) {
       sketcher.onPointerMove(x, y);
     }
-    if (gluePhase !== null || facePaintMode) {
+    if (attachPhase !== null || facePaintMode) {
       updateFaceHighlight(x, y);
     }
   }
@@ -690,13 +690,13 @@
       return;
     }
 
-    if (gluePhase === 'src') {
+    if (attachPhase === 'src') {
       commitSrcFacePick(x, y);
       return;
     }
 
-    if (gluePhase === 'target') {
-      commitGlueClick(x, y);
+    if (attachPhase === 'target') {
+      commitAttachClick(x, y);
       return;
     }
 
@@ -709,7 +709,7 @@
       // When the primary selection or the clicked item is in a group, the group is
       // treated as an atomic unit — any member of that group acts as a handle for
       // the entire group. This lets you shift-click a group to add it to a
-      // multi-select for welding (e.g. weld an existing A+B group with standalone D).
+      // multi-select for grouping (e.g. group an existing A+B with standalone D).
       if (e.shiftKey && selection.selectedMesh) {
         const hit = selection.pick(x, y, camera, meshes);
         if (hit && hit !== selection.selectedMesh) {
@@ -751,8 +751,8 @@
       // ── Group edit mode routing ───────────────────────────────────────────
       if (groupEditGroupId !== null) {
         const hitPart = hit ? session.parts.find((p) => p.mesh === hit) : undefined;
-        const ag = hitPart ? sketcher.glueManager.groupForPart(hitPart.id) : undefined;
-        const editAg = sketcher.glueManager.getAssemblyGroups().find((g) => g.id === groupEditGroupId);
+        const ag = hitPart ? sketcher.attachManager.groupForPart(hitPart.id) : undefined;
+        const editAg = sketcher.attachManager.getAssemblyGroups().find((g) => g.id === groupEditGroupId);
         if (ag && editAg && ag.id === editAg.id) {
           // Clicked a member inside the group being edited — switch the active member.
           enterGroupEditMode(ag, hit!);
@@ -761,7 +761,7 @@
           exitGroupEditMode();
           if (hit) {
             const newHitPart = session.parts.find((p) => p.mesh === hit);
-            const newAg = newHitPart ? sketcher.glueManager.groupForPart(newHitPart.id) : undefined;
+            const newAg = newHitPart ? sketcher.attachManager.groupForPart(newHitPart.id) : undefined;
             if (newAg) {
               selection.selectGroup(hit, newAg.group);
               tc.attach(newAg.group);
@@ -780,7 +780,7 @@
       if (hit) {
         // In normal mode, selecting any mesh in a group selects the whole group.
         const hitPart = session.parts.find((p) => p.mesh === hit);
-        const ag = hitPart ? sketcher.glueManager.groupForPart(hitPart.id) : undefined;
+        const ag = hitPart ? sketcher.attachManager.groupForPart(hitPart.id) : undefined;
         if (ag) {
           // Amber bounding box on the group instead of per-mesh outlines.
           selection.selectGroup(hit, ag.group);
@@ -795,16 +795,16 @@
 
   /**
    * Build the status bar hint shown when a group is selected as a whole.
-   * Must be called after selectGroup() so selectedPartHasGlue and selectedGroupIsWeld
+   * Must be called after selectGroup() so selectedPartIsAttached and selectedGroupIsGrouped
    * are already updated by the onSelectionChanged callback.
    */
   function groupStatusHint(): string {
     const base = 'Group selected. W/E/R transform · double-click to edit a member';
-    if (selectedPartHasGlue) return base + ' · G=glue edit · U=unglue';
-    if (selectedGroupIsWeld) return base + ' · U=unweld';
+    if (selectedPartIsAttached) return base + ' · G=attach edit · U=detach';
+    if (selectedGroupIsGrouped) return base + ' · U=ungroup';
     return base;
-    // Note: when both selectedPartHasGlue and selectedGroupIsWeld are true (weld member
-    // that also has direct glue joints), U=unglue takes priority; Unweld button is
+    // Note: when both selectedPartIsAttached and selectedGroupIsGrouped are true (group member
+    // that also has direct attach joints), U=detach takes priority; Ungroup button is
     // still visible separately in the toolbar.
   }
 
@@ -842,36 +842,36 @@
     }
   }
 
-  // ── Glue interaction ─────────────────────────────────────────────────────────
+  // ── Attach interaction ───────────────────────────────────────────────────────
 
-  function startGluePick() {
+  function startAttachPick() {
     // Detach the transform gizmo so it doesn't block face picking.
     tc.detach();
-    gluePhase = 'src';
+    attachPhase = 'src';
     statusMessage = 'Click any surface to place the anchor blob. Esc cancels.';
   }
 
-  function cancelGluePick() {
-    restoreGlueSrcGhost();
-    gluePhase = null;
-    glueSrcBlob = null;
-    glueMidpointMode = false;
+  function cancelAttachPick() {
+    restoreAttachSrcGhost();
+    attachPhase = null;
+    attachSrcBlob = null;
+    attachMidpointMode = false;
     clearFaceHighlight();
-    clearGlueBlobMarker();
+    clearAttachBlobMarker();
     // Restore the gizmo to whatever is currently selected.
     if (selectedPartId) {
       const session = sketcher.getSession();
       const part = session.parts.find((p) => p.id === selectedPartId);
       if (part) {
-        const ag = sketcher.glueManager.groupForPart(part.id);
+        const ag = sketcher.attachManager.groupForPart(part.id);
         tc.attach(ag ? ag.group : part.mesh);
       }
     }
     statusMessage = '';
   }
 
-  function restoreGlueSrcGhost() {
-    for (const { mesh, saved } of glueSrcGhostEntries) {
+  function restoreAttachSrcGhost() {
+    for (const { mesh, saved } of attachSrcGhostEntries) {
       const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.MeshStandardMaterial[];
       mats.forEach((m, i) => {
         m.transparent = saved[i].transparent;
@@ -879,7 +879,7 @@
         m.needsUpdate = true;
       });
     }
-    glueSrcGhostEntries = [];
+    attachSrcGhostEntries = [];
   }
 
   function clearFaceHighlight() {
@@ -891,12 +891,12 @@
     }
   }
 
-  function clearGlueBlobMarker() {
-    if (glueBlobMarker) {
-      scene.remove(glueBlobMarker);
-      glueBlobMarker.geometry.dispose();
-      (glueBlobMarker.material as THREE.Material).dispose();
-      glueBlobMarker = null;
+  function clearAttachBlobMarker() {
+    if (attachBlobMarker) {
+      scene.remove(attachBlobMarker);
+      attachBlobMarker.geometry.dispose();
+      (attachBlobMarker.material as THREE.Material).dispose();
+      attachBlobMarker = null;
     }
   }
 
@@ -904,16 +904,16 @@
     const session = sketcher.getSession();
 
     // Face-paint: highlight only the selected part's faces.
-    // Glue src: hover over any part. Glue target: exclude the src blob's group.
+    // Attach src: hover over any part. Attach target: exclude the src blob's group.
     let meshesToHit: THREE.Mesh[];
     if (facePaintMode && selectedPartId) {
       const selectedPart = session.parts.find((p) => p.id === selectedPartId);
       meshesToHit = selectedPart ? [selectedPart.mesh] : [];
-    } else if (gluePhase === 'src') {
+    } else if (attachPhase === 'src') {
       meshesToHit = session.parts.map((p) => p.mesh);
     } else {
-      const srcGroup = glueSrcBlob ? sketcher.glueManager.groupForPart(glueSrcBlob.partId) : undefined;
-      const excludedIds = srcGroup ? srcGroup.partIds : glueSrcBlob ? [glueSrcBlob.partId] : [];
+      const srcGroup = attachSrcBlob ? sketcher.attachManager.groupForPart(attachSrcBlob.partId) : undefined;
+      const excludedIds = srcGroup ? srcGroup.partIds : attachSrcBlob ? [attachSrcBlob.partId] : [];
       meshesToHit = session.parts.filter((p) => !excludedIds.includes(p.id)).map((p) => p.mesh);
     }
     if (!meshesToHit.length) return;
@@ -928,7 +928,7 @@
     const hitMeshForHighlight = hits[0].object as THREE.Mesh;
     const highlightFaceNormal = hits[0].face?.normal?.clone() ?? new THREE.Vector3(0, 1, 0);
     const hitWorldNormal = highlightFaceNormal.clone().transformDirection(hits[0].object.matrixWorld);
-    const dotWorldPos = (glueMidpointMode && !facePaintMode)
+    const dotWorldPos = (attachMidpointMode && !facePaintMode)
       ? computeGroupCentreLocal(hitMeshForHighlight, hits[0].face?.materialIndex ?? 0, highlightFaceNormal)
           .applyMatrix4(hitMeshForHighlight.matrixWorld)
       : hits[0].point.clone();
@@ -941,7 +941,7 @@
     scene.add(faceHighlight);
   }
 
-  // ── SA12d: Glue face-group centroid helper ────────────────────────────────
+  // ── SA12d: Attach face-group centroid helper ───────────────────────────────
 
   /**
    * Return the surface centre of a face group in mesh-local space.
@@ -1027,41 +1027,41 @@
     const matInv = hitMesh.matrixWorld.clone().invert();
     // In midpoint mode, snap the pick to the draw-group centroid instead of the exact cursor position.
     const hitFaceNormal = (hits[0].face?.normal ?? new THREE.Vector3(0, 1, 0)).clone();
-    const localPoint = glueMidpointMode
+    const localPoint = attachMidpointMode
       ? computeGroupCentreLocal(hitMesh, hits[0].face?.materialIndex ?? 0, hitFaceNormal)
       : hits[0].point.clone().applyMatrix4(matInv);
 
     // Pink blob at the anchor point. In midpoint mode, convert the local centroid
     // back to world space so the blob appears at the snapped position, not the click point.
     const hitNormal = hitFaceNormal.clone().transformDirection(hitMesh.matrixWorld);
-    const anchorWorldPos = glueMidpointMode
+    const anchorWorldPos = attachMidpointMode
       ? localPoint.clone().applyMatrix4(hitMesh.matrixWorld)
       : hits[0].point.clone();
     const blobPos = anchorWorldPos.clone().addScaledVector(hitNormal, 0.04);
-    clearGlueBlobMarker();
+    clearAttachBlobMarker();
     const geo = new THREE.SphereGeometry(0.12, 10, 8);
     const mat = new THREE.MeshBasicMaterial({ color: 0xff44aa, depthTest: false, transparent: true, opacity: 0.85 });
-    glueBlobMarker = new THREE.Mesh(geo, mat);
-    glueBlobMarker.position.copy(blobPos);
-    scene.add(glueBlobMarker);
+    attachBlobMarker = new THREE.Mesh(geo, mat);
+    attachBlobMarker.position.copy(blobPos);
+    scene.add(attachBlobMarker);
 
     clearFaceHighlight();
-    glueSrcBlob = { partId: part.id, localPoint, localNormal: hitFaceNormal, worldPoint: anchorWorldPos.clone() };
+    attachSrcBlob = { partId: part.id, localPoint, localNormal: hitFaceNormal, worldPoint: anchorWorldPos.clone() };
 
     // Ghost the src entity so it doesn't occlude clicks on parts behind it.
-    const srcGroup = sketcher.glueManager.groupForPart(part.id);
+    const srcGroup = sketcher.attachManager.groupForPart(part.id);
     const srcPartIds = srcGroup ? srcGroup.partIds : [part.id];
-    glueSrcGhostEntries = [];
+    attachSrcGhostEntries = [];
     for (const pid of srcPartIds) {
       const sp = session.parts.find((x) => x.id === pid);
       if (!sp) continue;
       const mats = (Array.isArray(sp.mesh.material) ? sp.mesh.material : [sp.mesh.material]) as THREE.MeshStandardMaterial[];
       const saved = mats.map((m) => ({ transparent: m.transparent, opacity: m.opacity }));
-      glueSrcGhostEntries.push({ mesh: sp.mesh, saved });
+      attachSrcGhostEntries.push({ mesh: sp.mesh, saved });
       for (const m of mats) { m.transparent = true; m.opacity = 0.2; m.needsUpdate = true; }
     }
 
-    gluePhase = 'target';
+    attachPhase = 'target';
     statusMessage = 'Now click any surface on a different part to snap it here. Esc cancels.';
   }
 
@@ -1069,16 +1069,16 @@
    * Phase 'target' click: snap the mover part so its clicked surface point
    * meets the anchor blob placed in phase 'src'.
    */
-  function commitGlueClick(ndcX: number, ndcY: number) {
+  function commitAttachClick(ndcX: number, ndcY: number) {
     const session = sketcher.getSession();
-    if (!glueSrcBlob) { cancelGluePick(); return; }
+    if (!attachSrcBlob) { cancelAttachPick(); return; }
 
-    const srcPart = session.parts.find((p) => p.id === glueSrcBlob!.partId);
-    if (!srcPart) { cancelGluePick(); return; }
+    const srcPart = session.parts.find((p) => p.id === attachSrcBlob!.partId);
+    if (!srcPart) { cancelAttachPick(); return; }
 
     // Exclude the anchor part and all parts in its group.
-    const srcGroup = sketcher.glueManager.groupForPart(glueSrcBlob.partId);
-    const excludedIds = srcGroup ? srcGroup.partIds : [glueSrcBlob.partId];
+    const srcGroup = sketcher.attachManager.groupForPart(attachSrcBlob.partId);
+    const excludedIds = srcGroup ? srcGroup.partIds : [attachSrcBlob.partId];
     const targetMeshes = session.parts
       .filter((p) => !excludedIds.includes(p.id))
       .map((p) => p.mesh);
@@ -1096,47 +1096,47 @@
     // In midpoint mode, snap the target anchor to the face centroid so both
     // contact points are centred on their respective faces.
     const targetFaceNormal = (hits[0].face?.normal ?? new THREE.Vector3(0, 1, 0)).clone();
-    const localPointTarget = glueMidpointMode
+    const localPointTarget = attachMidpointMode
       ? computeGroupCentreLocal(hitMesh, hits[0].face?.materialIndex ?? 0, targetFaceNormal)
       : hits[0].point.clone().applyMatrix4(hitMesh.matrixWorld.clone().invert());
     const localNormalTarget = (hits[0].face?.normal ?? new THREE.Vector3(0, 1, 0)).clone();
 
     // Anchor (A) stays; mover (B) rotates to face-align then snaps to meet the anchor point.
-    sketcherDoc.execute(new CommitGlueCommand(
+    sketcherDoc.execute(new CommitAttachCommand(
       sketcher,
-      srcPart, glueSrcBlob.localPoint, glueSrcBlob.localNormal,
+      srcPart, attachSrcBlob.localPoint, attachSrcBlob.localNormal,
       targetPart, localPointTarget, localNormalTarget,
     ));
 
     clearFaceHighlight();
-    clearGlueBlobMarker();
-    restoreGlueSrcGhost();
-    gluePhase = null;
-    glueSrcBlob = null;
-    statusMessage = 'Glued.';
+    clearAttachBlobMarker();
+    restoreAttachSrcGhost();
+    attachPhase = null;
+    attachSrcBlob = null;
+    statusMessage = 'Attached.';
 
-    // Re-attach TC to the combined glue group.
-    const ag = sketcher.glueManager.groupForPart(targetPart.id);
+    // Re-attach TC to the combined attach group.
+    const ag = sketcher.attachManager.groupForPart(targetPart.id);
     if (ag) {
       selection.selectGroup(targetPart.mesh, ag.group);
       tc.attach(ag.group);
     } else {
       tc.attach(targetPart.mesh);
     }
-    selectedPartHasGlue = true;
+    selectedPartIsAttached = true;
   }
 
-  function unglueSelected() {
+  function detachSelected() {
     if (!selectedPartId) return;
     // Clear the amber group box before the command dissolves the group.
     // _dissolveGroup re-parents group children to the scene via scene.attach(),
     // which would leave the box as a visible ghost if not removed first.
     selection.clearGroupBox();
-    sketcherDoc.execute(new UnglueAllCommand(selectedPartId, sketcher));
+    sketcherDoc.execute(new DetachAllCommand(selectedPartId, sketcher));
     // Re-attach TC and restore per-mesh selection outline.
     const part = sketcher.getSession().parts.find((p) => p.id === selectedPartId);
     if (part) {
-      const ag = sketcher.glueManager.groupForPart(part.id);
+      const ag = sketcher.attachManager.groupForPart(part.id);
       if (ag) {
         selection.selectGroup(part.mesh, ag.group);
         tc.attach(ag.group);
@@ -1145,8 +1145,8 @@
         tc.attach(part.mesh);
       }
     }
-    selectedPartHasGlue = false;
-    statusMessage = 'Unglued.';
+    selectedPartIsAttached = false;
+    statusMessage = 'Detached.';
   }
 
   // ── Texture drag-and-drop ────────────────────────────────────────────────────
@@ -1364,7 +1364,7 @@
   }
 
   function clearSession() {
-    if (gluePhase !== null) cancelGluePick();
+    if (attachPhase !== null) cancelAttachPick();
     selection.deselect();
     sketcher.clearSession();
     sketcherDoc.clearStack();
@@ -1376,7 +1376,7 @@
       await SketcherAssemblyStore.save(currentAssemblyId, assemblyName, sketcher.toDraft());
     }
     clearSession();
-    const meta = await SketcherAssemblyStore.create('Untitled', { version: 2, parts: [], joints: [], weldGroups: [] });
+    const meta = await SketcherAssemblyStore.create('Untitled', { version: 2, parts: [], joints: [], groups: [] });
     currentAssemblyId = meta.id;
     assemblyName = meta.name;
     localStorage.setItem('sketcher-assembly-id', meta.id);
@@ -1457,7 +1457,7 @@
     restoreGroupDimming();
     const prevGroupId = groupEditGroupId;
     groupEditGroupId = null;
-    const ag = sketcher.glueManager.getAssemblyGroups().find((g) => g.id === prevGroupId);
+    const ag = sketcher.attachManager.getAssemblyGroups().find((g) => g.id === prevGroupId);
     if (ag && selection.selectedMesh) {
       // Switch from per-mesh outline back to amber group bounding box.
       selection.selectGroup(selection.selectedMesh, ag.group);
@@ -1468,17 +1468,17 @@
     }
   }
 
-  function weldSelected() {    if (!sketcher || !selectedPartId) return;
+  function groupSelected() {    if (!sketcher || !selectedPartId) return;
     const meshes = selection.selectedMeshes;
     if (meshes.length < 2) return;
     const session = sketcher.getSession();
     // Expand each selected mesh to cover all members of its assembly group (if any),
-    // so shift-clicking a group handle brings the whole group into the weld.
+    // so shift-clicking a group handle brings the whole group into the group.
     const partIds = [...new Set(
       meshes.flatMap((m) => {
         const part = session.parts.find((p) => p.mesh === m);
         if (!part) return [];
-        const ag = sketcher.glueManager.groupForPart(part.id);
+        const ag = sketcher.attachManager.groupForPart(part.id);
         return ag ? ag.partIds : [part.id];
       })
     )];
@@ -1486,26 +1486,26 @@
     selection.clearMultiSelection();
     selection.deselect();
     multiSelectedCount = 0;
-    const cmd = new WeldCommand(partIds, sketcher);
+    const cmd = new GroupCommand(partIds, sketcher);
     sketcherDoc.execute(cmd);
-    // Re-select the group so TC attaches to the weld group and the button state updates.
-    const ag = sketcher.glueManager.groupForPart(partIds[0]);
+    // Re-select the group so TC attaches to the group and the button state updates.
+    const ag = sketcher.attachManager.groupForPart(partIds[0]);
     const firstPart = sketcher.getSession().parts.find((p) => p.id === partIds[0]);
     if (ag && firstPart) {
       selection.selectGroup(firstPart.mesh, ag.group);
       tc.attach(ag.group);
-      selectedGroupIsWeld = true;
+      selectedGroupIsGrouped = true;
     }
-    statusMessage = 'Welded. Parts grouped as one rigid unit.';
+    statusMessage = 'Grouped. Parts joined as one rigid unit.';
   }
 
-  function unweldSelected() {
+  function ungroupSelected() {
     if (!sketcher || !selectedPartId) return;
     selection.clearGroupBox();
-    sketcherDoc.execute(new UnweldCommand(selectedPartId, sketcher));
+    sketcherDoc.execute(new UngroupCommand(selectedPartId, sketcher));
     const part = sketcher.getSession().parts.find((p) => p.id === selectedPartId);
     if (part) {
-      const ag = sketcher.glueManager.groupForPart(selectedPartId);
+      const ag = sketcher.attachManager.groupForPart(selectedPartId);
       if (ag) {
         selection.selectGroup(part.mesh, ag.group);
         tc.attach(ag.group);
@@ -1514,13 +1514,13 @@
         tc.attach(part.mesh);
       }
     }
-    selectedGroupIsWeld = false;
-    statusMessage = 'Unwelded.';
+    selectedGroupIsGrouped = false;
+    statusMessage = 'Ungrouped.';
   }
   function onDoubleClick(e: MouseEvent) {
     if (!sketcher) return;
     if (sketcher.currentPhase !== 'idle') return;
-    if (gluePhase !== null) return;
+    if (attachPhase !== null) return;
     const [x, y] = toNDC(e);
     const session = sketcher.getSession();
     const meshes = session.parts.map((p) => p.mesh);
@@ -1528,7 +1528,7 @@
     if (!hit) return;
     const hitPart = session.parts.find((p) => p.mesh === hit);
     if (!hitPart) return;
-    const ag = sketcher.glueManager.groupForPart(hitPart.id);
+    const ag = sketcher.attachManager.groupForPart(hitPart.id);
     if (!ag) return;
     enterGroupEditMode(ag, hit);
   }
@@ -1651,29 +1651,29 @@
     <button onclick={() => insertPrimitive('cone')}>Cone</button>
     <button onclick={() => insertPrimitive('torus')}>Torus</button>
     <span class="separator"></span>
-    <button class="glue-btn" class:active={gluePhase !== null} onclick={startGluePick} title="G">Glue…</button>
-    {#if gluePhase !== null}
+    <button class="tool-btn" class:active={attachPhase !== null} onclick={startAttachPick} title="G">Attach…</button>
+    {#if attachPhase !== null}
       <button
-        class="glue-btn"
-        class:active={glueMidpointMode}
-        title="Snap glue anchor to face-group centroid"
-        onclick={() => { glueMidpointMode = !glueMidpointMode; }}
+        class="tool-btn"
+        class:active={attachMidpointMode}
+        title="Snap attach anchor to face-group centroid"
+        onclick={() => { attachMidpointMode = !attachMidpointMode; }}
       >⊕ Centre</button>
     {/if}
     {#if groupEditGroupId !== null}
-      <button class="glue-btn" onclick={exitGroupEditMode} title="Esc">Exit group edit</button>
+      <button class="tool-btn" onclick={exitGroupEditMode} title="Esc">Exit group edit</button>
     {/if}
     {#if multiSelectedCount > 1}
-      <button class="glue-btn" onclick={weldSelected} title="Weld selected parts into one rigid group">Weld</button>
+      <button class="tool-btn" onclick={groupSelected} title="Group selected parts into one rigid group">Group</button>
     {/if}
     {#if selectedPartId}
-      {#if selectedGroupIsWeld}
-        <button class="glue-btn" onclick={unweldSelected} title="Dissolve weld group">Unweld</button>
+      {#if selectedGroupIsGrouped}
+        <button class="tool-btn" onclick={ungroupSelected} title="Dissolve group">Ungroup</button>
       {/if}
-      {#if selectedPartHasGlue}
-        <button class="glue-btn" onclick={unglueSelected} title="U">Unglue</button>
+      {#if selectedPartIsAttached}
+        <button class="tool-btn" onclick={detachSelected} title="U">Detach</button>
       {/if}
-      <button class="glue-btn" onclick={snapToFloor} title="F">⬇ Floor</button>
+      <button class="tool-btn" onclick={snapToFloor} title="F">⬇ Floor</button>
     {/if}
     {#if isDrawing}
       <span class="separator"></span>
@@ -2404,11 +2404,11 @@
     opacity: 1;
   }
 
-  .glue-btn {
+  .tool-btn {
     font-size: 11px;
     padding: 3px 6px;
   }
-  .glue-btn.active {
+  .tool-btn.active {
     background: #4a3a00;
     border-color: #cc9900;
     color: #ffee88;

@@ -6,7 +6,7 @@ import * as THREE from 'three';
  * Standalone part selection: cyan EdgesGeometry outline added as a child of
  * the selected mesh — follows TransformControls drags automatically.
  *
- * Weld group selection: a single amber BoxHelper around the THREE.Group
+ * Group selection: a single amber BoxHelper around the THREE.Group
  * replaces per-mesh outlines entirely, making it unambiguous that the group
  * is the selected entity rather than any individual mesh.
  *
@@ -19,7 +19,7 @@ export class SelectionManager {
   private outline: THREE.LineSegments | null = null;
   private _multiSelected: Map<THREE.Mesh, THREE.LineSegments> = new Map();
 
-  // Weld group selection state — mutually exclusive with per-mesh outline.
+  // Group selection state — mutually exclusive with per-mesh outline.
   private _groupBox: THREE.LineSegments | null = null;
   private _groupBoxParent: THREE.Group | null = null;
   /** Soft white outline on the representative mesh — visible alongside the amber group box. */
@@ -85,7 +85,7 @@ export class SelectionManager {
   }
 
   /**
-   * Select a weld group as a unit.
+   * Select a group as a unit.
    *
    * Shows a single amber BoxHelper around the THREE.Group instead of per-mesh
    * outlines. The representative mesh is stored as the primary selection so
@@ -149,11 +149,11 @@ export class SelectionManager {
     this.onSelectionChanged?.(representativeMesh);
   }
 
-  /** Remove the weld group bounding box (and member hint) if one is shown. */
+  /** Remove the group bounding box (and member hint) if one is shown. */
   clearGroupBox(): void {
     if (this._groupBox) {
       // Use removeFromParent() rather than _groupBoxParent.remove() because
-      // GlueManager._dissolveGroup() re-parents group children to the scene
+      // AttachManager._dissolveGroup() re-parents group children to the scene
       // via scene.attach(), making _groupBoxParent stale. removeFromParent()
       // works regardless of what the current parent is.
       this._groupBox.removeFromParent();

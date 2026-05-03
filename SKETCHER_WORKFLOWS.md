@@ -144,31 +144,31 @@ Requires an image file on disk (any JPG/PNG).
 
 ---
 
-## T08 — Multi-select and Weld / Unweld
+## T08 — Multi-select and Group / Ungroup
 
-Weld fuses selected parts into a rigid THREE.Group that moves and scales as one unit.
+Group fuses selected parts into a rigid THREE.Group that moves and scales as one unit.
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
 | 1 | Insert a **Cube** and a **Cylinder**; position them side by side | — | OK | |
-| 2 | Click the cube; **Shift+click** the cylinder | Both highlighted; **Weld** button appears | OK | |
-| 3 | Click **Weld** | Status "Welded. Parts grouped as one rigid unit."; TC attaches to group centroid | OK | |
+| 2 | Click the cube; **Shift+click** the cylinder | Both highlighted; **Group** button appears | OK | |
+| 3 | Click **Group** | Status "Grouped. Parts joined as one rigid unit."; TC attaches to group centroid | OK | |
 | 4 | Drag the TC gizmo | Both parts move together | OK | |
-| 5 | Press **R** and scale the weld group | Both parts scale together | OK | |
-| 6 | Click any member of the group | Whole group selects; **Unweld** button appears | OK | |
-| 7 | Click **Unweld** | Status "Unwelded. Parts returned to scene root."; TC attaches to the clicked mesh | OK | |
+| 5 | Press **R** and scale the group | Both parts scale together | OK | |
+| 6 | Click any member of the group | Whole group selects; **Ungroup** button appears | OK | |
+| 7 | Click **Ungroup** | Status "Ungrouped. Parts returned to scene root."; TC attaches to the clicked mesh | OK | |
 | 8 | Drag the cube alone | Cylinder stays in place | OK | |
-| 9 | Ctrl+Z twice | Unweld and Weld both undo; group restored | OK | |
+| 9 | Ctrl+Z twice | Ungroup and Group both undo; group restored | OK | |
 
 ---
 
 ## T09 — Enter-group edit mode
 
-Requires a weld group from T08 (or create one).
+Requires a group from T08 (or create one).
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Click the weld group to select it | TC at group centroid | OK | |
+| 1 | Click the group to select it | TC at group centroid | OK | |
 | 2 | **Double-click** one member | Group edit mode: TC attaches to that mesh; other members dim to ~20% opacity; **Exit group edit** button appears | OK | |
 | 3 | Drag the TC gizmo | Only that member moves | OK | |
 | 4 | Single-click a different member inside the group | TC switches to the new member | OK | |
@@ -178,113 +178,113 @@ Requires a weld group from T08 (or create one).
 
 ---
 
-## T10 — Glue (live positional constraint)
+## T10 — Attach (live positional constraint)
 
-Glue attaches the *mover*'s face flush to the *anchor*'s face contact point. Moving the anchor pulls the mover with it by re-running constraint resolution each frame. Parts are **not** merged into a group — they stay at scene root or in their own weld groups.
+Attach connects the *mover*'s face flush to the *anchor*'s face contact point. Moving the anchor pulls the mover with it by re-running constraint resolution each frame. Parts are **not** merged into a group — they stay at scene root or in their own groups.
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
 | 1 | Insert a **Cylinder** and a **Cube**; position them apart | — | OK | |
-| 2 | Press **G** or click **Glue…** | Status "Click any surface to place the anchor blob. Esc cancels." | OK | |
+| 2 | Press **G** or click **Attach…** | Status "Click any surface to place the anchor blob. Esc cancels." | OK | |
 | 3 | Hover a face on the cylinder | Yellow dot tracks the surface | OK | |
 | 4 | Click to set the anchor | Pink blob appears on the cylinder; status "Now click any surface on a different part to snap it here. Esc cancels." | OK | |
 | 5 | Hover a face of the cube | Yellow dot tracks the cube; cylinder already excluded from second pick | OK | |
-| 6 | Click the cube face | Cube rotates face-flush and snaps its contact point to the pink blob; status "Glued." | OK | |
+| 6 | Click the cube face | Cube rotates face-flush and snaps its contact point to the pink blob; status "Attached." | OK | |
 | 7 | Select the cylinder and translate it | Cube follows, maintaining the joint offset | OK | |
-| 8 | Click the cube (mover) | **Unglue** button appears | OK | |
-| 9 | Press **U** or click **Unglue** | Status "Unglued."; cube stays at current position; cylinder ignores it | OK | |
-| 10 | Ctrl+Z to undo the glue | Both parts return to pre-glue positions; joint removed | OK | |
+| 8 | Click the cube (mover) | **Detach** button appears | OK | |
+| 9 | Press **U** or click **Detach** | Status "Detached."; cube stays at current position; cylinder ignores it | OK | |
+| 10 | Ctrl+Z to undo the attach | Both parts return to pre-attach positions; joint removed | OK | |
 
 ---
 
-## T11 — Glue / weld group interactions
+## T11 — Attach / group interactions
 
-Full coverage of glue joints where one or both sides involve a weld group. Tests constraint chaining, group topology survival, undo/redo, and member-edit access.
+Full coverage of attach joints where one or both sides involve a group. Tests constraint chaining, group topology survival, undo/redo, and member-edit access.
 
-### T11a — Weld group as glue mover
+### T11a — Group as attach mover
 
-Confirms a weld group (rigid entity) can be the mover in a glue joint.
+Confirms a group (rigid entity) can be the mover in an attach joint.
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Weld two cubes together | Weld group created | OK | |
+| 1 | Group two cubes together | Group created | OK | |
 | 2 | Insert a standalone cylinder | — | OK | |
 | 3 | Press **G**; click the cylinder as anchor | Pink blob on cylinder | OK | |
-| 4 | Click a face of one cube in the weld group | Entire weld group rotates and snaps to the cylinder | OK | |
-| 5 | Select and translate the cylinder | Weld group follows as a rigid unit | OK | |
-| 6 | Click the weld group; press **U** or click **Unglue** | Joint removed; weld group remains intact at current position | OK | |
+| 4 | Click a face of one cube in the group | Entire group rotates and snaps to the cylinder | OK | |
+| 5 | Select and translate the cylinder | Group follows as a rigid unit | OK | |
+| 6 | Click the group; press **U** or click **Unattach** | Joint removed; group remains intact at current position | OK | |
 
-### T11b — Weld bond survives unglue of an attached appendage
+### T11b — Group bond survives detach of an attached appendage
 
-Regression for the bug where ungluing a glue-joint part would silently destroy the weld group that had been merged into the same assembly.
+Regression for the bug where detaching an attached part would silently destroy the group that had been merged into the same assembly.
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Insert **Cube A** and **Cube B**; weld them together | Amber bounding box spans both cubes; status bar shows weld-group hint | OK | |
+| 1 | Insert **Cube A** and **Cube B**; group them together | Amber bounding box spans both cubes; status bar shows group hint | OK | |
 | 2 | Insert **Cylinder C** (standalone) | — | OK | |
 | 3 | Press **G**; click a face of **Cube B** as anchor; click a face of **Cylinder C** | Cylinder snaps flush; all three parts merge into one assembly group | OK | |
-| 4 | Click **Cylinder C** to select it | **Unglue** button appears (cylinder has a glue joint); **Unweld** button is absent (cylinder is not a weld member) | OK | |
-| 5 | Press **U** / click **Unglue** | Status "Unglued."; Cylinder C returns to standalone | OK | |
-| 6 | Verify **Cube A** and **Cube B** are still grouped | Amber bounding box spans A and B; clicking either selects the group; **Unweld** button appears | OK | |
-| 7 | Translate the A+B weld group | Both cubes move together as one rigid unit; Cylinder C stays put | OK | |
+| 4 | Click **Cylinder C** to select it | **Detach** button appears (cylinder has a attach joint); **Ungroup** button is absent (cylinder is not a group member) | OK | |
+| 5 | Press **U** / click **Detach** | Status "Detached."; Cylinder C returns to standalone | OK | |
+| 6 | Verify **Cube A** and **Cube B** are still grouped | Amber bounding box spans A and B; clicking either selects the group; **Ungroup** button appears | OK | |
+| 7 | Translate the A+B group | Both cubes move together as one rigid unit; Cylinder C stays put | OK | |
 
 ### T11c — Multiple appendages; ungluing one leaves the others
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Weld **Cube A** and **Cube B** | Weld group | OK | |
-| 2 | Glue **Cylinder C** to the top of Cube A | A+B+C in one assembly | OK | |
-| 3 | Glue **Sphere D** to the side of Cube B | A+B+C+D in one assembly | OK | |
+| 1 | Group **Cube A** and **Cube B** | Group | OK | |
+| 2 | Attach **Cylinder C** to the top of Cube A | A+B+C in one assembly | OK | |
+| 3 | Attach **Sphere D** to the side of Cube B | A+B+C+D in one assembly | OK | |
 | 4 | Click **Cylinder C**; press **U** | C detaches; A+B+D remain in one assembly | OK ||
-| 5 | Confirm A+B weld bond intact | Amber box spans A+B+D; **Unweld** button visible | OK | |
-| 6 | Click **Sphere D**; press **U** | D detaches; A+B remain as a standalone weld group | OK | |
+| 5 | Confirm A+B group bond intact | Amber box spans A+B+D; **Ungroup** button visible | OK | |
+| 6 | Click **Sphere D**; press **U** | D detaches; A+B remain as a standalone group | OK | |
 | 7 | Translate the A+B group | Both move together; C and D stay put | OK | |
 
-### T11d — Undo/redo preserves weld bond topology
+### T11d — Undo/redo preserves group bond topology
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Weld **Cube A** and **Cube B** | Weld group; 0 glue joints | OK | |
-| 2 | Glue **Cylinder C** to Cube B (step 3 of T11b) | A+B+C merged assembly | OK | |
-| 3 | Ctrl+Z to undo the glue | C returns to standalone; A+B re-form as a weld group | OK | |
-| 4 | Ctrl+Z to undo the weld | A and B are now separate standalone parts | OK | |
-| 5 | Ctrl+Shift+Z to redo the weld | A+B weld group restores; **Unweld** button visible | OK | |
-| 6 | Ctrl+Shift+Z to redo the glue | A+B+C merged assembly again; C snapped back to its position | OK | |
-| 7 | Ctrl+Z to undo the glue (second time) | A+B weld group intact; C standalone | OK | |
+| 1 | Group **Cube A** and **Cube B** | Group; 0 attach joints | OK | |
+| 2 | Attach **Cylinder C** to Cube B (step 3 of T11b) | A+B+C merged assembly | OK | |
+| 3 | Ctrl+Z to undo the attach | C returns to standalone; A+B re-form as a group | OK | |
+| 4 | Ctrl+Z to undo the group | A and B are now separate standalone parts | OK | |
+| 5 | Ctrl+Shift+Z to redo the group | A+B group restores; **Ungroup** button visible | OK | |
+| 6 | Ctrl+Shift+Z to redo the attach | A+B+C merged assembly again; C snapped back to its position | OK | |
+| 7 | Ctrl+Z to undo the attach (second time) | A+B group intact; C standalone | OK | |
 
 ### T11e — Double-click member-edit inside a mixed assembly
 
-Confirms you can enter group-edit mode on any member of a mixed assembly and switch the active member. Translate in group-edit mode is only meaningful for **weld** members repositioned relative to the group pivot; glued appendages carry a frozen local-contact-point record and have no supported independent motion (a future "reposition glue blob on face" gesture would update `localPointA`/`localPointB` on the `GlueJoint` rather than translating the mesh).
+Confirms you can enter group-edit mode on any member of a mixed assembly and switch the active member. Translate in group-edit mode is only meaningful for **group** members repositioned relative to the group pivot; attachd appendages carry a frozen local-contact-point record and have no supported independent motion (a future "reposition attach blob on face" gesture would update `localPointA`/`localPointB` on the `AttachJoint` rather than translating the mesh).
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Set up A+B weld + C glued to B (same as T11b steps 1–3) | A+B+C assembly | OK | |
+| 1 | Set up A+B group + C attachd to B (same as T11b steps 1–3) | A+B+C assembly | OK | |
 | 2 | Single-click any part of the assembly | Whole assembly selects (amber box, group TC) | OK | |
-| 3 | Double-click **Cube A** (weld member) | Group-edit mode enters; TC attaches to Cube A's mesh; other parts dim | OK | |
-| 4 | Double-click **Cylinder C** (glued appendage) while still in group-edit | Active member switches to Cylinder C; TC attaches to C's mesh | OK | |
+| 3 | Double-click **Cube A** (group member) | Group-edit mode enters; TC attaches to Cube A's mesh; other parts dim | OK | |
+| 4 | Double-click **Cylinder C** (attachd appendage) while still in group-edit | Active member switches to Cylinder C; TC attaches to C's mesh | OK | |
 | 5 | Click outside the assembly | Exits group-edit; full assembly re-selects | OK | |
 
-### T11f — Unglue vs Unweld button visibility
+### T11f — Unattach vs Ungroup button visibility
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Select a standalone part | Neither **Unglue** nor **Unweld** button visible | OK | |
-| 2 | Select a part in a pure weld group (no glue joints) | **Unweld** visible; **Unglue** absent | OK | |
-| 3 | Select **Cylinder C** in the T11b assembly (glue-only member) | **Unglue** visible; **Unweld** absent | OK | |
-| 4 | Glue two standalone parts with no weld involved; select either | **Unglue** visible; **Unweld** absent | OK | |
-| 5 | Weld two parts and then glue a third to one weld member; select the weld member in the merged assembly | **Unglue** absent (weld members have no direct glue joint); **Unweld** visible; pressing **U** unwelds the bond — weld core members with no glue joints go standalone, glue-jointed members stay in their group | OK | |
+| 1 | Select a standalone part | Neither **Unattach** nor **Ungroup** button visible | OK | |
+| 2 | Select a part in a pure group (no attach joints) | **Ungroup** visible; **Unattach** absent | OK | |
+| 3 | Select **Cylinder C** in the T11b assembly (attach-only member) | **Unattach** visible; **Ungroup** absent | OK | |
+| 4 | Attach two standalone parts with no group involved; select either | **Unattach** visible; **Ungroup** absent | OK | |
+| 5 | Group two parts and then attach a third to one group member; select the group member in the merged assembly | **Unattach** absent (group members have no direct attach joint); **Ungroup** visible; pressing **U** ungroups the bond — group core members with no attach joints go standalone, attach-jointed members stay in their group | OK | |
 
-### T11g — Constraint chaining through a weld group
+### T11g — Constraint chaining through a group
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
 | 1 | Insert three standalone cubes: **P**, **Q**, **R** | — | OK | |
-| 2 | Weld **Q** and **R** | Q+R weld group | OK | |
-| 3 | Glue **P** (anchor) ← top of P → bottom of Q | P–Q glue joint; P+Q+R in one assembly | OK | |
-| 4 | Insert **Cylinder S**; glue R's top face as anchor → S's bottom | P+Q+R+S in one assembly | OK | |
+| 2 | Group **Q** and **R** | Q+R group | OK | |
+| 3 | Attach **P** (anchor) ← top of P → bottom of Q | P–Q attach joint; P+Q+R in one assembly | OK | |
+| 4 | Insert **Cylinder S**; attach R's top face as anchor → S's bottom | P+Q+R+S in one assembly | OK | |
 | 5 | Select the entire assembly; translate it upward by dragging TC | All four parts move together | OK | |
-| 6 | Enter group-edit; select **P**; translate P upward | Q and R follow via glue joint; S follows because it is glued to R | OK | |
-| 7 | Press **Esc** to exit group-edit; click **P**; press **U** | P detaches; Q+R weld group remains; S stays glued to R; Q+R+S remain in one assembly | OK | |
+| 6 | Enter group-edit; select **P**; translate P upward | Q and R follow via attach joint; S follows because it is attachd to R | OK | |
+| 7 | Press **Esc** to exit group-edit; click **P**; press **U** | P detaches; Q+R group remains; S stays attachd to R; Q+R+S remain in one assembly | OK | |
 
 ---
 
@@ -316,11 +316,11 @@ Confirms you can enter group-edit mode on any member of a mixed assembly and swi
 | 4 | Click **✕** next to "Alien Eye" | "Alien Eye" disappears from the list | OK | |
 | 5 | Press **Esc** or click the panel close button | Panel closes | OK | |
 
-### T12d — Weld groups survive round-trip
+### T12d — Groups survive round-trip
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Load "My Robot"; weld two parts together; rename to "Weld Test"; reload | Weld group reconstructed; clicking any member selects the group | OK | |
+| 1 | Load "My Robot"; group two parts together; rename to "Group Test"; reload | Group reconstructed; clicking any member selects the group | OK | |
 
 ---
 
@@ -338,7 +338,7 @@ Confirms you can enter group-edit mode on any member of a mixed assembly and swi
 
 ## T14 — Integration: build a table from primitives
 
-Full authoring path using primitives, weld, snap to floor, and export.
+Full authoring path using primitives, group, snap to floor, and export.
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
@@ -346,25 +346,25 @@ Full authoring path using primitives, weld, snap to floor, and export.
 | 2 | Insert a **Cube**; scale to a flat slab (`~2.5 × 0.15 × 2.5`); colour wood-brown | Tabletop | — | |
 | 3 | Insert a **Cylinder**; scale to a thin tall leg; colour matching; press **F** to floor-snap | First leg at `y = 0` | — | |
 | 4 | Shift+D ×3; position each copy at a corner under the tabletop; floor-snap each | Four legs at `y = 0` | — | |
-| 5 | Shift-click all four legs → **Weld** | Four legs become one rigid weld group | — | |
-| 6 | Shift-click the leg weld group + the tabletop → **Weld** | All five parts in one group | — | |
+| 5 | Shift-click all four legs → **Group** | Four legs become one rigid group | — | |
+| 6 | Shift-click the leg group + the tabletop → **Group** | All five parts in one group | — | |
 | 7 | Translate and rotate the whole group | All five parts move together | — | |
 | 8 | Click **Export to Catalogue** | Entry "Dining Table" appears in main app catalogue | — | |
 
 ---
 
-## T15 — Integration: articulated character using glue
+## T15 — Integration: articulated character using attach
 
-Tests live constraint chaining across parts and weld groups.
+Tests live constraint chaining across parts and groups.
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Insert a **Cube** (body) and a **Cylinder** (neck); weld them together | Body+neck weld group | — | |
+| 1 | Insert a **Cube** (body) and a **Cylinder** (neck); group them together | Body+neck group | — | |
 | 2 | Insert a **Sphere** (head) | Standalone part | — | |
 | 3 | Press **G**; click the top of the cylinder as anchor | Pink blob | — | |
-| 4 | Click the bottom of the sphere | Sphere snaps flush to the cylinder top; status "Glued." | — | |
-| 5 | Translate the weld group (body+neck) | Sphere follows, maintaining joint offset | — | |
-| 6 | Click the sphere; **Unglue** | Sphere no longer follows; stays at current position | — | |
+| 4 | Click the bottom of the sphere | Sphere snaps flush to the cylinder top; status "Attached." | — | |
+| 5 | Translate the group (body+neck) | Sphere follows, maintaining joint offset | — | |
+| 6 | Click the sphere; **Unattach** | Sphere no longer follows; stays at current position | — | |
 
 ---
 
@@ -377,7 +377,7 @@ Repeat of T14 using only extruded polygon shapes.
 | 1 | Sketch and extrude a small square for a table leg; colour it | — | — | |
 | 2 | Shift+D ×3; position and floor-snap each copy | Four extruded legs at `y = 0` | — | |
 | 3 | Sketch and extrude a large rectangle for the tabletop; scale and position it above the legs | — | — | |
-| 4 | Weld all five parts together | One rigid group | — | |
+| 4 | Group all five parts together | One rigid group | — | |
 | 5 | Export to catalogue; verify in main app | Entry usable in a production | — | |
 
 ---
@@ -388,4 +388,4 @@ Repeat of T14 using only extruded polygon shapes.
 |---|---|
 | Extrusion depth numeric input (already in HUD — verify in T05 step 7) | SA12 |
 | Nominated-face floor snap (mark a specific face as the floor contact) | SA11b |
-| Glue point editor (adjust contact point position and twist on an existing joint) | SA12 |
+| Attach point editor (adjust contact point position and twist on an existing joint) | SA12 |

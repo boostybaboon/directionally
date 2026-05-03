@@ -15,8 +15,8 @@ import {
   ChangeColorCommand,
   ChangeFaceColorCommand,
   TransformPartCommand,
-  CommitGlueCommand,
-  UnglueAllCommand,
+  CommitAttachCommand,
+  DetachAllCommand,
   ApplyTextureCommand,
 } from './sketcherCommands.js';
 import type { SketcherCommand } from './SketcherCommand.js';
@@ -45,8 +45,8 @@ function makeStubCmd(label = 'Stub'): SketcherCommand & { executeCalls: number }
   };
 }
 
-function glueAB(sketcher: CartoonSketcher, pA: NonNullable<ReturnType<CartoonSketcher['insertPrimitive']>>, pB: NonNullable<ReturnType<CartoonSketcher['insertPrimitive']>>) {
-  return sketcher.glueManager.commitGlue(
+function attachAB(sketcher: CartoonSketcher, pA: NonNullable<ReturnType<CartoonSketcher['insertPrimitive']>>, pB: NonNullable<ReturnType<CartoonSketcher['insertPrimitive']>>) {
+  return sketcher.attachManager.commitAttach(
     pA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
     pB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
     [pA, pB],
@@ -297,7 +297,7 @@ describe('DeletePartCommand', () => {
     const pB = sketcher.insertPrimitive('box')!;
     pB.mesh.position.set(3, 0, 0);
     pB.mesh.updateMatrixWorld(true);
-    glueAB(sketcher, pA, pB);
+    attachAB(sketcher, pA, pB);
     expect(sketcher.getSession().joints).toHaveLength(1);
 
     doc.execute(new DeletePartCommand(pB.id, sketcher));
@@ -448,9 +448,9 @@ describe('TransformPartCommand', () => {
   });
 });
 
-// ── CommitGlueCommand ─────────────────────────────────────────────────────────
+// ── CommitAttachCommand ─────────────────────────────────────────────────────────
 
-describe('CommitGlueCommand', () => {
+describe('CommitAttachCommand', () => {
   let scene: THREE.Scene;
   let sketcher: CartoonSketcher;
   let pA: ReturnType<CartoonSketcher['insertPrimitive']>;
@@ -465,7 +465,7 @@ describe('CommitGlueCommand', () => {
   });
 
   it('execute() records a joint and creates an assembly group', () => {
-    const cmd = new CommitGlueCommand(
+    const cmd = new CommitAttachCommand(
       sketcher,
       pA!, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
       pB!, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
@@ -477,7 +477,7 @@ describe('CommitGlueCommand', () => {
 
   it('doc.undo() removes the joint', () => {
     const { doc } = makeDoc(sketcher);
-    doc.execute(new CommitGlueCommand(
+    doc.execute(new CommitAttachCommand(
       sketcher,
       pA!, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
       pB!, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
@@ -489,7 +489,7 @@ describe('CommitGlueCommand', () => {
 
   it('doc.redo() re-establishes the joint and group', () => {
     const { doc } = makeDoc(sketcher);
-    doc.execute(new CommitGlueCommand(
+    doc.execute(new CommitAttachCommand(
       sketcher,
       pA!, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
       pB!, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
@@ -501,17 +501,17 @@ describe('CommitGlueCommand', () => {
   });
 });
 
-// ── UnglueAllCommand ──────────────────────────────────────────────────────────
+// ── DetachAllCommand ──────────────────────────────────────────────────────────
 
-describe('UnglueAllCommand', () => {
+describe('DetachAllCommand', () => {
   it('execute() removes all joints for the part', () => {
     const { sketcher } = makeSketcher();
     const pA = sketcher.insertPrimitive('box')!;
     const pB = sketcher.insertPrimitive('box')!;
     pB.mesh.position.set(3, 0, 0);
     pB.mesh.updateMatrixWorld(true);
-    glueAB(sketcher, pA, pB);
-    const cmd = new UnglueAllCommand(pA.id, sketcher);
+    attachAB(sketcher, pA, pB);
+    const cmd = new DetachAllCommand(pA.id, sketcher);
     cmd.execute();
     expect(sketcher.getSession().joints).toHaveLength(0);
     expect(sketcher.getSession().assemblyGroups).toHaveLength(0);
@@ -524,8 +524,8 @@ describe('UnglueAllCommand', () => {
     const pB = sketcher.insertPrimitive('box')!;
     pB.mesh.position.set(3, 0, 0);
     pB.mesh.updateMatrixWorld(true);
-    glueAB(sketcher, pA, pB);
-    doc.execute(new UnglueAllCommand(pA.id, sketcher));
+    attachAB(sketcher, pA, pB);
+    doc.execute(new DetachAllCommand(pA.id, sketcher));
     doc.undo();
     expect(sketcher.getSession().joints).toHaveLength(1);
     expect(sketcher.getSession().assemblyGroups).toHaveLength(1);
@@ -538,24 +538,24 @@ describe('UnglueAllCommand', () => {
     const pB = sketcher.insertPrimitive('box')!;
     pB.mesh.position.set(3, 0, 0);
     pB.mesh.updateMatrixWorld(true);
-    glueAB(sketcher, pA, pB);
-    doc.execute(new UnglueAllCommand(pA.id, sketcher));
+    attachAB(sketcher, pA, pB);
+    doc.execute(new DetachAllCommand(pA.id, sketcher));
     doc.undo();
     doc.redo();
     expect(sketcher.getSession().joints).toHaveLength(0);
   });
 });
 
-// ── Integration: undo/redo glue chains ───────────────────────────────────────
+// ── Integration: undo/redo attach chains ───────────────────────────────────────
 
-describe('undo/redo glue integration', () => {
+describe('undo/redo attach integration', () => {
   /**
-   * Regression: after undoing CommitGlue(A-B), B used to vanish because
+   * Regression: after undoing CommitAttach(A-B), B used to vanish because
    * scene.attach(B.mesh) during group BFS-split accumulated incorrect world
    * transforms. With snapshot-based undo, B's world position is restored from
-   * the plain-data snapshot taken before the glue was committed.
+   * the plain-data snapshot taken before the attach was committed.
    */
-  it('undo of CommitGlue restores B to its pre-glue world position', () => {
+  it('undo of CommitAttach restores B to its pre-attach world position', () => {
     const { sketcher } = makeSketcher();
     const { doc } = makeDoc(sketcher);
 
@@ -566,7 +566,7 @@ describe('undo/redo glue integration', () => {
 
     const bxBefore = pB.mesh.position.x;
 
-    doc.execute(new CommitGlueCommand(
+    doc.execute(new CommitAttachCommand(
       sketcher,
       pA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
       pB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
@@ -583,10 +583,10 @@ describe('undo/redo glue integration', () => {
   });
 
   /**
-   * Regression: undo CommitGlue(A-B) from an A-B-C chain used to leave B
+   * Regression: undo CommitAttach(A-B) from an A-B-C chain used to leave B
    * at a garbage world position, or entirely absent from the scene.
    */
-  it('undoing A-B glue from A-B-C chain leaves B at correct world position', () => {
+  it('undoing A-B attach from A-B-C chain leaves B at correct world position', () => {
     const { sketcher } = makeSketcher();
     const { doc } = makeDoc(sketcher);
 
@@ -598,21 +598,21 @@ describe('undo/redo glue integration', () => {
     pC.mesh.position.set(8, 0, 0);
     pC.mesh.updateWorldMatrix(false, true);
 
-    // Glue B onto A
-    doc.execute(new CommitGlueCommand(
+    // Attach B onto A
+    doc.execute(new CommitAttachCommand(
       sketcher,
       pA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
       pB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
     ));
 
-    // Record B's world position after A-B is glued
+    // Record B's world position after A-B is attached
     const bPos = new THREE.Vector3();
     pB.mesh.updateWorldMatrix(true, false);
     pB.mesh.matrixWorld.decompose(bPos, new THREE.Quaternion(), new THREE.Vector3());
     const bxAfterAB = bPos.x;
 
-    // Glue C onto B
-    doc.execute(new CommitGlueCommand(
+    // Attach C onto B
+    doc.execute(new CommitAttachCommand(
       sketcher,
       pB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
       pC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
@@ -627,12 +627,12 @@ describe('undo/redo glue integration', () => {
     bPart.mesh.updateWorldMatrix(true, false);
     const restored = new THREE.Vector3();
     bPart.mesh.matrixWorld.decompose(restored, new THREE.Quaternion(), new THREE.Vector3());
-    // B should be at its original standalone position (before any glue).
+    // B should be at its original standalone position (before any attach).
     expect(restored.x).toBeCloseTo(4, 3);
   });
 
   /**
-   * Regression: redo after (insert A, insert B, glue B→A, move group, undo, undo)
+   * Regression: redo after (insert A, insert B, attach B→A, move group, undo, undo)
    * used to leave the gizmo at the right place but the mesh stationary because
    * TransformPartCommand stored a stale THREE.Group reference that had been
    * dissolved during undo. Snapshot-based redo restores the after-snapshot
@@ -647,8 +647,8 @@ describe('undo/redo glue integration', () => {
     pB.mesh.position.set(3, 0, 0);
     pB.mesh.updateWorldMatrix(false, true);
 
-    // Glue B onto A (SA15: no group created; pA and pB remain at scene root).
-    doc.execute(new CommitGlueCommand(
+    // Attach B onto A (SA15: no group created; pA and pB remain at scene root).
+    doc.execute(new CommitAttachCommand(
       sketcher,
       pA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
       pB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
@@ -666,12 +666,12 @@ describe('undo/redo glue integration', () => {
     pA.mesh.matrixWorld.decompose(ax, new THREE.Quaternion(), new THREE.Vector3());
     const aXAfterMove = ax.x;
 
-    // Undo the move, undo the glue.
+    // Undo the move, undo the attach.
     doc.undo(); // undo move
-    doc.undo(); // undo glue
+    doc.undo(); // undo attach
 
-    // Redo the glue, redo the move.
-    doc.redo(); // redo glue
+    // Redo the attach, redo the move.
+    doc.redo(); // redo attach
     doc.redo(); // redo move
 
     // After redo, pA's world x should match what it was right after the move.

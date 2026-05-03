@@ -41,13 +41,13 @@ export type SketcherPart = {
 
 /**
  * Records two world-surface contact points (in each part's local space) that
- * define a glue joint. The joint is satisfied when the two local points occupy
+ * define an attach joint. The joint is satisfied when the two local points occupy
  * the same world-space position.
  *
  * Neither side is "parent" — re-evaluating the recipe repositions whichever
  * side moved relative to the other.
  */
-export type GlueJoint = {
+export type AttachJoint = {
   id: string;
   partAId: string;
   /** Contact point in partA's mesh local space. */
@@ -64,7 +64,7 @@ export type GlueJoint = {
 /**
  * A persistent THREE.Group that owns all parts in a connected joint component.
  * Created when the first joint between two parts is committed; grows as more
- * parts are glued; shrinks or dissolves when joints are removed.
+ * parts are attached; shrinks or dissolves when joints are removed.
  */
 export type AssemblyGroup = {
   id: string;
@@ -75,7 +75,7 @@ export type AssemblyGroup = {
 
 export type SketcherSession = {
   parts: SketcherPart[];
-  joints: GlueJoint[];
+  joints: AttachJoint[];
   assemblyGroups: AssemblyGroup[];
 };
 
@@ -122,29 +122,29 @@ export type JointSnapshot = {
  * Only currently-present parts are listed; absent (soft-removed) parts are
  * omitted and restored from the pool by id on demand.
  */
-export type WeldGroupSnapshot = {
+export type GroupSnapshot = {
   /** Ordered list of part ids that form the assembly group. */
   partIds: string[];
   /**
-   * True when the group was created by a Weld command (pure rigid container,
-   * no glue joints between members). False (or absent in legacy snapshots) means
-   * the group was created by a glue operation.
+   * True when the group was created by a Group command (pure rigid container,
+   * no attach joints between members). False (or absent in legacy snapshots) means
+   * the group was created by an attach operation.
    */
-  isWeld?: boolean;
+  isGroup?: boolean;
 };
 
 export type SessionSnapshot = {
   parts: PartSnapshot[];
   joints: JointSnapshot[];
-  /** Weld groups present at snapshot time. Absent means no weld groups. */
-  weldGroups?: WeldGroupSnapshot[];
+  /** Groups present at snapshot time. Absent means no groups. */
+  groups?: GroupSnapshot[];
   /**
-   * Durable weld bond components: each entry is the set of part IDs that form
-   * one weld unit. Unlike weldGroups, these survive glue merges — when a glue
-   * op collapses a weld group into a larger assembly, the bond topology is
-   * preserved here so that ungluing restores the weld group correctly.
+   * Durable group bond components: each entry is the set of part IDs that form
+   * one group unit. Unlike groups, these survive attach merges — when an attach
+   * op collapses a group into a larger assembly, the bond topology is
+   * preserved here so that detaching restores the group correctly.
    */
-  weldComponents?: string[][];
+  groupComponents?: string[][];
 };
 
 // ── Draft types (used by CartoonSketcher.toDraft / loadDraft for persistence) ─
@@ -177,7 +177,7 @@ export type SketcherDraft = {
   version: 2;
   parts: PartDraft[];
   joints: JointSnapshot[];
-  weldGroups?: WeldGroupSnapshot[];
+  groups?: GroupSnapshot[];
 };
 
 /** Drawing mode for the polygon sketcher. */

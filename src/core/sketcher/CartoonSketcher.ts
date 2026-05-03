@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle, buildExtrusionGeometry } from './ExtrusionHandle.js';
-import { GlueManager } from './GlueManager.js';
-import type { FaceGroupInfo, PartSnapshot, JointSnapshot, WeldGroupSnapshot, PartDraft, SessionSnapshot, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
+import { AttachManager } from './AttachManager.js';
+import type { FaceGroupInfo, PartSnapshot, JointSnapshot, GroupSnapshot, PartDraft, SessionSnapshot, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
@@ -243,7 +243,7 @@ export class CartoonSketcher {
   private pendingShape: THREE.Shape | null = null;
   private pendingCentroid: THREE.Vector3 | null = null;
   private nextId = 1;
-  private readonly glue: GlueManager;
+  private readonly attach: AttachManager;
 
   /** Called whenever the extrusion depth changes during a drag (phase === 'extruding'). */
   onExtrusionDepthChanged?: (depth: number) => void;
@@ -258,7 +258,7 @@ export class CartoonSketcher {
     private readonly scene: THREE.Scene,
     private readonly camera: THREE.Camera,
   ) {
-    this.glue = new GlueManager(scene);
+    this.attach = new AttachManager(scene);
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -453,7 +453,7 @@ export class CartoonSketcher {
 
   /** Remove all parts, joints, and groups, then reset to idle. */
   clearSession(): void {
-    this.glue.dispose();
+    this.attach.dispose();
     for (const part of this.parts) {
       part.mesh.removeFromParent();
     }
@@ -602,10 +602,10 @@ export class CartoonSketcher {
   removePart(id: string): void {
     const idx = this.parts.findIndex((p) => p.id === id);
     if (idx === -1) return;
-    // Unglue before removing from the parts list so BFS can still find neighbours.
-    this.glue.unglueAll(id, this.parts);
-    // Clean up residual group membership (for groups that stayed connected after unglue).
-    this.glue.evictFromGroup(id, this.parts);
+    // Detach before removing from the parts list so BFS can still find neighbours.
+    this.attach.detachAll(id, this.parts);
+    // Clean up residual group membership (for groups that stayed connected after detach).
+    this.attach.evictFromGroup(id, this.parts);
     const [part] = this.parts.splice(idx, 1);
     part.mesh.removeFromParent();
     // part remains in allParts for potential undo restoration.
@@ -619,7 +619,7 @@ export class CartoonSketcher {
    * so no joint re-evaluation is needed (the entire assembly moved uniformly).
    *
    * mode 'member': snaps only this mesh in group-edit mode, then calls
-   * resolveConstraints so glue neighbours re-snap. Correct for non-rotated
+   * resolveConstraints so attach neighbours re-snap. Correct for non-rotated
    * groups (the group's Y offset is accounted for by the world-space box).
    */
   snapToFloor(id: string, mode: 'group' | 'member' = 'group'): void {
@@ -629,9 +629,9 @@ export class CartoonSketcher {
       const box = new THREE.Box3().setFromObject(part.mesh);
       part.mesh.position.y -= box.min.y;
       part.mesh.updateWorldMatrix(false, true);
-      this.glue.resolveConstraints([id], this.parts);
+      this.attach.resolveConstraints([id], this.parts);
     } else {
-      const ag = this.glue.groupForPart(id);
+      const ag = this.attach.groupForPart(id);
       const root: THREE.Object3D = ag ? ag.group : part.mesh;
       const box = new THREE.Box3().setFromObject(root);
       root.position.y -= box.min.y;
@@ -639,17 +639,17 @@ export class CartoonSketcher {
   }
 
   /**
-   * Weld the given parts into a single rigid weld group at their current world
+   * Group the given parts into a single rigid group at their current world
    * positions. All parts must be standalone (not already in any assembly group).
    * Returns the new AssemblyGroup, or null if the input is invalid.
    */
-  weld(partIds: string[]): AssemblyGroup | null {
+  group(partIds: string[]): AssemblyGroup | null {
     if (partIds.length < 2) return null;
     // Expand any grouped parts to include all members of their group so that
-    // welding a standalone D onto an existing A+B group produces an A+B+D group.
+    // grouping a standalone D onto an existing A+B group produces an A+B+D group.
     const expandedIds = [...new Set(
       partIds.flatMap((id) => {
-        const ag = this.glue.groupForPart(id);
+        const ag = this.attach.groupForPart(id);
         return ag ? ag.partIds : [id];
       })
     )];
@@ -657,20 +657,20 @@ export class CartoonSketcher {
       .map((id) => this.parts.find((p) => p.id === id))
       .filter((p): p is SketcherPart => p !== undefined);
     if (parts.length < 2) return null;
-    return this.glue.createWeldGroup(parts);
+    return this.attach.createGroup(parts);
   }
 
   /**
-   * Dissolve the weld group that contains the given part, returning all members
+   * Dissolve the group that contains the given part, returning all members
    * to the scene root at their current world positions.
-   * No-op if the part is not in a weld group.
+   * No-op if the part is not in a group.
    */
-  unweld(partId: string): void {
-    if (this.glue.isWeldGroup(partId)) {
-      const ag = this.glue.groupForPart(partId);
-      if (ag) this.glue.dissolveWeldGroup(ag.id, this.parts);
-    } else if (this.glue.isInWeldComponent(partId)) {
-      this.glue.dissolveWeldComponent(partId, this.parts);
+  ungroup(partId: string): void {
+    if (this.attach.isGroup(partId)) {
+      const ag = this.attach.groupForPart(partId);
+      if (ag) this.attach.dissolveGroup(ag.id, this.parts);
+    } else if (this.attach.isInGroupComponent(partId)) {
+      this.attach.dissolveGroupComponent(partId, this.parts);
     }
   }
 
@@ -678,17 +678,17 @@ export class CartoonSketcher {
   getSession(): SketcherSession {
     return {
       parts: [...this.parts],
-      joints: [...this.glue.getJoints()],
-      assemblyGroups: [...this.glue.getAssemblyGroups()],
+      joints: [...this.attach.getJoints()],
+      assemblyGroups: [...this.attach.getAssemblyGroups()],
     };
   }
 
   /**
-   * Expose the GlueManager so the page can call commitGlue, replayJoints,
-   * unglue, getConnectedIds, and groupForPart directly.
+   * Expose the AttachManager so the page can call commitAttach, replayJoints,
+   * detach, getConnectedIds, and groupForPart directly.
    */
-  get glueManager(): GlueManager {
-    return this.glue;
+  get attachManager(): AttachManager {
+    return this.attach;
   }
 
   get currentPhase(): Phase {
@@ -783,7 +783,7 @@ export class CartoonSketcher {
   }
 
   dispose(): void {
-    this.glue.dispose();
+    this.attach.dispose();
     this.clearSession();
   }
 
@@ -791,7 +791,7 @@ export class CartoonSketcher {
    * Capture a plain-data snapshot of the current session.
    * Uses world-space transforms so positions are correct regardless of group
    * parentage. Joints are recorded in local space (unchanged by group transforms).
-   * Weld groups are captured by part-id lists so they can be re-created on restore.
+   * Groups are captured by part-id lists so they can be re-created on restore.
    */
   takeSnapshot(): SessionSnapshot {
     const wp = new THREE.Vector3();
@@ -810,7 +810,7 @@ export class CartoonSketcher {
         faceTextures: [...p.faceTextures],
       };
     });
-    const joints: JointSnapshot[] = this.glue.getJoints().map((j) => ({
+    const joints: JointSnapshot[] = this.attach.getJoints().map((j) => ({
       partAId: j.partAId,
       localPointA: [j.localPointA.x, j.localPointA.y, j.localPointA.z],
       localNormalA: [j.localNormalA.x, j.localNormalA.y, j.localNormalA.z],
@@ -818,17 +818,17 @@ export class CartoonSketcher {
       localPointB: [j.localPointB.x, j.localPointB.y, j.localPointB.z],
       localNormalB: [j.localNormalB.x, j.localNormalB.y, j.localNormalB.z],
     }));
-    // Capture ALL assembly groups (weld and glue) so undo/redo restores grouped state.
-    const weldGroups: WeldGroupSnapshot[] = this.glue.getAssemblyGroups()
-      .map((ag) => ({ partIds: [...ag.partIds], isWeld: this.glue.isWeldGroup(ag.partIds[0]) }));
-    return { parts, joints, weldGroups, weldComponents: this.glue.getWeldComponents() };
+    // Capture ALL assembly groups (group and attach) so undo/redo restores grouped state.
+    const groups: GroupSnapshot[] = this.attach.getAssemblyGroups()
+      .map((ag) => ({ partIds: [...ag.partIds], isGroup: this.attach.isGroup(ag.partIds[0]) }));
+    return { parts, joints, groups, groupComponents: this.attach.getGroupComponents() };
   }
 
   /**
    * Rebuild the Three.js scene to match a plain-data snapshot.
    * All currently-present meshes are removed; the correct subset from allParts
    * is re-added at their snapshotted world positions; joints are re-registered
-   * (no repositioning — world positions already reflect the glued state).
+   * (no repositioning — world positions already reflect the attached state).
    */
   restoreSnapshot(snap: SessionSnapshot): void {
     // Remove all current meshes from their parents (group or scene root).
@@ -836,7 +836,7 @@ export class CartoonSketcher {
       part.mesh.removeFromParent();
     }
     // Dissolve all groups and clear the joint list.
-    this.glue.dispose();
+    this.attach.dispose();
     this.parts.length = 0;
 
     // Restore part meshes at world-space transforms from the snapshot.
@@ -873,7 +873,7 @@ export class CartoonSketcher {
       const partA = this.parts.find((p) => p.id === js.partAId);
       const partB = this.parts.find((p) => p.id === js.partBId);
       if (partA && partB) {
-        this.glue.registerJoint(
+        this.attach.registerJoint(
           partA,
           new THREE.Vector3(js.localPointA[0], js.localPointA[1], js.localPointA[2]),
           new THREE.Vector3(js.localNormalA[0], js.localNormalA[1], js.localNormalA[2]),
@@ -884,8 +884,8 @@ export class CartoonSketcher {
       }
     }
 
-    // Rebuild all assembly groups from snapshot data (preserves weld/glue types).
-    this.glue.rebuildGroupsFromSnapshot(snap.weldGroups ?? [], this.parts, snap.weldComponents);
+    // Rebuild all assembly groups from snapshot data (preserves group/attach types).
+    this.attach.rebuildGroupsFromSnapshot(snap.groups ?? [], this.parts, snap.groupComponents);
   }
 
   /**
@@ -923,7 +923,7 @@ export class CartoonSketcher {
       }
       return draft;
     });
-    const joints: JointSnapshot[] = this.glue.getJoints().map((j) => ({
+    const joints: JointSnapshot[] = this.attach.getJoints().map((j) => ({
       partAId: j.partAId,
       localPointA: [j.localPointA.x, j.localPointA.y, j.localPointA.z],
       localNormalA: [j.localNormalA.x, j.localNormalA.y, j.localNormalA.z],
@@ -931,11 +931,11 @@ export class CartoonSketcher {
       localPointB: [j.localPointB.x, j.localPointB.y, j.localPointB.z],
       localNormalB: [j.localNormalB.x, j.localNormalB.y, j.localNormalB.z],
     }));
-    const weldGroups: WeldGroupSnapshot[] = this.glue.getAssemblyGroups().map((ag) => ({
+    const groups: GroupSnapshot[] = this.attach.getAssemblyGroups().map((ag) => ({
       partIds: [...ag.partIds],
-      isWeld: this.glue.isWeldGroup(ag.partIds[0]),
+      isGroup: this.attach.isGroup(ag.partIds[0]),
     }));
-    return { version: 2, parts, joints, weldGroups };
+    return { version: 2, parts, joints, groups };
   }
 
   /**
@@ -1007,7 +1007,7 @@ export class CartoonSketcher {
       const partA = this.parts.find((p) => p.id === js.partAId);
       const partB = this.parts.find((p) => p.id === js.partBId);
       if (partA && partB) {
-        this.glue.registerJoint(
+        this.attach.registerJoint(
           partA,
           new THREE.Vector3(js.localPointA[0], js.localPointA[1], js.localPointA[2]),
           new THREE.Vector3(js.localNormalA[0], js.localNormalA[1], js.localNormalA[2]),
@@ -1018,7 +1018,7 @@ export class CartoonSketcher {
       }
     }
 
-    this.glue.rebuildGroupsFromSnapshot(draft.weldGroups ?? [], this.parts);
+    this.attach.rebuildGroupsFromSnapshot(draft.groups ?? [], this.parts);
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────

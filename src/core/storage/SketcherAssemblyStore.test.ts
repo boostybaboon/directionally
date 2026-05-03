@@ -39,7 +39,7 @@ function createMockDir() {
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-const EMPTY_DRAFT: SketcherDraft = { version: 2, parts: [], joints: [], weldGroups: [] };
+const EMPTY_DRAFT: SketcherDraft = { version: 2, parts: [], joints: [], groups: [] };
 
 // ── Test setup ────────────────────────────────────────────────────────────────
 
@@ -94,7 +94,7 @@ describe('SketcherAssemblyStore – create + get', () => {
         },
       ],
       joints: [],
-      weldGroups: [],
+      groups: [],
     };
     const meta = await create('Test', draft);
     const loaded = await get(meta.id);

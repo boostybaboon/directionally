@@ -114,8 +114,8 @@ export class ApplyTextureCommand implements SketcherCommand {
  * Records a transform mutation applied by the TransformControls gizmo.
  *
  * The TC gizmo applies the transform to the Three.js object directly, before
- * this command is constructed. execute() only needs to replay glue joints so
- * glued partners stay flush. The actual undo/redo of the transform is handled
+ * this command is constructed. execute() only needs to replay attach joints so
+ * attached partners stay flush. The actual undo/redo of the transform is handled
  * by SketcherDocument restoring the before/after SessionSnapshot (which uses
  * world-space transforms and is immune to stale object references).
  *
@@ -142,18 +142,18 @@ export class TransformPartCommand implements SketcherCommand {
     const session = this.sketcher.getSession();
     const part = session.parts.find((p) => p.id === this.movedPartId);
     if (!part) return;
-    const ag = this.sketcher.glueManager.groupForPart(this.movedPartId);
+    const ag = this.sketcher.attachManager.groupForPart(this.movedPartId);
     // group: whole assembly moved — seed BFS with all members so intra-group joints are skipped.
     // member: only this part moved — BFS propagates to all joint neighbours.
     const movedIds = this.mode === 'member' ? [part.id] : (ag ? ag.partIds : [part.id]);
-    this.sketcher.glueManager.resolveConstraints(movedIds, session.parts);
+    this.sketcher.attachManager.resolveConstraints(movedIds, session.parts);
   }
 }
 
-// ── CommitGlueCommand ─────────────────────────────────────────────────────────
+// ── CommitAttachCommand ─────────────────────────────────────────────────────────────
 
-export class CommitGlueCommand implements SketcherCommand {
-  readonly label = 'Glue';
+export class CommitAttachCommand implements SketcherCommand {
+  readonly label = 'Attach';
 
   constructor(
     private readonly sketcher: CartoonSketcher,
@@ -167,7 +167,7 @@ export class CommitGlueCommand implements SketcherCommand {
 
   execute(): void {
     const allParts = this.sketcher.getSession().parts;
-    this.sketcher.glueManager.commitGlue(
+    this.sketcher.attachManager.commitAttach(
       this.partA, this.localPointA, this.localNormalA,
       this.partB, this.localPointB, this.localNormalB,
       allParts,
@@ -175,10 +175,10 @@ export class CommitGlueCommand implements SketcherCommand {
   }
 }
 
-// ── UnglueAllCommand ──────────────────────────────────────────────────────────
+// ── DetachAllCommand ──────────────────────────────────────────────────────────────
 
-export class UnglueAllCommand implements SketcherCommand {
-  readonly label = 'Unglue';
+export class DetachAllCommand implements SketcherCommand {
+  readonly label = 'Detach';
 
   constructor(
     private readonly partId: string,
@@ -186,7 +186,7 @@ export class UnglueAllCommand implements SketcherCommand {
   ) {}
 
   execute(): void {
-    this.sketcher.glueManager.unglueAll(this.partId, this.sketcher.getSession().parts);
+    this.sketcher.attachManager.detachAll(this.partId, this.sketcher.getSession().parts);
   }
 }
 
@@ -207,10 +207,10 @@ export class SnapToFloorCommand implements SketcherCommand {
   }
 }
 
-// ── WeldCommand ───────────────────────────────────────────────────────────────
+// ── GroupCommand ───────────────────────────────────────────────────────────────────
 
-export class WeldCommand implements SketcherCommand {
-  readonly label = 'Weld';
+export class GroupCommand implements SketcherCommand {
+  readonly label = 'Group';
 
   constructor(
     private readonly partIds: string[],
@@ -218,14 +218,14 @@ export class WeldCommand implements SketcherCommand {
   ) {}
 
   execute(): void {
-    this.sketcher.weld(this.partIds);
+    this.sketcher.group(this.partIds);
   }
 }
 
-// ── UnweldCommand ─────────────────────────────────────────────────────────────
+// ── UngroupCommand ──────────────────────────────────────────────────────────────────
 
-export class UnweldCommand implements SketcherCommand {
-  readonly label = 'Unweld';
+export class UngroupCommand implements SketcherCommand {
+  readonly label = 'Ungroup';
 
   constructor(
     private readonly partId: string,
@@ -233,7 +233,7 @@ export class UnweldCommand implements SketcherCommand {
   ) {}
 
   execute(): void {
-    this.sketcher.unweld(this.partId);
+    this.sketcher.ungroup(this.partId);
   }
 }
 

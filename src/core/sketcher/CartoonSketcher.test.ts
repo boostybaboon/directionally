@@ -616,13 +616,13 @@ describe('toDraft / loadDraft', () => {
     expect(restored.faceTextures[1]).toBeNull();
   });
 
-  it('toDraft() round-trip preserves a glue joint', () => {
+  it('toDraft() round-trip preserves an attach joint', () => {
     const pA = sketcher.insertPrimitive('box')!;
     const pB = sketcher.insertPrimitive('box')!;
     pB.mesh.position.set(2, 0, 0);
     pB.mesh.updateWorldMatrix(false, true);
 
-    sketcher.glueManager.commitGlue(
+    sketcher.attachManager.commitAttach(
       pA, new THREE.Vector3(0.5, 0, 0), new THREE.Vector3(1, 0, 0),
       pB, new THREE.Vector3(-0.5, 0, 0), new THREE.Vector3(-1, 0, 0),
       [pA, pB],
@@ -636,8 +636,8 @@ describe('toDraft / loadDraft', () => {
 
     expect(sketcher.getSession().joints).toHaveLength(1);
     expect(sketcher.getSession().parts).toHaveLength(2);
-    // Glue creates a group; after draft round-trip the group is restored.
-    const ag = sketcher.glueManager.groupForPart(sketcher.getSession().parts[0].id);
+    // Attach creates a group; after draft round-trip the group is restored.
+    const ag = sketcher.attachManager.groupForPart(sketcher.getSession().parts[0].id);
     expect(ag).toBeDefined();
   });
 
@@ -759,10 +759,10 @@ describe('snapToFloor', () => {
     expect(box.min.y).toBeCloseTo(0, 5);
   });
 
-  it('moves the entire assembly group when the part is glued', () => {
+  it('moves the entire assembly group when the part is attached', () => {
     const partA = sketcher.insertPrimitive('box')!;
     const partB = sketcher.insertPrimitive('box')!;
-    sketcher.glueManager.commitGlue(
+    sketcher.attachManager.commitAttach(
       partA,
       new THREE.Vector3(0, 0.5, 0),
       new THREE.Vector3(0, 1, 0),
@@ -772,8 +772,8 @@ describe('snapToFloor', () => {
       [partA, partB],
     );
 
-    // Lift the glue group and snap the whole assembly to the floor.
-    const ag = sketcher.glueManager.groupForPart(partA.id)!;
+    // Lift the attach group and snap the whole assembly to the floor.
+    const ag = sketcher.attachManager.groupForPart(partA.id)!;
     ag.group.position.y = 10;
     ag.group.updateMatrixWorld(true);
 
@@ -789,9 +789,9 @@ describe('snapToFloor', () => {
 });
 
 // ---------------------------------------------------------------------------
-// weld / unweld
+// group / ungroup
 // ---------------------------------------------------------------------------
-describe('weld / unweld', () => {
+describe('group / ungroup', () => {
   let scene: THREE.Scene;
   let sketcher: CartoonSketcher;
 
@@ -800,20 +800,20 @@ describe('weld / unweld', () => {
     sketcher = new CartoonSketcher(scene, makePerspectiveCamera());
   });
 
-  it('welds two standalone parts into a weld AssemblyGroup', () => {
+  it('groups two standalone parts into a group AssemblyGroup', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
 
-    const ag = sketcher.weld([a.id, b.id]);
+    const ag = sketcher.group([a.id, b.id]);
 
     expect(ag).not.toBeNull();
     expect(ag!.partIds).toContain(a.id);
     expect(ag!.partIds).toContain(b.id);
-    expect(sketcher.glueManager.isWeldGroup(a.id)).toBe(true);
-    expect(sketcher.glueManager.isWeldGroup(b.id)).toBe(true);
+    expect(sketcher.attachManager.isGroup(a.id)).toBe(true);
+    expect(sketcher.attachManager.isGroup(b.id)).toBe(true);
   });
 
-  it('preserves world positions of parts after weld', () => {
+  it('preserves world positions of parts after group', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
     a.mesh.position.set(2, 0, 0);
@@ -821,7 +821,7 @@ describe('weld / unweld', () => {
     a.mesh.updateMatrixWorld(true);
     b.mesh.updateMatrixWorld(true);
 
-    sketcher.weld([a.id, b.id]);
+    sketcher.group([a.id, b.id]);
 
     const posA = new THREE.Vector3();
     const posB = new THREE.Vector3();
@@ -833,82 +833,82 @@ describe('weld / unweld', () => {
 
   it('returns null if fewer than two part ids are given', () => {
     const a = sketcher.insertPrimitive('box')!;
-    expect(sketcher.weld([a.id])).toBeNull();
-    expect(sketcher.weld([])).toBeNull();
+    expect(sketcher.group([a.id])).toBeNull();
+    expect(sketcher.group([])).toBeNull();
   });
 
-  it('welds a standalone part into an existing weld group (group merging)', () => {
+  it('groups a standalone part into an existing group (group merging)', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
     const d = sketcher.insertPrimitive('box')!;
-    sketcher.weld([a.id, b.id]);
+    sketcher.group([a.id, b.id]);
 
-    // Now weld D into the A+B group — all three should end up in one weld group.
-    const result = sketcher.weld([a.id, b.id, d.id]);
+    // Now group D into the A+B group — all three should end up in one group.
+    const result = sketcher.group([a.id, b.id, d.id]);
     expect(result).not.toBeNull();
 
-    const ag = sketcher.glueManager.groupForPart(a.id);
+    const ag = sketcher.attachManager.groupForPart(a.id);
     expect(ag).toBeDefined();
     expect(ag!.partIds).toHaveLength(3);
     expect(ag!.partIds).toContain(d.id);
-    expect(sketcher.glueManager.isWeldGroup(d.id)).toBe(true);
-    // Merged weld component should cover all three parts.
-    expect(sketcher.glueManager.isInWeldComponent(a.id)).toBe(true);
-    expect(sketcher.glueManager.isInWeldComponent(d.id)).toBe(true);
+    expect(sketcher.attachManager.isGroup(d.id)).toBe(true);
+    // Merged group component should cover all three parts.
+    expect(sketcher.attachManager.isInGroupComponent(a.id)).toBe(true);
+    expect(sketcher.attachManager.isInGroupComponent(d.id)).toBe(true);
     // No stale old group — all three share one group.
-    expect(sketcher.glueManager.groupForPart(b.id)?.id).toBe(ag!.id);
-    expect(sketcher.glueManager.groupForPart(d.id)?.id).toBe(ag!.id);
+    expect(sketcher.attachManager.groupForPart(b.id)?.id).toBe(ag!.id);
+    expect(sketcher.attachManager.groupForPart(d.id)?.id).toBe(ag!.id);
   });
 
-  it('merges two independent weld groups into one', () => {
+  it('merges two independent groups into one', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
     const c = sketcher.insertPrimitive('box')!;
     const d = sketcher.insertPrimitive('box')!;
-    sketcher.weld([a.id, b.id]);
-    sketcher.weld([c.id, d.id]);
+    sketcher.group([a.id, b.id]);
+    sketcher.group([c.id, d.id]);
 
-    // Weld the two groups together.
-    const result = sketcher.weld([a.id, c.id]);
+    // Group all four parts together.
+    const result = sketcher.group([a.id, c.id]);
     expect(result).not.toBeNull();
 
-    const ag = sketcher.glueManager.groupForPart(a.id);
+    const ag = sketcher.attachManager.groupForPart(a.id);
     expect(ag).toBeDefined();
     expect(ag!.partIds).toHaveLength(4);
     [a, b, c, d].forEach((p) => {
-      expect(sketcher.glueManager.groupForPart(p.id)?.id).toBe(ag!.id);
-      expect(sketcher.glueManager.isWeldGroup(p.id)).toBe(true);
+      expect(sketcher.attachManager.groupForPart(p.id)?.id).toBe(ag!.id);
+      expect(sketcher.attachManager.isGroup(p.id)).toBe(true);
     });
-    // Single merged weld component.
-    expect(sketcher.glueManager.getWeldComponents()).toHaveLength(1);
-    expect(sketcher.glueManager.getWeldComponents()[0].sort()).toEqual(
+    // Single merged group component.
+    expect(sketcher.attachManager.getGroupComponents()).toHaveLength(1);
+    expect(sketcher.attachManager.getGroupComponents()[0].sort()).toEqual(
       [a.id, b.id, c.id, d.id].sort(),
     );
   });
 
-  it('unweld dissolves a weld group and returns parts to scene root', () => {
+  it('ungroup dissolves a group and returns parts to scene root', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
-    sketcher.weld([a.id, b.id]);
+    sketcher.group([a.id, b.id]);
 
-    sketcher.unweld(a.id);
+    sketcher.ungroup(a.id);
 
-    expect(sketcher.glueManager.groupForPart(a.id)).toBeUndefined();
-    expect(sketcher.glueManager.groupForPart(b.id)).toBeUndefined();
-    expect(sketcher.glueManager.isWeldGroup(a.id)).toBe(false);
+    expect(sketcher.attachManager.groupForPart(a.id)).toBeUndefined();
+    expect(sketcher.attachManager.groupForPart(b.id)).toBeUndefined();
+    expect(sketcher.attachManager.isGroup(a.id)).toBe(false);
     // Parts should now be direct children of the scene.
     expect(a.mesh.parent).toBe(scene);
     expect(b.mesh.parent).toBe(scene);
   });
 
-  it('unweld is a no-op for a part not in a weld group', () => {
+  it('ungroup is a no-op for a part not in a group', () => {
     const a = sketcher.insertPrimitive('box')!;
-    expect(() => sketcher.unweld(a.id)).not.toThrow();
+    expect(() => sketcher.ungroup(a.id)).not.toThrow();
   });
 });
 
-// takeSnapshot / restoreSnapshot — weld group round-trip
-describe('snapshot weld group round-trip', () => {
+// takeSnapshot / restoreSnapshot — group round-trip
+describe('snapshot group round-trip', () => {
   let scene: THREE.Scene;
   let sketcher: CartoonSketcher;
 
@@ -917,42 +917,42 @@ describe('snapshot weld group round-trip', () => {
     sketcher = new CartoonSketcher(scene, makePerspectiveCamera());
   });
 
-  it('takeSnapshot captures weld group membership', () => {
+  it('takeSnapshot captures group membership', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
-    sketcher.weld([a.id, b.id]);
+    sketcher.group([a.id, b.id]);
 
     const snap = sketcher.takeSnapshot();
 
-    expect(snap.weldGroups).toHaveLength(1);
-    expect(snap.weldGroups![0].partIds).toContain(a.id);
-    expect(snap.weldGroups![0].partIds).toContain(b.id);
+    expect(snap.groups).toHaveLength(1);
+    expect(snap.groups![0].partIds).toContain(a.id);
+    expect(snap.groups![0].partIds).toContain(b.id);
   });
 
-  it('takeSnapshot returns empty weldGroups when no weld groups exist', () => {
+  it('takeSnapshot returns empty groups when no groups exist', () => {
     sketcher.insertPrimitive('box');
     sketcher.insertPrimitive('sphere');
 
     const snap = sketcher.takeSnapshot();
 
-    expect(snap.weldGroups).toHaveLength(0);
+    expect(snap.groups).toHaveLength(0);
   });
 
-  it('restoreSnapshot re-creates weld groups at correct world positions', () => {
+  it('restoreSnapshot re-creates groups at correct world positions', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
     a.mesh.position.set(2, 0, 0);
     b.mesh.position.set(5, 0, 0);
-    sketcher.weld([a.id, b.id]);
+    sketcher.group([a.id, b.id]);
     const snap = sketcher.takeSnapshot();
 
     // Dissolve group externally, then restore.
-    sketcher.unweld(a.id);
+    sketcher.ungroup(a.id);
     sketcher.restoreSnapshot(snap);
 
-    expect(sketcher.glueManager.isWeldGroup(a.id)).toBe(true);
-    expect(sketcher.glueManager.isWeldGroup(b.id)).toBe(true);
-    const ag = sketcher.glueManager.groupForPart(a.id)!;
+    expect(sketcher.attachManager.isGroup(a.id)).toBe(true);
+    expect(sketcher.attachManager.isGroup(b.id)).toBe(true);
+    const ag = sketcher.attachManager.groupForPart(a.id)!;
     expect(ag).toBeDefined();
     // World positions should be preserved through the round-trip.
     const wpA = new THREE.Vector3();
@@ -965,10 +965,10 @@ describe('snapshot weld group round-trip', () => {
     expect(wpB.x).toBeCloseTo(5);
   });
 
-  it('restoreSnapshot is backward-compatible when weldGroups is absent', () => {
+  it('restoreSnapshot is backward-compatible when groups is absent', () => {
     const a = sketcher.insertPrimitive('box')!;
     const snap = sketcher.takeSnapshot();
-    // Simulate an old snapshot without weldGroups.
+    // Simulate an old snapshot without groups.
     const oldSnap = { parts: snap.parts, joints: snap.joints };
 
     expect(() => sketcher.restoreSnapshot(oldSnap)).not.toThrow();

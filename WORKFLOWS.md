@@ -349,50 +349,50 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 ---
 
-## Workflow S4 — Sketcher: Glue, Weld, Snap-to-Floor, and Group Scaling
+## Workflow S4 — Sketcher: Attach, Group, Snap-to-Floor, and Group Scaling
 
-**Goal:** Combine separate parts into rigid assemblies using glue (face-to-face join with a live joint) and weld (arbitrary rigid group), settle the assembly onto the ground plane with snap-to-floor, then scale the whole assembly and individual members independently.
+**Goal:** Combine separate parts into rigid assemblies using attach (face-to-face join with a live joint) and group (arbitrary rigid group), settle the assembly onto the ground plane with snap-to-floor, then scale the whole assembly and individual members independently.
 
 **Preconditions:** App running. Navigate to `/sketch`. Two or more extruded parts already in the scene (create via Workflow S1/S2, or extrude simple polygons now).
 
 ---
 
-### Part A — Glue two parts together (face-to-face joint)
+### Part A — Attach two parts together (face-to-face joint)
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 1 | Click **Glue…** in the toolbar (shortcut **G**); the toolbar adds a **⊕ Centre** toggle and the status bar reads "Click any surface to place the anchor blob. Esc cancels." | — | |
+| 1 | Click **Attach…** in the toolbar (shortcut **G**); the toolbar adds a **⊕ Centre** toggle and the status bar reads "Click any surface to place the anchor blob. Esc cancels." | — | |
 | 2 | Click a flat face on Part A (the source part); a pink blob marker appears on that face confirming the anchor point | — | |
 | 3 | Status bar updates to "Now click a face on a different part to complete the joint" | — | |
 | 4 | Click a face on Part B (the target part); the two parts snap together so the chosen faces are coplanar | — | |
-| 5 | The joint is committed; both parts become an assembly. The **Unglue** button appears when either part is selected | — | |
+| 5 | The joint is committed; both parts become an assembly. The **Detach** button appears when either part is selected | — | |
 | ✓ | The two parts are joined at the chosen faces; moving the assembly moves them as a unit | — | |
 
 **Tip — Snap anchor to face centre:** Before clicking the source face, toggle **⊕ Centre** on. The anchor snaps to the centroid of the face's draw group rather than the exact cursor hit, giving a cleaner, symmetric joint.
 
 ---
 
-### Part B — Unglue and re-join at a different face
+### Part B — Detach and re-join at a different face
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 6 | Click either part of the glue assembly to select it; click **Unglue** (shortcut **U**) | — | |
+| 6 | Click either part of the attach assembly to select it; click **Detach** (shortcut **U**) | — | |
 | 7 | The parts separate and return to independent positions; the joint is removed | — | |
 | 8 | Use the transform inspector or gizmo to reposition Part B | — | |
-| 9 | Perform a new **Glue…** picking a different face pair | — | |
-| ✓ | Re-glued assembly reflects the new face alignment | — | |
+| 9 | Perform a new **Attach…** picking a different face pair | — | |
+| ✓ | Re-attached assembly reflects the new face alignment | — | |
 
 ---
 
-### Part C — Weld multiple parts into a rigid group
+### Part C — Group multiple parts into a rigid group
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
 | 10 | Click Part A to select it; then **Shift+click** Part B and Part C to multi-select (all selected parts gain a highlight outline) | — | |
-| 11 | The **Weld** button appears in the toolbar (visible only when 2+ parts are selected) | — | |
-| 12 | Click **Weld**; a weld group is created at the centroid of the selection; the TC gizmo attaches to the group | — | |
-| 13 | Drag or use the inspector to move the weld group; all members move as one rigid unit | — | |
-| ✓ | The three parts form a rigid group; the Weld button is replaced by **Unweld** | — | |
+| 11 | The **Group** button appears in the toolbar (visible only when 2+ parts are selected) | — | |
+| 12 | Click **Group**; a group is created at the centroid of the selection; the TC gizmo attaches to the group | — | |
+| 13 | Drag or use the inspector to move the group; all members move as one rigid unit | — | |
+| ✓ | The three parts form a rigid group; the Group button is replaced by **Ungroup** | — | |
 
 ---
 
@@ -400,7 +400,7 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 14 | With the weld group selected, **double-click** any member inside the group | — | |
+| 14 | With the group selected, **double-click** any member inside the group | — | |
 | 15 | The tool enters **group edit mode**; the clicked member is highlighted; other members are dimmed; the TC gizmo attaches to that member alone | — | |
 | 16 | Drag or use the inspector to move, rotate, or scale the member **within** the group | — | |
 | 17 | Double-click a different member to switch the active edit target | — | |
@@ -409,7 +409,7 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 ---
 
-### Part E — Scale an individual member inside a weld group
+### Part E — Scale an individual member inside a group
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
@@ -418,15 +418,15 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 | 21 | Drag the scale gizmo handles; the member resizes in-place; other group members are unaffected | — | |
 | 22 | For a precise size: type the target value in the **Scale X/Y/Z** inspector fields and press **Enter**; lock the **🔒** button for proportional scaling | — | |
 | 23 | Press **Esc** to exit group edit; the group resumes whole-group selection with the updated member size baked in | — | |
-| ✓ | One member is a different size than before; the weld group is intact | — | |
+| ✓ | One member is a different size than before; the group is intact | — | |
 
 ---
 
-### Part F — Scale the entire weld group
+### Part F — Scale the entire group
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 24 | Click the weld group (single click, not inside a group edit); the TC gizmo attaches to the group origin | — | |
+| 24 | Click the group (single click, not inside a group edit); the TC gizmo attaches to the group origin | — | |
 | 25 | Switch to **Scale** mode; drag a gizmo handle to scale all members together | — | |
 | 26 | Or use the **Scale** inspector: lock **🔒**, set **Scale X** to `1.5`, press **Enter** — all three axes scale to 1.5× | — | |
 | 27 | Confirm all members grew uniformly; relative positions and member sizes inside the group are preserved | — | |
@@ -438,31 +438,31 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 28 | Select the weld group (or any standalone part); click **⬇ Floor** in the toolbar (shortcut **F**) | — | |
+| 28 | Select the group (or any standalone part); click **⬇ Floor** in the toolbar (shortcut **F**) | — | |
 | 29 | The lowest point of the selected object's bounding box is translated to Y = 0; the part or group rests on the ground plane | — | |
 | 30 | If in group edit mode, floor-snapping moves only the selected **member** to Y = 0 (useful to align a leg or base without lifting the whole assembly) | — | |
 | ✓ | The bottom of the assembly sits exactly on the floor; no part clips below Y = 0 | — | |
 
 ---
 
-### Part H — Unweld and verify members retain their transforms
+### Part H — Ungroup and verify members retain their transforms
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 31 | Click the weld group; click **Unweld** | — | |
+| 31 | Click the group; click **Ungroup** | — | |
 | 32 | All three parts are returned to scene root maintaining their current world position, rotation, and scale | — | |
 | 33 | Click each part individually; confirm the inspector shows the same values they had while nested in the group | — | |
-| 34 | Use **↩ Undo** to restore the weld group | — | |
-| ✓ | Unweld preserves all world transforms; undo restores the group correctly | — | |
+| 34 | Use **↩ Undo** to restore the group | — | |
+| ✓ | Ungroup preserves all world transforms; undo restores the group correctly | — | |
 
 ---
 
-### Part I — Scale a glue assembly and re-snap to floor
+### Part I — Scale an attach assembly and re-snap to floor
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 35 | Select either member of a glue assembly; the TC gizmo attaches to the part (glue assemblies do not use a Three.js group; scale one part at a time) | — | |
+| 35 | Select either member of an attach assembly; the TC gizmo attaches to the part (attach assemblies do not use a Three.js group; scale one part at a time) | — | |
 | 36 | Scale Part A larger using the inspector; Part B remains at its current size and position — the live joint is not re-solved automatically | — | |
-| 37 | Click **Glue…** → **Unglue** then re-glue at the same face pair to re-solve the joint with the new size | — | |
-| 38 | Click **⬇ Floor** to settle the re-glued assembly back onto the ground plane | — | |
+| 37 | Click **Attach…** → **Detach** then re-attach at the same face pair to re-solve the joint with the new size | — | |
+| 38 | Click **⬇ Floor** to settle the re-attached assembly back onto the ground plane | — | |
 | ✓ | Assembly size updated and re-snapped to floor | — | |
