@@ -254,6 +254,59 @@ interface OPFSCatalogueStore {
 
 ---
 
+## Phase SA19 — Precise glue point placement
+
+The current glue system has two positioning modes: **free** (blob placed at exact click point) and **centre** (blob snapped to the face-group centroid). Neither is sufficient for precise assembly work, e.g. attaching four table legs at symmetric positions on the underside of a tabletop.
+
+### Core concept: face tangent frame
+
+Every flat face (and, by extension, every face-group centroid on a curved surface) defines a local 2D coordinate system:
+
+- `n` — face normal, in mesh-local space (already stored as `GlueJoint.localNormalA`)
+- `t` — tangent: a stable vector perpendicular to `n` (e.g. derived via `Quaternion.setFromUnitVectors(worldY, n)`)
+- `b` — bitangent: `cross(n, t)`, completing the orthonormal frame
+
+A glue point is then expressed as:
+
+```
+localPoint = faceCentroid_local + dx·t + dy·b + dz·n
+```
+
+`dx`, `dy` are the in-plane offset from the face centroid; `dz` is the normal-direction offset (see below). All three are in mesh-local units. `localPoint` is what gets stored in `GlueJoint.localPointA/B` — this is **already** how the data model works, so this phase is entirely additive UI.
+
+Because `localPoint` is in mesh-local space, it survives arbitrary world-space rotation, translation, and uniform scaling of the part with no changes. To re-edit, the `dx`/`dy`/`dz` values are recovered by projecting `localPoint - faceCentroid_local` onto `t`, `b`, `n`.
+
+### Normal-direction offset (`dz`)
+
+Without a non-zero `dz`, two curved surfaces that meet at a point (e.g. a cylinder glued into a sphere's side) produce a visual z-fighting artefact — the cylinder end cap and sphere surface overlap at the contact circle. A small inward `dz` offset (negative along the anchor's normal) sinks the appendage slightly into the anchor surface, producing a natural "embedded" look.
+
+This is a per-joint property. A default of `dz = 0` preserves current behaviour. For the cylinder-into-sphere case a user would set e.g. `dz = -0.1` (push the cylinder 0.1 units into the sphere), which `resolveConstraints` honours by translating the result of `_applyJointPosition` an additional `dz` along the anchor normal.
+
+### Proposed UX — "precise" placement mode
+
+A third toggle alongside the existing free / centre modes. When active, the glue pick becomes a three-sub-step flow:
+
+1. **Face pick** — click selects the face as now; blob appears at face centroid (`centre` mode baseline).
+2. **Offset input** — a compact inline HUD appears with three fields: `dx`, `dy`, `dz` (all defaulting to 0). The blob marker updates live as the user types. Enter (or a Confirm button) locks the position and advances to the target phase.
+3. **Target pick** — identical to existing flow; can also use precise mode for the target face.
+
+For the table-leg workflow: anchor on tabletop underside → enter `(-0.7, -0.7, 0)` → pick leg top face in centre mode → leg snaps to position. Repeat four times.
+
+### Editing existing joints
+
+The dream is a fully positionable glue system: select an existing assembled joint, open a properties panel that shows the anchor face, current `dx`/`dy`/`dz` values, and allows live editing. On change, `resolveConstraints` reruns and the assembly reflows immediately.
+
+The UX challenge is joint selection — an assembled part may be involved in multiple joints (e.g. a central hub with four spokes). The face-highlight hover logic already identifies which face-group was clicked, and each joint stores which face-group it uses (via the `localNormal` direction). These two can be correlated to identify the specific joint the user intends to edit.
+
+### Implementation notes
+
+- `GlueJoint` type needs no schema change: `localPointA` already encodes any `dx`/`dy`/`dz` offset implicitly.
+- `_applyJointPosition` in `GlueManager` needs a small extension to apply the `dz` normal offset on top of the face-flush snap. Currently it snaps the target face flush with the anchor — a `dz` offset shifts the target an additional `dz · anchorWorldNormal` after snapping.
+- The tangent-frame derivation is a pure utility function (no Three.js state): `(normal: THREE.Vector3) → { t, b }`. Deterministic so the same frame is reconstructed for round-trip editing.
+- Non-uniform scaling of a part after gluing will shift the stored `localPoint` proportionally in the scaled axis — the same limitation as every node-based CAD tool. Discourage non-uniform scaling of assembled parts.
+
+---
+
 ## Deferred *(low priority, not blocking)*
 
 | Phase | Content |

@@ -138,6 +138,13 @@ export type SessionSnapshot = {
   joints: JointSnapshot[];
   /** Weld groups present at snapshot time. Absent means no weld groups. */
   weldGroups?: WeldGroupSnapshot[];
+  /**
+   * Durable weld bond components: each entry is the set of part IDs that form
+   * one weld unit. Unlike weldGroups, these survive glue merges — when a glue
+   * op collapses a weld group into a larger assembly, the bond topology is
+   * preserved here so that ungluing restores the weld group correctly.
+   */
+  weldComponents?: string[][];
 };
 
 // ── Draft types (used by CartoonSketcher.toDraft / loadDraft for persistence) ─

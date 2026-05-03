@@ -645,14 +645,18 @@ export class CartoonSketcher {
    */
   weld(partIds: string[]): AssemblyGroup | null {
     if (partIds.length < 2) return null;
-    const parts = partIds
+    // Expand any grouped parts to include all members of their group so that
+    // welding a standalone D onto an existing A+B group produces an A+B+D group.
+    const expandedIds = [...new Set(
+      partIds.flatMap((id) => {
+        const ag = this.glue.groupForPart(id);
+        return ag ? ag.partIds : [id];
+      })
+    )];
+    const parts = expandedIds
       .map((id) => this.parts.find((p) => p.id === id))
       .filter((p): p is SketcherPart => p !== undefined);
     if (parts.length < 2) return null;
-    // Reject if any part is already in an assembly group.
-    for (const p of parts) {
-      if (this.glue.groupForPart(p.id)) return null;
-    }
     return this.glue.createWeldGroup(parts);
   }
 
@@ -662,10 +666,12 @@ export class CartoonSketcher {
    * No-op if the part is not in a weld group.
    */
   unweld(partId: string): void {
-    if (!this.glue.isWeldGroup(partId)) return;
-    const ag = this.glue.groupForPart(partId);
-    if (!ag) return;
-    this.glue.dissolveWeldGroup(ag.id, this.parts);
+    if (this.glue.isWeldGroup(partId)) {
+      const ag = this.glue.groupForPart(partId);
+      if (ag) this.glue.dissolveWeldGroup(ag.id, this.parts);
+    } else if (this.glue.isInWeldComponent(partId)) {
+      this.glue.dissolveWeldComponent(partId, this.parts);
+    }
   }
 
   /** Return a snapshot of the current session. */
@@ -815,7 +821,7 @@ export class CartoonSketcher {
     // Capture ALL assembly groups (weld and glue) so undo/redo restores grouped state.
     const weldGroups: WeldGroupSnapshot[] = this.glue.getAssemblyGroups()
       .map((ag) => ({ partIds: [...ag.partIds], isWeld: this.glue.isWeldGroup(ag.partIds[0]) }));
-    return { parts, joints, weldGroups };
+    return { parts, joints, weldGroups, weldComponents: this.glue.getWeldComponents() };
   }
 
   /**
@@ -879,7 +885,7 @@ export class CartoonSketcher {
     }
 
     // Rebuild all assembly groups from snapshot data (preserves weld/glue types).
-    this.glue.rebuildGroupsFromSnapshot(snap.weldGroups ?? [], this.parts);
+    this.glue.rebuildGroupsFromSnapshot(snap.weldGroups ?? [], this.parts, snap.weldComponents);
   }
 
   /**

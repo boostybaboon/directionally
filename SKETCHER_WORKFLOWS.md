@@ -197,18 +197,94 @@ Glue attaches the *mover*'s face flush to the *anchor*'s face contact point. Mov
 
 ---
 
-## T11 — Glue with weld groups as mover
+## T11 — Glue / weld group interactions
+
+Full coverage of glue joints where one or both sides involve a weld group. Tests constraint chaining, group topology survival, undo/redo, and member-edit access.
+
+### T11a — Weld group as glue mover
 
 Confirms a weld group (rigid entity) can be the mover in a glue joint.
 
 | Step | Action | Expected | Status | Notes |
 |:----:|--------|----------|:------:|-------|
-| 1 | Weld two cubes together | Weld group created | — | |
-| 2 | Insert a standalone cylinder | — | — | |
-| 3 | Press **G**; click the cylinder as anchor | Pink blob on cylinder | — | |
-| 4 | Click a face of one cube in the weld group | Entire weld group rotates and snaps to the cylinder | — | |
-| 5 | Select and translate the cylinder | Weld group follows as a rigid unit | — | |
-| 6 | Click the weld group; **Unglue** | Joint removed; weld group remains intact at current position | — | |
+| 1 | Weld two cubes together | Weld group created | OK | |
+| 2 | Insert a standalone cylinder | — | OK | |
+| 3 | Press **G**; click the cylinder as anchor | Pink blob on cylinder | OK | |
+| 4 | Click a face of one cube in the weld group | Entire weld group rotates and snaps to the cylinder | OK | |
+| 5 | Select and translate the cylinder | Weld group follows as a rigid unit | OK | |
+| 6 | Click the weld group; press **U** or click **Unglue** | Joint removed; weld group remains intact at current position | OK | |
+
+### T11b — Weld bond survives unglue of an attached appendage
+
+Regression for the bug where ungluing a glue-joint part would silently destroy the weld group that had been merged into the same assembly.
+
+| Step | Action | Expected | Status | Notes |
+|:----:|--------|----------|:------:|-------|
+| 1 | Insert **Cube A** and **Cube B**; weld them together | Amber bounding box spans both cubes; status bar shows weld-group hint | OK | |
+| 2 | Insert **Cylinder C** (standalone) | — | OK | |
+| 3 | Press **G**; click a face of **Cube B** as anchor; click a face of **Cylinder C** | Cylinder snaps flush; all three parts merge into one assembly group | OK | |
+| 4 | Click **Cylinder C** to select it | **Unglue** button appears (cylinder has a glue joint); **Unweld** button is absent (cylinder is not a weld member) | OK | |
+| 5 | Press **U** / click **Unglue** | Status "Unglued."; Cylinder C returns to standalone | OK | |
+| 6 | Verify **Cube A** and **Cube B** are still grouped | Amber bounding box spans A and B; clicking either selects the group; **Unweld** button appears | OK | |
+| 7 | Translate the A+B weld group | Both cubes move together as one rigid unit; Cylinder C stays put | OK | |
+
+### T11c — Multiple appendages; ungluing one leaves the others
+
+| Step | Action | Expected | Status | Notes |
+|:----:|--------|----------|:------:|-------|
+| 1 | Weld **Cube A** and **Cube B** | Weld group | OK | |
+| 2 | Glue **Cylinder C** to the top of Cube A | A+B+C in one assembly | OK | |
+| 3 | Glue **Sphere D** to the side of Cube B | A+B+C+D in one assembly | OK | |
+| 4 | Click **Cylinder C**; press **U** | C detaches; A+B+D remain in one assembly | OK ||
+| 5 | Confirm A+B weld bond intact | Amber box spans A+B+D; **Unweld** button visible | OK | |
+| 6 | Click **Sphere D**; press **U** | D detaches; A+B remain as a standalone weld group | OK | |
+| 7 | Translate the A+B group | Both move together; C and D stay put | OK | |
+
+### T11d — Undo/redo preserves weld bond topology
+
+| Step | Action | Expected | Status | Notes |
+|:----:|--------|----------|:------:|-------|
+| 1 | Weld **Cube A** and **Cube B** | Weld group; 0 glue joints | OK | |
+| 2 | Glue **Cylinder C** to Cube B (step 3 of T11b) | A+B+C merged assembly | OK | |
+| 3 | Ctrl+Z to undo the glue | C returns to standalone; A+B re-form as a weld group | OK | |
+| 4 | Ctrl+Z to undo the weld | A and B are now separate standalone parts | OK | |
+| 5 | Ctrl+Shift+Z to redo the weld | A+B weld group restores; **Unweld** button visible | OK | |
+| 6 | Ctrl+Shift+Z to redo the glue | A+B+C merged assembly again; C snapped back to its position | OK | |
+| 7 | Ctrl+Z to undo the glue (second time) | A+B weld group intact; C standalone | OK | |
+
+### T11e — Double-click member-edit inside a mixed assembly
+
+Confirms you can enter group-edit mode on any member of a mixed assembly and switch the active member. Translate in group-edit mode is only meaningful for **weld** members repositioned relative to the group pivot; glued appendages carry a frozen local-contact-point record and have no supported independent motion (a future "reposition glue blob on face" gesture would update `localPointA`/`localPointB` on the `GlueJoint` rather than translating the mesh).
+
+| Step | Action | Expected | Status | Notes |
+|:----:|--------|----------|:------:|-------|
+| 1 | Set up A+B weld + C glued to B (same as T11b steps 1–3) | A+B+C assembly | OK | |
+| 2 | Single-click any part of the assembly | Whole assembly selects (amber box, group TC) | OK | |
+| 3 | Double-click **Cube A** (weld member) | Group-edit mode enters; TC attaches to Cube A's mesh; other parts dim | OK | |
+| 4 | Double-click **Cylinder C** (glued appendage) while still in group-edit | Active member switches to Cylinder C; TC attaches to C's mesh | OK | |
+| 5 | Click outside the assembly | Exits group-edit; full assembly re-selects | OK | |
+
+### T11f — Unglue vs Unweld button visibility
+
+| Step | Action | Expected | Status | Notes |
+|:----:|--------|----------|:------:|-------|
+| 1 | Select a standalone part | Neither **Unglue** nor **Unweld** button visible | OK | |
+| 2 | Select a part in a pure weld group (no glue joints) | **Unweld** visible; **Unglue** absent | OK | |
+| 3 | Select **Cylinder C** in the T11b assembly (glue-only member) | **Unglue** visible; **Unweld** absent | OK | |
+| 4 | Glue two standalone parts with no weld involved; select either | **Unglue** visible; **Unweld** absent | OK | |
+| 5 | Weld two parts and then glue a third to one weld member; select the weld member in the merged assembly | **Unglue** absent (weld members have no direct glue joint); **Unweld** visible; pressing **U** unwelds the bond — weld core members with no glue joints go standalone, glue-jointed members stay in their group | OK | |
+
+### T11g — Constraint chaining through a weld group
+
+| Step | Action | Expected | Status | Notes |
+|:----:|--------|----------|:------:|-------|
+| 1 | Insert three standalone cubes: **P**, **Q**, **R** | — | OK | |
+| 2 | Weld **Q** and **R** | Q+R weld group | OK | |
+| 3 | Glue **P** (anchor) ← top of P → bottom of Q | P–Q glue joint; P+Q+R in one assembly | OK | |
+| 4 | Insert **Cylinder S**; glue R's top face as anchor → S's bottom | P+Q+R+S in one assembly | OK | |
+| 5 | Select the entire assembly; translate it upward by dragging TC | All four parts move together | OK | |
+| 6 | Enter group-edit; select **P**; translate P upward | Q and R follow via glue joint; S follows because it is glued to R | OK | |
+| 7 | Press **Esc** to exit group-edit; click **P**; press **U** | P detaches; Q+R weld group remains; S stays glued to R; Q+R+S remain in one assembly | OK | |
 
 ---
 

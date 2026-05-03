@@ -837,15 +837,53 @@ describe('weld / unweld', () => {
     expect(sketcher.weld([])).toBeNull();
   });
 
-  it('returns null if any part is already in an assembly group', () => {
+  it('welds a standalone part into an existing weld group (group merging)', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    const d = sketcher.insertPrimitive('box')!;
+    sketcher.weld([a.id, b.id]);
+
+    // Now weld D into the A+B group — all three should end up in one weld group.
+    const result = sketcher.weld([a.id, b.id, d.id]);
+    expect(result).not.toBeNull();
+
+    const ag = sketcher.glueManager.groupForPart(a.id);
+    expect(ag).toBeDefined();
+    expect(ag!.partIds).toHaveLength(3);
+    expect(ag!.partIds).toContain(d.id);
+    expect(sketcher.glueManager.isWeldGroup(d.id)).toBe(true);
+    // Merged weld component should cover all three parts.
+    expect(sketcher.glueManager.isInWeldComponent(a.id)).toBe(true);
+    expect(sketcher.glueManager.isInWeldComponent(d.id)).toBe(true);
+    // No stale old group — all three share one group.
+    expect(sketcher.glueManager.groupForPart(b.id)?.id).toBe(ag!.id);
+    expect(sketcher.glueManager.groupForPart(d.id)?.id).toBe(ag!.id);
+  });
+
+  it('merges two independent weld groups into one', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
     const c = sketcher.insertPrimitive('box')!;
-    // Weld a and b.
+    const d = sketcher.insertPrimitive('box')!;
     sketcher.weld([a.id, b.id]);
-    // Trying to weld a (already grouped) with c should fail.
+    sketcher.weld([c.id, d.id]);
+
+    // Weld the two groups together.
     const result = sketcher.weld([a.id, c.id]);
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+
+    const ag = sketcher.glueManager.groupForPart(a.id);
+    expect(ag).toBeDefined();
+    expect(ag!.partIds).toHaveLength(4);
+    [a, b, c, d].forEach((p) => {
+      expect(sketcher.glueManager.groupForPart(p.id)?.id).toBe(ag!.id);
+      expect(sketcher.glueManager.isWeldGroup(p.id)).toBe(true);
+    });
+    // Single merged weld component.
+    expect(sketcher.glueManager.getWeldComponents()).toHaveLength(1);
+    expect(sketcher.glueManager.getWeldComponents()[0].sort()).toEqual(
+      [a.id, b.id, c.id, d.id].sort(),
+    );
   });
 
   it('unweld dissolves a weld group and returns parts to scene root', () => {

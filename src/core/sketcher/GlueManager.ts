@@ -57,6 +57,21 @@ export class GlueManager {
   private readonly assemblyGroups: AssemblyGroup[] = [];
   /** Ids of AssemblyGroups created by weld (no joint topology). */
   private readonly weldGroupIds = new Set<string>();
+  /**
+   * Durable weld bond components. Each Set lists the part IDs that form one
+   * weld unit. Unlike weldGroupIds (which tracks ephemeral group object IDs),
+   * this persists through glue merges: when commitGlue dissolves the weld
+   * group and folds its members into a larger assembly, these bonds survive so
+   * that _rebuildGroupsForParts can reform the weld after ungluing.
+   *
+   * Lifecycle:
+   *  - createWeldGroup: push a new Set for the welded members.
+   *  - dissolveWeldGroup: remove the Set (explicit unweld).
+   *  - _dissolveGroup: intentionally does NOT touch weldComponents.
+   *  - evictFromGroup: delete the evicted part from every Set; prune size-1 Sets.
+   *  - dispose: clear the array.
+   */
+  private readonly weldComponents: Array<Set<string>> = [];
 
   constructor(private readonly scene: THREE.Scene) {}
 
@@ -229,6 +244,36 @@ export class GlueManager {
    * All parts must be standalone (not already in any group).
    */
   createWeldGroup(parts: SketcherPart[]): AssemblyGroup {
+    // Dissolve any existing assembly groups for these parts before creating the
+    // new combined group. Callers are responsible for passing the full expanded
+    // member list (including members of any groups being merged).
+    const dissolved = new Set<string>();
+    for (const p of parts) {
+      const existing = this.groupForPart(p.id);
+      if (existing && !dissolved.has(existing.id)) {
+        dissolved.add(existing.id);
+        // Remove the weldGroupIds entry; the new combined Set will replace it.
+        this.weldGroupIds.delete(existing.id);
+        this._dissolveGroup(existing);
+      }
+    }
+    // Merge all durable weld bond Sets that overlap with the incoming part ids.
+    // Example: welding A+B+D where A+B was already a weld bond → one Set {A,B,D}.
+    const partIdSet = new Set(parts.map((p) => p.id));
+    const mergedWC = new Set<string>(partIdSet);
+    const toRemove: number[] = [];
+    for (let i = 0; i < this.weldComponents.length; i++) {
+      const wc = this.weldComponents[i];
+      if ([...wc].some((id) => partIdSet.has(id))) {
+        for (const id of wc) mergedWC.add(id);
+        toRemove.push(i);
+      }
+    }
+    for (let i = toRemove.length - 1; i >= 0; i--) {
+      this.weldComponents.splice(toRemove[i], 1);
+    }
+    this.weldComponents.push(mergedWC);
+
     const ag = this._createGroup(parts);
     this.weldGroupIds.add(ag.id);
     return ag;
@@ -241,6 +286,11 @@ export class GlueManager {
   dissolveWeldGroup(groupId: string, _allParts?: SketcherPart[]): void {
     const ag = this.assemblyGroups.find((g) => g.id === groupId);
     if (!ag || !this.weldGroupIds.has(groupId)) return;
+    // Remove the durable weld bond component so the bond is truly gone after an explicit unweld.
+    const wcIdx = this.weldComponents.findIndex(
+      (wc) => wc.size === ag.partIds.length && ag.partIds.every((id) => wc.has(id)),
+    );
+    if (wcIdx !== -1) this.weldComponents.splice(wcIdx, 1);
     this._dissolveGroup(ag);
   }
 
@@ -248,6 +298,31 @@ export class GlueManager {
   isWeldGroup(partId: string): boolean {
     const ag = this.groupForPart(partId);
     return ag ? this.weldGroupIds.has(ag.id) : false;
+  }
+
+  /** Return true if the part is in any durable weld bond component (even when merged into a glue group). */
+  isInWeldComponent(partId: string): boolean {
+    return this.weldComponents.some((wc) => wc.has(partId));
+  }
+
+  /** Return all durable weld bond components as plain arrays (for snapshot serialization). */
+  getWeldComponents(): string[][] {
+    return this.weldComponents.map((wc) => [...wc]);
+  }
+
+  /**
+   * Remove the weld bond component containing `partId` and rebuild group topology.
+   * Used when unwelding weld members that are folded into a larger glue assembly:
+   * the glue joints remain; parts that are no longer weld-connected separate into
+   * sub-groups or go standalone depending on their glue connectivity.
+   */
+  dissolveWeldComponent(partId: string, allParts: SketcherPart[]): void {
+    const wcIdx = this.weldComponents.findIndex((wc) => wc.has(partId));
+    if (wcIdx === -1) return;
+    this.weldComponents.splice(wcIdx, 1);
+    const ag = this.groupForPart(partId);
+    const affectedIds = ag ? [...ag.partIds] : [partId];
+    this._rebuildGroupsForParts(affectedIds, allParts);
   }
 
   /**
@@ -260,6 +335,11 @@ export class GlueManager {
     if (!ag) return;
     const idx = ag.partIds.indexOf(partId);
     if (idx !== -1) ag.partIds.splice(idx, 1);
+    // Remove the evicted part from every weld bond component; prune size-1 sets.
+    for (const wc of this.weldComponents) { wc.delete(partId); }
+    for (let i = this.weldComponents.length - 1; i >= 0; i--) {
+      if (this.weldComponents[i].size < 2) this.weldComponents.splice(i, 1);
+    }
     if (ag.partIds.length <= 1) {
       this._dissolveGroup(ag);
     }
@@ -291,22 +371,41 @@ export class GlueManager {
    *
    * Groups with isWeld === true (or absent, for backward compat) are registered
    * as weld groups. Others are plain assembly groups (glue groups).
+   *
+   * Pass `weldComponents` (from SessionSnapshot) when available so durable weld
+   * bond topology is also restored. Without it, bond components are derived from
+   * the weld-marked groups (backward-compatible but cannot restore bonds that
+   * were merged into a larger glue assembly).
    */
   rebuildGroupsFromSnapshot(
     groups: Array<{ partIds: string[]; isWeld?: boolean }>,
     allParts: SketcherPart[],
+    weldComponents?: string[][],
   ): void {
     for (const wg of groups) {
       const parts = wg.partIds
         .map((id) => allParts.find((p) => p.id === id))
         .filter((p): p is SketcherPart => p !== undefined);
       if (parts.length < 2) continue;
+      const ag = this._createGroup(parts);
       if (wg.isWeld !== false) {
-        // isWeld absent (legacy) or true → weld group
-        this.createWeldGroup(parts);
-      } else {
-        // Glue group: plain assembly group, not marked as weld
-        this._createGroup(parts);
+        // isWeld absent (legacy) or true → weld group; weldGroupIds marked here;
+        // weldComponents handled below to avoid double-adding when using the new format.
+        this.weldGroupIds.add(ag.id);
+      }
+    }
+    // Restore durable weld bond components.
+    if (weldComponents) {
+      // New format: use the serialized bond topology directly.
+      for (const wc of weldComponents) {
+        this.weldComponents.push(new Set(wc));
+      }
+    } else {
+      // Backward compat: derive from current weld-marked groups (simple case only).
+      for (const ag of this.assemblyGroups) {
+        if (this.weldGroupIds.has(ag.id)) {
+          this.weldComponents.push(new Set(ag.partIds));
+        }
       }
     }
   }
@@ -318,6 +417,7 @@ export class GlueManager {
     this.joints.length = 0;
     this.assemblyGroups.length = 0;
     this.weldGroupIds.clear();
+    this.weldComponents.length = 0;
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────
@@ -384,9 +484,10 @@ export class GlueManager {
 
   /**
    * After joint removal, dissolve the former group(s) and rebuild new groups
-   * by BFS over the remaining joints. Parts with no joint connections end up
-   * at scene root (standalone). Weld-only groups with no glue joints are NOT
-   * reconstructed here (they are handled by CartoonSketcher.restoreSnapshot).
+   * by BFS over the remaining joints AND weld bond components. Parts with no
+   * connections end up at scene root (standalone). A component whose members
+   * are all in the same weld bond component (and have no glue joints among
+   * them) is re-marked as a weld group.
    */
   private _rebuildGroupsForParts(partIds: string[], allParts: SketcherPart[]): void {
     // Dissolve all existing groups containing these parts.
@@ -395,7 +496,7 @@ export class GlueManager {
       const ag = this.groupForPart(id);
       if (ag && !dissolved.has(ag.id)) { dissolved.add(ag.id); this._dissolveGroup(ag); }
     }
-    // Find connected components via BFS on remaining joints.
+    // Find connected components via BFS on remaining joints AND weld bond components.
     const remaining = new Set(partIds);
     const visited  = new Set<string>();
     for (const startId of remaining) {
@@ -406,16 +507,36 @@ export class GlueManager {
         const curr = q.shift()!;
         if (visited.has(curr)) continue;
         visited.add(curr); component.push(curr);
+        // Glue joint edges.
         for (const j of this.joints) {
           if (j.partAId === curr && remaining.has(j.partBId) && !visited.has(j.partBId)) q.push(j.partBId);
           else if (j.partBId === curr && remaining.has(j.partAId) && !visited.has(j.partAId)) q.push(j.partAId);
+        }
+        // Weld bond edges.
+        for (const wc of this.weldComponents) {
+          if (wc.has(curr)) {
+            for (const wid of wc) {
+              if (remaining.has(wid) && !visited.has(wid)) q.push(wid);
+            }
+          }
         }
       }
       if (component.length >= 2) {
         const parts = component
           .map((id) => allParts.find((p) => p.id === id))
           .filter((p): p is SketcherPart => p !== undefined);
-        if (parts.length >= 2) this._createGroup(parts);
+        if (parts.length >= 2) {
+          const ag = this._createGroup(parts);
+          // Re-mark as weld group if no glue joints span this component and all
+          // its members belong to the same weld bond component.
+          const hasGlueJoint = this.joints.some(
+            (j) => component.includes(j.partAId) && component.includes(j.partBId),
+          );
+          if (!hasGlueJoint) {
+            const wc = this.weldComponents.find((w) => component.every((id) => w.has(id)));
+            if (wc) this.weldGroupIds.add(ag.id);
+          }
+        }
       }
     }
   }

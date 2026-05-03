@@ -542,3 +542,214 @@ describe('faceGroupLabel', () => {
   });
 });
 
+// ── T11-6: weld survives unglue of an attached glue part ─────────────────────
+
+describe('GlueManager weld bond survives glue-then-unglue (T11-6)', () => {
+  it('ungluing C from [A,B weld + C glued] restores the weld group for A and B', () => {
+    const scene = makeScene();
+    const glue = new GlueManager(scene);
+    const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
+    const partB = makePart(scene, new THREE.Vector3(1, 0, 0));
+    const partC = makePart(scene, new THREE.Vector3(0, 5, 0));
+
+    // Weld A and B together.
+    glue.createWeldGroup([partA, partB]);
+    expect(glue.isWeldGroup(partA.id)).toBe(true);
+
+    // Glue C to B — this merges everything into one assembly (no longer a pure weld group).
+    glue.commitGlue(
+      partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
+      partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
+      [partA, partB, partC],
+    );
+    expect(glue.getAssemblyGroups()).toHaveLength(1);
+    expect(glue.isWeldGroup(partA.id)).toBe(false); // merged group is not pure weld
+    expect(glue.isInWeldComponent(partA.id)).toBe(true); // but bond still tracked
+
+    // Unglue C.
+    glue.unglueAll(partC.id, [partA, partB, partC]);
+
+    // A and B should be back in a weld group; C should be standalone.
+    expect(glue.getAssemblyGroups()).toHaveLength(1);
+    expect(glue.isWeldGroup(partA.id)).toBe(true);
+    expect(glue.isWeldGroup(partB.id)).toBe(true);
+    expect(glue.groupForPart(partC.id)).toBeUndefined();
+    expect(partC.mesh.parent).toBe(scene);
+  });
+
+  it('explicit unweld then unglue does NOT restore the weld group', () => {
+    const scene = makeScene();
+    const glue = new GlueManager(scene);
+    const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
+    const partB = makePart(scene, new THREE.Vector3(1, 0, 0));
+    const partC = makePart(scene, new THREE.Vector3(0, 5, 0));
+
+    glue.createWeldGroup([partA, partB]);
+    glue.commitGlue(
+      partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
+      partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
+      [partA, partB, partC],
+    );
+
+    // There's no pure-weld group to unweld right now (it's merged). But suppose
+    // the user undoes the glue (snapshot restore) and then unwelded — simulate
+    // that by dissolving weld component directly via dissolveWeldGroup on the
+    // original weld's parts. We can test by verifying isInWeldComponent after
+    // a dissolveWeldGroup would clear the bond.
+    // Instead, test the simpler case: weld A-B, immediately dissolveWeldGroup, then
+    // confirm ungluing a hypothetical C would not restore the bond.
+    const scene2 = makeScene();
+    const g2 = new GlueManager(scene2);
+    const a2 = makePart(scene2, new THREE.Vector3(0, 0, 0));
+    const b2 = makePart(scene2, new THREE.Vector3(1, 0, 0));
+    const c2 = makePart(scene2, new THREE.Vector3(0, 5, 0));
+    const wg = g2.createWeldGroup([a2, b2]);
+    g2.dissolveWeldGroup(wg.id);
+    // Bond removed: isInWeldComponent should be false.
+    expect(g2.isInWeldComponent(a2.id)).toBe(false);
+    // Glue c2 to a2 (no weld bond in scope).
+    g2.commitGlue(
+      a2, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
+      c2, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
+      [a2, b2, c2],
+    );
+    g2.unglueAll(c2.id, [a2, b2, c2]);
+    // Without a weld bond, a2 and b2 must be standalone after unglue.
+    expect(g2.groupForPart(a2.id)).toBeUndefined();
+    expect(g2.groupForPart(b2.id)).toBeUndefined();
+  });
+
+  it('getWeldComponents returns serializable arrays and rebuildGroupsFromSnapshot restores them', () => {
+    const scene = makeScene();
+    const glue = new GlueManager(scene);
+    const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
+    const partB = makePart(scene, new THREE.Vector3(1, 0, 0));
+    const partC = makePart(scene, new THREE.Vector3(0, 5, 0));
+
+    glue.createWeldGroup([partA, partB]);
+    glue.commitGlue(
+      partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
+      partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
+      [partA, partB, partC],
+    );
+
+    // Serialize the weld components.
+    const serialized = glue.getWeldComponents();
+    expect(serialized).toHaveLength(1);
+    expect(serialized[0].sort()).toEqual([partA.id, partB.id].sort());
+
+    // Restore into a fresh GlueManager (simulates undo/redo snapshot restore).
+    const scene2 = makeScene();
+    const glue2 = new GlueManager(scene2);
+    const a2 = { ...partA, mesh: partA.mesh };
+    const b2 = { ...partB, mesh: partB.mesh };
+    const c2 = { ...partC, mesh: partC.mesh };
+    scene2.add(a2.mesh, b2.mesh, c2.mesh);
+
+    // Simulate: merged glue group [A,B,C] (isWeld=false) in snapshot, plus weldComponents [[A,B]].
+    glue2.rebuildGroupsFromSnapshot(
+      [{ partIds: [partA.id, partB.id, partC.id], isWeld: false }],
+      [a2, b2, c2],
+      serialized,
+    );
+    // weld bond restored via weldComponents param.
+    expect(glue2.isInWeldComponent(partA.id)).toBe(true);
+    expect(glue2.isInWeldComponent(partB.id)).toBe(true);
+    expect(glue2.isInWeldComponent(partC.id)).toBe(false);
+  });
+});
+
+// ── dissolveWeldComponent ────────────────────────────────────────────────────
+
+describe('GlueManager.dissolveWeldComponent', () => {
+  it('unwelding a weld member in a mixed assembly separates non-jointed members', () => {
+    // A+B weld, C glued to B. After dissolveWeldComponent(A):
+    // A has no glue joints → standalone. B+C still glue-jointed → glue group.
+    const scene = makeScene();
+    const glue = new GlueManager(scene);
+    const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
+    const partB = makePart(scene, new THREE.Vector3(1, 0, 0));
+    const partC = makePart(scene, new THREE.Vector3(0, 5, 0));
+
+    glue.createWeldGroup([partA, partB]);
+    glue.commitGlue(
+      partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
+      partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
+      [partA, partB, partC],
+    );
+
+    glue.dissolveWeldComponent(partA.id, [partA, partB, partC]);
+
+    expect(glue.isInWeldComponent(partA.id)).toBe(false);
+    expect(glue.groupForPart(partA.id)).toBeUndefined();
+    expect(partA.mesh.parent).toBe(scene);
+
+    const bcGroup = glue.groupForPart(partB.id);
+    expect(bcGroup).toBeDefined();
+    expect(bcGroup!.partIds).toContain(partC.id);
+    expect(glue.isWeldGroup(partB.id)).toBe(false); // it's a glue group, not weld
+  });
+
+  it('no-op when partId is not in any weld component', () => {
+    const scene = makeScene();
+    const glue = new GlueManager(scene);
+    const partA = makePart(scene);
+    const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
+    glue.commitGlue(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+
+    // partA is in a glue group, not a weld component — dissolveWeldComponent should no-op.
+    glue.dissolveWeldComponent(partA.id, [partA, partB]);
+
+    expect(glue.getAssemblyGroups()).toHaveLength(1); // glue group unchanged
+    expect(glue.getJoints()).toHaveLength(1);
+  });
+});
+
+// ── createWeldGroup — group merging ──────────────────────────────────────────
+
+describe('GlueManager.createWeldGroup — group merging', () => {
+  it('merges a standalone part into an existing weld group', () => {
+    const scene = makeScene();
+    const glue = new GlueManager(scene);
+    const a = makePart(scene);
+    const b = makePart(scene, new THREE.Vector3(1, 0, 0));
+    const d = makePart(scene, new THREE.Vector3(2, 0, 0));
+
+    glue.createWeldGroup([a, b]);
+    // Merge D into A+B.
+    glue.createWeldGroup([a, b, d]);
+
+    const ag = glue.groupForPart(a.id);
+    expect(ag).toBeDefined();
+    expect(ag!.partIds).toHaveLength(3);
+    expect(ag!.partIds).toContain(d.id);
+    // Only one assembly group should exist (old one dissolved).
+    expect(glue.getAssemblyGroups()).toHaveLength(1);
+    // One merged weld component covering all three.
+    expect(glue.getWeldComponents()).toHaveLength(1);
+    expect(glue.getWeldComponents()[0].sort()).toEqual([a.id, b.id, d.id].sort());
+  });
+
+  it('merges two independent weld groups into one', () => {
+    const scene = makeScene();
+    const glue = new GlueManager(scene);
+    const a = makePart(scene);
+    const b = makePart(scene, new THREE.Vector3(1, 0, 0));
+    const c = makePart(scene, new THREE.Vector3(2, 0, 0));
+    const d = makePart(scene, new THREE.Vector3(3, 0, 0));
+
+    glue.createWeldGroup([a, b]);
+    glue.createWeldGroup([c, d]);
+    // Weld all four together (caller has expanded both groups to their full member lists).
+    glue.createWeldGroup([a, b, c, d]);
+
+    // All four should be in one group.
+    const ag = glue.groupForPart(a.id);
+    expect(ag).toBeDefined();
+    expect(ag!.partIds).toHaveLength(4);
+    expect(glue.getAssemblyGroups()).toHaveLength(1);
+    expect(glue.getWeldComponents()).toHaveLength(1);
+    expect(glue.getWeldComponents()[0].sort()).toEqual([a.id, b.id, c.id, d.id].sort());
+  });
+});
+

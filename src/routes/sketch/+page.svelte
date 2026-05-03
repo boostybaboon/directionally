@@ -229,7 +229,7 @@
         if (part) {
           selectedPartId = part.id;
           selectedColor = '#' + part.color.toString(16).padStart(6, '0');
-          selectedGroupIsWeld = sketcher.glueManager.isWeldGroup(part.id);
+          selectedGroupIsWeld = sketcher.glueManager.isWeldGroup(part.id) || sketcher.glueManager.isInWeldComponent(part.id);
           selectedPartHasGlue = sketcher.glueManager.getJoints().some(
             (j) => j.partAId === part.id || j.partBId === part.id,
           );
@@ -359,7 +359,10 @@
           if (gluePhase === null) startGluePick();
           break;
         case 'u': case 'U':
-          if (selectedPartId) unglueSelected();
+          if (selectedPartId) {
+            if (selectedPartHasGlue) unglueSelected();
+            else if (selectedGroupIsWeld) unweldSelected();
+          }
           break;
       }
     };
@@ -699,20 +702,15 @@
       const session = sketcher.getSession();
       const meshes = session.parts.map((p) => p.mesh);
 
-      // Shift-click: toggle a standalone part in the multi-selection.
-      // Weld groups are treated as atomic — shift-clicking any member of a
-      // group that is already selected does nothing (the group is already
-      // selected as a unit). TC is detached during multi-select.
+      // Shift-click: toggle parts or whole assembly groups in the multi-selection.
+      // When the primary selection or the clicked item is in a group, the group is
+      // treated as an atomic unit — any member of that group acts as a handle for
+      // the entire group. This lets you shift-click a group to add it to a
+      // multi-select for welding (e.g. weld an existing A+B group with standalone D).
       if (e.shiftKey && selection.selectedMesh) {
         const hit = selection.pick(x, y, camera, meshes);
         if (hit && hit !== selection.selectedMesh) {
-          const hitPart = session.parts.find((p) => p.mesh === hit);
-          const hitInGroup = hitPart ? sketcher.glueManager.groupForPart(hitPart.id) : undefined;
-          const primaryInGroup = sketcher.glueManager.groupForPart(selectedPartId ?? '');
-          if (hitInGroup || primaryInGroup) {
-            // Groups are atomic — can't be mixed into a standalone multi-select.
-            statusMessage = 'Multi-select only works with standalone parts (not in a group).';
-          } else if (selection.selectedMeshes.includes(hit)) {
+          if (selection.selectedMeshes.includes(hit)) {
             selection.removeFromSelection(hit);
           } else {
             selection.addToSelection(hit);
@@ -764,7 +762,7 @@
             if (newAg) {
               selection.selectGroup(hit, newAg.group);
               tc.attach(newAg.group);
-              statusMessage = 'Group selected. W/E/R transform · G=glue edit · U=unglue · double-click to edit a member';
+              statusMessage = groupStatusHint();
             } else {
               selection.select(hit);
             }
@@ -784,12 +782,27 @@
           // Amber bounding box on the group instead of per-mesh outlines.
           selection.selectGroup(hit, ag.group);
           tc.attach(ag.group);
-          statusMessage = 'Group selected. W/E/R transform · G=glue edit · U=unglue · double-click to edit a member';
+          statusMessage = groupStatusHint();
           return;
         }
       }
       selection.select(hit);
     }
+  }
+
+  /**
+   * Build the status bar hint shown when a group is selected as a whole.
+   * Must be called after selectGroup() so selectedPartHasGlue and selectedGroupIsWeld
+   * are already updated by the onSelectionChanged callback.
+   */
+  function groupStatusHint(): string {
+    const base = 'Group selected. W/E/R transform · double-click to edit a member';
+    if (selectedPartHasGlue) return base + ' · G=glue edit · U=unglue';
+    if (selectedGroupIsWeld) return base + ' · U=unweld';
+    return base;
+    // Note: when both selectedPartHasGlue and selectedGroupIsWeld are true (weld member
+    // that also has direct glue joints), U=unglue takes priority; Unweld button is
+    // still visible separately in the toolbar.
   }
 
   function onPointerDown(e: PointerEvent) {
@@ -909,14 +922,14 @@
     if (!hits.length) return;
 
     // Place the dot at the hit point (or face centroid in midpoint mode), nudged along the face normal.
-    const hitNormal = hits[0].face?.normal?.clone() ?? new THREE.Vector3(0, 1, 0);
-    hitNormal.transformDirection(hits[0].object.matrixWorld);
     const hitMeshForHighlight = hits[0].object as THREE.Mesh;
+    const highlightFaceNormal = hits[0].face?.normal?.clone() ?? new THREE.Vector3(0, 1, 0);
+    const hitWorldNormal = highlightFaceNormal.clone().transformDirection(hits[0].object.matrixWorld);
     const dotWorldPos = (glueMidpointMode && !facePaintMode)
-      ? computeGroupCentreLocal(hitMeshForHighlight.geometry, hits[0].face?.materialIndex ?? 0)
+      ? computeGroupCentreLocal(hitMeshForHighlight, hits[0].face?.materialIndex ?? 0, highlightFaceNormal)
           .applyMatrix4(hitMeshForHighlight.matrixWorld)
       : hits[0].point.clone();
-    const pos = dotWorldPos.addScaledVector(hitNormal, 0.02);
+    const pos = dotWorldPos.addScaledVector(hitWorldNormal, 0.02);
     const geo = new THREE.SphereGeometry(0.07, 8, 6);
     const highlightColor = facePaintMode ? 0x44ccaa : 0xffee00;
     const mat = new THREE.MeshBasicMaterial({ color: highlightColor, depthTest: false, transparent: true, opacity: 0.9 });
@@ -928,25 +941,65 @@
   // ── SA12d: Glue face-group centroid helper ────────────────────────────────
 
   /**
-   * Compute the centroid (average vertex position) of a draw group in a
-   * geometry, in the geometry's local space. Used for midpoint-mode glue.
+   * Return the surface centre of a face group in mesh-local space.
+   *
+   * Returns the surface-centre of a face group in mesh-local space.
+   *
+   * Uses the bounding-box centre of the group's unique vertices as the
+   * geometric centre (symmetric regardless of vertex density), then projects
+   * it onto the actual mesh skin via a raycast along the hit face's outward
+   * normal. This avoids the degenerate case where averaging all radial normals
+   * of a full cylinder barrel cancels to zero and makes the projection fail.
+   *
+   * @param hitFaceNormal - geometry local-space normal of the hit triangle,
+   *   used as the projection direction (e.g. hits[0].face.normal).
    */
   function computeGroupCentreLocal(
-    geo: THREE.BufferGeometry,
+    mesh: THREE.Mesh,
     materialIndex: number,
+    hitFaceNormal: THREE.Vector3,
   ): THREE.Vector3 {
+    const geo = mesh.geometry;
     const grp = geo.groups.find((g) => g.materialIndex === materialIndex);
     if (!grp) return new THREE.Vector3();
-    const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+    const posAttr = geo.getAttribute('position') as THREE.BufferAttribute;
     const index = geo.index;
-    let cx = 0, cy = 0, cz = 0, count = 0;
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    const seen = new Set<number>();
     for (let i = grp.start; i < grp.start + grp.count; i++) {
       const vi = index ? index.getX(i) : i;
-      cx += pos.getX(vi); cy += pos.getY(vi); cz += pos.getZ(vi);
-      count++;
+      if (seen.has(vi)) continue;
+      seen.add(vi);
+      const px = posAttr.getX(vi), py = posAttr.getY(vi), pz = posAttr.getZ(vi);
+      if (px < minX) minX = px; if (px > maxX) maxX = px;
+      if (py < minY) minY = py; if (py > maxY) maxY = py;
+      if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz;
     }
-    if (count === 0) return new THREE.Vector3();
-    return new THREE.Vector3(cx / count, cy / count, cz / count);
+    if (!isFinite(minX)) return new THREE.Vector3();
+    // Bounding-box centre: symmetric for any vertex distribution, and lies
+    // exactly on-surface for flat faces (all verts share the same coordinate
+    // in the normal direction, so min===max in that axis).
+    const localCentroid = new THREE.Vector3(
+      (minX + maxX) / 2,
+      (minY + maxY) / 2,
+      (minZ + maxZ) / 2,
+    );
+    // Project onto the mesh skin. For curved faces (e.g. a cylinder barrel)
+    // the bbox centre is interior; the hit face normal gives the outward
+    // direction so the ray always starts outside and returns the surface point.
+    mesh.updateWorldMatrix(true, false);
+    const worldCentroid = localCentroid.clone().applyMatrix4(mesh.matrixWorld);
+    const worldNormal = hitFaceNormal.clone().transformDirection(mesh.matrixWorld).normalize();
+    const bboxDiag = Math.sqrt((maxX - minX) ** 2 + (maxY - minY) ** 2 + (maxZ - minZ) ** 2);
+    const offset = Math.max(bboxDiag, 1);
+    const rc = new THREE.Raycaster();
+    rc.set(worldCentroid.clone().addScaledVector(worldNormal, offset), worldNormal.clone().negate());
+    const surfaceHit = rc.intersectObject(mesh, false).find((h) => h.face?.materialIndex === materialIndex);
+    if (surfaceHit) {
+      return surfaceHit.point.clone().applyMatrix4(mesh.matrixWorld.clone().invert());
+    }
+    return localCentroid;
   }
 
   /**
@@ -970,14 +1023,14 @@
     hitMesh.updateWorldMatrix(true, false);
     const matInv = hitMesh.matrixWorld.clone().invert();
     // In midpoint mode, snap the pick to the draw-group centroid instead of the exact cursor position.
+    const hitFaceNormal = (hits[0].face?.normal ?? new THREE.Vector3(0, 1, 0)).clone();
     const localPoint = glueMidpointMode
-      ? computeGroupCentreLocal(hitMesh.geometry, hits[0].face?.materialIndex ?? 0)
+      ? computeGroupCentreLocal(hitMesh, hits[0].face?.materialIndex ?? 0, hitFaceNormal)
       : hits[0].point.clone().applyMatrix4(matInv);
-    const localNormal = (hits[0].face?.normal ?? new THREE.Vector3(0, 1, 0)).clone();
 
     // Pink blob at the anchor point. In midpoint mode, convert the local centroid
     // back to world space so the blob appears at the snapped position, not the click point.
-    const hitNormal = localNormal.clone().transformDirection(hitMesh.matrixWorld);
+    const hitNormal = hitFaceNormal.clone().transformDirection(hitMesh.matrixWorld);
     const anchorWorldPos = glueMidpointMode
       ? localPoint.clone().applyMatrix4(hitMesh.matrixWorld)
       : hits[0].point.clone();
@@ -990,7 +1043,7 @@
     scene.add(glueBlobMarker);
 
     clearFaceHighlight();
-    glueSrcBlob = { partId: part.id, localPoint, localNormal, worldPoint: anchorWorldPos.clone() };
+    glueSrcBlob = { partId: part.id, localPoint, localNormal: hitFaceNormal, worldPoint: anchorWorldPos.clone() };
 
     // Ghost the src entity so it doesn't occlude clicks on parts behind it.
     const srcGroup = sketcher.glueManager.groupForPart(part.id);
@@ -1039,8 +1092,9 @@
     hitMesh.updateWorldMatrix(true, false);
     // In midpoint mode, snap the target anchor to the face centroid so both
     // contact points are centred on their respective faces.
+    const targetFaceNormal = (hits[0].face?.normal ?? new THREE.Vector3(0, 1, 0)).clone();
     const localPointTarget = glueMidpointMode
-      ? computeGroupCentreLocal(hitMesh.geometry, hits[0].face?.materialIndex ?? 0)
+      ? computeGroupCentreLocal(hitMesh, hits[0].face?.materialIndex ?? 0, targetFaceNormal)
       : hits[0].point.clone().applyMatrix4(hitMesh.matrixWorld.clone().invert());
     const localNormalTarget = (hits[0].face?.normal ?? new THREE.Vector3(0, 1, 0)).clone();
 
@@ -1405,7 +1459,7 @@
       // Switch from per-mesh outline back to amber group bounding box.
       selection.selectGroup(selection.selectedMesh, ag.group);
       tc.attach(ag.group);
-      statusMessage = 'Group selected. W/E/R transform · double-click to edit a member · U=unweld';
+      statusMessage = groupStatusHint();
     } else {
       selection.deselect();
     }
@@ -1415,9 +1469,16 @@
     const meshes = selection.selectedMeshes;
     if (meshes.length < 2) return;
     const session = sketcher.getSession();
-    const partIds = meshes
-      .map((m) => session.parts.find((p) => p.mesh === m)?.id)
-      .filter((id): id is string => id !== undefined);
+    // Expand each selected mesh to cover all members of its assembly group (if any),
+    // so shift-clicking a group handle brings the whole group into the weld.
+    const partIds = [...new Set(
+      meshes.flatMap((m) => {
+        const part = session.parts.find((p) => p.mesh === m);
+        if (!part) return [];
+        const ag = sketcher.glueManager.groupForPart(part.id);
+        return ag ? ag.partIds : [part.id];
+      })
+    )];
     if (partIds.length < 2) return;
     selection.clearMultiSelection();
     selection.deselect();
@@ -1437,11 +1498,21 @@
 
   function unweldSelected() {
     if (!sketcher || !selectedPartId) return;
+    selection.clearGroupBox();
     sketcherDoc.execute(new UnweldCommand(selectedPartId, sketcher));
     const part = sketcher.getSession().parts.find((p) => p.id === selectedPartId);
-    if (part) tc.attach(part.mesh);
+    if (part) {
+      const ag = sketcher.glueManager.groupForPart(selectedPartId);
+      if (ag) {
+        selection.selectGroup(part.mesh, ag.group);
+        tc.attach(ag.group);
+      } else {
+        selection.select(part.mesh);
+        tc.attach(part.mesh);
+      }
+    }
     selectedGroupIsWeld = false;
-    statusMessage = 'Unwelded. Parts returned to scene root.';
+    statusMessage = 'Unwelded.';
   }
   function onDoubleClick(e: MouseEvent) {
     if (!sketcher) return;
@@ -1454,7 +1525,6 @@
     if (!hit) return;
     const hitPart = session.parts.find((p) => p.mesh === hit);
     if (!hitPart) return;
-    if (!sketcher.glueManager.isWeldGroup(hitPart.id)) return;
     const ag = sketcher.glueManager.groupForPart(hitPart.id);
     if (!ag) return;
     enterGroupEditMode(ag, hit);

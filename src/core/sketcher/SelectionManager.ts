@@ -22,6 +22,8 @@ export class SelectionManager {
   // Weld group selection state — mutually exclusive with per-mesh outline.
   private _groupBox: THREE.LineSegments | null = null;
   private _groupBoxParent: THREE.Group | null = null;
+  /** Soft white outline on the representative mesh — visible alongside the amber group box. */
+  private _memberHint: THREE.LineSegments | null = null;
 
   onSelectionChanged?: (mesh: THREE.Mesh | null) => void;
 
@@ -131,10 +133,23 @@ export class SelectionManager {
     this._groupBox = box;
     this._groupBoxParent = group;
 
+    // Soft white outline on the representative mesh so the clicked member is
+    // identifiable alongside the amber group box.
+    const hintEdges = new THREE.EdgesGeometry(representativeMesh.geometry);
+    const hintMat = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      depthTest: false,
+      transparent: true,
+      opacity: 0.45,
+    });
+    this._memberHint = new THREE.LineSegments(hintEdges, hintMat);
+    this._memberHint.renderOrder = 998;
+    representativeMesh.add(this._memberHint);
+
     this.onSelectionChanged?.(representativeMesh);
   }
 
-  /** Remove the weld group bounding box if one is shown. */
+  /** Remove the weld group bounding box (and member hint) if one is shown. */
   clearGroupBox(): void {
     if (this._groupBox) {
       // Use removeFromParent() rather than _groupBoxParent.remove() because
@@ -146,6 +161,12 @@ export class SelectionManager {
       (this._groupBox.material as THREE.Material).dispose();
       this._groupBox = null;
       this._groupBoxParent = null;
+    }
+    if (this._memberHint) {
+      this._memberHint.removeFromParent();
+      this._memberHint.geometry.dispose();
+      (this._memberHint.material as THREE.Material).dispose();
+      this._memberHint = null;
     }
   }
 
