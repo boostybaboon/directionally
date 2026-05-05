@@ -3,8 +3,8 @@
   import * as THREE from 'three';
   import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
   import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-  import { ProceduralHumanoid, C3PO_COLORS, SONNY_COLORS, DEFAULT_COLORS, DEFAULT_BONE_PARAMS, BONE_GROUPS } from '../../core/character/ProceduralHumanoid.js';
-  import type { RobotStyle, BoneParamMap } from '../../core/character/ProceduralHumanoid.js';
+  import { ProceduralHumanoid, C3PO_COLORS, SONNY_COLORS, DEFAULT_COLORS, DEFAULT_BONE_PARAMS, BONE_GROUPS, DEFAULT_FACE_PARAMS } from '../../core/character/ProceduralHumanoid.js';
+  import type { RobotStyle, BoneParamMap, FaceParams } from '../../core/character/ProceduralHumanoid.js';
 
   let canvas: HTMLCanvasElement;
 
@@ -38,6 +38,8 @@
   let robotStyle = $state<RobotStyle>('organic');
   let boneParams = $state<BoneParamMap>({ ...DEFAULT_BONE_PARAMS });
   let selectedGroup = $state<string>(BONE_GROUPS[0].key);
+  let faceParams = $state<FaceParams>({ ...DEFAULT_FACE_PARAMS });
+  const ALL_GROUPS = [...BONE_GROUPS, { label: 'Face', key: 'face' }];
   let insetFactor = $state(0);
   let hoveredBone = $state<string | null>(null);
   let loading = $state(true);
@@ -62,7 +64,7 @@
       humanoid.dispose();
     }
     const colors = style === 'c3po' ? C3PO_COLORS : style === 'sonny' ? SONNY_COLORS : DEFAULT_COLORS;
-    humanoid = new ProceduralHumanoid(rigGltfScene, [...allLoadedClips], colors, style, boneParams, insetFactor);
+    humanoid = new ProceduralHumanoid(rigGltfScene, [...allLoadedClips], colors, style, boneParams, insetFactor, faceParams);
     humanoid.setInPlace(inPlace);
     humanoid.setBodyVisible(bodyVisible);
     humanoid.setSkeletonVisible(skeletonVisible);
@@ -243,7 +245,7 @@
           value={selectedGroup}
           onchange={(e) => { selectedGroup = e.currentTarget.value; }}
         >
-          {#each BONE_GROUPS as g}
+          {#each ALL_GROUPS as g}
             <option value={g.key}>{g.label}</option>
           {/each}
         </select>
@@ -392,6 +394,160 @@
           buildHumanoid(robotStyle);
         }}>Reset</button>
       {/if}
+      {#if selectedGroup === 'face'}
+        <label class="param-label">
+          Eye size
+          <span class="param-val">{faceParams.eyeRadius.toFixed(1)} cm</span>
+          <input type="range" min="0.5" max="6" step="0.25"
+            value={faceParams.eyeRadius}
+            oninput={(e) => { faceParams = { ...faceParams, eyeRadius: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Eye spacing
+          <span class="param-val">{faceParams.eyeSpacing.toFixed(1)} cm</span>
+          <input type="range" min="1" max="10" step="0.5"
+            value={faceParams.eyeSpacing}
+            oninput={(e) => { faceParams = { ...faceParams, eyeSpacing: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Eye rise
+          <span class="param-val">{faceParams.eyeRise.toFixed(1)} cm</span>
+          <input type="range" min="-8" max="8" step="0.5"
+            value={faceParams.eyeRise}
+            oninput={(e) => { faceParams = { ...faceParams, eyeRise: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Forward Z
+          <span class="param-val">{faceParams.eyeForwardZ.toFixed(1)} cm</span>
+          <input type="range" min="-14" max="14" step="0.5"
+            value={faceParams.eyeForwardZ}
+            oninput={(e) => { faceParams = { ...faceParams, eyeForwardZ: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Pupil size
+          <span class="param-val">{(faceParams.pupilScale * 100).toFixed(0)}%</span>
+          <input type="range" min="0" max="1" step="0.05"
+            value={faceParams.pupilScale}
+            oninput={(e) => { faceParams = { ...faceParams, pupilScale: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Pupil depth
+          <span class="param-val">{faceParams.pupilOffsetZ.toFixed(1)} cm</span>
+          <input type="range" min="0" max="4" step="0.25"
+            value={faceParams.pupilOffsetZ}
+            oninput={(e) => { faceParams = { ...faceParams, pupilOffsetZ: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Nose size
+          <span class="param-val">{faceParams.noseRadius.toFixed(1)} cm</span>
+          <input type="range" min="0" max="4" step="0.25"
+            value={faceParams.noseRadius}
+            oninput={(e) => { faceParams = { ...faceParams, noseRadius: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Nose drop
+          <span class="param-val">{faceParams.noseDrop.toFixed(1)} cm</span>
+          <input type="range" min="0" max="8" step="0.5"
+            value={faceParams.noseDrop}
+            oninput={(e) => { faceParams = { ...faceParams, noseDrop: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Nose reach
+          <span class="param-val">{faceParams.noseForwardOffset.toFixed(1)} cm</span>
+          <input type="range" min="-6" max="6" step="0.25"
+            value={faceParams.noseForwardOffset}
+            oninput={(e) => { faceParams = { ...faceParams, noseForwardOffset: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Mouth width
+          <span class="param-val">{faceParams.mouthWidth.toFixed(1)} cm</span>
+          <input type="range" min="0" max="10" step="0.5"
+            value={faceParams.mouthWidth}
+            oninput={(e) => { faceParams = { ...faceParams, mouthWidth: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Mouth height
+          <span class="param-val">{faceParams.mouthThickness.toFixed(1)} cm</span>
+          <input type="range" min="0.2" max="4" step="0.2"
+            value={faceParams.mouthThickness}
+            oninput={(e) => { faceParams = { ...faceParams, mouthThickness: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Mouth drop
+          <span class="param-val">{faceParams.mouthDrop.toFixed(1)} cm</span>
+          <input type="range" min="0" max="14" step="0.5"
+            value={faceParams.mouthDrop}
+            oninput={(e) => { faceParams = { ...faceParams, mouthDrop: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Mouth reach
+          <span class="param-val">{faceParams.mouthForwardOffset.toFixed(1)} cm</span>
+          <input type="range" min="-6" max="6" step="0.25"
+            value={faceParams.mouthForwardOffset}
+            oninput={(e) => { faceParams = { ...faceParams, mouthForwardOffset: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Ear size
+          <span class="param-val">{faceParams.earRadius.toFixed(1)} cm</span>
+          <input type="range" min="0" max="6" step="0.25"
+            value={faceParams.earRadius}
+            oninput={(e) => { faceParams = { ...faceParams, earRadius: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Ear depth
+          <span class="param-val">{faceParams.earThickness.toFixed(1)} cm</span>
+          <input type="range" min="0.2" max="3" step="0.1"
+            value={faceParams.earThickness}
+            oninput={(e) => { faceParams = { ...faceParams, earThickness: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Hair size
+          <span class="param-val">{faceParams.hairRadius.toFixed(1)} cm</span>
+          <input type="range" min="0" max="18" step="0.5"
+            value={faceParams.hairRadius}
+            oninput={(e) => { faceParams = { ...faceParams, hairRadius: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Hair height
+          <span class="param-val">{faceParams.hairHeight.toFixed(1)} cm</span>
+          <input type="range" min="2" max="16" step="0.5"
+            value={faceParams.hairHeight}
+            oninput={(e) => { faceParams = { ...faceParams, hairHeight: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Fringe
+          <span class="param-val">{faceParams.fringeLength.toFixed(1)} cm</span>
+          <input type="range" min="0" max="12" step="0.5"
+            value={faceParams.fringeLength}
+            oninput={(e) => { faceParams = { ...faceParams, fringeLength: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Hair colour
+          <input type="color"
+            value={`#${faceParams.hairColor.toString(16).padStart(6, '0')}`}
+            oninput={(e) => { faceParams = { ...faceParams, hairColor: parseInt(e.currentTarget.value.slice(1), 16) }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <button class="reset-btn" onclick={() => { faceParams = { ...DEFAULT_FACE_PARAMS }; buildHumanoid(robotStyle); }}>Reset</button>
+      {/if}
       <span class="param-sep">|</span>
       <label class="param-label">
         Inset
@@ -512,12 +668,15 @@
 
   .params-bar {
     display: flex;
-    gap: 20px;
+    flex-wrap: wrap;
+    gap: 10px 20px;
     padding: 6px 16px;
     background: #0d0d1a;
     border-bottom: 1px solid #2a2a44;
     flex-shrink: 0;
     align-items: center;
+    max-height: 28vh;
+    overflow-y: auto;
   }
 
   .param-label {

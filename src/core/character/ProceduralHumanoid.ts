@@ -82,6 +82,74 @@ export interface BoneParams {
 /** Keyed by bone group name (matching BONE_GROUPS[*].key and BONE_SPECS[*].group). */
 export type BoneParamMap = Record<string, BoneParams>;
 
+/**
+ * Parameters for procedural face features placed on the head bone.
+ * All values are in centimetres, in head-bone local space.
+ * `eyeForwardZ`: positive = face-forward (+Z in Mixamo head-bone local space).
+ */
+export interface FaceParams {
+  /** Radius of each eye sphere (cm). */
+  eyeRadius: number;
+  /** Half-distance between eye centres on the head X axis (cm). */
+  eyeSpacing: number;
+  /** Y offset of eye centres above the head ellipsoid centre (cm). */
+  eyeRise: number;
+  /** Z offset of eye centres from the head ellipsoid centre — positive = forward (cm). */
+  eyeForwardZ: number;
+  /** Organic only: pupil sphere radius as a fraction of eyeRadius (0 to suppress). */
+  pupilScale: number;
+  /** Organic only: additional Z offset for the pupil past the sclera (cm, positive = further forward). */
+  pupilOffsetZ: number;
+  /** Nose sphere radius (cm); set to 0 to suppress. Organic only. */
+  noseRadius: number;
+  /** How far below the eye centres the nose sits (cm). */
+  noseDrop: number;
+  /** X half-width of the mouth ellipsoid (cm); set to 0 to suppress. */
+  mouthWidth: number;
+  /** Y half-height (thickness) of the mouth ellipsoid (cm). */
+  mouthThickness: number;
+  /** How far below the eye centres the mouth sits (cm). */
+  mouthDrop: number;
+  /** Additional Z offset for the mouth relative to eyeForwardZ (positive = further forward). */
+  mouthForwardOffset: number;
+  /** Additional Z offset for the nose relative to eyeForwardZ (positive = further forward). */
+  noseForwardOffset: number;
+  /** Left/right ear disc Y/Z radius (cm, 0 = suppressed). */
+  earRadius: number;
+  /** X half-thickness of each ear disc (cm). */
+  earThickness: number;
+  /** Crown hair ellipsoid X/Z radius (cm, 0 = suppressed). Organic only. */
+  hairRadius: number;
+  /** Y half-height of the crown hair ellipsoid (cm). */
+  hairHeight: number;
+  /** Fringe ellipsoid Z half-depth over the forehead (cm, 0 = no fringe). Organic only. */
+  fringeLength: number;
+  /** Hair colour as a hex integer. */
+  hairColor: number;
+}
+
+export const DEFAULT_FACE_PARAMS: FaceParams = {
+  eyeRadius:      2.5,
+  eyeSpacing:     4.5,
+  eyeRise:       -1.0,
+  eyeForwardZ:    9.0,
+  pupilScale:     0.55,
+  pupilOffsetZ:   1.5,
+  noseRadius:     2.3,
+  noseDrop:       4.0,
+  noseForwardOffset:  1.0,
+  mouthWidth:     5.0,
+  mouthThickness: 1.2,
+  mouthDrop:      7.5,
+  mouthForwardOffset: -1.8,
+  earRadius:      3.0,
+  earThickness:   0.8,
+  hairRadius:    12.0,
+  hairHeight:     8.0,
+  fringeLength:   4.0,
+  hairColor:   0x3d2008,
+};
+
 /** Canonical bone groups for the tuning UI. Symmetric left/right pairs share one entry. */
 export const BONE_GROUPS: ReadonlyArray<{ readonly label: string; readonly key: string }> = [
   { label: 'Hips',        key: 'hips'     },
@@ -249,6 +317,7 @@ export class ProceduralHumanoid {
     style: RobotStyle = 'organic',
     boneParamMap: BoneParamMap = {},
     insetFactor: number = 0,
+    faceParams: FaceParams = DEFAULT_FACE_PARAMS,
   ) {
     this.root = gltfScene;
     this.clips = clips;
@@ -256,6 +325,7 @@ export class ProceduralHumanoid {
 
     this._hideSkinnedMeshes();
     this._attachBodyGeom(colors, style, boneParamMap, insetFactor);
+    this._attachFaceGeom(style, colors, boneParamMap, faceParams);
     this._attachSkeletonGeom();
     this.setSkeletonVisible(false);
 
@@ -356,6 +426,127 @@ export class ProceduralHumanoid {
       this.bodyLinks.push({ child: childBone, mesh: tubeMesh, inset });
     });
   }
+
+  private _attachFaceGeom(
+    style: RobotStyle,
+    colors: BodyColors,
+    boneParamMap: BoneParamMap,
+    fp: FaceParams,
+  ): void {
+    this.root.traverse((obj) => {
+      if (obj.name !== 'mixamorigHead') return;
+
+      const headBp  = boneParamMap['head'] ?? DEFAULT_BONE_PARAMS['head'];
+      const centreY = headBp?.jointOffsetY ?? 0;
+      const headW   = headBp?.jointRadius  ?? 11;
+      const headH   = headBp?.jointRadiusY ?? headW;
+      const eyeY = centreY + fp.eyeRise;
+      const ledColor = style === 'c3po' ? 0xff6600 : 0x44aaff;
+
+      // Eyes
+      for (const x of [-fp.eyeSpacing, fp.eyeSpacing]) {
+        if (style === 'organic') {
+          const scleraMesh = new THREE.Mesh(
+            new THREE.SphereGeometry(fp.eyeRadius, 12, 8),
+            new THREE.MeshToonMaterial({ color: 0xffffff }),
+          );
+          scleraMesh.position.set(x, eyeY, fp.eyeForwardZ);
+          obj.add(scleraMesh);
+          this.bodyMeshes.push(scleraMesh);
+
+          if (fp.pupilScale > 1e-5) {
+            const pupilMesh = new THREE.Mesh(
+              new THREE.SphereGeometry(fp.eyeRadius * fp.pupilScale, 10, 7),
+              new THREE.MeshToonMaterial({ color: 0x1a1a2e }),
+            );
+            pupilMesh.position.set(x, eyeY, fp.eyeForwardZ + fp.pupilOffsetZ);
+            obj.add(pupilMesh);
+            this.bodyMeshes.push(pupilMesh);
+          }
+        } else {
+          const ledMesh = new THREE.Mesh(
+            new THREE.SphereGeometry(fp.eyeRadius, 10, 7),
+            new THREE.MeshBasicMaterial({ color: ledColor }),
+          );
+          ledMesh.position.set(x, eyeY, fp.eyeForwardZ);
+          obj.add(ledMesh);
+          this.bodyMeshes.push(ledMesh);
+        }
+      }
+
+      // Nose — organic only: small skin-toned bump below the eyes.
+      if (style === 'organic' && fp.noseRadius > 1e-5) {
+        const noseMesh = new THREE.Mesh(
+          new THREE.SphereGeometry(fp.noseRadius, 10, 7),
+          new THREE.MeshToonMaterial({ color: colors.skin }),
+        );
+        noseMesh.position.set(0, eyeY - fp.noseDrop, fp.eyeForwardZ + fp.noseForwardOffset);
+        obj.add(noseMesh);
+        this.bodyMeshes.push(noseMesh);
+      }
+
+      // Mouth — organic: stretched dark-red ellipsoid; robotic: horizontal LED bar.
+      if (fp.mouthWidth > 1e-5) {
+        const mouthMat = style === 'organic'
+          ? new THREE.MeshToonMaterial({ color: 0xaa3333 })
+          : new THREE.MeshBasicMaterial({ color: ledColor });
+        const mouthMesh = new THREE.Mesh(
+          new THREE.SphereGeometry(1, 12, 8),
+          mouthMat,
+        );
+        mouthMesh.scale.set(fp.mouthWidth, fp.mouthThickness, fp.mouthThickness);
+        mouthMesh.position.set(0, eyeY - fp.mouthDrop, fp.eyeForwardZ + fp.mouthForwardOffset);
+        obj.add(mouthMesh);
+        this.bodyMeshes.push(mouthMesh);
+      }
+
+      // Ears — flattened ellipsoids at the head sides.
+      if (fp.earRadius > 1e-5) {
+        for (const side of [-1, 1]) {
+          const earMesh = new THREE.Mesh(
+            new THREE.SphereGeometry(1, 12, 8),
+            new THREE.MeshToonMaterial({ color: colors.skin }),
+          );
+          earMesh.scale.set(fp.earThickness, fp.earRadius, fp.earRadius);
+          earMesh.position.set(
+            side * (headW + fp.earThickness * 0.4),
+            centreY + fp.eyeRise * 0.4,
+            fp.eyeForwardZ * 0.2,
+          );
+          obj.add(earMesh);
+          this.bodyMeshes.push(earMesh);
+        }
+      }
+
+      // Hair (organic only) — crown ellipsoid + optional fringe over the forehead.
+      if (style === 'organic' && fp.hairRadius > 1e-5) {
+        const hairMat = new THREE.MeshToonMaterial({ color: fp.hairColor });
+
+        // Crown: slightly wider than the skull, centred in the upper portion.
+        const crownMesh = new THREE.Mesh(
+          new THREE.SphereGeometry(1, 16, 12),
+          hairMat,
+        );
+        crownMesh.scale.set(fp.hairRadius, fp.hairHeight, fp.hairRadius * 0.85);
+        crownMesh.position.set(0, centreY + headH * 0.4, -fp.hairRadius * 0.05);
+        obj.add(crownMesh);
+        this.bodyMeshes.push(crownMesh);
+
+        // Fringe: flat ellipsoid draped over the upper forehead.
+        if (fp.fringeLength > 1e-5) {
+          const fringeMesh = new THREE.Mesh(
+            new THREE.SphereGeometry(1, 12, 8),
+            hairMat,
+          );
+          fringeMesh.scale.set(fp.hairRadius * 0.75, fp.hairHeight * 0.25, fp.fringeLength);
+          fringeMesh.position.set(0, centreY + headH * 0.55, fp.eyeForwardZ * 0.7);
+          obj.add(fringeMesh);
+          this.bodyMeshes.push(fringeMesh);
+        }
+      }
+    });
+  }
+
   private _attachSkeletonGeom(): void {
     // Thin cylinders from each bone to its child, plus a small joint sphere at each bone.
     // All meshes tagged with userData.boneName for raycasting identification.
