@@ -71,6 +71,8 @@ export interface BoneParams {
   jointRadiusZ?: number;
   /** Local-Y offset of the joint centre in cm (positive = toward child bone). */
   jointOffsetY?: number;
+  /** Local-Z offset of the joint centre in cm — perpendicular to the bone axis. */
+  jointOffsetZ?: number;
   /** Frustum ratio (0–1): switches joint to a frustum. X fans wide at +Y (knuckle end). */
   jointFrustumRatio?: number;
   /** Independent Z taper for the frustum — Z tapers toward +Y (knuckle end), opposite to X. */
@@ -105,13 +107,13 @@ export const BONE_GROUPS: ReadonlyArray<{ readonly label: string; readonly key: 
  */
 export const DEFAULT_BONE_PARAMS: BoneParamMap = {
   //                        rx     rz    joint  (cm)
-  hips:     { tubeRadiusX: 10.0, tubeRadiusZ:  7.0, jointRadius:  8.0 },
-  spine:    { tubeRadiusX:  9.0, tubeRadiusZ:  6.0, jointRadius:  5.0 },
-  spine1:   { tubeRadiusX: 11.0, tubeRadiusZ:  7.0, jointRadius:  5.5 },
-  spine2:   { tubeRadiusX: 13.0, tubeRadiusZ:  8.0, jointRadius:  6.0 },
-  neck:     { tubeRadiusX:  3.5, tubeRadiusZ:  3.0, jointRadius:  3.5 },
+  hips:     { tubeRadiusX: 16.0, tubeRadiusZ:  9.0, jointRadius:  9.0 },
+  spine:    { tubeRadiusX: 15.0, tubeRadiusZ:  9.0, jointRadius:  5.0 },
+  spine1:   { tubeRadiusX: 15.5, tubeRadiusZ:  9.5, jointRadius:  5.5 },
+  spine2:   { tubeRadiusX: 16.5, tubeRadiusZ: 11.0, jointRadius:  6.0 },
+  neck:     { tubeRadiusX:  5.0, tubeRadiusZ:  5.0, jointRadius:  3.5 },
   // Offset ellipsoid: base flush at head-bone origin, extends ~13 cm toward HeadTop_End.
-  head:     { tubeRadiusX:  0.0, tubeRadiusZ:  0.0, jointRadius: 10.0, jointRadiusY: 13.0, jointOffsetY: 13.0 },
+  head:     { tubeRadiusX:  0.0, tubeRadiusZ:  0.0, jointRadius: 11.0, jointRadiusY: 13.0, jointOffsetY: 13.0 },
   shoulder: { tubeRadiusX:  2.0, tubeRadiusZ:  2.0, jointRadius:  5.0 },
   arm:      { tubeRadiusX:  4.0, tubeRadiusZ:  3.5, jointRadius:  4.5 },
   forearm:  { tubeRadiusX:  3.0, tubeRadiusZ:  2.5, jointRadius:  3.5 },
@@ -120,8 +122,8 @@ export const DEFAULT_BONE_PARAMS: BoneParamMap = {
   hand:     { tubeRadiusX:  0.0, tubeRadiusZ:  0.0, jointRadius:  6.0, jointRadiusY: 12.0, jointRadiusZ:  3.0, jointOffsetY:  6.0, jointFrustumRatio: 0.60, jointFrustumRatioZ: 0.70 },
   upleg:    { tubeRadiusX:  7.0, tubeRadiusZ:  5.5, jointRadius:  6.0 },
   leg:      { tubeRadiusX:  5.0, tubeRadiusZ:  4.0, jointRadius:  4.5 },
-  foot:     { tubeRadiusX:  4.0, tubeRadiusZ:  3.0, jointRadius:  3.0 },
-  toe:      { tubeRadiusX:  2.0, tubeRadiusZ:  2.0, jointRadius:  2.0 },
+  foot:     { tubeRadiusX:  5.0, tubeRadiusZ:  3.0, jointRadius:  5.0, jointRadiusY:  6.0, jointRadiusZ:  5.0, jointOffsetY:  2.0, jointOffsetZ: -3.5 },
+  toe:      { tubeRadiusX:  5.0, tubeRadiusZ:  2.0, jointRadius:  2.0 },
   finger:   { tubeRadiusX:  1.0, tubeRadiusZ:  1.0, jointRadius:  1.2 },
 };
 
@@ -328,6 +330,7 @@ export class ProceduralHumanoid {
         const jointMesh = new THREE.Mesh(jointGeom, m);
         jointMesh.scale.set(bp.jointRadius, ry, rz);
         jointMesh.position.y = bp.jointOffsetY ?? 0;
+        jointMesh.position.z = bp.jointOffsetZ ?? 0;
         jointMesh.userData.boneName = obj.name;
         obj.add(jointMesh);
         this.bodyMeshes.push(jointMesh);

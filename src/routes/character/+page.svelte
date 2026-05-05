@@ -330,6 +330,63 @@
             />
           </label>
         {/if}
+        {#if selectedGroup === 'foot'}
+          <label class="param-label">
+            Heel width
+            <span class="param-val">{bp.jointRadius.toFixed(1)} cm</span>
+            <input type="range" min="0" max="10" step="0.5"
+              value={bp.jointRadius}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointRadius: +e.currentTarget.value } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+          <label class="param-label">
+            Heel height
+            <span class="param-val">{(bp.jointRadiusZ ?? bp.jointRadius).toFixed(1)} cm</span>
+            <input type="range" min="0" max="10" step="0.5"
+              value={bp.jointRadiusZ ?? bp.jointRadius}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointRadiusZ: +e.currentTarget.value } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+          <label class="param-label">
+            Heel length
+            <span class="param-val">{(bp.jointRadiusY ?? bp.jointRadius).toFixed(1)} cm</span>
+            <input type="range" min="0" max="12" step="0.5"
+              value={bp.jointRadiusY ?? bp.jointRadius}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointRadiusY: +e.currentTarget.value } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+          <label class="param-label">
+            Heel offset Y
+            <span class="param-val">{(bp.jointOffsetY ?? 0).toFixed(1)} cm</span>
+            <input type="range" min="-15" max="15" step="0.5"
+              value={bp.jointOffsetY ?? 0}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointOffsetY: e.currentTarget.valueAsNumber } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+          <label class="param-label">
+            Heel offset Z
+            <span class="param-val">{(bp.jointOffsetZ ?? 0).toFixed(1)} cm</span>
+            <input type="range" min="-10" max="10" step="0.5"
+              value={bp.jointOffsetZ ?? 0}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointOffsetZ: e.currentTarget.valueAsNumber } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+        {/if}
         <button class="reset-btn" onclick={() => {
           boneParams = { ...boneParams, [selectedGroup]: DEFAULT_BONE_PARAMS[selectedGroup] };
           buildHumanoid(robotStyle);
