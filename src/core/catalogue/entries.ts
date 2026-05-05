@@ -14,18 +14,6 @@ export const CATALOGUE_ENTRIES: CatalogueEntry[] = [
     defaultAnimation: 'Idle',
     defaultScale: 1,
   },
-  {
-    kind: 'character',
-    id: 'soldier',
-    label: 'Soldier',
-    gltfPath: '/models/gltf/Soldier.glb',
-    // Clips present in the Three.js Soldier example asset (MIT licensed).
-    defaultAnimation: 'idle',
-    defaultScale: 2.7,
-    // Soldier was authored facing -Z; flip 180° around Y so it faces +Z (toward camera).
-    defaultRotation: [0, Math.PI, 0],
-  },
-
   // ── Set pieces ────────────────────────────────────────────────────────────
   {
     kind: 'set-piece',

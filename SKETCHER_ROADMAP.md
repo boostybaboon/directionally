@@ -324,17 +324,105 @@ The UX challenge is joint selection — an assembled part may be involved in mul
 
 ## Track B — Character animation *(future)*
 
-### CB0 — Base humanoid decision
+### Architecture
 
-Recommendation: **VRoid Studio** (free, browser-based) → `VRMC_vrm 1.0` spec + [`three-vrm`](https://github.com/pixiv/three-vrm) for loading. Target VRM 1.0 from day one; 0.x has a different bone hierarchy requiring a migration pass.
+The character creator is a **sibling route** to the sketcher, not a sub-facility of it. Both are asset creation tools that write to the OPFS catalogue; the production window's catalogue panel consumes their output without caring which tool produced it.
+
+```
+Tab bar:  [Production]  [Sketcher ✏]  [Characters 👤]
+                           ↓                  ↓
+                     OPFSCatalogueStore  OPFSCatalogueStore
+                     (kind: set-piece)   (kind: character)
+                                   ↓
+                           Catalogue panel — cast & set pieces
+```
+
+The sketcher is **constructive**: draw, extrude, attach, iterate from nothing. The character creator is **configurational**: a humanoid is always on screen; the user tunes sliders and pickers. These are different enough mental models that sharing a UI would be confusing.
+
+**Future cross-tool interaction (far downstream):** a character might carry a sketcher-made prop (a sword attached to `mixamorigRightHand`, a hat on `mixamorigHead`) or even have sketcher-made body parts composited onto it. An interaction model for this — likely an asset-picker that selects from the sketch catalogue and a socket/attachment system on named bones — is deferred until both tools are mature independently.
+
+### Design principle
+
+Humanoid rigging, blend-shape authoring, and motion capture are expert-level work well beyond the sketcher's scope. Animations are a set of bone rotations over time — they are independent of mesh geometry. This separation means a procedurally-constructed skeleton with Mixamo bone names can play the entire free Mixamo animation library directly, with no asset mesh dependency.
+
+### CB0 — Base humanoid: procedural skeleton + Mixamo animations
+
+**Approach: build a `THREE.Skeleton` in code using Mixamo bone names; attach simple capsule/sphere geometry; drive it with downloaded Mixamo animation clips.**
+
+A `THREE.AnimationClip` is a collection of `KeyframeTrack` objects — each track is bone rotations (quaternions) and optionally root translation, keyed over time. Three.js's `AnimationMixer` resolves tracks to bones by name. If the procedural skeleton uses the Mixamo bone naming scheme, any Mixamo clip plays on it without modification.
+
+**Why procedural beats using a Mixamo mesh:**
+- No UV maps or texture files — flat-coloured `MeshToonMaterial` segments consistent with the existing catalogue aesthetic
+- Proportions are fully parametric at runtime: scale a bone, the capsule geometry scales with it
+- Clothing is colour regions, not mesh swaps — no art pipeline dependency
+- No third-party base asset required to ship
+
+**Skeleton structure (Mixamo naming):**
+
+```
+mixamorigHips
+├── mixamorigSpine → Spine1 → Spine2 → Neck → Head
+│                                       └── [hair/hat mesh, swappable]
+├── mixamorigLeftShoulder → LeftArm → LeftForeArm → LeftHand
+├── mixamorigRightShoulder → RightArm → RightForeArm → RightHand
+├── mixamorigLeftUpLeg → LeftLeg → LeftFoot → LeftToeBase
+└── mixamorigRightUpLeg → RightLeg → RightFoot → RightToeBase
+```
+
+Each segment rendered as a `CapsuleGeometry` or `SphereGeometry` sized to the bone's rest length. Colour per segment = skin/clothing region.
+
+**Root translation scaling:** walk/run clips include absolute hip translation. Scale the translation track by the character's height ratio so taller characters take proportionally longer strides.
+
+**Animation library target (~15 clips from [Mixamo](https://www.mixamo.com), free commercial use):**
+
+`idle`, `walk`, `run`, `sit-down`, `sitting-idle`, `stand-up`, `talk`, `wave`, `point`, `look-left`, `look-right`, `crouch`, `pick-up`, `react-hit`, `cheer`
+
+**Alternatives considered:**
+
+- *Mixamo mesh characters* — cleaner appearance but creates a third-party asset dependency for the base character and loses the parametric proportions benefit. Could be added later as an optional "realistic" mode.
+- *VRoid / VRM* — own skeleton spec; free Mixamo animation library unavailable without retargeting. Deferred.
+- *Ready Player Me* — Mixamo-compatible skeleton, embeddable web creator. More realistic appearance vs. toon aesthetic. Keep in view for a "realistic character" mode.
+- *Quaternius / Kenney* — CC0 toon characters but non-Mixamo skeleton; animation library is per-pack only.
 
 ### CB1 — Bone proportion editor
 
-Mii-style sliders calling `bone.scale.set()` on VRM bones. Non-destructive at runtime; bake to GLB on export.
+Sliders scale named bones at runtime. Non-destructive — the rest-pose bone lengths are stored separately; sliders apply a multiplier. No baking needed unless exporting to catalogue.
 
-### CB2 — Colour picker
+| Slider | Bones | Notes |
+|---|---|---|
+| Height | `mixamorigHips` root Y + all bones uniform | Floor-correct so feet stay on y=0 |
+| Weight / bulk | `Spine`, `Spine1`, `Spine2`, `Hips` | Non-uniform XZ scale |
+| Arm length | `LeftArm`, `LeftForeArm`, mirrored | |
+| Leg length | `LeftUpLeg`, `LeftLeg`, mirrored | |
+| Head size | `Head` | |
+| Shoulder width | `LeftShoulder`, `RightShoulder` | |
 
-Per-material colour swaps on the loaded VRM mesh (diffuse colour + optional toon texture tint).
+Constrain to ±40% — beyond that, capsule geometry overlaps at joints. For toon characters this range produces stocky, tall, and child-proportioned variants convincingly.
+
+### CB2 — Colour customisation
+
+`MeshToonMaterial` colour per body region — no material slot naming convention needed since the geometry is authored:
+
+| Region | Segments | Control |
+|---|---|---|
+| Skin | Head, hands, any exposed limbs | Tone picker |
+| Top | Torso segments | Colour picker |
+| Bottom | Leg segments | Colour picker |
+| Shoes | Foot segments | Colour picker |
+
+### CB3 — Hair / accessory swap
+
+A small set of preset meshes (hair styles, hats) attached to `mixamorigHead` as a child `Object3D`. Swapping replaces the child; no bone binding needed since accessories move rigidly with the head.
+
+### CB4 — Output to catalogue
+
+The character creator serialises the current parameter set (proportion values + colours + hair preset index) as a `CharacterEntry` in `OPFSCatalogueStore`. At load time the procedural skeleton is reconstructed from the parameter set — no GLB baking required. The production system sees it as a standard `CharacterEntry`.
+
+### Out of scope (v1)
+
+- Facial expressions / lip sync (morph targets need authored blend shapes)
+- Cloth simulation
+- User-uploaded clothing meshes
 
 ---
 

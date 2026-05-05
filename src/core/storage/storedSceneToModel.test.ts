@@ -6,7 +6,6 @@ import type { StoredScene, StoredActor } from './types';
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const ROBOT_GLTF = '/models/gltf/RobotExpressive.glb';
-const SOLDIER_GLTF = '/models/gltf/Soldier.glb';
 
 function baseScene(overrides: Partial<StoredScene> = {}): StoredScene {
   return {
@@ -23,7 +22,7 @@ function baseScene(overrides: Partial<StoredScene> = {}): StoredScene {
 }
 
 const robotActor: StoredActor = { id: 'actor-r', role: 'Robot', catalogueId: 'robot-expressive' };
-const soldierActor: StoredActor = { id: 'actor-s', role: 'Soldier', catalogueId: 'soldier' };
+const actorB: StoredActor = { id: 'actor-b', role: 'Robot B', catalogueId: 'robot-expressive' };
 
 // ── Camera ────────────────────────────────────────────────────────────────────
 
@@ -154,12 +153,12 @@ describe('storedSceneToModel – staged actors', () => {
     const scene = baseScene({
       stagedActors: [
         { actorId: 'actor-r', startPosition: [-2, 0, 0] },
-        { actorId: 'actor-s', startPosition: [ 2, 0, 0] },
+        { actorId: 'actor-b', startPosition: [ 2, 0, 0] },
       ],
     });
-    const model = storedSceneToModel(scene, [robotActor, soldierActor]);
+    const model = storedSceneToModel(scene, [robotActor, actorB]);
     expect(model.gltfs[0].url).toBe(ROBOT_GLTF);
-    expect(model.gltfs[1].url).toBe(SOLDIER_GLTF);
+    expect(model.gltfs[1].url).toBe(ROBOT_GLTF);
   });
 
   it('falls back to RobotExpressive for an unknown catalogueId', () => {
@@ -240,14 +239,14 @@ describe('storedSceneToModel – actions', () => {
     const scene = baseScene({
       stagedActors: [
         { actorId: 'actor-r' },
-        { actorId: 'actor-s' },
+        { actorId: 'actor-b' },
       ],
       actions: [
         { type: 'speak', actorId: 'actor-r', startTime: 1,   text: 'Line one.' },
-        { type: 'speak', actorId: 'actor-s', startTime: 3.5, text: 'Line two.' },
+        { type: 'speak', actorId: 'actor-b', startTime: 3.5, text: 'Line two.' },
       ],
     });
-    const model = storedSceneToModel(scene, [robotActor, soldierActor]);
+    const model = storedSceneToModel(scene, [robotActor, actorB]);
     expect(model.speechEntries[0].text).toBe('Line one.');
     expect(model.speechEntries[1].text).toBe('Line two.');
   });

@@ -59,7 +59,7 @@ function vec3Equal(a: Vec3, b: Vec3): boolean {
  * - If neither is provided and there is no movement: no facing track is emitted.
  *
  * `modelDefaultRotation` (Euler XYZ, radians) corrects models whose forward axis
- * differs from +Z (e.g. Soldier faces -Z; pass [0, π, 0]). It is post-multiplied
+ * differs from +Z (e.g. a model facing -Z needs [0, π, 0]). It is post-multiplied
  * onto every computed facing quaternion so that direction-of-travel is accurate.
  *
  * The compiled tracks are not stored — they are merged with `scene.actions` at

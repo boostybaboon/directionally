@@ -1135,6 +1135,7 @@
                 onclick={() => (leftTab = 'catalogue')}
               >Catalogue</button>
               <a href="/sketch" class="tab-btn tab-link">Sketcher ✏</a>
+              <a href="/character" class="tab-btn tab-link">Characters 👤</a>
             </div>
             <div class="tab-content">
               {#if leftTab === 'productions'}

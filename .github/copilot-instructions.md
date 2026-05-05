@@ -27,7 +27,7 @@ src/core/document/        # Editing API — headless, no UI/browser dependencies
 
 src/core/catalogue/       # Bundled asset catalogue (characters, set pieces)
   types.ts                # CharacterEntry, SetPieceEntry, CatalogueEntry, CatalogueKind
-  entries.ts              # Seed data: RobotExpressive (6 clips), Soldier (3 clips, MIT Three.js) + geometry primitives
+  entries.ts              # Seed data: RobotExpressive (6 clips) + geometry primitives
   catalogue.ts            # Pure service: getCharacters(), getSetPieces(), getById()
 
 src/lib/                  # UI layer (Svelte) + legacy model format

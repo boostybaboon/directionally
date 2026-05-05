@@ -13,8 +13,8 @@ export interface CharacterEntry {
   defaultScale?: number;
   /**
    * Euler XYZ rotation (radians) to apply when no authored rotation exists.
-   * Use this to correct models whose forward axis differs from +Z (e.g. Soldier
-   * was authored facing -Z, so set [0, π, 0] to flip it to face the camera).
+   * Use this to correct models whose forward axis differs from +Z (e.g. a model
+   * facing -Z needs [0, π, 0] to face toward the camera).
    */
   defaultRotation?: Vec3;
 }
