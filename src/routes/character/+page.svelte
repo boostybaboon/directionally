@@ -63,6 +63,7 @@
     }
     const colors = style === 'c3po' ? C3PO_COLORS : style === 'sonny' ? SONNY_COLORS : DEFAULT_COLORS;
     humanoid = new ProceduralHumanoid(rigGltfScene, [...allLoadedClips], colors, style, boneParams, insetFactor);
+    humanoid.setInPlace(inPlace);
     humanoid.setBodyVisible(bodyVisible);
     humanoid.setSkeletonVisible(skeletonVisible);
     scene.add(humanoid.root);
@@ -166,7 +167,7 @@
       const first = clipNames.find((n) => /idle/i.test(n)) ?? (clipNames[0] ?? null);
       if (first) {
         activeClip = first;
-        humanoid.playClip(first);
+        humanoid.playClip(first, inPlace);
       }
       loading = false;
     }).catch(() => {
@@ -198,6 +199,7 @@
         class:active={inPlace}
         onclick={() => {
           inPlace = !inPlace;
+          humanoid?.setInPlace(inPlace);
           if (activeClip) humanoid?.playClip(activeClip, inPlace);
         }}
       >In Place</button>
@@ -281,6 +283,53 @@
             }}
           />
         </label>
+        {#if bp.jointFrustumRatio !== undefined}
+          <label class="param-label">
+            Palm depth
+            <span class="param-val">{(bp.jointRadiusZ ?? bp.jointRadius).toFixed(1)} cm</span>
+            <input type="range" min="0" max="20" step="0.5"
+              value={bp.jointRadiusZ ?? bp.jointRadius}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointRadiusZ: +e.currentTarget.value } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+          <label class="param-label">
+            Palm length
+            <span class="param-val">{((bp.jointRadiusY ?? bp.jointRadius) * 2).toFixed(1)} cm</span>
+            <input type="range" min="0" max="30" step="0.5"
+              value={bp.jointRadiusY ?? bp.jointRadius}
+              oninput={(e) => {
+                const ry = +e.currentTarget.value;
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointRadiusY: ry, jointOffsetY: ry / 2 } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+          <label class="param-label">
+            Wrist taper
+            <span class="param-val">{((bp.jointFrustumRatio) * 100).toFixed(0)}%</span>
+            <input type="range" min="0.1" max="1" step="0.05"
+              value={bp.jointFrustumRatio}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointFrustumRatio: +e.currentTarget.value } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+          <label class="param-label">
+            Knuckle taper
+            <span class="param-val">{((bp.jointFrustumRatioZ ?? 1) * 100).toFixed(0)}%</span>
+            <input type="range" min="0.1" max="1" step="0.05"
+              value={bp.jointFrustumRatioZ ?? 1}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointFrustumRatioZ: +e.currentTarget.value } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+        {/if}
         <button class="reset-btn" onclick={() => {
           boneParams = { ...boneParams, [selectedGroup]: DEFAULT_BONE_PARAMS[selectedGroup] };
           buildHumanoid(robotStyle);

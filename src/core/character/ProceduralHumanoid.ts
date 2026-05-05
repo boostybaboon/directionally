@@ -45,13 +45,36 @@ export const SONNY_COLORS: BodyColors = {
  * Per-bone geometry sizing. All values are in centimetres.
  * - `tubeRadiusX` / `tubeRadiusZ`: half-widths of the elliptical tube cross-section
  *   in the bone's local X and Z axes.
- * - `jointRadius`: sphere radius at the bone origin. Set to 0 to suppress the joint.
+ * - `jointRadius`: joint X half-radius. Set to 0 to suppress the joint.
+ * - `jointRadiusY`: Y half-height of the joint. Defaults to `jointRadius` (sphere).
+ *   Set larger for a tall head.
+ * - `jointRadiusZ`: Z half-depth of the joint. Defaults to `jointRadius`.
+ *   Set smaller than `jointRadius` for a flat shape (e.g. palm disc).
+ * - `jointOffsetY`: translate the joint centre along the bone's local +Y axis (cm).
+ *   Set equal to `jointRadiusY` so the base sits flush at the bone origin.
+ * - `jointFrustumRatio` (0–1): when present, renders the joint as a frustum.
+ *   `jointRadius` is the wide end (+Y, finger side); `jointRadius * ratio` is the
+ *   narrow end (-Y, bone origin). Combine with `jointOffsetY = jointRadiusY / 2`.
+ * - `jointFrustumRatioZ` (0–1): independent Z taper for the frustum. When set, Z
+ *   tapers in the *opposite* direction to X — full `jointRadiusZ` at the bone origin
+ *   (wrist, -Y) and `jointRadiusZ * ratio` at the finger end (+Y). Models a palm that
+ *   fans outward in width but narrows in thickness toward the knuckles.
  * Tube is suppressed when either radius is 0.
  */
 export interface BoneParams {
   tubeRadiusX: number;
   tubeRadiusZ: number;
   jointRadius: number;
+  /** Y half-height of the joint; defaults to `jointRadius` (sphere). */
+  jointRadiusY?: number;
+  /** Z half-depth of the joint; defaults to `jointRadius`. */
+  jointRadiusZ?: number;
+  /** Local-Y offset of the joint centre in cm (positive = toward child bone). */
+  jointOffsetY?: number;
+  /** Frustum ratio (0–1): switches joint to a frustum. X fans wide at +Y (knuckle end). */
+  jointFrustumRatio?: number;
+  /** Independent Z taper for the frustum — Z tapers toward +Y (knuckle end), opposite to X. */
+  jointFrustumRatioZ?: number;
 }
 
 /** Keyed by bone group name (matching BONE_GROUPS[*].key and BONE_SPECS[*].group). */
@@ -87,11 +110,14 @@ export const DEFAULT_BONE_PARAMS: BoneParamMap = {
   spine1:   { tubeRadiusX: 11.0, tubeRadiusZ:  7.0, jointRadius:  5.5 },
   spine2:   { tubeRadiusX: 13.0, tubeRadiusZ:  8.0, jointRadius:  6.0 },
   neck:     { tubeRadiusX:  3.5, tubeRadiusZ:  3.0, jointRadius:  3.5 },
-  head:     { tubeRadiusX:  0.0, tubeRadiusZ:  0.0, jointRadius: 11.0 },
+  // Offset ellipsoid: base flush at head-bone origin, extends ~13 cm toward HeadTop_End.
+  head:     { tubeRadiusX:  0.0, tubeRadiusZ:  0.0, jointRadius: 10.0, jointRadiusY: 13.0, jointOffsetY: 13.0 },
   shoulder: { tubeRadiusX:  2.0, tubeRadiusZ:  2.0, jointRadius:  5.0 },
   arm:      { tubeRadiusX:  4.0, tubeRadiusZ:  3.5, jointRadius:  4.5 },
   forearm:  { tubeRadiusX:  3.0, tubeRadiusZ:  2.5, jointRadius:  3.5 },
-  hand:     { tubeRadiusX:  0.0, tubeRadiusZ:  0.0, jointRadius:  2.5 },
+  // Frustum palm: fans wide in X toward knuckles, narrows in Z (side view tapers inward).
+  // jointOffsetY = jointRadiusY/2 puts the wrist end flush at the hand-bone origin.
+  hand:     { tubeRadiusX:  0.0, tubeRadiusZ:  0.0, jointRadius:  6.0, jointRadiusY: 12.0, jointRadiusZ:  3.0, jointOffsetY:  6.0, jointFrustumRatio: 0.60, jointFrustumRatioZ: 0.70 },
   upleg:    { tubeRadiusX:  7.0, tubeRadiusZ:  5.5, jointRadius:  6.0 },
   leg:      { tubeRadiusX:  5.0, tubeRadiusZ:  4.0, jointRadius:  4.5 },
   foot:     { tubeRadiusX:  4.0, tubeRadiusZ:  3.0, jointRadius:  3.0 },
@@ -138,6 +164,12 @@ const BONE_SPECS: Record<string, BoneSpec> = {
   mixamorigLeftHandPinky1:  { region: 'hands', group: 'finger' },
   mixamorigLeftHandPinky2:  { region: 'hands', group: 'finger' },
   mixamorigLeftHandPinky3:  { region: 'hands', group: 'finger' },
+  // Finger tips — terminal cap spheres (bones absent in some rigs are silently ignored).
+  mixamorigLeftHandThumb4:  { region: 'skin',  group: 'finger' },
+  mixamorigLeftHandIndex4:  { region: 'hands', group: 'finger' },
+  mixamorigLeftHandMiddle4: { region: 'hands', group: 'finger' },
+  mixamorigLeftHandRing4:   { region: 'hands', group: 'finger' },
+  mixamorigLeftHandPinky4:  { region: 'hands', group: 'finger' },
   mixamorigRightHandThumb1:  { region: 'skin',  group: 'finger' },
   mixamorigRightHandThumb2:  { region: 'skin',  group: 'finger' },
   mixamorigRightHandThumb3:  { region: 'skin',  group: 'finger' },
@@ -153,6 +185,11 @@ const BONE_SPECS: Record<string, BoneSpec> = {
   mixamorigRightHandPinky1:  { region: 'hands', group: 'finger' },
   mixamorigRightHandPinky2:  { region: 'hands', group: 'finger' },
   mixamorigRightHandPinky3:  { region: 'hands', group: 'finger' },
+  mixamorigRightHandThumb4:  { region: 'skin',  group: 'finger' },
+  mixamorigRightHandIndex4:  { region: 'hands', group: 'finger' },
+  mixamorigRightHandMiddle4: { region: 'hands', group: 'finger' },
+  mixamorigRightHandRing4:   { region: 'hands', group: 'finger' },
+  mixamorigRightHandPinky4:  { region: 'hands', group: 'finger' },
   // ── Legs ───────────────────────────────────────────────────────────────────
   mixamorigLeftUpLeg:      { region: 'legs',  group: 'upleg' },
   mixamorigLeftLeg:        { region: 'legs',  group: 'leg'   },
@@ -163,6 +200,9 @@ const BONE_SPECS: Record<string, BoneSpec> = {
   // ── Toes ───────────────────────────────────────────────────────────────────
   mixamorigLeftToeBase:    { region: 'shoes', group: 'toe'   },
   mixamorigRightToeBase:   { region: 'shoes', group: 'toe'   },
+  // Toe tips — terminal cap spheres.
+  mixamorigLeftToe_End:    { region: 'shoes', group: 'toe'   },
+  mixamorigRightToe_End:   { region: 'shoes', group: 'toe'   },
 };
 
 const _up = new THREE.Vector3(0, 1, 0);
@@ -193,8 +233,12 @@ export class ProceduralHumanoid {
   private skeletonLinks: Array<{ child: THREE.Bone; mesh: THREE.Mesh }> = [];
   /** Body tube links re-synced every frame when animation moves bone positions. */
   private bodyLinks: Array<{ child: THREE.Bone; mesh: THREE.Mesh; inset: number }> = [];
-  /** Lazily-generated in-place variants: XZ hip translation removed, Y kept. */
+  /** Lazily-generated in-place variants: kept for potential future use. */
   private inPlaceCache = new Map<string, THREE.AnimationClip>();
+  /** Reference to mixamorigHips for runtime root-motion cancellation. */
+  private hipsRef: THREE.Bone | null = null;
+  /** When true, hips XZ is pinned to 0 each frame so the character animates on the spot. */
+  private _inPlaceMode = false;
 
   constructor(
     gltfScene: THREE.Group,
@@ -212,6 +256,10 @@ export class ProceduralHumanoid {
     this._attachBodyGeom(colors, style, boneParamMap, insetFactor);
     this._attachSkeletonGeom();
     this.setSkeletonVisible(false);
+
+    this.root.traverse((obj) => {
+      if (obj instanceof THREE.Bone && obj.name === 'mixamorigHips') this.hipsRef = obj;
+    });
   }
 
   private _hideSkinnedMeshes(): void {
@@ -243,11 +291,43 @@ export class ProceduralHumanoid {
       const bp = boneParamMap[spec.group] ?? DEFAULT_BONE_PARAMS[spec.group] ?? fallback;
       const m  = mat(spec.region);
 
-      // Sphere joint at this bone's origin.
+      // Joint at this bone's origin.
+      // - Default: triaxial ellipsoid (sphere when all radii equal).
+      // - jointFrustumRatio set: frustum (CylinderGeometry) — wide end at +Y (finger side),
+      //   narrow end at -Y (bone origin). jointOffsetY = ry/2 sits the wrist end flush.
       if (bp.jointRadius > 1e-5) {
-        const jointGeom = new THREE.SphereGeometry(1, tubeSides, Math.ceil(tubeSides * 0.75));
+        const ry = bp.jointRadiusY ?? bp.jointRadius;
+        const rz = bp.jointRadiusZ ?? bp.jointRadius;
+        let jointGeom: THREE.BufferGeometry;
+        if (bp.jointFrustumRatio !== undefined) {
+          if (bp.jointFrustumRatioZ !== undefined) {
+            // Independent X/Z taper: X fans wide toward +Y (knuckle), Z narrows toward +Y.
+            // Start from a unit cylinder (radius=1 at both ends) then reshape each vertex.
+            // t=0 → wrist (-Y): xMul=xRatio (narrow), zMul=1 (full depth)
+            // t=1 → knuckle (+Y): xMul=1 (wide), zMul=zRatio (thin)
+            const xRatio = bp.jointFrustumRatio;
+            const zRatio = bp.jointFrustumRatioZ;
+            jointGeom = new THREE.CylinderGeometry(1, 1, 1, tubeSides);
+            const pos = jointGeom.attributes.position as THREE.BufferAttribute;
+            for (let vi = 0; vi < pos.count; vi++) {
+              const t = pos.getY(vi) + 0.5; // 0 = wrist, 1 = knuckle
+              const xMul = xRatio + t * (1.0 - xRatio); // narrow→wide
+              const zMul = 1.0 - t * (1.0 - zRatio);    // full→thin
+              pos.setX(vi, pos.getX(vi) * xMul);
+              pos.setZ(vi, pos.getZ(vi) * zMul);
+            }
+            pos.needsUpdate = true;
+            jointGeom.computeVertexNormals();
+          } else {
+            // Uniform frustum: same ratio in X and Z.
+            jointGeom = new THREE.CylinderGeometry(1, bp.jointFrustumRatio, 1, tubeSides);
+          }
+        } else {
+          jointGeom = new THREE.SphereGeometry(1, tubeSides, Math.ceil(tubeSides * 0.75));
+        }
         const jointMesh = new THREE.Mesh(jointGeom, m);
-        jointMesh.scale.setScalar(bp.jointRadius);
+        jointMesh.scale.set(bp.jointRadius, ry, rz);
+        jointMesh.position.y = bp.jointOffsetY ?? 0;
         jointMesh.userData.boneName = obj.name;
         obj.add(jointMesh);
         this.bodyMeshes.push(jointMesh);
@@ -397,6 +477,14 @@ export class ProceduralHumanoid {
   /** Advance animations and sync geometry to the skeleton's current pose. */
   update(delta: number): void {
     this.mixer.update(delta);
+    // Pin hips translation after the mixer writes it.
+    // Mixamo GLBs bake a -90° X rotation into the Armature on export, so the hips
+    // bone's local axes are: X = world side-to-side, Y = world forward/back, Z = world up.
+    // Zeroing X and Y kills walk/strafe drift; Z stays free for vertical bob and crouch.
+    if (this._inPlaceMode && this.hipsRef) {
+      this.hipsRef.position.x = 0;
+      this.hipsRef.position.y = 0;
+    }
     this._syncSkeletonLinks();
     this._syncBodyLinks();
   }
@@ -426,8 +514,8 @@ export class ProceduralHumanoid {
     this.mixer.stopAllAction();
     const raw = this.clips.find((c) => c.name === name);
     if (!raw) return;
-    const clip = inPlace ? this._inPlaceClip(raw) : raw;
-    this.mixer.clipAction(clip).play();
+    this._inPlaceMode = inPlace;
+    this.mixer.clipAction(raw).play();
   }
 
   /** Append additional clips to the internal list (used after async GLB loads). */
@@ -438,6 +526,11 @@ export class ProceduralHumanoid {
   /** Show or hide the body geometry layer. */
   setBodyVisible(visible: boolean): void {
     this.bodyMeshes.forEach((m) => (m.visible = visible));
+  }
+
+  /** Lock (or unlock) XZ root motion so the character animates on the spot. */
+  setInPlace(enabled: boolean): void {
+    this._inPlaceMode = enabled;
   }
 
   /** Show or hide the skeleton visualisation layer. */
