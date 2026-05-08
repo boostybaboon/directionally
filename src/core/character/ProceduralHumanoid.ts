@@ -98,8 +98,14 @@ export interface FaceParams {
   eyeForwardZ: number;
   /** Organic only: pupil sphere radius as a fraction of eyeRadius (0 to suppress). */
   pupilScale: number;
-  /** Organic only: additional Z offset for the pupil past the sclera (cm, positive = further forward). */
-  pupilOffsetZ: number;
+  /** Organic only: iris disc radius as a fraction of eyeRadius (0 to suppress). Sits between sclera and pupil. */
+  irisScale: number;
+  /** Iris colour as a hex integer. */
+  irisColor: number;
+  /** Organic only: upper eyelid coverage fraction (0 = no lid, 1 = fully closed). */
+  upperLidCover: number;
+  /** Organic only: lower eyelid coverage fraction (0 = no lid, 1 = fully closed). */
+  lowerLidCover: number;
   /** Nose sphere radius (cm); set to 0 to suppress. Organic only. */
   noseRadius: number;
   /** How far below the eye centres the nose sits (cm). */
@@ -133,15 +139,18 @@ export const DEFAULT_FACE_PARAMS: FaceParams = {
   eyeSpacing:     4.5,
   eyeRise:       -1.0,
   eyeForwardZ:    9.0,
-  pupilScale:     0.55,
-  pupilOffsetZ:   1.5,
+  pupilScale:     0.15,
+  irisScale:      0.45,
+  irisColor:   0x3a6e3a,
+  upperLidCover:  0.35,
+  lowerLidCover:  0.30,
   noseRadius:     2.3,
   noseDrop:       4.0,
   noseForwardOffset:  1.0,
   mouthWidth:     5.0,
   mouthThickness: 1.2,
   mouthDrop:      7.5,
-  mouthForwardOffset: -1.8,
+  mouthForwardOffset: -2.0,
   earRadius:      3.0,
   earThickness:   0.8,
   hairRadius:    12.0,
@@ -299,6 +308,11 @@ export class ProceduralHumanoid {
   private activeAction: THREE.AnimationAction | null = null;
   private bodyMeshes: THREE.Mesh[] = [];
   private skeletonMeshes: THREE.Mesh[] = [];
+  /** Hemisphere lids per eye — rotation.x is tweened by blink(t). */
+  private _upperLids: Array<{ mesh: THREE.Mesh; openRx: number }> = [];
+  private _lowerLids: Array<{ mesh: THREE.Mesh; openRx: number }> = [];
+  /** Accumulated time for the autonomous blink cycle. */
+  private _blinkTimer = 0;
   /** Bone→cylinder links; position/rotation/scale are re-synced every frame. */
   private skeletonLinks: Array<{ child: THREE.Bone; mesh: THREE.Mesh }> = [];
   /** Body tube links re-synced every frame when animation moves bone positions. */
@@ -446,22 +460,81 @@ export class ProceduralHumanoid {
       // Eyes
       for (const x of [-fp.eyeSpacing, fp.eyeSpacing]) {
         if (style === 'organic') {
+          // Sclera — warm off-white rather than pure white to soften the stare.
           const scleraMesh = new THREE.Mesh(
             new THREE.SphereGeometry(fp.eyeRadius, 12, 8),
-            new THREE.MeshToonMaterial({ color: 0xffffff }),
+            new THREE.MeshToonMaterial({ color: 0xfff5ee }),
           );
           scleraMesh.position.set(x, eyeY, fp.eyeForwardZ);
           obj.add(scleraMesh);
           this.bodyMeshes.push(scleraMesh);
 
-          if (fp.pupilScale > 1e-5) {
-            const pupilMesh = new THREE.Mesh(
-              new THREE.SphereGeometry(fp.eyeRadius * fp.pupilScale, 10, 7),
-              new THREE.MeshToonMaterial({ color: 0x1a1a2e }),
+          // Iris — spherical cap that conforms to the sclera surface.
+          // thetaLength = asin(irisScale) gives the cap whose projected radius equals
+          // irisScale * eyeRadius. rotation.x = +π/2 rotates the north pole from +Y to +Z.
+          if (fp.irisScale > 1e-5) {
+            const irisCap = new THREE.Mesh(
+              new THREE.SphereGeometry(fp.eyeRadius + 0.02, 20, 8, 0, Math.PI * 2, 0, Math.asin(Math.min(fp.irisScale, 0.999))),
+              new THREE.MeshToonMaterial({ color: fp.irisColor }),
             );
-            pupilMesh.position.set(x, eyeY, fp.eyeForwardZ + fp.pupilOffsetZ);
-            obj.add(pupilMesh);
-            this.bodyMeshes.push(pupilMesh);
+            irisCap.rotation.x = Math.PI / 2;
+            irisCap.position.set(x, eyeY, fp.eyeForwardZ);
+            obj.add(irisCap);
+            this.bodyMeshes.push(irisCap);
+          }
+
+          // Pupil — same technique, smaller cap, sits in front of iris.
+          if (fp.pupilScale > 1e-5) {
+            const pupilCap = new THREE.Mesh(
+              new THREE.SphereGeometry(fp.eyeRadius + 0.04, 16, 6, 0, Math.PI * 2, 0, Math.asin(Math.min(fp.pupilScale, 0.999))),
+              new THREE.MeshToonMaterial({ color: 0x1a0f00 }),
+            );
+            pupilCap.rotation.x = Math.PI / 2;
+            pupilCap.position.set(x, eyeY, fp.eyeForwardZ);
+            obj.add(pupilCap);
+            this.bodyMeshes.push(pupilCap);
+          }
+
+          // Eyelids — each lid is a full hemisphere (thetaLength = π/2) centred at the
+          // eye origin. The rim always sits flush on the sclera surface at any rotation.
+          //
+          // openRx = (cover - 0.5) * π  — linear map over cover ∈ [0, 0.5]:
+          //   cover=0   → openRx=-π/2 → dome faces backward, lid invisible (fully open eye)
+          //   cover≈0.35 → openRx≈-0.47 → natural resting eyelid arc visible at top/bottom
+          //   cover=0.5  → openRx=0    → rim at equator (half-closed look)
+          // blink(t) closes to +π/2 (dome faces forward = eye covered) regardless of openRx.
+          //
+          // Lower lid uses a wrapper with rotation.z=π to flip the dome downward;
+          // the mesh's local rotation.x is then identical in semantics to the upper lid.
+          const lidMat = new THREE.MeshToonMaterial({ color: colors.skin });
+          const lidR = fp.eyeRadius + 0.08;
+          if (fp.upperLidCover > 1e-5) {
+            const openRx = (fp.upperLidCover - 0.5) * Math.PI;
+            const upperLid = new THREE.Mesh(
+              new THREE.SphereGeometry(lidR, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+              lidMat,
+            );
+            upperLid.rotation.x = openRx;
+            upperLid.position.set(x, eyeY, fp.eyeForwardZ);
+            obj.add(upperLid);
+            this.bodyMeshes.push(upperLid);
+            this._upperLids.push({ mesh: upperLid, openRx });
+          }
+          if (fp.lowerLidCover > 1e-5) {
+            // Wrapper carries the Z-flip so the mesh's local X axis is clean.
+            const lidWrapper = new THREE.Object3D();
+            lidWrapper.rotation.z = Math.PI;
+            lidWrapper.position.set(x, eyeY, fp.eyeForwardZ);
+            obj.add(lidWrapper);
+            const openRx = (fp.lowerLidCover - 0.5) * Math.PI;
+            const lowerLid = new THREE.Mesh(
+              new THREE.SphereGeometry(lidR, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+              lidMat,
+            );
+            lowerLid.rotation.x = openRx;
+            lidWrapper.add(lowerLid);
+            this.bodyMeshes.push(lowerLid);
+            this._lowerLids.push({ mesh: lowerLid, openRx });
           }
         } else {
           const ledMesh = new THREE.Mesh(
@@ -681,6 +754,24 @@ export class ProceduralHumanoid {
     }
     this._syncSkeletonLinks();
     this._syncBodyLinks();
+
+    // Autonomous blink — suppressed when no clip is playing (T-pose / static preview).
+    if (this._upperLids.length > 0) {
+      if (!this.activeAction) {
+        this.blink(0);
+      } else {
+        // 15 blinks/min = one blink every 4 s.
+        // Each blink: 0–150 ms close, 150–300 ms open, remainder idle.
+        const PERIOD = 4.0;
+        const HALF   = 0.15;
+        this._blinkTimer = (this._blinkTimer + delta) % PERIOD;
+        const phase = this._blinkTimer;
+        let t = 0;
+        if      (phase < HALF)      t = phase / HALF;
+        else if (phase < HALF * 2)  t = 1 - (phase - HALF) / HALF;
+        this.blink(t);
+      }
+    }
   }
 
   /** Dispose all procedural geometry and materials, then detach from bone parents. */
@@ -694,6 +785,8 @@ export class ProceduralHumanoid {
         (m.material as THREE.Material).dispose();
       }
     };
+    this._upperLids = [];
+    this._lowerLids = [];
     this.bodyMeshes.forEach(disposeMesh);
     this.skeletonMeshes.forEach(disposeMesh);
     this.bodyMeshes = [];
@@ -709,7 +802,8 @@ export class ProceduralHumanoid {
     const raw = this.clips.find((c) => c.name === name);
     if (!raw) return;
     this._inPlaceMode = inPlace;
-    this.mixer.clipAction(raw).play();
+    this.activeAction = this.mixer.clipAction(raw);
+    this.activeAction.play();
   }
 
   /** Append additional clips to the internal list (used after async GLB loads). */
@@ -720,6 +814,23 @@ export class ProceduralHumanoid {
   /** Show or hide the body geometry layer. */
   setBodyVisible(visible: boolean): void {
     this.bodyMeshes.forEach((m) => (m.visible = visible));
+  }
+
+  /**
+   * Animate a blink. `t=0` is fully open, `t=1` is fully closed.
+   * Tweens each lid hemisphere's rotation.x between its resting open angle and π/2
+   * (dome facing forward = eye covered). Safe to call every frame.
+   */
+  blink(t: number): void {
+    // closedRx = 0: both hemisphere rims sit at the eye's horizontal midplane and just touch.
+    const closedRx = 0;
+    for (const lid of this._upperLids) {
+      lid.mesh.rotation.x = lid.openRx + t * (closedRx - lid.openRx);
+    }
+    // Lower lids close upward: their openRx is negative, closedRx is +π/2 in wrapper-local space.
+    for (const lid of this._lowerLids) {
+      lid.mesh.rotation.x = lid.openRx + t * (closedRx - lid.openRx);
+    }
   }
 
   /** Lock (or unlock) XZ root motion so the character animates on the spot. */

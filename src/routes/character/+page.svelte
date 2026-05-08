@@ -436,11 +436,34 @@
           />
         </label>
         <label class="param-label">
-          Pupil depth
-          <span class="param-val">{faceParams.pupilOffsetZ.toFixed(1)} cm</span>
-          <input type="range" min="0" max="4" step="0.25"
-            value={faceParams.pupilOffsetZ}
-            oninput={(e) => { faceParams = { ...faceParams, pupilOffsetZ: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          Iris size
+          <span class="param-val">{(faceParams.irisScale * 100).toFixed(0)}%</span>
+          <input type="range" min="0" max="1" step="0.05"
+            value={faceParams.irisScale}
+            oninput={(e) => { faceParams = { ...faceParams, irisScale: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Iris colour
+          <input type="color"
+            value={`#${faceParams.irisColor.toString(16).padStart(6, '0')}`}
+            oninput={(e) => { faceParams = { ...faceParams, irisColor: parseInt(e.currentTarget.value.slice(1), 16) }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Upper lid
+          <span class="param-val">{(faceParams.upperLidCover * 100).toFixed(0)}%</span>
+          <input type="range" min="0.20" max="0.5" step="0.05"
+            value={faceParams.upperLidCover}
+            oninput={(e) => { faceParams = { ...faceParams, upperLidCover: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Lower lid
+          <span class="param-val">{(faceParams.lowerLidCover * 100).toFixed(0)}%</span>
+          <input type="range" min="0.15" max="0.5" step="0.05"
+            value={faceParams.lowerLidCover}
+            oninput={(e) => { faceParams = { ...faceParams, lowerLidCover: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
           />
         </label>
         <label class="param-label">
