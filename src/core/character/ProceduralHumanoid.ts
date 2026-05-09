@@ -120,10 +120,12 @@ export interface FaceParams {
   mouthForwardOffset: number;
   /** Tube cross-section radius for each lip (cm). */
   mouthLipRadius: number;
-  /** Angle of the jaw-open motion in degrees: 0 = straight down, positive = forward-down. */
-  mouthOpenAngle: number;
+  /** Tilt of the whole mouth plane in degrees; rotates all lip geometry around X. 0 = horizontal, -45 = tilted so top of head is further back. */
+  mouthLipPlane: number;
   /** Z setback of lip corners relative to lip centre (cm); wraps lips around the head sphere. */
   mouthLipWrap: number;
+  /** Y offset of both lip corners from rest (cm); positive = corners up. Midpoint stays fixed. */
+  mouthCornerLift: number;
   /** Additional Z offset for the nose relative to eyeForwardZ (positive = further forward). */
   noseForwardOffset: number;
   /** Left/right ear disc Y/Z radius (cm, 0 = suppressed). */
@@ -167,11 +169,12 @@ export const DEFAULT_FACE_PARAMS: FaceParams = {
   noseForwardOffset:  1.0,
   mouthWidth:     7.0,
   mouthThickness: 0.4,
-  mouthDrop:      8.0,
-  mouthForwardOffset:  0.3,
+  mouthDrop:      9.0,
+  mouthForwardOffset: -0.8,
   mouthLipRadius:  0.5,
-  mouthOpenAngle: -45,
-  mouthLipWrap:    2.0,
+  mouthLipPlane:  -43,
+  mouthLipWrap:    1.3,
+  mouthCornerLift: 0,
   earRadius:      3.0,
   earThickness:   0.8,
   hairRadius:    12.0,
@@ -355,7 +358,7 @@ export class ProceduralHumanoid {
   /** Sphere end-cap meshes at the four lip corners — updated in setMouth(). */
   private _lipCaps: THREE.Mesh[] = [];
   /** Mouth params retained for geometry rebuilds inside setMouth(). */
-  private _mouthParams: { mouthY: number; mouthZ: number; width: number; thickness: number; lipRadius: number; openAngle: number; lipWrap: number } | null = null;
+  private _mouthParams: { mouthY: number; mouthZ: number; width: number; thickness: number; lipRadius: number; lipPlane: number; lipWrap: number; cornerLift: number } | null = null;
   /** Bone→cylinder links; position/rotation/scale are re-synced every frame. */
   private skeletonLinks: Array<{ child: THREE.Bone; mesh: THREE.Mesh }> = [];
   /** Body tube links re-synced every frame when animation moves bone positions. */
@@ -653,13 +656,13 @@ export class ProceduralHumanoid {
           jawPivot.userData.neutralY = mouthY;
           obj.add(jawPivot);
           this._jawPivot = jawPivot;
-          this._mouthParams = { mouthY, mouthZ, width: fp.mouthWidth, thickness: fp.mouthThickness, lipRadius: fp.mouthLipRadius, openAngle: fp.mouthOpenAngle, lipWrap: fp.mouthLipWrap };
+          this._mouthParams = { mouthY, mouthZ, width: fp.mouthWidth, thickness: fp.mouthThickness, lipRadius: fp.mouthLipRadius, lipPlane: fp.mouthLipPlane, lipWrap: fp.mouthLipWrap, cornerLift: fp.mouthCornerLift };
 
           const lipMat = new THREE.MeshToonMaterial({ color: 0xcc4444, side: THREE.DoubleSide });
           const holeMat = new THREE.MeshToonMaterial({ color: 0x1a0808, side: THREE.DoubleSide });
-          const { hw, cornerY, cornerZ, upperCenter, lowerCenterY, lowerCenterZ } = this._mouthControlPoints(fp.mouthWidth, fp.mouthThickness, 0, 0, fp.mouthOpenAngle, fp.mouthLipWrap);
+          const { hw, cornerY, cornerZ, upperCenterY, upperCenterZ, lowerCenterY, lowerCenterZ } = this._mouthControlPoints(fp.mouthWidth, fp.mouthThickness, 0, 0, fp.mouthLipPlane, fp.mouthLipWrap, fp.mouthCornerLift);
 
-          const upperMesh = new THREE.Mesh(this._buildLipTube(hw, cornerY, cornerZ, upperCenter, fp.mouthLipRadius), lipMat);
+          const upperMesh = new THREE.Mesh(this._buildLipTube(hw, cornerY, cornerZ, upperCenterY, fp.mouthLipRadius, upperCenterZ), lipMat);
           upperMesh.position.set(0, mouthY, mouthZ);
           obj.add(upperMesh);
           this.bodyMeshes.push(upperMesh);
@@ -671,7 +674,7 @@ export class ProceduralHumanoid {
           this.bodyMeshes.push(lowerMesh);
           this._lowerLipMesh = lowerMesh;
 
-          const holeMesh = new THREE.Mesh(this._buildMouthFill(hw, cornerY, cornerZ, upperCenter, lowerCenterY, lowerCenterZ), holeMat);
+          const holeMesh = new THREE.Mesh(this._buildMouthFill(hw, cornerY, cornerZ, upperCenterY, upperCenterZ, lowerCenterY, lowerCenterZ), holeMat);
           // Positioned at the same local origin as the upper lip mesh.
           holeMesh.position.set(0, mouthY, mouthZ);
           obj.add(holeMesh);
@@ -1000,19 +1003,31 @@ export class ProceduralHumanoid {
   }
 
   /** Derive shared bezier control dimensions from raw params + expression state. */
-  private _mouthControlPoints(width: number, thickness: number, smile: number, open: number, openAngle: number, lipWrap: number): {
-    hw: number; cornerY: number; cornerZ: number; upperCenter: number; lowerCenterY: number; lowerCenterZ: number;
+  private _mouthControlPoints(width: number, thickness: number, smile: number, open: number, lipPlane: number, lipWrap: number, cornerLift: number): {
+    hw: number; cornerY: number; cornerZ: number; upperCenterY: number; upperCenterZ: number; lowerCenterY: number; lowerCenterZ: number;
   } {
-    const hw          = width * 0.5;
-    const cornerY     = smile * thickness * 2.0;
-    // cornerZ pushes the lip ends back into the head sphere; center stays forward at Z=0.
-    const cornerZ     = -lipWrap;
-    const upperCenter  =  thickness * 0.5 - cornerY;
-    const openDist    = open * thickness * 8.0;
-    const rad         = openAngle * (Math.PI / 180);
-    const lowerCenterY = -(thickness * 0.5 + cornerY) - openDist * Math.cos(rad);
-    const lowerCenterZ =  openDist * Math.sin(rad);
-    return { hw, cornerY, cornerZ, upperCenter, lowerCenterY, lowerCenterZ };
+    const hw     = width * 0.5;
+    // Step 1: build in upright-cylinder space. Y = up the cylinder, Z = into the sphere.
+    // cornerLift is a pure-Y offset so it travels along the cylinder surface, not through it.
+    const cy_cyl = smile * thickness * 2.0 + cornerLift;
+    const uc_cyl = thickness * 0.5 - cy_cyl;       // bezier compensation: midpoint stays at thickness*0.25
+    const lc_cyl = -(thickness * 0.5 + cy_cyl) - open * thickness * 8.0;
+
+    // Step 2: rotate the whole frame by lipPlane around X.
+    // This tilts the mouth plane (and its opening direction) as a rigid body.
+    const a     = -lipPlane * (Math.PI / 180);
+    const cos_a = Math.cos(a);
+    const sin_a = Math.sin(a);
+    // Rotate (y, z): y' = y*cos - z*sin,  z' = y*sin + z*cos
+    // Corner z_cyl = -lipWrap:
+    const cornerY      = cy_cyl * cos_a + lipWrap * sin_a;
+    const cornerZ      = cy_cyl * sin_a - lipWrap * cos_a;
+    // Upper/lower centers have z_cyl = 0:
+    const upperCenterY = uc_cyl * cos_a;
+    const upperCenterZ = uc_cyl * sin_a;
+    const lowerCenterY = lc_cyl * cos_a;
+    const lowerCenterZ = lc_cyl * sin_a;
+    return { hw, cornerY, cornerZ, upperCenterY, upperCenterZ, lowerCenterY, lowerCenterZ };
   }
 
   /**
@@ -1036,13 +1051,13 @@ export class ProceduralHumanoid {
    */
   private _buildMouthFill(
     hw: number, cornerY: number, cornerZ: number,
-    upperCenter: number,
+    upperCenterY: number, upperCenterZ: number,
     lowerCenterY: number, lowerCenterZ: number,
   ): THREE.BufferGeometry {
     const N = 20;
     const upperCurve = new THREE.QuadraticBezierCurve3(
       new THREE.Vector3(-hw, cornerY, cornerZ),
-      new THREE.Vector3(  0, upperCenter, 0),
+      new THREE.Vector3(  0, upperCenterY, upperCenterZ),
       new THREE.Vector3( hw, cornerY, cornerZ),
     );
     const lowerCurve = new THREE.QuadraticBezierCurve3(
@@ -1072,18 +1087,20 @@ export class ProceduralHumanoid {
 
   /**
    * Drive mouth shape. `smile` ∈ [-1,1]: positive curves/lifts corners, negative frowns.
-   * `open` ∈ [0,1] drops the jaw. Rebuilds all three mouth geometries (cheap at this vertex count).
+   * `open` ∈ [0,1] drops the jaw. `cornerLift` overrides the built-in default when provided.
+   * Rebuilds all three mouth geometries (cheap at this vertex count).
    */
-  setMouth(smile: number, open: number): void {
+  setMouth(smile: number, open: number, cornerLift?: number): void {
     if (!this._jawPivot || !this._mouthParams) return;
-    const { mouthY, width, thickness, lipRadius, openAngle, lipWrap } = this._mouthParams;
-    const { hw, cornerY, cornerZ, upperCenter, lowerCenterY, lowerCenterZ } = this._mouthControlPoints(width, thickness, smile, open, openAngle, lipWrap);
+    const { mouthY, width, thickness, lipRadius, lipPlane, lipWrap } = this._mouthParams;
+    const lift = cornerLift ?? this._mouthParams.cornerLift;
+    const { hw, cornerY, cornerZ, upperCenterY, upperCenterZ, lowerCenterY, lowerCenterZ } = this._mouthControlPoints(width, thickness, smile, open, lipPlane, lipWrap, lift);
 
     this._jawPivot.position.y = mouthY;
 
     if (this._upperLipMesh) {
       this._upperLipMesh.geometry.dispose();
-      this._upperLipMesh.geometry = this._buildLipTube(hw, cornerY, cornerZ, upperCenter, lipRadius);
+      this._upperLipMesh.geometry = this._buildLipTube(hw, cornerY, cornerZ, upperCenterY, lipRadius, upperCenterZ);
     }
 
     if (this._lowerLipMesh) {
@@ -1093,7 +1110,7 @@ export class ProceduralHumanoid {
 
     if (this._mouthHoleMesh) {
       this._mouthHoleMesh.geometry.dispose();
-      this._mouthHoleMesh.geometry = this._buildMouthFill(hw, cornerY, cornerZ, upperCenter, lowerCenterY, lowerCenterZ);
+      this._mouthHoleMesh.geometry = this._buildMouthFill(hw, cornerY, cornerZ, upperCenterY, upperCenterZ, lowerCenterY, lowerCenterZ);
     }
 
     if (this._lipCaps.length === 4) {
