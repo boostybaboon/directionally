@@ -70,11 +70,67 @@
     humanoid.setSkeletonVisible(skeletonVisible);
     scene.add(humanoid.root);
     if (activeClip) humanoid.playClip(activeClip, inPlace);
+    // Re-apply the current expression after a rebuild since pivots are recreated.
+    reapplyFace();
   }
 
   function selectClip(name: string): void {
     activeClip = name;
     humanoid?.playClip(name, inPlace);
+  }
+
+  type Emotion = 'neutral' | 'smile' | 'frown';
+  type Gaze    = 'ahead'   | 'left'   | 'right';
+
+  let emotion  = $state<Emotion>('neutral');
+  let gaze     = $state<Gaze>('ahead');
+  let speaking = $state(false);
+  let speakInterval: ReturnType<typeof setInterval> | null = null;
+
+  function applyEmotion(e: Emotion): void {
+    if (!humanoid) return;
+    emotion = e;
+    switch (e) {
+      case 'smile':   humanoid.setBrow('both', 0.25, 0); humanoid.setMouth(1, speaking ? 0.5 : 0); break;
+      case 'frown':   humanoid.setBrow('both', 0, 1);    humanoid.setMouth(0, speaking ? 0.5 : 0); break;
+      default:        humanoid.setBrow('both', 0, 0);    if (!speaking) humanoid.setMouth(0, 0);    break;
+    }
+  }
+
+  function applyGaze(g: Gaze): void {
+    if (!humanoid) return;
+    gaze = g;
+    switch (g) {
+      case 'left':  humanoid.setGaze( 0.35, 0); break;
+      case 'right': humanoid.setGaze(-0.35, 0); break;
+      default:      humanoid.setGaze(0, 0);     break;
+    }
+  }
+
+  function toggleSpeak(): void {
+    if (!humanoid) return;
+    speaking = !speaking;
+    if (!speaking) {
+      if (speakInterval) { clearInterval(speakInterval); speakInterval = null; }
+      humanoid.setMouth(emotion === 'smile' ? 1 : 0, 0);
+      return;
+    }
+    let phase = 0;
+    speakInterval = setInterval(() => {
+      const smileVal = emotion === 'smile' ? 1 : 0;
+      humanoid?.setMouth(smileVal, Math.max(0, Math.sin(phase * Math.PI)));
+      phase += 0.25;
+    }, 80);
+  }
+
+  /** Re-apply all axes — called after humanoid rebuild. */
+  function reapplyFace(): void {
+    applyGaze(gaze);
+    applyEmotion(emotion);
+    if (speaking) {
+      speaking = false;
+      toggleSpeak();
+    }
   }
 
   onMount(() => {
@@ -184,6 +240,7 @@
   });
 
   onDestroy(() => {
+    if (speakInterval) clearInterval(speakInterval);
     cancelAnimationFrame(animId);
     humanoid?.dispose();
     orbit?.dispose();
@@ -233,6 +290,17 @@
             onclick={() => selectClip(name)}
           >{clipLabel(name)}</button>
         {/each}
+      </div>
+      <div class="clip-bar">
+        <button class="clip-btn" class:active={emotion === 'neutral'} onclick={() => applyEmotion('neutral')}>Neutral</button>
+        <button class="clip-btn" class:active={emotion === 'smile'}   onclick={() => applyEmotion('smile')}>Smile</button>
+        <button class="clip-btn" class:active={emotion === 'frown'}   onclick={() => applyEmotion('frown')}>Frown</button>
+        <span class="clip-sep"></span>
+        <button class="clip-btn" class:active={gaze === 'ahead'} onclick={() => applyGaze('ahead')}>Ahead</button>
+        <button class="clip-btn" class:active={gaze === 'left'}  onclick={() => applyGaze('left')}>Look L</button>
+        <button class="clip-btn" class:active={gaze === 'right'} onclick={() => applyGaze('right')}>Look R</button>
+        <span class="clip-sep"></span>
+        <button class="clip-btn" class:active={speaking} onclick={toggleSpeak}>Speak</button>
       </div>
     {/if}
   </header>
@@ -523,6 +591,30 @@
           />
         </label>
         <label class="param-label">
+          Lip radius
+          <span class="param-val">{faceParams.mouthLipRadius.toFixed(2)} cm</span>
+          <input type="range" min="0.05" max="1.5" step="0.05"
+            value={faceParams.mouthLipRadius}
+            oninput={(e) => { faceParams = { ...faceParams, mouthLipRadius: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Open angle
+          <span class="param-val">{faceParams.mouthOpenAngle.toFixed(0)}°</span>
+          <input type="range" min="-90" max="90" step="1"
+            value={faceParams.mouthOpenAngle}
+            oninput={(e) => { faceParams = { ...faceParams, mouthOpenAngle: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Lip wrap
+          <span class="param-val">{faceParams.mouthLipWrap.toFixed(1)} cm</span>
+          <input type="range" min="0" max="10" step="0.25"
+            value={faceParams.mouthLipWrap}
+            oninput={(e) => { faceParams = { ...faceParams, mouthLipWrap: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
           Ear size
           <span class="param-val">{faceParams.earRadius.toFixed(1)} cm</span>
           <input type="range" min="0" max="6" step="0.25"
@@ -567,6 +659,54 @@
           <input type="color"
             value={`#${faceParams.hairColor.toString(16).padStart(6, '0')}`}
             oninput={(e) => { faceParams = { ...faceParams, hairColor: parseInt(e.currentTarget.value.slice(1), 16) }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Brow reach
+          <span class="param-val">{faceParams.browForwardOffset.toFixed(1)} cm</span>
+          <input type="range" min="-4" max="4" step="0.25"
+            value={faceParams.browForwardOffset}
+            oninput={(e) => { faceParams = { ...faceParams, browForwardOffset: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Brow length
+          <span class="param-val">{faceParams.browLength.toFixed(1)} cm</span>
+          <input type="range" min="0.5" max="12" step="0.25"
+            value={faceParams.browLength}
+            oninput={(e) => { faceParams = { ...faceParams, browLength: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Brow height
+          <span class="param-val">{faceParams.browHeight.toFixed(1)} cm</span>
+          <input type="range" min="0" max="10" step="0.25"
+            value={faceParams.browHeight}
+            oninput={(e) => { faceParams = { ...faceParams, browHeight: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Brow separation
+          <span class="param-val">{faceParams.browSeparation.toFixed(1)} cm</span>
+          <input type="range" min="0" max="12" step="0.25"
+            value={faceParams.browSeparation}
+            oninput={(e) => { faceParams = { ...faceParams, browSeparation: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Brow angle
+          <span class="param-val">{faceParams.browAngle.toFixed(0)}°</span>
+          <input type="range" min="-30" max="30" step="1"
+            value={faceParams.browAngle}
+            oninput={(e) => { faceParams = { ...faceParams, browAngle: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Brow wrap
+          <span class="param-val">{faceParams.browWrapAngle.toFixed(0)}°</span>
+          <input type="range" min="-60" max="60" step="1"
+            value={faceParams.browWrapAngle}
+            oninput={(e) => { faceParams = { ...faceParams, browWrapAngle: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
           />
         </label>
         <button class="reset-btn" onclick={() => { faceParams = { ...DEFAULT_FACE_PARAMS }; buildHumanoid(robotStyle); }}>Reset</button>
@@ -650,6 +790,13 @@
     background: #3355aa;
     border-color: #4466cc;
     color: #fff;
+  }
+  .clip-sep {
+    display: inline-block;
+    width: 1px;
+    background: #444;
+    align-self: stretch;
+    margin: 2px 4px;
   }
 
   .viewport {
