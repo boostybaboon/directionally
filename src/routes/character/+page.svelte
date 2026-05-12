@@ -41,6 +41,7 @@
   let faceParams = $state<FaceParams>({ ...DEFAULT_FACE_PARAMS });
   const ALL_GROUPS = [...BONE_GROUPS, { label: 'Face', key: 'face' }];
   let insetFactor = $state(0);
+  let neckTiltDeg = $state(-10);
   let hoveredBone = $state<string | null>(null);
   let loading = $state(true);
   let loadError = $state(false);
@@ -64,7 +65,7 @@
       humanoid.dispose();
     }
     const colors = style === 'c3po' ? C3PO_COLORS : style === 'sonny' ? SONNY_COLORS : DEFAULT_COLORS;
-    humanoid = new ProceduralHumanoid(rigGltfScene, [...allLoadedClips], colors, style, boneParams, insetFactor, faceParams);
+    humanoid = new ProceduralHumanoid(rigGltfScene, [...allLoadedClips], colors, style, boneParams, insetFactor, faceParams, neckTiltDeg);
     humanoid.setInPlace(inPlace);
     humanoid.setBodyVisible(bodyVisible);
     humanoid.setSkeletonVisible(skeletonVisible);
@@ -490,22 +491,6 @@
           />
         </label>
         <label class="param-label">
-          Forward Z
-          <span class="param-val">{faceParams.eyeForwardZ.toFixed(1)} cm</span>
-          <input type="range" min="-14" max="14" step="0.5"
-            value={faceParams.eyeForwardZ}
-            oninput={(e) => { faceParams = { ...faceParams, eyeForwardZ: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
-          Pupil size
-          <span class="param-val">{(faceParams.pupilScale * 100).toFixed(0)}%</span>
-          <input type="range" min="0" max="1" step="0.05"
-            value={faceParams.pupilScale}
-            oninput={(e) => { faceParams = { ...faceParams, pupilScale: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
           Iris size
           <span class="param-val">{(faceParams.irisScale * 100).toFixed(0)}%</span>
           <input type="range" min="0" max="1" step="0.05"
@@ -518,22 +503,6 @@
           <input type="color"
             value={`#${faceParams.irisColor.toString(16).padStart(6, '0')}`}
             oninput={(e) => { faceParams = { ...faceParams, irisColor: parseInt(e.currentTarget.value.slice(1), 16) }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
-          Upper lid
-          <span class="param-val">{(faceParams.upperLidCover * 100).toFixed(0)}%</span>
-          <input type="range" min="0.20" max="0.5" step="0.05"
-            value={faceParams.upperLidCover}
-            oninput={(e) => { faceParams = { ...faceParams, upperLidCover: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
-          Lower lid
-          <span class="param-val">{(faceParams.lowerLidCover * 100).toFixed(0)}%</span>
-          <input type="range" min="0.15" max="0.5" step="0.05"
-            value={faceParams.lowerLidCover}
-            oninput={(e) => { faceParams = { ...faceParams, lowerLidCover: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
           />
         </label>
         <label class="param-label">
@@ -550,14 +519,6 @@
           <input type="range" min="0" max="8" step="0.5"
             value={faceParams.noseDrop}
             oninput={(e) => { faceParams = { ...faceParams, noseDrop: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
-          Nose reach
-          <span class="param-val">{faceParams.noseForwardOffset.toFixed(1)} cm</span>
-          <input type="range" min="-6" max="6" step="0.25"
-            value={faceParams.noseForwardOffset}
-            oninput={(e) => { faceParams = { ...faceParams, noseForwardOffset: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
           />
         </label>
         <label class="param-label">
@@ -579,49 +540,9 @@
         <label class="param-label">
           Mouth drop
           <span class="param-val">{faceParams.mouthDrop.toFixed(1)} cm</span>
-          <input type="range" min="0" max="14" step="0.5"
+          <input type="range" min="0" max="11" step="0.5"
             value={faceParams.mouthDrop}
             oninput={(e) => { faceParams = { ...faceParams, mouthDrop: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
-          Mouth reach
-          <span class="param-val">{faceParams.mouthForwardOffset.toFixed(1)} cm</span>
-          <input type="range" min="-6" max="6" step="0.25"
-            value={faceParams.mouthForwardOffset}
-            oninput={(e) => { faceParams = { ...faceParams, mouthForwardOffset: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
-          Lip radius
-          <span class="param-val">{faceParams.mouthLipRadius.toFixed(2)} cm</span>
-          <input type="range" min="0.05" max="1.5" step="0.05"
-            value={faceParams.mouthLipRadius}
-            oninput={(e) => { faceParams = { ...faceParams, mouthLipRadius: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
-          Lip plane
-          <span class="param-val">{faceParams.mouthLipPlane.toFixed(0)}°</span>
-          <input type="range" min="-90" max="90" step="1"
-            value={faceParams.mouthLipPlane}
-            oninput={(e) => { faceParams = { ...faceParams, mouthLipPlane: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
-          Lip wrap
-          <span class="param-val">{faceParams.mouthLipWrap.toFixed(1)} cm</span>
-          <input type="range" min="0" max="10" step="0.25"
-            value={faceParams.mouthLipWrap}
-            oninput={(e) => { faceParams = { ...faceParams, mouthLipWrap: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
-          Corner lift
-          <span class="param-val">{faceParams.mouthCornerLift.toFixed(2)} cm</span>
-          <input type="range" min="-3" max="3" step="0.05"
-            value={faceParams.mouthCornerLift}
-            oninput={(e) => { faceParams = { ...faceParams, mouthCornerLift: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
           />
         </label>
         <label class="param-label">
@@ -633,27 +554,11 @@
           />
         </label>
         <label class="param-label">
-          Ear depth
-          <span class="param-val">{faceParams.earThickness.toFixed(1)} cm</span>
-          <input type="range" min="0.2" max="3" step="0.1"
-            value={faceParams.earThickness}
-            oninput={(e) => { faceParams = { ...faceParams, earThickness: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
           Hair size
           <span class="param-val">{faceParams.hairRadius.toFixed(1)} cm</span>
           <input type="range" min="0" max="18" step="0.5"
             value={faceParams.hairRadius}
             oninput={(e) => { faceParams = { ...faceParams, hairRadius: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
-          Hair height
-          <span class="param-val">{faceParams.hairHeight.toFixed(1)} cm</span>
-          <input type="range" min="2" max="16" step="0.5"
-            value={faceParams.hairHeight}
-            oninput={(e) => { faceParams = { ...faceParams, hairHeight: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
           />
         </label>
         <label class="param-label">
@@ -669,14 +574,6 @@
           <input type="color"
             value={`#${faceParams.hairColor.toString(16).padStart(6, '0')}`}
             oninput={(e) => { faceParams = { ...faceParams, hairColor: parseInt(e.currentTarget.value.slice(1), 16) }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
-          Brow reach
-          <span class="param-val">{faceParams.browForwardOffset.toFixed(1)} cm</span>
-          <input type="range" min="-4" max="4" step="0.25"
-            value={faceParams.browForwardOffset}
-            oninput={(e) => { faceParams = { ...faceParams, browForwardOffset: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
           />
         </label>
         <label class="param-label">
@@ -696,27 +593,11 @@
           />
         </label>
         <label class="param-label">
-          Brow separation
-          <span class="param-val">{faceParams.browSeparation.toFixed(1)} cm</span>
-          <input type="range" min="0" max="12" step="0.25"
-            value={faceParams.browSeparation}
-            oninput={(e) => { faceParams = { ...faceParams, browSeparation: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
           Brow angle
           <span class="param-val">{faceParams.browAngle.toFixed(0)}°</span>
           <input type="range" min="-30" max="30" step="1"
             value={faceParams.browAngle}
             oninput={(e) => { faceParams = { ...faceParams, browAngle: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
-          />
-        </label>
-        <label class="param-label">
-          Brow wrap
-          <span class="param-val">{faceParams.browWrapAngle.toFixed(0)}°</span>
-          <input type="range" min="-60" max="60" step="1"
-            value={faceParams.browWrapAngle}
-            oninput={(e) => { faceParams = { ...faceParams, browWrapAngle: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
           />
         </label>
         <button class="reset-btn" onclick={() => { faceParams = { ...DEFAULT_FACE_PARAMS }; buildHumanoid(robotStyle); }}>Reset</button>
@@ -728,6 +609,14 @@
         <input type="range" min="0" max="1.0" step="0.05"
           value={insetFactor}
           oninput={(e) => { insetFactor = +e.currentTarget.value; buildHumanoid(robotStyle); }}
+        />
+      </label>
+      <label class="param-label">
+        Neck tilt
+        <span class="param-val">{neckTiltDeg.toFixed(0)}°</span>
+        <input type="range" min="-30" max="30" step="1"
+          value={neckTiltDeg}
+          oninput={(e) => { neckTiltDeg = +e.currentTarget.value; buildHumanoid(robotStyle); }}
         />
       </label>
     </div>

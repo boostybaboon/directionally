@@ -94,99 +94,54 @@ export interface FaceParams {
   eyeSpacing: number;
   /** Y offset of eye centres above the head ellipsoid centre (cm). */
   eyeRise: number;
-  /** Z offset of eye centres from the head ellipsoid centre — positive = forward (cm). */
-  eyeForwardZ: number;
-  /** Organic only: pupil sphere radius as a fraction of eyeRadius (0 to suppress). */
-  pupilScale: number;
   /** Organic only: iris disc radius as a fraction of eyeRadius (0 to suppress). Sits between sclera and pupil. */
   irisScale: number;
   /** Iris colour as a hex integer. */
   irisColor: number;
-  /** Organic only: upper eyelid coverage fraction (0 = no lid, 1 = fully closed). */
-  upperLidCover: number;
-  /** Organic only: lower eyelid coverage fraction (0 = no lid, 1 = fully closed). */
-  lowerLidCover: number;
   /** Nose sphere radius (cm); set to 0 to suppress. Organic only. */
   noseRadius: number;
-  /** How far below the eye centres the nose sits (cm). */
+  /** How far below the head ellipsoid centre the nose sits (cm). */
   noseDrop: number;
   /** X half-width of the mouth ellipsoid (cm); set to 0 to suppress. */
   mouthWidth: number;
   /** Y half-height (thickness) of the mouth ellipsoid (cm). */
   mouthThickness: number;
-  /** How far below the eye centres the mouth sits (cm). */
+  /** How far below the head ellipsoid centre the mouth sits (cm). */
   mouthDrop: number;
-  /** Additional Z offset for the mouth relative to eyeForwardZ (positive = further forward). */
-  mouthForwardOffset: number;
-  /** Tube cross-section radius for each lip (cm). */
-  mouthLipRadius: number;
-  /** Tilt of the whole mouth plane in degrees; rotates all lip geometry around X. 0 = horizontal, -45 = tilted so top of head is further back. */
-  mouthLipPlane: number;
-  /** Z setback of lip corners relative to lip centre (cm); wraps lips around the head sphere. */
-  mouthLipWrap: number;
-  /** Y offset of both lip corners from rest (cm); positive = corners up. Midpoint stays fixed. */
-  mouthCornerLift: number;
-  /** Additional Z offset for the nose relative to eyeForwardZ (positive = further forward). */
-  noseForwardOffset: number;
   /** Left/right ear disc Y/Z radius (cm, 0 = suppressed). */
   earRadius: number;
-  /** X half-thickness of each ear disc (cm). */
-  earThickness: number;
   /** Crown hair ellipsoid X/Z radius (cm, 0 = suppressed). Organic only. */
   hairRadius: number;
-  /** Y half-height of the crown hair ellipsoid (cm). */
-  hairHeight: number;
   /** Fringe ellipsoid Z half-depth over the forehead (cm, 0 = no fringe). Organic only. */
   fringeLength: number;
   /** Hair colour as a hex integer. */
   hairColor: number;
-  /** Additional Z offset for the eyebrows relative to eyeForwardZ (positive = further forward). */
-  browForwardOffset: number;
   /** Full length of each eyebrow ellipsoid (cm). */
   browLength: number;
   /** Y offset of brow centres above the eye centre (cm). */
   browHeight: number;
-  /** Half-distance between brow centres on the head X axis (cm). */
-  browSeparation: number;
   /** Rotation of each brow around its Z axis in degrees; positive = outer end up (natural arch). */
   browAngle: number;
-  /** Rotation of each brow around its Y axis in degrees; positive = inner end forward (wraps to face sphere). */
-  browWrapAngle: number;
 }
 
 export const DEFAULT_FACE_PARAMS: FaceParams = {
   eyeRadius:      2.5,
   eyeSpacing:     4.5,
   eyeRise:       -1.0,
-  eyeForwardZ:    9.0,
-  pupilScale:     0.15,
   irisScale:      0.45,
   irisColor:   0x3a6e3a,
-  upperLidCover:  0.35,
-  lowerLidCover:  0.30,
   noseRadius:     2.3,
-  noseDrop:       4.0,
-  noseForwardOffset:  1.0,
+  noseDrop:       5.0,
   mouthWidth:     7.0,
   mouthThickness: 0.4,
-  mouthDrop:      9.0,
-  mouthForwardOffset: -0.8,
-  mouthLipRadius:  0.5,
-  mouthLipPlane:  -43,
-  mouthLipWrap:    1.3,
-  mouthCornerLift: 0,
+  mouthDrop:     10.0,
   earRadius:      3.0,
-  earThickness:   0.8,
   hairRadius:    12.0,
-  hairHeight:     8.0,
   fringeLength:   4.0,
   hairColor:   0x3d2008,
-  browForwardOffset: 0.8,
   browLength: 2.5,
   browHeight: 3.5,
-  browSeparation: 5.8,
   browAngle: 4,
-  browWrapAngle: -26,
 };
 
 /** Canonical bone groups for the tuning UI. Symmetric left/right pairs share one entry. */
@@ -358,7 +313,7 @@ export class ProceduralHumanoid {
   /** Sphere end-cap meshes at the four lip corners — updated in setMouth(). */
   private _lipCaps: THREE.Mesh[] = [];
   /** Mouth params retained for geometry rebuilds inside setMouth(). */
-  private _mouthParams: { mouthY: number; mouthZ: number; width: number; thickness: number; lipRadius: number; lipPlane: number; lipWrap: number; cornerLift: number } | null = null;
+  private _mouthParams: { mouthY: number; mouthZ: number; width: number; thickness: number; lipRadius: number; rx: number; ry: number; rz: number; cy: number } | null = null;
   /** Bone→cylinder links; position/rotation/scale are re-synced every frame. */
   private skeletonLinks: Array<{ child: THREE.Bone; mesh: THREE.Mesh }> = [];
   /** Body tube links re-synced every frame when animation moves bone positions. */
@@ -369,6 +324,10 @@ export class ProceduralHumanoid {
   private hipsRef: THREE.Bone | null = null;
   /** When true, hips XZ is pinned to 0 each frame so the character animates on the spot. */
   private _inPlaceMode = false;
+  /** Neck tube mesh, tagged at build time so the per-frame tilt can be applied after link sync. */
+  private _neckTube: THREE.Mesh | null = null;
+  /** Tilt angle (degrees) applied to the neck tube top, pivoting around the bone base. */
+  private _neckTiltDeg = 0;
 
   constructor(
     gltfScene: THREE.Group,
@@ -378,10 +337,12 @@ export class ProceduralHumanoid {
     boneParamMap: BoneParamMap = {},
     insetFactor: number = 0,
     faceParams: FaceParams = DEFAULT_FACE_PARAMS,
+    neckTiltDeg: number = -10,
   ) {
     this.root = gltfScene;
     this.clips = clips;
     this.mixer = new THREE.AnimationMixer(gltfScene);
+    this._neckTiltDeg = neckTiltDeg;
 
     this._hideSkinnedMeshes();
     this._attachBodyGeom(colors, style, boneParamMap, insetFactor);
@@ -484,6 +445,7 @@ export class ProceduralHumanoid {
       obj.add(tubeMesh);
       this.bodyMeshes.push(tubeMesh);
       this.bodyLinks.push({ child: childBone, mesh: tubeMesh, inset });
+      if (obj.name === 'mixamorigNeck') this._neckTube = tubeMesh;
     });
   }
 
@@ -497,11 +459,15 @@ export class ProceduralHumanoid {
       if (obj.name !== 'mixamorigHead') return;
 
       const headBp  = boneParamMap['head'] ?? DEFAULT_BONE_PARAMS['head'];
-      const centreY = headBp?.jointOffsetY ?? 0;
-      const headW   = headBp?.jointRadius  ?? 11;
-      const headH   = headBp?.jointRadiusY ?? headW;
-      const eyeY = centreY + fp.eyeRise;
-      const ledColor = style === 'c3po' ? 0xff6600 : 0x44aaff;
+      const centreY  = headBp?.jointOffsetY  ?? 0;
+      const headW    = headBp?.jointRadius   ?? 11;
+      const headH    = headBp?.jointRadiusY  ?? headW;
+      const headRz   = headBp?.jointRadiusZ  ?? headW;
+      const eyeY     = centreY + fp.eyeRise;
+      // Eye Z derived from ellipsoid surface so eyes remain on the face when the head is resized.
+      const eyeSurfaceZ = ProceduralHumanoid._ellipsoidSurfaceZ(headW, headH, headRz, centreY, fp.eyeSpacing, eyeY);
+      const eyeZ        = eyeSurfaceZ - 1.0;
+      const ledColor    = style === 'c3po' ? 0xff6600 : 0x44aaff;
 
       // Eyes
       for (const x of [-fp.eyeSpacing, fp.eyeSpacing]) {
@@ -510,7 +476,7 @@ export class ProceduralHumanoid {
           const isLeft = x < 0;
           const eyePivot = new THREE.Object3D();
           eyePivot.name = isLeft ? 'eyePivotL' : 'eyePivotR';
-          eyePivot.position.set(x, eyeY, fp.eyeForwardZ);
+          eyePivot.position.set(x, eyeY, eyeZ);
           obj.add(eyePivot);
           if (isLeft) this._eyePivotL = eyePivot; else this._eyePivotR = eyePivot;
 
@@ -536,9 +502,10 @@ export class ProceduralHumanoid {
           }
 
           // Pupil — same technique, smaller cap, sits in front of iris.
-          if (fp.pupilScale > 1e-5) {
+          const pupilScale = fp.irisScale * 0.35;
+          if (pupilScale > 1e-5) {
             const pupilCap = new THREE.Mesh(
-              new THREE.SphereGeometry(fp.eyeRadius + 0.04, 16, 6, 0, Math.PI * 2, 0, Math.asin(Math.min(fp.pupilScale, 0.999))),
+              new THREE.SphereGeometry(fp.eyeRadius + 0.04, 16, 6, 0, Math.PI * 2, 0, Math.asin(Math.min(pupilScale, 0.999))),
               new THREE.MeshToonMaterial({ color: 0x1a0f00 }),
             );
             pupilCap.rotation.x = Math.PI / 2;
@@ -557,8 +524,8 @@ export class ProceduralHumanoid {
           // the mesh's local rotation.x is then identical in semantics to the upper lid.
           const lidMat = new THREE.MeshToonMaterial({ color: colors.skin });
           const lidR = fp.eyeRadius + 0.08;
-          if (fp.upperLidCover > 1e-5) {
-            const openRx = (fp.upperLidCover - 0.5) * Math.PI;
+          {
+            const openRx = (0.35 - 0.5) * Math.PI;
             const upperLid = new THREE.Mesh(
               new THREE.SphereGeometry(lidR, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2),
               lidMat,
@@ -568,12 +535,12 @@ export class ProceduralHumanoid {
             this.bodyMeshes.push(upperLid);
             this._upperLids.push({ mesh: upperLid, openRx });
           }
-          if (fp.lowerLidCover > 1e-5) {
+          {
             // Wrapper carries the Z-flip so the mesh's local X axis is clean.
             const lidWrapper = new THREE.Object3D();
             lidWrapper.rotation.z = Math.PI;
             eyePivot.add(lidWrapper);
-            const openRx = (fp.lowerLidCover - 0.5) * Math.PI;
+            const openRx = (0.30 - 0.5) * Math.PI;
             const lowerLid = new THREE.Mesh(
               new THREE.SphereGeometry(lidR, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2),
               lidMat,
@@ -593,11 +560,11 @@ export class ProceduralHumanoid {
           const browY = eyeY + fp.browHeight;
           // Pivot sits 1/3 of the brow length from the nose (inner) end so that
           // furrowing rotates the inner section down without over-moving the outer end.
-          const browOuterX = isLeft ? -fp.browSeparation : fp.browSeparation;
+          const browOuterX = isLeft ? -(fp.eyeSpacing + 1.3) : (fp.eyeSpacing + 1.3);
           const browPivotX = isLeft
             ? browOuterX + (2 / 3) * fp.browLength
             : browOuterX - (2 / 3) * fp.browLength;
-          const browZ = fp.eyeForwardZ + fp.browForwardOffset;
+          const browZ = ProceduralHumanoid._ellipsoidSurfaceZ(headW, headH, headRz, centreY, browPivotX, browY);
           browPivot.position.set(browPivotX, browY, browZ);
           browPivot.userData.neutralY = browY;
           browPivot.userData.raiseRange = fp.eyeRadius * 0.9;
@@ -615,7 +582,7 @@ export class ProceduralHumanoid {
           // Arch: positive browAngle lifts outer end; mirror for right brow.
           browMesh.rotation.z = (fp.browAngle * Math.PI / 180) * (isLeft ? 1 : -1);
           // Wrap: positive browWrapAngle swings inner end forward to follow face sphere curvature.
-          browMesh.rotation.y = (fp.browWrapAngle * Math.PI / 180) * (isLeft ? 1 : -1);
+          browMesh.rotation.y = (-26 * Math.PI / 180) * (isLeft ? 1 : -1);
           browPivot.add(browMesh);
           this.bodyMeshes.push(browMesh);
         } else {
@@ -623,7 +590,7 @@ export class ProceduralHumanoid {
             new THREE.SphereGeometry(fp.eyeRadius, 10, 7),
             new THREE.MeshBasicMaterial({ color: ledColor }),
           );
-          ledMesh.position.set(x, eyeY, fp.eyeForwardZ);
+          ledMesh.position.set(x, eyeY, eyeZ);
           obj.add(ledMesh);
           this.bodyMeshes.push(ledMesh);
         }
@@ -635,7 +602,9 @@ export class ProceduralHumanoid {
           new THREE.SphereGeometry(fp.noseRadius, 10, 7),
           new THREE.MeshToonMaterial({ color: colors.skin }),
         );
-        noseMesh.position.set(0, eyeY - fp.noseDrop, fp.eyeForwardZ + fp.noseForwardOffset);
+        const noseY        = centreY - fp.noseDrop;
+        const noseSurfaceZ  = ProceduralHumanoid._ellipsoidSurfaceZ(headW, headH, headRz, centreY, 0, noseY);
+        noseMesh.position.set(0, noseY, noseSurfaceZ);
         obj.add(noseMesh);
         this.bodyMeshes.push(noseMesh);
       }
@@ -645,9 +614,12 @@ export class ProceduralHumanoid {
       // Upper lip is parented to head (fixed). Lower lip is on the jaw pivot.
       // setMouth(smile, open) rebuilds all three geometries from shared control points.
       if (fp.mouthWidth > 1e-5) {
+        const mouthY     = centreY - fp.mouthDrop;
+        const lipRadius  = fp.mouthWidth * 0.07;
+        const mouthSurfZ  = ProceduralHumanoid._ellipsoidSurfaceZ(headW, headH, headRz, centreY, 0, mouthY);
+        // Push tube centre forward by lipRadius so the tube back just kisses the surface.
+        const mouthZ     = mouthSurfZ + lipRadius;
         if (style === 'organic') {
-          const mouthY = eyeY - fp.mouthDrop;
-          const mouthZ = fp.eyeForwardZ + fp.mouthForwardOffset;
 
           // Jaw pivot — lower lip and hole are parented here.
           const jawPivot = new THREE.Object3D();
@@ -656,19 +628,19 @@ export class ProceduralHumanoid {
           jawPivot.userData.neutralY = mouthY;
           obj.add(jawPivot);
           this._jawPivot = jawPivot;
-          this._mouthParams = { mouthY, mouthZ, width: fp.mouthWidth, thickness: fp.mouthThickness, lipRadius: fp.mouthLipRadius, lipPlane: fp.mouthLipPlane, lipWrap: fp.mouthLipWrap, cornerLift: fp.mouthCornerLift };
+          this._mouthParams = { mouthY, mouthZ, width: fp.mouthWidth, thickness: fp.mouthThickness, lipRadius, rx: headW, ry: headH, rz: headRz, cy: centreY };
 
           const lipMat = new THREE.MeshToonMaterial({ color: 0xcc4444, side: THREE.DoubleSide });
           const holeMat = new THREE.MeshToonMaterial({ color: 0x1a0808, side: THREE.DoubleSide });
-          const { hw, cornerY, cornerZ, upperCenterY, upperCenterZ, lowerCenterY, lowerCenterZ } = this._mouthControlPoints(fp.mouthWidth, fp.mouthThickness, 0, 0, fp.mouthLipPlane, fp.mouthLipWrap, fp.mouthCornerLift);
+          const { hw, cornerY, cornerZ, upperCenterY, upperCenterZ, lowerCenterY, lowerCenterZ } = this._mouthControlPoints(fp.mouthWidth, fp.mouthThickness, 0, 0, headW, headH, headRz, centreY, mouthY, 0);
 
-          const upperMesh = new THREE.Mesh(this._buildLipTube(hw, cornerY, cornerZ, upperCenterY, fp.mouthLipRadius, upperCenterZ), lipMat);
+          const upperMesh = new THREE.Mesh(this._buildLipTube(hw, cornerY, cornerZ, upperCenterY, lipRadius, upperCenterZ), lipMat);
           upperMesh.position.set(0, mouthY, mouthZ);
           obj.add(upperMesh);
           this.bodyMeshes.push(upperMesh);
           this._upperLipMesh = upperMesh;
 
-          const lowerMesh = new THREE.Mesh(this._buildLipTube(hw, cornerY, cornerZ, lowerCenterY, fp.mouthLipRadius, lowerCenterZ), lipMat);
+          const lowerMesh = new THREE.Mesh(this._buildLipTube(hw, cornerY, cornerZ, lowerCenterY, lipRadius, lowerCenterZ), lipMat);
           lowerMesh.position.set(0, 0, 0);
           jawPivot.add(lowerMesh);
           this.bodyMeshes.push(lowerMesh);
@@ -681,7 +653,7 @@ export class ProceduralHumanoid {
           this.bodyMeshes.push(holeMesh);
           this._mouthHoleMesh = holeMesh;
 
-          const capGeo = () => new THREE.SphereGeometry(fp.mouthLipRadius, 8, 6);
+          const capGeo = () => new THREE.SphereGeometry(lipRadius, 8, 6);
           const capUL = new THREE.Mesh(capGeo(), lipMat); capUL.position.set(-hw, cornerY, cornerZ); upperMesh.add(capUL);
           const capUR = new THREE.Mesh(capGeo(), lipMat); capUR.position.set( hw, cornerY, cornerZ); upperMesh.add(capUR);
           const capLL = new THREE.Mesh(capGeo(), lipMat); capLL.position.set(-hw, cornerY, cornerZ); lowerMesh.add(capLL);
@@ -694,7 +666,7 @@ export class ProceduralHumanoid {
             new THREE.MeshBasicMaterial({ color: ledColor }),
           );
           mouthMesh.scale.set(fp.mouthWidth, fp.mouthThickness, fp.mouthThickness);
-          mouthMesh.position.set(0, eyeY - fp.mouthDrop, fp.eyeForwardZ + fp.mouthForwardOffset);
+          mouthMesh.position.set(0, mouthY, mouthZ);
           obj.add(mouthMesh);
           this.bodyMeshes.push(mouthMesh);
         }
@@ -707,11 +679,12 @@ export class ProceduralHumanoid {
             new THREE.SphereGeometry(1, 12, 8),
             new THREE.MeshToonMaterial({ color: colors.skin }),
           );
-          earMesh.scale.set(fp.earThickness, fp.earRadius, fp.earRadius);
+          const earThickness = fp.earRadius * 0.27;
+          earMesh.scale.set(earThickness, fp.earRadius, fp.earRadius);
           earMesh.position.set(
-            side * (headW + fp.earThickness * 0.4),
-            centreY + fp.eyeRise * 0.4,
-            fp.eyeForwardZ * 0.2,
+            side * (headW + earThickness * 0.4),
+            centreY,
+            eyeZ * 0.2,
           );
           obj.add(earMesh);
           this.bodyMeshes.push(earMesh);
@@ -727,7 +700,7 @@ export class ProceduralHumanoid {
           new THREE.SphereGeometry(1, 16, 12),
           hairMat,
         );
-        crownMesh.scale.set(fp.hairRadius, fp.hairHeight, fp.hairRadius * 0.85);
+        crownMesh.scale.set(fp.hairRadius, fp.hairRadius * 0.67, fp.hairRadius * 0.85);
         crownMesh.position.set(0, centreY + headH * 0.4, -fp.hairRadius * 0.05);
         obj.add(crownMesh);
         this.bodyMeshes.push(crownMesh);
@@ -738,8 +711,8 @@ export class ProceduralHumanoid {
             new THREE.SphereGeometry(1, 12, 8),
             hairMat,
           );
-          fringeMesh.scale.set(fp.hairRadius * 0.75, fp.hairHeight * 0.25, fp.fringeLength);
-          fringeMesh.position.set(0, centreY + headH * 0.55, fp.eyeForwardZ * 0.7);
+          fringeMesh.scale.set(fp.hairRadius * 0.75, fp.hairRadius * 0.67 * 0.25, fp.fringeLength);
+          fringeMesh.position.set(0, centreY + headH * 0.55, eyeZ * 0.7);
           obj.add(fringeMesh);
           this.bodyMeshes.push(fringeMesh);
         }
@@ -866,6 +839,21 @@ export class ProceduralHumanoid {
       mesh.scale.x = rx;
       mesh.scale.z = rz;
     }
+    if (this._neckTube && this._neckTiltDeg !== 0) {
+      const mesh = this._neckTube;
+      const θ = this._neckTiltDeg * (Math.PI / 180);
+      const halfLen = mesh.scale.y / 2;
+      // Current axis of the tube (local Y) expressed in parent/bone space.
+      const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(mesh.quaternion);
+      // Lock the base (bottom rim) to the bone origin — this is the pivot point.
+      const base = mesh.position.clone().addScaledVector(localUp, -halfLen);
+      // Tilt around parent's X axis (premultiply = applied in parent space).
+      const tiltQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), θ);
+      mesh.quaternion.premultiply(tiltQ);
+      // Reposition so the base stays fixed.
+      const newLocalUp = new THREE.Vector3(0, 1, 0).applyQuaternion(mesh.quaternion);
+      mesh.position.copy(base).addScaledVector(newLocalUp, halfLen);
+    }
   }
 
   /** Advance animations and sync geometry to the skeleton's current pose. */
@@ -919,6 +907,7 @@ export class ProceduralHumanoid {
     this._browL = null;
     this._browR = null;
     this._jawPivot = null;
+    this._neckTube = null;
     this._upperLipMesh = null;
     this._lowerLipMesh = null;
     this._mouthHoleMesh = null;
@@ -1002,11 +991,36 @@ export class ProceduralHumanoid {
     }
   }
 
+  /** Z of the head ellipsoid surface at head-bone local (x, y); 0 if the point is inside the ellipsoid. */
+  private static _ellipsoidSurfaceZ(rx: number, ry: number, rz: number, cy: number, x: number, y: number): number {
+    const inner = 1 - (x / rx) ** 2 - ((y - cy) / ry) ** 2;
+    return inner > 0 ? rz * Math.sqrt(inner) : 0;
+  }
+
+  /**
+   * Derive the lip-plane rotation angle (°) and corner setback (cm) from the head ellipsoid at the mouth position.
+   * lipPlane: rotates the cylinder frame so its +Y aligns with the surface tangent-up direction at (x=0, y=mouthY).
+   * lipWrap:  Z setback of the corner at x=hw vs. centre, both on the ellipsoid surface.
+   */
+  private static _derivedLipGeometry(rx: number, ry: number, rz: number, cy: number, mouthY: number, hw: number): { lipPlane: number; lipWrap: number } {
+    const surfZ0  = ProceduralHumanoid._ellipsoidSurfaceZ(rx, ry, rz, cy, 0,  mouthY);
+    const surfZhw = ProceduralHumanoid._ellipsoidSurfaceZ(rx, ry, rz, cy, hw, mouthY);
+    const lipWrap = Math.max(0, surfZ0 - surfZhw);
+    // Tangent-up at (x=0, mouthY): dP/dθ = (0, ry·cos θ, −rz·sin θ) = (0, ry·surfZ0/rz, −rz·(mouthY−cy)/ry).
+    // Rotation angle a that maps cylinder +Y → tangent-up: a = atan2(tZ, tY).
+    const a = Math.atan2(-rz * rz * (mouthY - cy), ry * ry * surfZ0);
+    return { lipPlane: -a * (180 / Math.PI), lipWrap };
+  }
+
   /** Derive shared bezier control dimensions from raw params + expression state. */
-  private _mouthControlPoints(width: number, thickness: number, smile: number, open: number, lipPlane: number, lipWrap: number, cornerLift: number): {
+  private _mouthControlPoints(width: number, thickness: number, smile: number, open: number,
+                              rx: number, ry: number, rz: number, cy: number, mouthY: number,
+                              cornerLift: number): {
     hw: number; cornerY: number; cornerZ: number; upperCenterY: number; upperCenterZ: number; lowerCenterY: number; lowerCenterZ: number;
   } {
-    const hw     = width * 0.5;
+    const hw                    = width * 0.5;
+    // Lip plane and wrap are fully derived from the head ellipsoid at the mouth's Y position.
+    const { lipPlane, lipWrap } = ProceduralHumanoid._derivedLipGeometry(rx, ry, rz, cy, mouthY, hw);
     // Step 1: build in upright-cylinder space. Y = up the cylinder, Z = into the sphere.
     // cornerLift is a pure-Y offset so it travels along the cylinder surface, not through it.
     const cy_cyl = smile * thickness * 2.0 + cornerLift;
@@ -1019,14 +1033,18 @@ export class ProceduralHumanoid {
     const cos_a = Math.cos(a);
     const sin_a = Math.sin(a);
     // Rotate (y, z): y' = y*cos - z*sin,  z' = y*sin + z*cos
-    // Corner z_cyl = -lipWrap:
+    // Corner: z_cyl = -lipWrap, then subtract lipWrap*(1-cos_a) so the corner
+    // endpoint lands at surfZhw+lipRadius in world space regardless of lipPlane tilt.
+    // Algebraically: cy_cyl*sin_a - lipWrap*cos_a - lipWrap*(1-cos_a) = cy_cyl*sin_a - lipWrap.
     const cornerY      = cy_cyl * cos_a + lipWrap * sin_a;
-    const cornerZ      = cy_cyl * sin_a - lipWrap * cos_a;
-    // Upper/lower centers have z_cyl = 0:
+    const cornerZ      = cy_cyl * sin_a - lipWrap;
+    // Upper/lower centers: z_cyl = +lipWrap so the bezier at t=0.5 evaluates to
+    // ½(−lipWrap) + ½(+lipWrap) = 0, keeping the tube centerline on the surface.
+    // Only the Z is corrected; Y (lip shape) is left to uc_cyl/lc_cyl alone.
     const upperCenterY = uc_cyl * cos_a;
-    const upperCenterZ = uc_cyl * sin_a;
+    const upperCenterZ = uc_cyl * sin_a + lipWrap * cos_a;
     const lowerCenterY = lc_cyl * cos_a;
-    const lowerCenterZ = lc_cyl * sin_a;
+    const lowerCenterZ = lc_cyl * sin_a + lipWrap * cos_a;
     return { hw, cornerY, cornerZ, upperCenterY, upperCenterZ, lowerCenterY, lowerCenterZ };
   }
 
@@ -1092,9 +1110,9 @@ export class ProceduralHumanoid {
    */
   setMouth(smile: number, open: number, cornerLift?: number): void {
     if (!this._jawPivot || !this._mouthParams) return;
-    const { mouthY, width, thickness, lipRadius, lipPlane, lipWrap } = this._mouthParams;
-    const lift = cornerLift ?? this._mouthParams.cornerLift;
-    const { hw, cornerY, cornerZ, upperCenterY, upperCenterZ, lowerCenterY, lowerCenterZ } = this._mouthControlPoints(width, thickness, smile, open, lipPlane, lipWrap, lift);
+    const { mouthY, width, thickness, lipRadius, rx, ry, rz, cy } = this._mouthParams;
+    const lift = cornerLift ?? 0;
+    const { hw, cornerY, cornerZ, upperCenterY, upperCenterZ, lowerCenterY, lowerCenterZ } = this._mouthControlPoints(width, thickness, smile, open, rx, ry, rz, cy, mouthY, lift);
 
     this._jawPivot.position.y = mouthY;
 
