@@ -59,27 +59,32 @@ function resolveOpfsGltfPath(
  * match `StoredActor.id` — the IDs are not remapped.
  *
  * Pass `userEntries` to resolve `opfs://<id>` gltfPath references in set
- * pieces to the current session blob URLs produced by OPFSCatalogueStore.
+ * pieces to the current session blob URLs produced by OPFSCatalogueStore,
+ * and to look up user-added characters by catalogueId.
  */
 export function storedSceneToModel(
   storedScene: StoredScene,
   storedActors: StoredActor[],
-  userEntries: Array<{ id: string; gltfPath?: string }> = [],
+  userEntries: Array<{ id: string; gltfPath?: string; kind?: string; defaultAnimation?: string; defaultRotation?: [number, number, number] }> = [],
 ): Model {
   // Resolve stored actors into domain Actor objects.
   // The domain Actor's id must equal StoredActor.id so that all scene
   // references (stagedActors, actions) continue to resolve correctly.
   const characterEntries = new Map<string, { defaultAnimation?: string }>();
   const actors: Actor[] = storedActors.map((sa, i) => {
-    const entry     = getById(sa.catalogueId, CATALOGUE_ENTRIES);
-    const character = entry?.kind === 'character' ? entry : undefined;
-    if (character?.defaultAnimation) characterEntries.set(sa.id, { defaultAnimation: character.defaultAnimation });
+    const bundledEntry = getById(sa.catalogueId, CATALOGUE_ENTRIES);
+    const userEntry    = userEntries.find((e) => e.id === sa.catalogueId && e.kind === 'character');
+    const character    = bundledEntry?.kind === 'character' ? bundledEntry : undefined;
+    const resolvedUrl  = character?.gltfPath ?? userEntry?.gltfPath ?? FALLBACK_GLTF_URL;
+    const resolvedDefaultAnimation = character?.defaultAnimation ?? userEntry?.defaultAnimation;
+    const resolvedDefaultRotation  = character?.defaultRotation  ?? userEntry?.defaultRotation;
+    if (resolvedDefaultAnimation) characterEntries.set(sa.id, { defaultAnimation: resolvedDefaultAnimation });
     return {
       id:             sa.id,
       name:           sa.role,
-      asset:          { type: 'gltf', url: character?.gltfPath ?? FALLBACK_GLTF_URL },
+      asset:          { type: 'gltf', url: resolvedUrl },
       voice:          sa.voice ?? defaultVoice(i),
-      defaultRotation: character?.defaultRotation,
+      defaultRotation: resolvedDefaultRotation,
       tint:           sa.tint,
     };
   });

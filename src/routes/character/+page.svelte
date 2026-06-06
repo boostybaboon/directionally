@@ -5,6 +5,10 @@
   import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
   import { ProceduralHumanoid, C3PO_COLORS, SONNY_COLORS, DEFAULT_COLORS, DEFAULT_BONE_PARAMS, BONE_GROUPS, DEFAULT_FACE_PARAMS } from '../../core/character/ProceduralHumanoid.js';
   import type { RobotStyle, BoneParamMap, FaceParams } from '../../core/character/ProceduralHumanoid.js';
+  import { exportCharacterGLB } from '../../core/character/exportCharacterGLB.js';
+  import * as CharacterDesignStore from '../../core/storage/CharacterDesignStore.js';
+  import type { DesignMeta } from '../../core/storage/CharacterDesignStore.js';
+  import * as OPFSCatalogueStore from '../../core/storage/OPFSCatalogueStore.js';
 
   let canvas: HTMLCanvasElement;
 
@@ -46,6 +50,14 @@
   let loading = $state(true);
   let loadError = $state(false);
 
+  // Design store state (mirrors Sketcher assembly management)
+  let designName = $state('Untitled');
+  let currentDesignId = $state<string | null>(null);
+  let savedDesigns = $state<DesignMeta[]>([]);
+  let showOpenPanel = $state(false);
+  let statusMessage = $state('');
+  let designSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Stored so style changes can rebuild without reloading assets.
   let rigGltfScene: THREE.Group | null = null;
   let allLoadedClips: THREE.AnimationClip[] = [];
@@ -73,6 +85,23 @@
     if (activeClip) humanoid.playClip(activeClip, inPlace);
     // Re-apply the current expression after a rebuild since pivots are recreated.
     reapplyFace();
+
+    // Auto-save design on every rebuild, debounced 500 ms (mirrors Sketcher autosave).
+    if (designSaveTimer !== null) clearTimeout(designSaveTimer);
+    designSaveTimer = setTimeout(async () => {
+      const design = { boneParams, faceParams, style: robotStyle, neckTiltDeg, insetFactor };
+      if (currentDesignId) {
+        await CharacterDesignStore.save(currentDesignId, designName, design);
+      } else {
+        const meta = await CharacterDesignStore.create(designName, design);
+        currentDesignId = meta.id;
+        localStorage.setItem('character-design-id', meta.id);
+        savedDesigns = await CharacterDesignStore.list();
+      }
+      savedDesigns = await CharacterDesignStore.list();
+      statusMessage = `Saved "${designName}".`;
+      designSaveTimer = null;
+    }, 500);
   }
 
   function selectClip(name: string): void {
@@ -230,6 +259,27 @@
         activeClip = first;
         humanoid.playClip(first, inPlace);
       }
+
+      // Restore last-used design (URL param ?id=<id> takes priority over localStorage).
+      savedDesigns = await CharacterDesignStore.list();
+      const urlId = new URLSearchParams(window.location.search).get('id');
+      const lastId = urlId ?? localStorage.getItem('character-design-id');
+      if (lastId) {
+        const design = await CharacterDesignStore.get(lastId);
+        const meta = savedDesigns.find((d) => d.id === lastId);
+        if (design && meta) {
+          boneParams = design.boneParams;
+          faceParams = design.faceParams;
+          neckTiltDeg = design.neckTiltDeg;
+          insetFactor = design.insetFactor;
+          robotStyle = design.style;
+          currentDesignId = lastId;
+          designName = meta.name;
+          localStorage.setItem('character-design-id', lastId);
+          buildHumanoid(design.style);
+        }
+      }
+
       loading = false;
     }).catch(() => {
       loadError = true;
@@ -244,17 +294,126 @@
 
   onDestroy(() => {
     if (speakInterval) clearInterval(speakInterval);
+    if (designSaveTimer !== null) clearTimeout(designSaveTimer);
     cancelAnimationFrame(animId);
     humanoid?.dispose();
     orbit?.dispose();
     renderer?.dispose();
   });
+
+  // ── Design management (mirrors Sketcher assembly functions) ─────────────────
+
+  async function newDesign() {
+    if (currentDesignId) {
+      const design = { boneParams, faceParams, style: robotStyle, neckTiltDeg, insetFactor };
+      await CharacterDesignStore.save(currentDesignId, designName, design);
+    }
+    boneParams = { ...DEFAULT_BONE_PARAMS };
+    faceParams = { ...DEFAULT_FACE_PARAMS };
+    neckTiltDeg = -10;
+    insetFactor = 0;
+    robotStyle = 'organic';
+    designName = 'Untitled';
+    const meta = await CharacterDesignStore.create('Untitled', { boneParams, faceParams, style: 'organic', neckTiltDeg: -10, insetFactor: 0 });
+    currentDesignId = meta.id;
+    localStorage.setItem('character-design-id', meta.id);
+    savedDesigns = await CharacterDesignStore.list();
+    buildHumanoid('organic');
+    statusMessage = 'New design started.';
+  }
+
+  async function openDesign(id: string) {
+    if (currentDesignId) {
+      const design = { boneParams, faceParams, style: robotStyle, neckTiltDeg, insetFactor };
+      await CharacterDesignStore.save(currentDesignId, designName, design);
+    }
+    const meta = savedDesigns.find((d) => d.id === id);
+    const design = await CharacterDesignStore.get(id);
+    if (design && meta) {
+      boneParams = design.boneParams;
+      faceParams = design.faceParams;
+      neckTiltDeg = design.neckTiltDeg;
+      insetFactor = design.insetFactor;
+      robotStyle = design.style;
+      currentDesignId = id;
+      designName = meta.name;
+      localStorage.setItem('character-design-id', id);
+      showOpenPanel = false;
+      buildHumanoid(design.style);
+      statusMessage = `Opened "${meta.name}".`;
+    }
+  }
+
+  async function deleteDesign(id: string) {
+    await CharacterDesignStore.remove(id);
+    savedDesigns = await CharacterDesignStore.list();
+    if (currentDesignId === id) {
+      currentDesignId = null;
+      designName = 'Untitled';
+      localStorage.removeItem('character-design-id');
+    }
+  }
+
+  async function saveCurrentDesign() {
+    const name = designName.trim() || 'Untitled';
+    const design = { boneParams, faceParams, style: robotStyle, neckTiltDeg, insetFactor };
+    if (currentDesignId) {
+      await CharacterDesignStore.save(currentDesignId, name, design);
+    } else {
+      const meta = await CharacterDesignStore.create(name, design);
+      currentDesignId = meta.id;
+      localStorage.setItem('character-design-id', meta.id);
+    }
+    savedDesigns = await CharacterDesignStore.list();
+    statusMessage = `Saved "${name}".`;
+  }
+
+  async function exportToCatalogue() {
+    if (!humanoid) { statusMessage = 'Character not loaded yet.'; return; }
+    statusMessage = 'Exporting…';
+    const { blob } = await exportCharacterGLB(humanoid);
+    const label = designName.trim() || 'Untitled';
+
+    // Re-export path: update the existing catalogue entry in place.
+    if (currentDesignId) {
+      const existing = await OPFSCatalogueStore.findByAssemblyId(currentDesignId);
+      if (existing) {
+        await OPFSCatalogueStore.update(existing.id, blob, label);
+        new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
+        statusMessage = `Updated "${label}" in catalogue.`;
+        return;
+      }
+    }
+
+    // First export: create a new catalogue entry linked to this design.
+    await OPFSCatalogueStore.add(blob, { kind: 'character', label }, currentDesignId ?? undefined);
+    new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
+    statusMessage = `Exported "${label}" to catalogue.`;
+  }
+
 </script>
 
 <div class="page">
   <header class="toolbar">
     <a href="/" class="back-btn">← Back</a>
     <span class="title">Character Creator</span>
+    <div class="design-controls">
+      <input
+        class="design-name-input"
+        type="text"
+        bind:value={designName}
+        onkeydown={(e) => { if (e.key === 'Enter') saveCurrentDesign(); }}
+        title="Design name"
+        placeholder="Untitled"
+      />
+      <button class="layer-btn" onclick={saveCurrentDesign} title="Save design">Save</button>
+      <button class="layer-btn" onclick={newDesign} title="New design">New</button>
+      <button class="layer-btn" class:active={showOpenPanel} onclick={() => { showOpenPanel = !showOpenPanel; }} title="Open saved design">Open…</button>
+      <button class="layer-btn export-btn" onclick={exportToCatalogue} title="Export to catalogue">→ Catalogue</button>
+    </div>
+    {#if statusMessage}
+      <span class="status-msg">{statusMessage}</span>
+    {/if}
     <div class="layer-bar">
       <button
         class="layer-btn"
@@ -308,6 +467,27 @@
     {/if}
   </header>
 
+  {#if showOpenPanel}
+    <div class="open-panel">
+      <div class="open-panel-header">
+        <span class="open-panel-title">Saved designs</span>
+        <button class="open-panel-close" onclick={() => { showOpenPanel = false; }}>✕</button>
+      </div>
+      {#if savedDesigns.length === 0}
+        <p class="open-panel-empty">No saved designs yet.</p>
+      {:else}
+        <ul class="open-panel-list">
+          {#each savedDesigns as d}
+            <li class="open-panel-row" class:active={d.id === currentDesignId}>
+              <button class="open-panel-name" onclick={() => openDesign(d.id)}>{d.name}</button>
+              <button class="open-panel-delete" onclick={() => deleteDesign(d.id)} title="Delete">✕</button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  {/if}
+
   {#if !loading}
     <div class="params-bar">
       <label class="param-label">
@@ -323,30 +503,32 @@
       </label>
       {#if boneParams[selectedGroup]}
         {@const bp = boneParams[selectedGroup]}
+        {#if selectedGroup !== 'head'}
+          <label class="param-label">
+            Width
+            <span class="param-val">{bp.tubeRadiusX.toFixed(1)} cm</span>
+            <input type="range" min="0" max="25" step="0.5"
+              value={bp.tubeRadiusX}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, tubeRadiusX: +e.currentTarget.value } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+          <label class="param-label">
+            Depth
+            <span class="param-val">{bp.tubeRadiusZ.toFixed(1)} cm</span>
+            <input type="range" min="0" max="25" step="0.5"
+              value={bp.tubeRadiusZ}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, tubeRadiusZ: +e.currentTarget.value } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+        {/if}
         <label class="param-label">
-          Width
-          <span class="param-val">{bp.tubeRadiusX.toFixed(1)} cm</span>
-          <input type="range" min="0" max="25" step="0.5"
-            value={bp.tubeRadiusX}
-            oninput={(e) => {
-              boneParams = { ...boneParams, [selectedGroup]: { ...bp, tubeRadiusX: +e.currentTarget.value } };
-              buildHumanoid(robotStyle);
-            }}
-          />
-        </label>
-        <label class="param-label">
-          Depth
-          <span class="param-val">{bp.tubeRadiusZ.toFixed(1)} cm</span>
-          <input type="range" min="0" max="25" step="0.5"
-            value={bp.tubeRadiusZ}
-            oninput={(e) => {
-              boneParams = { ...boneParams, [selectedGroup]: { ...bp, tubeRadiusZ: +e.currentTarget.value } };
-              buildHumanoid(robotStyle);
-            }}
-          />
-        </label>
-        <label class="param-label">
-          Joint
+          {selectedGroup === 'head' ? 'Head width' : 'Joint'}
           <span class="param-val">{bp.jointRadius.toFixed(1)} cm</span>
           <input type="range" min="0" max="20" step="0.5"
             value={bp.jointRadius}
@@ -356,6 +538,31 @@
             }}
           />
         </label>
+        {#if selectedGroup === 'head'}
+          <label class="param-label">
+            Head height
+            <span class="param-val">{(bp.jointRadiusY ?? bp.jointRadius).toFixed(1)} cm</span>
+            <input type="range" min="5" max="20" step="0.5"
+              value={bp.jointRadiusY ?? bp.jointRadius}
+              oninput={(e) => {
+                const ry = +e.currentTarget.value;
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointRadiusY: ry, jointOffsetY: ry } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+          <label class="param-label">
+            Neck joint
+            <span class="param-val">{(bp.atlasRadius ?? 0).toFixed(1)} cm</span>
+            <input type="range" min="0" max="10" step="0.5"
+              value={bp.atlasRadius ?? 0}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, atlasRadius: +e.currentTarget.value } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+        {/if}
         {#if bp.jointFrustumRatio !== undefined}
           <label class="param-label">
             Palm depth
@@ -400,6 +607,16 @@
                 boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointFrustumRatioZ: +e.currentTarget.value } };
                 buildHumanoid(robotStyle);
               }}
+            />
+          </label>
+        {/if}
+        {#if selectedGroup === 'neck'}
+          <label class="param-label">
+            Neck tilt
+            <span class="param-val">{neckTiltDeg.toFixed(0)}°</span>
+            <input type="range" min="-30" max="30" step="1"
+              value={neckTiltDeg}
+              oninput={(e) => { neckTiltDeg = +e.currentTarget.value; buildHumanoid(robotStyle); }}
             />
           </label>
         {/if}
@@ -611,14 +828,6 @@
           oninput={(e) => { insetFactor = +e.currentTarget.value; buildHumanoid(robotStyle); }}
         />
       </label>
-      <label class="param-label">
-        Neck tilt
-        <span class="param-val">{neckTiltDeg.toFixed(0)}°</span>
-        <input type="range" min="-30" max="30" step="1"
-          value={neckTiltDeg}
-          oninput={(e) => { neckTiltDeg = +e.currentTarget.value; buildHumanoid(robotStyle); }}
-        />
-      </label>
     </div>
   {/if}
 
@@ -663,6 +872,67 @@
     border-radius: 3px;
   }
   .back-btn:hover { color: #fff; border-color: #888; }
+
+  .design-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .design-name-input {
+    background: #1e1e33;
+    border: 1px solid #444;
+    border-radius: 3px;
+    color: #fff;
+    font-size: 12px;
+    padding: 3px 7px;
+    width: 130px;
+  }
+  .design-name-input:focus { outline: none; border-color: #4466cc; }
+
+  .export-btn { color: #8fc; border-color: #4a8; }
+  .export-btn:hover { background: #1a3a2a; border-color: #6ca; }
+
+  .status-msg {
+    font-size: 11px;
+    color: #8fc;
+    flex-shrink: 0;
+  }
+
+  .open-panel {
+    background: #12121f;
+    border-bottom: 1px solid #333;
+    padding: 10px 14px;
+    flex-shrink: 0;
+  }
+  .open-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .open-panel-title { font-size: 12px; color: #aaa; font-weight: 600; }
+  .open-panel-close {
+    background: none; border: none; color: #888; cursor: pointer; font-size: 13px; padding: 0 2px;
+  }
+  .open-panel-close:hover { color: #fff; }
+  .open-panel-empty { font-size: 12px; color: #666; margin: 0; }
+  .open-panel-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .open-panel-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .open-panel-row.active .open-panel-name { color: #4af; }
+  .open-panel-name {
+    background: none; border: 1px solid #333; border-radius: 3px;
+    color: #ccc; cursor: pointer; font-size: 12px; padding: 3px 10px; flex: 1; text-align: left;
+  }
+  .open-panel-name:hover { background: #1e1e33; border-color: #555; color: #fff; }
+  .open-panel-delete {
+    background: none; border: none; color: #666; cursor: pointer; font-size: 12px; padding: 2px 6px;
+  }
+  .open-panel-delete:hover { color: #f88; }
 
   .title {
     font-size: 13px;

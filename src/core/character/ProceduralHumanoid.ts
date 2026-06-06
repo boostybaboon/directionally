@@ -77,6 +77,11 @@ export interface BoneParams {
   jointFrustumRatio?: number;
   /** Independent Z taper for the frustum — Z tapers toward +Y (knuckle end), opposite to X. */
   jointFrustumRatioZ?: number;
+  /**
+   * When set, adds a second sphere at the bone origin (y=0) in addition to the main joint.
+   * Used on the head bone to cap the neck-tube end with an atlas joint sphere.
+   */
+  atlasRadius?: number;
 }
 
 /** Keyed by bone group name (matching BONE_GROUPS[*].key and BONE_SPECS[*].group). */
@@ -173,9 +178,12 @@ export const DEFAULT_BONE_PARAMS: BoneParamMap = {
   spine:    { tubeRadiusX: 15.0, tubeRadiusZ:  9.0, jointRadius:  5.0 },
   spine1:   { tubeRadiusX: 15.5, tubeRadiusZ:  9.5, jointRadius:  5.5 },
   spine2:   { tubeRadiusX: 16.5, tubeRadiusZ: 11.0, jointRadius:  6.0 },
-  neck:     { tubeRadiusX:  5.0, tubeRadiusZ:  5.0, jointRadius:  3.5 },
-  // Offset ellipsoid: base flush at head-bone origin, extends ~13 cm toward HeadTop_End.
-  head:     { tubeRadiusX:  0.0, tubeRadiusZ:  0.0, jointRadius: 11.0, jointRadiusY: 13.0, jointOffsetY: 13.0 },
+  neck:     { tubeRadiusX:  5.0, tubeRadiusZ:  5.0, jointRadius:  5.0 },
+  // Offset ellipsoid: centre 9 cm above the atlas joint (bone origin), radius 17 cm toward HeadTop_End.
+  // Crown stays at +26 cm; chin drops to -8 cm so the lower face extends below the atlas joint.
+  // jointOffsetZ shifts the sphere (and all face features) forward of the atlas joint to approximate
+  // the jaw's forward projection relative to the skull base.
+  head:     { tubeRadiusX:  0.0, tubeRadiusZ:  0.0, jointRadius: 11.0, jointRadiusY: 17.0, jointOffsetY: 9.0, jointOffsetZ: 4.0, atlasRadius: 3.5 },
   shoulder: { tubeRadiusX:  2.0, tubeRadiusZ:  2.0, jointRadius:  5.0 },
   arm:      { tubeRadiusX:  4.0, tubeRadiusZ:  3.5, jointRadius:  4.5 },
   forearm:  { tubeRadiusX:  3.0, tubeRadiusZ:  2.5, jointRadius:  3.5 },
@@ -328,7 +336,8 @@ export class ProceduralHumanoid {
   private _neckTube: THREE.Mesh | null = null;
   /** Tilt angle (degrees) applied to the neck tube top, pivoting around the bone base. */
   private _neckTiltDeg = 0;
-
+  /** Atlas joint sphere parented to the neck bone, repositioned each frame to the tube top. */
+  private _atlasJointMesh: THREE.Mesh | null = null;
   constructor(
     gltfScene: THREE.Group,
     clips: THREE.AnimationClip[],
@@ -425,6 +434,19 @@ export class ProceduralHumanoid {
         jointMesh.userData.boneName = obj.name;
         obj.add(jointMesh);
         this.bodyMeshes.push(jointMesh);
+
+        // Atlas sphere: parented to the neck bone (obj.parent) so it can track the tilted
+        // tube top each frame via _atlasJointMesh, rather than sitting at the skeleton joint.
+        if (bp.atlasRadius && obj.parent) {
+          const atlasMesh = new THREE.Mesh(
+            new THREE.SphereGeometry(bp.atlasRadius, tubeSides, Math.ceil(tubeSides * 0.75)),
+            m,
+          );
+          atlasMesh.userData.boneName = obj.name;
+          obj.parent.add(atlasMesh);
+          this.bodyMeshes.push(atlasMesh);
+          if (obj.name === 'mixamorigHead') this._atlasJointMesh = atlasMesh;
+        }
       }
 
       // Tube toward the child bone. Suppressed when either cross-section radius is 0.
@@ -460,13 +482,15 @@ export class ProceduralHumanoid {
 
       const headBp  = boneParamMap['head'] ?? DEFAULT_BONE_PARAMS['head'];
       const centreY  = headBp?.jointOffsetY  ?? 0;
+      const centreZ  = headBp?.jointOffsetZ  ?? 0;
       const headW    = headBp?.jointRadius   ?? 11;
       const headH    = headBp?.jointRadiusY  ?? headW;
       const headRz   = headBp?.jointRadiusZ  ?? headW;
       const eyeY     = centreY + fp.eyeRise;
       // Eye Z derived from ellipsoid surface so eyes remain on the face when the head is resized.
       const eyeSurfaceZ = ProceduralHumanoid._ellipsoidSurfaceZ(headW, headH, headRz, centreY, fp.eyeSpacing, eyeY);
-      const eyeZ        = eyeSurfaceZ - 1.0;
+      // centreZ offsets all face features forward with the sphere when jointOffsetZ is set.
+      const eyeZ        = eyeSurfaceZ - 1.0 + centreZ;
       const ledColor    = style === 'c3po' ? 0xff6600 : 0x44aaff;
 
       // Eyes
@@ -565,7 +589,7 @@ export class ProceduralHumanoid {
             ? browOuterX + (2 / 3) * fp.browLength
             : browOuterX - (2 / 3) * fp.browLength;
           const browZ = ProceduralHumanoid._ellipsoidSurfaceZ(headW, headH, headRz, centreY, browPivotX, browY);
-          browPivot.position.set(browPivotX, browY, browZ);
+          browPivot.position.set(browPivotX, browY, browZ + centreZ);
           browPivot.userData.neutralY = browY;
           browPivot.userData.raiseRange = fp.eyeRadius * 0.9;
           obj.add(browPivot);
@@ -604,7 +628,7 @@ export class ProceduralHumanoid {
         );
         const noseY        = centreY - fp.noseDrop;
         const noseSurfaceZ  = ProceduralHumanoid._ellipsoidSurfaceZ(headW, headH, headRz, centreY, 0, noseY);
-        noseMesh.position.set(0, noseY, noseSurfaceZ);
+        noseMesh.position.set(0, noseY, noseSurfaceZ + centreZ);
         obj.add(noseMesh);
         this.bodyMeshes.push(noseMesh);
       }
@@ -618,7 +642,7 @@ export class ProceduralHumanoid {
         const lipRadius  = fp.mouthWidth * 0.07;
         const mouthSurfZ  = ProceduralHumanoid._ellipsoidSurfaceZ(headW, headH, headRz, centreY, 0, mouthY);
         // Push tube centre forward by lipRadius so the tube back just kisses the surface.
-        const mouthZ     = mouthSurfZ + lipRadius;
+        const mouthZ     = mouthSurfZ + lipRadius + centreZ;
         if (style === 'organic') {
 
           // Jaw pivot — lower lip and hole are parented here.
@@ -695,13 +719,15 @@ export class ProceduralHumanoid {
       if (style === 'organic' && fp.hairRadius > 1e-5) {
         const hairMat = new THREE.MeshToonMaterial({ color: fp.hairColor });
 
-        // Crown: slightly wider than the skull, centred in the upper portion.
+        // Crown: Y-extent derived from headH so the cap always clears the skull top.
+        // Centre sits at 65% of the way up the head; Y-radius = 40% of headH reaches the
+        // skull peak (centreY + headH) with a small puff above it.
         const crownMesh = new THREE.Mesh(
           new THREE.SphereGeometry(1, 16, 12),
           hairMat,
         );
-        crownMesh.scale.set(fp.hairRadius, fp.hairRadius * 0.67, fp.hairRadius * 0.85);
-        crownMesh.position.set(0, centreY + headH * 0.4, -fp.hairRadius * 0.05);
+        crownMesh.scale.set(fp.hairRadius, headH * 0.4, fp.hairRadius * 0.85);
+        crownMesh.position.set(0, centreY + headH * 0.65, centreZ - fp.hairRadius * 0.05);
         obj.add(crownMesh);
         this.bodyMeshes.push(crownMesh);
 
@@ -711,7 +737,9 @@ export class ProceduralHumanoid {
             new THREE.SphereGeometry(1, 12, 8),
             hairMat,
           );
-          fringeMesh.scale.set(fp.hairRadius * 0.75, fp.hairRadius * 0.67 * 0.25, fp.fringeLength);
+          // X-radius: at least headW * 0.86 so the fringe clears the skull sides at this latitude.
+          const fringeX = Math.max(headW * 0.86, fp.hairRadius * 0.75);
+          fringeMesh.scale.set(fringeX, fp.hairRadius * 0.67 * 0.25, fp.fringeLength);
           fringeMesh.position.set(0, centreY + headH * 0.55, eyeZ * 0.7);
           obj.add(fringeMesh);
           this.bodyMeshes.push(fringeMesh);
@@ -839,20 +867,27 @@ export class ProceduralHumanoid {
       mesh.scale.x = rx;
       mesh.scale.z = rz;
     }
-    if (this._neckTube && this._neckTiltDeg !== 0) {
+    if (this._neckTube) {
       const mesh = this._neckTube;
-      const θ = this._neckTiltDeg * (Math.PI / 180);
       const halfLen = mesh.scale.y / 2;
-      // Current axis of the tube (local Y) expressed in parent/bone space.
-      const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(mesh.quaternion);
-      // Lock the base (bottom rim) to the bone origin — this is the pivot point.
-      const base = mesh.position.clone().addScaledVector(localUp, -halfLen);
-      // Tilt around parent's X axis (premultiply = applied in parent space).
-      const tiltQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), θ);
-      mesh.quaternion.premultiply(tiltQ);
-      // Reposition so the base stays fixed.
-      const newLocalUp = new THREE.Vector3(0, 1, 0).applyQuaternion(mesh.quaternion);
-      mesh.position.copy(base).addScaledVector(newLocalUp, halfLen);
+      if (this._neckTiltDeg !== 0) {
+        const θ = this._neckTiltDeg * (Math.PI / 180);
+        // Current axis of the tube (local Y) expressed in parent/bone space.
+        const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(mesh.quaternion);
+        // Lock the base (bottom rim) to the bone origin — this is the pivot point.
+        const base = mesh.position.clone().addScaledVector(localUp, -halfLen);
+        // Tilt around parent's X axis (premultiply = applied in parent space).
+        const tiltQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), θ);
+        mesh.quaternion.premultiply(tiltQ);
+        // Reposition so the base stays fixed.
+        const newLocalUp = new THREE.Vector3(0, 1, 0).applyQuaternion(mesh.quaternion);
+        mesh.position.copy(base).addScaledVector(newLocalUp, halfLen);
+      }
+      // Atlas sphere tracks the actual tilted tube top every frame.
+      if (this._atlasJointMesh) {
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(mesh.quaternion);
+        this._atlasJointMesh.position.copy(mesh.position).addScaledVector(up, halfLen);
+      }
     }
   }
 
@@ -908,6 +943,7 @@ export class ProceduralHumanoid {
     this._browR = null;
     this._jawPivot = null;
     this._neckTube = null;
+    this._atlasJointMesh = null;
     this._upperLipMesh = null;
     this._lowerLipMesh = null;
     this._mouthHoleMesh = null;
