@@ -73,6 +73,14 @@ export interface BoneParams {
   jointOffsetY?: number;
   /** Local-Z offset of the joint centre in cm — perpendicular to the bone axis. */
   jointOffsetZ?: number;
+  /**
+   * Shift the tube centre toward the front of the character (cm).
+   * Applied as +Z in the bone's local space, which is character-forward for upright
+   * torso and neck bones (empirically verified; Mixamo baked-rotation convention).
+   * Differential values across spine segments recreate the S-curve: chest protrudes most,
+   * lumbar least. Has no effect on joint spheres (use jointOffsetZ for those).
+   */
+  tubeOffsetForward?: number;
   /** Frustum ratio (0–1): switches joint to a frustum. X fans wide at +Y (knuckle end). */
   jointFrustumRatio?: number;
   /** Independent Z taper for the frustum — Z tapers toward +Y (knuckle end), opposite to X. */
@@ -136,10 +144,10 @@ export const DEFAULT_FACE_PARAMS: FaceParams = {
   irisScale:      0.45,
   irisColor:   0x3a6e3a,
   noseRadius:     2.3,
-  noseDrop:       5.0,
+  noseDrop:       6.0,
   mouthWidth:     7.0,
   mouthThickness: 0.4,
-  mouthDrop:     10.0,
+  mouthDrop:     11.0,
   earRadius:      3.0,
   hairRadius:    12.0,
   fringeLength:   4.0,
@@ -174,16 +182,16 @@ export const BONE_GROUPS: ReadonlyArray<{ readonly label: string; readonly key: 
  */
 export const DEFAULT_BONE_PARAMS: BoneParamMap = {
   //                        rx     rz    joint  (cm)
-  hips:     { tubeRadiusX: 16.0, tubeRadiusZ:  9.0, jointRadius:  9.0 },
-  spine:    { tubeRadiusX: 15.0, tubeRadiusZ:  9.0, jointRadius:  5.0 },
-  spine1:   { tubeRadiusX: 15.5, tubeRadiusZ:  9.5, jointRadius:  5.5 },
-  spine2:   { tubeRadiusX: 16.5, tubeRadiusZ: 11.0, jointRadius:  6.0 },
-  neck:     { tubeRadiusX:  5.0, tubeRadiusZ:  5.0, jointRadius:  5.0 },
+  hips:     { tubeRadiusX: 15.0, tubeRadiusZ: 10.0, jointRadius:  9.0, tubeOffsetForward: 1.0 },
+  spine:    { tubeRadiusX: 15.0, tubeRadiusZ: 10.0, jointRadius:  5.0, tubeOffsetForward: 1.5 },
+  spine1:   { tubeRadiusX: 15.5, tubeRadiusZ: 11.0, jointRadius:  8.5, tubeOffsetForward: 2.5 },
+  spine2:   { tubeRadiusX: 16.5, tubeRadiusZ: 11.0, jointRadius:  8.5, tubeOffsetForward: 2.5 },
+  neck:     { tubeRadiusX:  5.0, tubeRadiusZ:  5.0, jointRadius:  2.0, tubeOffsetForward:-1.0 },
   // Offset ellipsoid: centre 9 cm above the atlas joint (bone origin), radius 17 cm toward HeadTop_End.
   // Crown stays at +26 cm; chin drops to -8 cm so the lower face extends below the atlas joint.
   // jointOffsetZ shifts the sphere (and all face features) forward of the atlas joint to approximate
   // the jaw's forward projection relative to the skull base.
-  head:     { tubeRadiusX:  0.0, tubeRadiusZ:  0.0, jointRadius: 11.0, jointRadiusY: 17.0, jointOffsetY: 9.0, jointOffsetZ: 4.0, atlasRadius: 3.5 },
+  head:     { tubeRadiusX:  0.0, tubeRadiusZ:  0.0, jointRadius: 11.0, jointRadiusY: 17.0, jointOffsetY: 9.0, jointOffsetZ:-1.0, atlasRadius: 3.5 },
   shoulder: { tubeRadiusX:  2.0, tubeRadiusZ:  2.0, jointRadius:  5.0 },
   arm:      { tubeRadiusX:  4.0, tubeRadiusZ:  3.5, jointRadius:  4.5 },
   forearm:  { tubeRadiusX:  3.0, tubeRadiusZ:  2.5, jointRadius:  3.5 },
@@ -325,7 +333,7 @@ export class ProceduralHumanoid {
   /** Bone→cylinder links; position/rotation/scale are re-synced every frame. */
   private skeletonLinks: Array<{ child: THREE.Bone; mesh: THREE.Mesh }> = [];
   /** Body tube links re-synced every frame when animation moves bone positions. */
-  private bodyLinks: Array<{ child: THREE.Bone; mesh: THREE.Mesh; inset: number }> = [];
+  private bodyLinks: Array<{ child: THREE.Bone; mesh: THREE.Mesh; inset: number; forwardOffset: number }> = [];
   /** Lazily-generated in-place variants: kept for potential future use. */
   private inPlaceCache = new Map<string, THREE.AnimationClip>();
   /** Reference to mixamorigHips for runtime root-motion cancellation. */
@@ -346,7 +354,7 @@ export class ProceduralHumanoid {
     boneParamMap: BoneParamMap = {},
     insetFactor: number = 0,
     faceParams: FaceParams = DEFAULT_FACE_PARAMS,
-    neckTiltDeg: number = -10,
+    neckTiltDeg: number = -20,
   ) {
     this.root = gltfScene;
     this.clips = clips;
@@ -462,11 +470,13 @@ export class ProceduralHumanoid {
       tubeMesh.scale.x = bp.tubeRadiusX;
       tubeMesh.scale.z = bp.tubeRadiusZ;
       const inset = bp.jointRadius * insetFactor;
+      const forwardOffset = bp.tubeOffsetForward ?? 0;
       tubeMesh.userData.boneName = obj.name;
       this._applyBoneLink(tubeMesh, childBone.position, inset);
+      tubeMesh.position.z += forwardOffset;
       obj.add(tubeMesh);
       this.bodyMeshes.push(tubeMesh);
-      this.bodyLinks.push({ child: childBone, mesh: tubeMesh, inset });
+      this.bodyLinks.push({ child: childBone, mesh: tubeMesh, inset, forwardOffset });
       if (obj.name === 'mixamorigNeck') this._neckTube = tubeMesh;
     });
   }
@@ -705,10 +715,13 @@ export class ProceduralHumanoid {
           );
           const earThickness = fp.earRadius * 0.27;
           earMesh.scale.set(earThickness, fp.earRadius, fp.earRadius);
+          // Keep ears anchored to the head ellipsoid, independent of eye placement.
+          // This makes ear motion follow head forward/back tuning (jointOffsetZ) directly.
+          const earZ = centreZ + headRz * 0.1;
           earMesh.position.set(
             side * (headW + earThickness * 0.4),
             centreY,
-            eyeZ * 0.2,
+            earZ,
           );
           obj.add(earMesh);
           this.bodyMeshes.push(earMesh);
@@ -859,13 +872,14 @@ export class ProceduralHumanoid {
   }
 
   private _syncBodyLinks(): void {
-    for (const { child, mesh, inset } of this.bodyLinks) {
+    for (const { child, mesh, inset, forwardOffset } of this.bodyLinks) {
       // Preserve the per-bone elliptical scale set at build time.
       const rx = mesh.scale.x;
       const rz = mesh.scale.z;
       this._applyBoneLink(mesh, child.position, inset);
       mesh.scale.x = rx;
       mesh.scale.z = rz;
+      mesh.position.z += forwardOffset;
     }
     if (this._neckTube) {
       const mesh = this._neckTube;

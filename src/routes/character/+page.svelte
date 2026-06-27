@@ -45,7 +45,7 @@
   let faceParams = $state<FaceParams>({ ...DEFAULT_FACE_PARAMS });
   const ALL_GROUPS = [...BONE_GROUPS, { label: 'Face', key: 'face' }];
   let insetFactor = $state(0);
-  let neckTiltDeg = $state(-10);
+  let neckTiltDeg = $state(-20);
   let hoveredBone = $state<string | null>(null);
   let loading = $state(true);
   let loadError = $state(false);
@@ -310,11 +310,11 @@
     }
     boneParams = { ...DEFAULT_BONE_PARAMS };
     faceParams = { ...DEFAULT_FACE_PARAMS };
-    neckTiltDeg = -10;
+    neckTiltDeg = -20;
     insetFactor = 0;
     robotStyle = 'organic';
     designName = 'Untitled';
-    const meta = await CharacterDesignStore.create('Untitled', { boneParams, faceParams, style: 'organic', neckTiltDeg: -10, insetFactor: 0 });
+    const meta = await CharacterDesignStore.create('Untitled', { boneParams, faceParams, style: 'organic', neckTiltDeg: -20, insetFactor: 0 });
     currentDesignId = meta.id;
     localStorage.setItem('character-design-id', meta.id);
     savedDesigns = await CharacterDesignStore.list();
@@ -526,6 +526,17 @@
               }}
             />
           </label>
+          <label class="param-label">
+            Forward offset
+            <span class="param-val">{(bp.tubeOffsetForward ?? 0).toFixed(1)} cm</span>
+            <input type="range" min="-10" max="15" step="0.5"
+              value={bp.tubeOffsetForward ?? 0}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, tubeOffsetForward: e.currentTarget.valueAsNumber } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
         {/if}
         <label class="param-label">
           {selectedGroup === 'head' ? 'Head width' : 'Joint'}
@@ -542,11 +553,32 @@
           <label class="param-label">
             Head height
             <span class="param-val">{(bp.jointRadiusY ?? bp.jointRadius).toFixed(1)} cm</span>
-            <input type="range" min="5" max="20" step="0.5"
+            <input type="range" min="5" max="25" step="0.5"
               value={bp.jointRadiusY ?? bp.jointRadius}
               oninput={(e) => {
-                const ry = +e.currentTarget.value;
-                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointRadiusY: ry, jointOffsetY: ry } };
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointRadiusY: +e.currentTarget.value } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+          <label class="param-label">
+            Head base
+            <span class="param-val">{(bp.jointOffsetY ?? 0).toFixed(1)} cm</span>
+            <input type="range" min="-10" max="25" step="0.5"
+              value={bp.jointOffsetY ?? 0}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointOffsetY: e.currentTarget.valueAsNumber } };
+                buildHumanoid(robotStyle);
+              }}
+            />
+          </label>
+          <label class="param-label">
+            Face forward
+            <span class="param-val">{(bp.jointOffsetZ ?? 0).toFixed(1)} cm</span>
+            <input type="range" min="-5" max="15" step="0.5"
+              value={bp.jointOffsetZ ?? 0}
+              oninput={(e) => {
+                boneParams = { ...boneParams, [selectedGroup]: { ...bp, jointOffsetZ: e.currentTarget.valueAsNumber } };
                 buildHumanoid(robotStyle);
               }}
             />
@@ -733,7 +765,7 @@
         <label class="param-label">
           Nose drop
           <span class="param-val">{faceParams.noseDrop.toFixed(1)} cm</span>
-          <input type="range" min="0" max="8" step="0.5"
+          <input type="range" min="0" max="14" step="0.5"
             value={faceParams.noseDrop}
             oninput={(e) => { faceParams = { ...faceParams, noseDrop: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
           />
@@ -757,7 +789,7 @@
         <label class="param-label">
           Mouth drop
           <span class="param-val">{faceParams.mouthDrop.toFixed(1)} cm</span>
-          <input type="range" min="0" max="11" step="0.5"
+          <input type="range" min="0" max="18" step="0.5"
             value={faceParams.mouthDrop}
             oninput={(e) => { faceParams = { ...faceParams, mouthDrop: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
           />
