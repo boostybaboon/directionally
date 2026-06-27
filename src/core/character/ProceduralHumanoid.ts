@@ -123,10 +123,18 @@ export interface FaceParams {
   mouthDrop: number;
   /** Left/right ear disc Y/Z radius (cm, 0 = suppressed). */
   earRadius: number;
-  /** Crown hair ellipsoid X/Z radius (cm, 0 = suppressed). Organic only. */
-  hairRadius: number;
-  /** Fringe ellipsoid Z half-depth over the forehead (cm, 0 = no fringe). Organic only. */
-  fringeLength: number;
+  /** Outward scalp thickness (cm) applied along ellipsoid normals. */
+  hairThickness: number;
+  /** Front hairline recession amount (radians in scalp-parameter space). */
+  hairlineFrontRecession: number;
+  /** Temple hairline recession amount (radians in scalp-parameter space). */
+  hairlineTempleRecession: number;
+  /** Nape drop amount (radians in scalp-parameter space). */
+  hairlineNapeDrop: number;
+  /** Flattens crown thickness near top-middle (0..2). */
+  hairCrownFlatness: number;
+  /** Adds thickness over side/temple bands (0..2). */
+  hairSideVolume: number;
   /** Hair colour as a hex integer. */
   hairColor: number;
   /** Full length of each eyebrow ellipsoid (cm). */
@@ -149,8 +157,13 @@ export const DEFAULT_FACE_PARAMS: FaceParams = {
   mouthThickness: 0.4,
   mouthDrop:     11.0,
   earRadius:      3.0,
-  hairRadius:    12.0,
-  fringeLength:   4.0,
+  hairThickness:  2.0,
+  hairlineFrontRecession: 0.9,
+  hairlineTempleRecession: 0.3,
+  hairlineNapeDrop: 0.46,
+  // 1.0 is the previous slider max. With the new UI normalization this displays as 50%.
+  hairCrownFlatness: 1.0,
+  hairSideVolume: 1.0,
   hairColor:   0x3d2008,
   browLength: 2.5,
   browHeight: 3.5,
@@ -728,35 +741,33 @@ export class ProceduralHumanoid {
         }
       }
 
-      // Hair (organic only) — crown ellipsoid + optional fringe over the forehead.
-      if (style === 'organic' && fp.hairRadius > 1e-5) {
+      // Hair (organic only) — conforming scalp patch.
+      if (style === 'organic') {
         const hairMat = new THREE.MeshToonMaterial({ color: fp.hairColor });
 
-        // Crown: Y-extent derived from headH so the cap always clears the skull top.
-        // Centre sits at 65% of the way up the head; Y-radius = 40% of headH reaches the
-        // skull peak (centreY + headH) with a small puff above it.
-        const crownMesh = new THREE.Mesh(
-          new THREE.SphereGeometry(1, 16, 12),
+        // Minimum conforming scalp patch:
+        // 1) sample points on the head ellipsoid inside a parameterized hairline fence,
+        // 2) push outward along ellipsoid normals for thickness.
+        const scalpPatch = new THREE.Mesh(
+          this._buildConformingScalpPatch(
+            headW,
+            headH,
+            headRz,
+            centreY,
+            centreZ,
+            fp.hairThickness ?? DEFAULT_FACE_PARAMS.hairThickness,
+            fp.hairlineFrontRecession ?? DEFAULT_FACE_PARAMS.hairlineFrontRecession,
+            fp.hairlineTempleRecession ?? DEFAULT_FACE_PARAMS.hairlineTempleRecession,
+            fp.hairlineNapeDrop ?? DEFAULT_FACE_PARAMS.hairlineNapeDrop,
+            fp.hairCrownFlatness ?? DEFAULT_FACE_PARAMS.hairCrownFlatness,
+            fp.hairSideVolume ?? DEFAULT_FACE_PARAMS.hairSideVolume,
+          ),
           hairMat,
         );
-        crownMesh.scale.set(fp.hairRadius, headH * 0.4, fp.hairRadius * 0.85);
-        crownMesh.position.set(0, centreY + headH * 0.65, centreZ - fp.hairRadius * 0.05);
-        obj.add(crownMesh);
-        this.bodyMeshes.push(crownMesh);
+        obj.add(scalpPatch);
+        this.bodyMeshes.push(scalpPatch);
 
-        // Fringe: flat ellipsoid draped over the upper forehead.
-        if (fp.fringeLength > 1e-5) {
-          const fringeMesh = new THREE.Mesh(
-            new THREE.SphereGeometry(1, 12, 8),
-            hairMat,
-          );
-          // X-radius: at least headW * 0.86 so the fringe clears the skull sides at this latitude.
-          const fringeX = Math.max(headW * 0.86, fp.hairRadius * 0.75);
-          fringeMesh.scale.set(fringeX, fp.hairRadius * 0.67 * 0.25, fp.fringeLength);
-          fringeMesh.position.set(0, centreY + headH * 0.55, eyeZ * 0.7);
-          obj.add(fringeMesh);
-          this.bodyMeshes.push(fringeMesh);
-        }
+
       }
     });
   }
@@ -1045,6 +1056,144 @@ export class ProceduralHumanoid {
   private static _ellipsoidSurfaceZ(rx: number, ry: number, rz: number, cy: number, x: number, y: number): number {
     const inner = 1 - (x / rx) ** 2 - ((y - cy) / ry) ** 2;
     return inner > 0 ? rz * Math.sqrt(inner) : 0;
+  }
+
+  /** Clamp-smoothed interpolation in [0, 1]. */
+  private static _smoothstep(edge0: number, edge1: number, x: number): number {
+    const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+    return t * t * (3 - 2 * t);
+  }
+
+  /** Shortest angular distance on a 2π circle. */
+  private static _angleDistance(a: number, b: number): number {
+    const twoPi = Math.PI * 2;
+    const d = Math.abs(a - b) % twoPi;
+    return d > Math.PI ? twoPi - d : d;
+  }
+
+  /**
+   * Build a minimum conforming hair patch over the head ellipsoid.
+   * - Fence curve is a phi->thetaMax profile (front/temple recession + lower nape).
+   * - Thickness is applied along ellipsoid normals with boundary falloff.
+   */
+  private _buildConformingScalpPatch(
+    rx: number,
+    ry: number,
+    rz: number,
+    cy: number,
+    cz: number,
+    hairThickness: number,
+    hairlineFrontRecession: number,
+    hairlineTempleRecession: number,
+    hairlineNapeDrop: number,
+    hairCrownFlatness: number,
+    hairSideVolume: number,
+  ): THREE.BufferGeometry {
+    const phiSegments = 48;
+    const thetaSegments = 20;
+    const twoPi = Math.PI * 2;
+
+    // Thickness and fence profile (radians) are UI-tunable, with conservative floors.
+    const baseThickness = Math.max(0.2, hairThickness);
+
+    // thetaBase is fixed; scalp extent is now controlled via explicit recession parameters.
+    const thetaBase = 1.78;
+    const frontRecession = Math.max(0, hairlineFrontRecession);
+    const templeRecession = Math.max(0, hairlineTempleRecession);
+    const napeDrop = Math.max(0, hairlineNapeDrop);
+    const crownFlatness = Math.max(0, Math.min(2, hairCrownFlatness));
+    const sideVolume = Math.max(0, Math.min(2, hairSideVolume));
+
+    const frontPhi = Math.PI / 2;
+    const backPhi = 3 * Math.PI / 2;
+    const leftTemplePhi = 0;
+    const rightTemplePhi = Math.PI;
+
+    const thetaFence = (phi: number): number => {
+      const front = frontRecession * Math.exp(-((ProceduralHumanoid._angleDistance(phi, frontPhi) / 0.8) ** 2));
+      const leftTemple = templeRecession * Math.exp(-((ProceduralHumanoid._angleDistance(phi, leftTemplePhi) / 0.55) ** 2));
+      const rightTemple = templeRecession * Math.exp(-((ProceduralHumanoid._angleDistance(phi, rightTemplePhi) / 0.55) ** 2));
+      const back = napeDrop * Math.exp(-((ProceduralHumanoid._angleDistance(phi, backPhi) / 0.75) ** 2));
+      return Math.max(1.2, Math.min(2.35, thetaBase - front - leftTemple - rightTemple + back));
+    };
+
+    const positions: number[] = [];
+    const indices: number[] = [];
+
+    for (let i = 0; i <= phiSegments; i++) {
+      const u = i / phiSegments;
+      const phi = u * twoPi;
+      const thetaMax = thetaFence(phi);
+
+      for (let j = 0; j <= thetaSegments; j++) {
+        const v = j / thetaSegments;
+        const theta = v * thetaMax;
+
+        const sinT = Math.sin(theta);
+        const cosT = Math.cos(theta);
+        const cosP = Math.cos(phi);
+        const sinP = Math.sin(phi);
+
+        const sx = rx * sinT * cosP;
+        const sy = cy + ry * cosT;
+        const sz = cz + rz * sinT * sinP;
+
+        // Ellipsoid normal from implicit surface gradient.
+        const nx0 = sx / (rx * rx);
+        const ny0 = (sy - cy) / (ry * ry);
+        const nz0 = (sz - cz) / (rz * rz);
+        const nLen = Math.hypot(nx0, ny0, nz0) || 1;
+        const nx = nx0 / nLen;
+        const ny = ny0 / nLen;
+        const nz = nz0 / nLen;
+
+        // Keep edge pinned close to the skull so raising thickness does not "lift" the hairline.
+        // Then add profile shaping for a modern cut:
+        // - flatter crown,
+        // - fuller front-side / temple region,
+        // - slightly reduced rear/nape bulk.
+        const edgeFalloff = ProceduralHumanoid._smoothstep(0.8, 1.0, v);
+        const rootWeight = 1 - edgeFalloff;
+        const edgePinnedThickness = 0.08;
+        const crownFlatTerm = crownFlatness * Math.exp(-((v / 0.42) ** 2));
+        const sideMask = Math.exp(-((ProceduralHumanoid._angleDistance(phi, leftTemplePhi) / 0.8) ** 2))
+          + Math.exp(-((ProceduralHumanoid._angleDistance(phi, rightTemplePhi) / 0.8) ** 2));
+        const frontBias = 1
+          + 0.35 * Math.exp(-((ProceduralHumanoid._angleDistance(phi, frontPhi) / 0.95) ** 2))
+          - 0.45 * Math.exp(-((ProceduralHumanoid._angleDistance(phi, backPhi) / 0.8) ** 2));
+        const clampedFrontBias = Math.max(0.4, Math.min(1.35, frontBias));
+        const sideTerm = sideVolume * 0.35 * sideMask * clampedFrontBias * ProceduralHumanoid._smoothstep(0.2, 0.9, v);
+        const baseProfile = baseThickness * rootWeight;
+        const backNapeTaper = 0.22
+          * Math.exp(-((ProceduralHumanoid._angleDistance(phi, backPhi) / 0.75) ** 2))
+          * ProceduralHumanoid._smoothstep(0.45, 1.0, v);
+        const shaped = baseProfile * (1 - 0.45 * crownFlatTerm + sideTerm) * (1 - backNapeTaper);
+        const thickness = Math.max(edgePinnedThickness, shaped);
+
+        positions.push(
+          sx + nx * thickness,
+          sy + ny * thickness,
+          sz + nz * thickness,
+        );
+      }
+    }
+
+    const row = thetaSegments + 1;
+    for (let i = 0; i < phiSegments; i++) {
+      for (let j = 0; j < thetaSegments; j++) {
+        const a = i * row + j;
+        const b = (i + 1) * row + j;
+        const c = b + 1;
+        const d = a + 1;
+        indices.push(a, b, d, b, c, d);
+      }
+    }
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geom.setIndex(indices);
+    geom.computeVertexNormals();
+    return geom;
   }
 
   /**

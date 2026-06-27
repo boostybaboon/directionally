@@ -123,7 +123,7 @@
     switch (e) {
       case 'smile':   humanoid.setBrow('both', 0.25, 0); humanoid.setMouth(1, speaking ? 0.5 : 0, 1.2);  break;
       case 'frown':   humanoid.setBrow('both', 0, 1);    humanoid.setMouth(0, speaking ? 0.5 : 0, -0.5); break;
-      default:        humanoid.setBrow('both', 0, 0);    if (!speaking) humanoid.setMouth(0, 0, 0);       break;
+      default:        humanoid.setBrow('both', 0, 0.1);    if (!speaking) humanoid.setMouth(0, 0, 0.3);       break;
     }
   }
 
@@ -269,7 +269,7 @@
         const meta = savedDesigns.find((d) => d.id === lastId);
         if (design && meta) {
           boneParams = design.boneParams;
-          faceParams = design.faceParams;
+          faceParams = { ...DEFAULT_FACE_PARAMS, ...design.faceParams };
           neckTiltDeg = design.neckTiltDeg;
           insetFactor = design.insetFactor;
           robotStyle = design.style;
@@ -331,7 +331,7 @@
     const design = await CharacterDesignStore.get(id);
     if (design && meta) {
       boneParams = design.boneParams;
-      faceParams = design.faceParams;
+      faceParams = { ...DEFAULT_FACE_PARAMS, ...design.faceParams };
       neckTiltDeg = design.neckTiltDeg;
       insetFactor = design.insetFactor;
       robotStyle = design.style;
@@ -802,20 +802,53 @@
             oninput={(e) => { faceParams = { ...faceParams, earRadius: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
           />
         </label>
+
         <label class="param-label">
-          Hair size
-          <span class="param-val">{faceParams.hairRadius.toFixed(1)} cm</span>
-          <input type="range" min="0" max="18" step="0.5"
-            value={faceParams.hairRadius}
-            oninput={(e) => { faceParams = { ...faceParams, hairRadius: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          Hair thickness
+          <span class="param-val">{faceParams.hairThickness.toFixed(1)} cm</span>
+          <input type="range" min="0.2" max="6" step="0.1"
+            value={faceParams.hairThickness}
+            oninput={(e) => { faceParams = { ...faceParams, hairThickness: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
           />
         </label>
         <label class="param-label">
-          Fringe
-          <span class="param-val">{faceParams.fringeLength.toFixed(1)} cm</span>
-          <input type="range" min="0" max="12" step="0.5"
-            value={faceParams.fringeLength}
-            oninput={(e) => { faceParams = { ...faceParams, fringeLength: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          Front recession
+          <span class="param-val">{faceParams.hairlineFrontRecession.toFixed(2)} rad</span>
+          <input type="range" min="0" max="0.9" step="0.02"
+            value={faceParams.hairlineFrontRecession}
+            oninput={(e) => { faceParams = { ...faceParams, hairlineFrontRecession: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Temple recession
+          <span class="param-val">{faceParams.hairlineTempleRecession.toFixed(2)} rad</span>
+          <input type="range" min="0" max="0.9" step="0.02"
+            value={faceParams.hairlineTempleRecession}
+            oninput={(e) => { faceParams = { ...faceParams, hairlineTempleRecession: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Nape drop
+          <span class="param-val">{faceParams.hairlineNapeDrop.toFixed(2)} rad</span>
+          <input type="range" min="0" max="0.9" step="0.02"
+            value={faceParams.hairlineNapeDrop}
+            oninput={(e) => { faceParams = { ...faceParams, hairlineNapeDrop: +e.currentTarget.value }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Crown flatness
+          <span class="param-val">{(faceParams.hairCrownFlatness * 50).toFixed(0)}%</span>
+          <input type="range" min="0" max="100" step="1"
+            value={faceParams.hairCrownFlatness * 50}
+            oninput={(e) => { faceParams = { ...faceParams, hairCrownFlatness: (+e.currentTarget.value) / 50 }; buildHumanoid(robotStyle); }}
+          />
+        </label>
+        <label class="param-label">
+          Side volume
+          <span class="param-val">{(faceParams.hairSideVolume * 50).toFixed(0)}%</span>
+          <input type="range" min="0" max="100" step="1"
+            value={faceParams.hairSideVolume * 50}
+            oninput={(e) => { faceParams = { ...faceParams, hairSideVolume: (+e.currentTarget.value) / 50 }; buildHumanoid(robotStyle); }}
           />
         </label>
         <label class="param-label">
