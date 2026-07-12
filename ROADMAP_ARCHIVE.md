@@ -369,3 +369,60 @@ Redesign areas delivered:
 - **Script vs model**: Domain model is the source of truth for runtime. The screenplay view is a two-way editor over it.
 - **Assets**: Bundled catalogue first. User GLTF import deferred.
 - **Existing stubs**: `enter`/`exit` actions and `point` lights were already scaffolded; implemented in Phase 5c and Phase 10 respectively.
+
+---
+
+## Superseded Roadmap Items (Treatment-Driven Workflow Pivot)
+
+These items were on the pre-treatment-first roadmap and are now superseded by
+the treatment-driven roadmap in [ROADMAP.md](ROADMAP.md). They are archived for
+history even when unfinished.
+
+Status key:
+- `Not started` — no implementation work landed.
+- `Partially complete` — groundwork exists, but phase goals not completed.
+- `Deferred` — explicitly postponed.
+
+### Superseded, unfinished items
+
+- Phase L5 — GLTF set-piece infrastructure: `Partially complete`
+  - Notes: directionally already has OPFS user assets and GLTF-driven set pieces in active use,
+    but this phase as originally scoped was not closed as a discrete milestone.
+
+- Phase L6 — OPFSCatalogueStore user-extensible catalogue: `Partially complete`
+  - Notes: core store and integration exist and are used by character/set-piece flows; original
+    phase acceptance criteria and roadmap closure were not formally completed under the old plan.
+
+- Phase UX2.5 — Reusable set templates: `Not started`
+
+- Phase UX3.1 — Main-area tab bar redesign: `Not started`
+
+- Phase UX3.2 — Script format compliance: `Not started`
+
+- Phase 6.5 — Screenplay enrichment (pagination/title page/PDF): `Deferred`
+
+- Phase 10 — Lighting rig completion: `Not started`
+
+- Phase 11 — Audio timeline/waveform: `Partially complete`
+  - Notes: `AudioBlock` design captured; timeline rendering and waveform tooling remain.
+
+- Phase 12 — Dance/MIDI choreography: `Deferred`
+
+- Phase 13 — Remote asset store: `Deferred`
+
+- Phase 14 — Video render export: `Deferred`
+
+- Phase UX3 — Drag-and-drop cast management: `Deferred`
+
+- Infrastructure I0–I5 (IndexedDB migration, Azure deployment path, CI/CD expansion): `Deferred`
+
+### Pivot rationale
+
+The project shifted from capability-first sequencing to treatment-driven authoring:
+
+1. treatment/script intent as the starting point,
+2. compile to first-pass production,
+3. iterative refinements with safe recompile/merge.
+
+Superseded items may be revived later under the new milestones, but are no longer
+the primary sequencing mechanism.
