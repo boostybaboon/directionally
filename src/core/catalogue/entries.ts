@@ -12,7 +12,8 @@ export const CATALOGUE_ENTRIES: CatalogueEntry[] = [
     label: 'Robot',
     gltfPath: '/models/gltf/RobotExpressive.glb',
     defaultAnimation: 'Idle',
-    defaultScale: 1,
+    // Native GLB height ~4.77 units; 0.35 ≈ 1.67m (human scale)
+    defaultScale: 0.35,
   },
   // ── Set pieces ────────────────────────────────────────────────────────────
   {

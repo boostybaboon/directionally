@@ -184,14 +184,24 @@ export function storedSceneToModel(
     }
   }
 
-  // Default idle animations: play the catalogue's defaultAnimation looping for the full
-  // scene duration for each staged actor that has one. These run at lowest priority —
-  // any authored per-actor animation blocks that fade in/out will blend over them.
+  // Default idle animations: fill gaps between authored blocks for each actor.
+  // A single full-scene idle track would blend with and visually override any authored
+  // clip (e.g. Walking) because the mixer sums weights — idle must not cover block windows.
   const defaultIdleTracks: SceneAction[] = [];
   const sceneDuration = storedScene.duration ?? 10;
   for (const staged of storedScene.stagedActors) {
     const idleClip = characterEntries.get(staged.actorId)?.defaultAnimation;
-    if (idleClip) {
+    if (!idleClip) continue;
+
+    // Collect all clip-bearing block windows for this actor (blocks that set a clip).
+    const clipWindows = (storedScene.blocks ?? [])
+      .filter((b): b is ActorBlock =>
+        b.type === 'actorBlock' && b.actorId === staged.actorId && !!b.clip
+      )
+      .sort((a, b) => a.startTime - b.startTime);
+
+    if (clipWindows.length === 0) {
+      // No authored clips — single full-scene idle is safe.
       defaultIdleTracks.push({
         type: 'animate',
         actorId: staged.actorId,
@@ -200,6 +210,26 @@ export function storedSceneToModel(
         endTime: sceneDuration,
         loop: 'repeat',
       });
+      continue;
+    }
+
+    // Emit idle segments only in the gaps: before the first block, between blocks,
+    // and after the last block.
+    const gapStarts = [0, ...clipWindows.map((b) => b.endTime)];
+    const gapEnds   = [...clipWindows.map((b) => b.startTime), sceneDuration];
+    for (let i = 0; i < gapStarts.length; i++) {
+      const gapStart = gapStarts[i];
+      const gapEnd   = gapEnds[i];
+      if (gapEnd - gapStart > 0.05) {
+        defaultIdleTracks.push({
+          type: 'animate',
+          actorId: staged.actorId,
+          animationName: idleClip,
+          startTime: gapStart,
+          endTime: gapEnd,
+          loop: 'repeat',
+        });
+      }
     }
   }
 

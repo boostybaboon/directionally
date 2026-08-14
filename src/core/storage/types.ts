@@ -66,6 +66,14 @@ export type NamedScene = {
    * script view (e.g. "LIGHTS FADE TO BLACK."). Not part of the scene's scripted content.
    */
   transition?: string;
+  /**
+   * Raw source text for the script-first minimal DSL, when this scene was authored
+   * (or last edited) via the script-first flow. This is the authoring source of truth —
+   * `scene.stagedActors` / `scene.blocks` / `scene.actions` and `script` (ScriptLine[])
+   * are derived from it by the compiler. Absent for scenes authored via direct
+   * manipulation only.
+   */
+  dslSource?: string;
 };
 
 /**

@@ -426,3 +426,126 @@ The project shifted from capability-first sequencing to treatment-driven authori
 
 Superseded items may be revived later under the new milestones, but are no longer
 the primary sequencing mechanism.
+
+---
+
+## Treatment-Driven Authoring: TDA-1/TDA-2/TDA-3 ✅ COMPLETE (Sigil Editor Pivot)
+
+The following phases shipped under the treatment-driven-workflow branch and are now
+superseded as the primary editing surface by Track SCR (sigil-tokenized editor) in
+[ROADMAP.md](ROADMAP.md), though the underlying `ScriptDocument`/`compileScriptDocument()`
+data model they established is unchanged and still in active use.
+
+### TDA-1 — ScriptDocument → Fountain → Production (M1) ✅ COMPLETE
+
+Goal: `ScriptDocument` is the source of truth. Fountain text is derived from it, not the
+reverse. Production compiles from `ScriptDocument` deterministically.
+
+Delivered:
+- `ScriptDocument`, `SceneBlock`, `Beat` types with typed union for beat kinds (dialogue,
+  action with verb/target, transition).
+- `renderFountain(doc): string` — produces valid, readable Fountain from any `ScriptDocument`.
+- `compileScriptDocument(doc): { scenes, actors, diagnostics }` — produces `NamedScene[]` and
+  `StoredActor[]` from `ScriptDocument`.
+- Default `ScriptDocument` example demonstrating enter/exit/move/dialogue.
+- Golden tests: deterministic output for known inputs.
+- Action-by-actor tracking: debug panel shows which ScriptDocument beat produced each
+  compiled block.
+- Custom DSL parser and all regex-based free-text parsing removed.
+
+### TDA-2 — Structured Text Editor (M2) ✅ COMPLETE
+
+Goal: the text editor is a locked-down controller for `ScriptDocument` — every interaction
+maps to a legal `ScriptDocument` mutation.
+
+Delivered:
+- Scene heading row — INT./EXT., setting, time-of-day as three structured fields.
+- Cast management — add/rename/remove cast members; rename propagates to all beats; remove
+  deletes all beats referencing the member.
+- Dialogue beat row — actor select + dialogue text input.
+- Action beat row — actor + verb select (enter/exit/move/hold), verb-specific arg fields.
+- `+ dialogue` / `+ action` buttons; `+ New production` (blank) vs `Example scene`.
+- **Combobox component** (`src/lib/Combobox.svelte`) — reusable keyboard-driven type-to-filter
+  field. Click-driven to commit; type-to-filter implemented, keyboard commit never finished
+  before the sigil-editor pivot superseded this whole surface.
+- Read-only Fountain `<details>` preview; debug panel with cast→beat refs.
+
+Accepted trade-off at the time: the interaction was dropdown/combobox-driven, not the
+constrained-typing dream — deliberately staged, with the data model considered correct and
+the interaction layer expected to be revisited. That revisit became Track SCR, which replaces
+this editor outright rather than making it keyboard-navigable.
+
+### TDA-3 — Multi-Scene Productions (M3) — absorbed into SCR-3
+
+Originally scoped as a scene-switcher UI (numbered tabs/dropdown) atop the boxed editor.
+Superseded before implementation: Track SCR's `#` sigil makes multi-scene authoring fall out
+of the editor rework directly (see SCR-3 in ROADMAP.md) — keep typing past one scene into the
+next, no separate switcher UI needed for authoring.
+
+### Structured Editor Design (original brainstorm)
+
+The boxed editor's design rules, recorded here for reference:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ SCENE HEADING  [INT. STAGE]  [-]  [DAY]                    │
+├─────────────────────────────────────────────────────────────┤
+│ ACTION  [ALPHA ▼]  [enters ▼]  from  [stage left ▼]        │
+│ ACTION  [BETA  ▼]  [enters ▼]  from  [stage right ▼]       │
+│ DIALOG  [ALPHA ▼]  "We start here."                        │
+│ ACTION  [ALPHA ▼]  [moves to ▼]  [centre ▼]                │
+│ DIALOG  [BETA  ▼]  "Copy that."                            │
+│                                          [+ Add beat ▼]    │
+├─────────────────────────────────────────────────────────────┤
+│ CAST:  ALPHA  BETA  [+ Add]                                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Rules that made it locked-down:
+
+1. Scene heading — location and time-of-day are separate fields; only the heading prefix
+   (INT/EXT/EST/I/E) + location + dash + time-of-day pattern is emitted.
+2. Cast names — a single canonical name in CAST CASE everywhere; no two cast members share a
+   normalised name.
+3. Dialogue beats — actor is a dropdown; dialogue text is the one free-form field (never
+   parsed).
+4. Action beats — actor + verb dropdowns; verb-specific arg fields appear conditionally
+   (enter/exit → side; move → target mark; hold → duration).
+5. `+ Add beat` dropdown appends after the last beat, opens with actor dropdown focused.
+6. `+ Add scene` appends a new scene with an immediately-editable default heading.
+7. Fountain preview rendered from `ScriptDocument` on every mutation, read-only.
+8. Compile runs on every debounced mutation — no separate "generate" step.
+
+What this eliminated: case-sensitivity bugs, regex fragility, "character X or verb Y?"
+ambiguity, phantom actors from mis-parsed verb words, invalid Fountain output.
+
+### Rejected/superseded typing-paradigm directions (pre-sigil)
+
+Before settling on inline sigils (`@actor`, `>action`, `#scene` — see Track SCR in
+ROADMAP.md), several interaction models were weighed:
+
+- **Combobox keyboard-commit only** — Arrow/Enter/Tab drive the existing boxed fields,
+  Tab advances field-to-field. Lowest risk (`Combobox.svelte` already had most of this), but
+  ceiling is low — still visually "a form," not a screenplay.
+- **Emmet-style snippet tab-stops** — type an abbreviation (`d` + Tab for dialogue, `a` + Tab
+  for action), expands into a beat scaffold with cursor landing in the first tab-stop field.
+  Faster than mousing into dropdowns but still discrete boxed fields under the hood.
+- **Command-palette fuzzy beat matching** — one text input per beat, fuzzy-matched against all
+  legal beats (cast × verbs × args) the way VSCode's Ctrl+P works; ghost-text ahead of the
+  cursor, Tab/Enter commits. Highest raw typing speed but reads more like a command bar than a
+  screenplay page, and fuzzy-match ambiguity needs a clear disambiguation UI.
+- **Loose Fountain-text-with-confirm-diff** (what Highland Pro actually does) — type real
+  loose Fountain (character cues in caps, action lines, dialogue) into one buffer; parse
+  speculatively on idle/blur into a proposed `ScriptDocument` diff; require explicit confirm
+  for anything ambiguous before committing. Rejected as the primary authoring loop because it
+  is exactly the heuristic prose-parsing the Roadmap Principle bans — Highland's parse target
+  is a readable page where a bad guess just looks wrong, but Directionally's parse target is
+  executable data where a bad guess breaks the compiler. Confirming ambiguity after the fact
+  just moves today's dropdown friction to a different point in the flow rather than removing
+  it. Kept in mind only as a possible future "paste in a rough treatment" bulk-import feature,
+  never as the primary typing loop.
+
+Inline sigils won because the sigil scopes a token's type before a single character of its
+value is typed — deterministic, not heuristic — while still reading like a screenplay as you
+type. See Track SCR in [ROADMAP.md](ROADMAP.md) for the chosen design.
+
