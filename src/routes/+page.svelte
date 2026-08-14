@@ -6,25 +6,30 @@
   import type { VoiceBackend } from '$lib/types.js';
   import { storedSceneToModel } from '../core/storage/storedSceneToModel.js';
   import { starterSceneShell } from '../core/storage/sceneBuilder.js';
+  import * as OPFSCatalogueStore from '../core/storage/OPFSCatalogueStore.js';
+
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import { getScenes } from '../core/storage/types.js';
   import type { StoredProduction, NamedScene } from '../core/storage/types.js';
   import type { ActorBlock } from '../core/domain/types.js';
   import { renderFountain, createDefaultScriptDocument } from '../core/treatment/fountain.js';
-  import type { Diagnostic, ScriptDocument, ActionVerb, StageSide, StageMark, ActionBeat, Beat } from '../core/treatment/fountain.js';
+  import type { Diagnostic, ScriptDocument } from '../core/treatment/fountain.js';
   import { compileScriptDocument } from '../core/treatment/fountainCompiler.js';
-  import Combobox from '$lib/Combobox.svelte';
+  import { tokenizeScript, renderScript } from '../core/treatment/sigilScript.js';
+  import SigilTextarea from '$lib/script/SigilTextarea.svelte';
+
 
   /**
    * Script-first, single-view authoring shell (treatment-driven-workflow branch).
    *
-   * ScriptDocument is the source of truth, built programmatically.
-   * Fountain text in the editor is a render of the ScriptDocument.
-   * Free-text edits re-parse via parseFountain (best-effort) and recompile.
+   * The sigil-tokenized text buffer (`sigilText`, Track SCR) is the authoring
+   * source of truth. `tokenizeScript()` derives a `ScriptDocument` from it on
+   * every edit; `compileScriptDocument()` turns that into a playable production.
    * See ROADMAP.md "Data Contract" for the layer model.
    */
 
   const DEFAULT_DOC = createDefaultScriptDocument();
+  const DEFAULT_SIGIL_TEMPLATE = '#INT STAGE DAY\n\n';
 
   let presenter: Presenter | undefined = $state();
 
@@ -34,6 +39,10 @@
   let productionNameInput = $state('Untitled Production');
   let showProductionPicker = $state(false);
 
+  // Primary authoring surface (Track SCR, SCR-2): sigil-tokenized text buffer.
+  // Persisted per-scene as NamedScene.dslSource; ScriptDocument is derived from
+  // it via tokenizeScript() on every edit — never the other way round.
+  let sigilText = $state('');
   let scriptDoc = $state<ScriptDocument>({ scenes: [], cast: [], diagnostics: [] });
   let fountainSource = $derived(renderFountain(scriptDoc));
   let diagnostics = $state<Diagnostic[]>([]);
@@ -53,6 +62,11 @@
   let showDebugPanels = $state(true);
   let discoveredClips = $state<Record<string, string[]>>({});
 
+  // Track CAT: user-authored catalogue entries (Sketcher + Character creator exports),
+  // merged with the bundled catalogue for cast/setting resolution during compile.
+  let userCatalogueEntries = $state<Awaited<ReturnType<typeof OPFSCatalogueStore.list>>>([]);
+
+
   // Derived blocks for timeline / compiled inspector — read-only
   const compiledActors = $derived(currentProduction?.actors ?? []);
   const compiledScene = $derived(
@@ -67,6 +81,7 @@
   onMount(async () => {
     await ProductionStore.init();
     productions = ProductionStore.list();
+    userCatalogueEntries = await OPFSCatalogueStore.list();
     if (productions.length > 0) {
       openProduction(productions[0]);
     } else {
@@ -74,13 +89,18 @@
     }
   });
 
+  /** Sets the sigil buffer and re-derives scriptDoc from it. Does not compile. */
+  function loadSigilText(text: string) {
+    sigilText = text;
+    scriptDoc = tokenizeScript(text).doc;
+  }
+
   function openProduction(prod: StoredProduction) {
     currentProduction = prod;
     productionNameInput = prod.name;
     const ns = getScenes(prod.tree ?? [])[0];
     currentSceneId = ns?.id ?? crypto.randomUUID();
-    // Restore scriptDoc from the stored scene if possible; fall back to blank
-    scriptDoc = { scenes: [{ heading: '', interior: undefined, setting: '', timeOfDay: '', beats: [] }], cast: prod.actors?.map((a) => a.role) ?? [], diagnostics: [] };
+    loadSigilText(ns?.dslSource ?? DEFAULT_SIGIL_TEMPLATE);
     diagnostics = [];
     statusMessage = '';
     showProductionPicker = false;
@@ -92,7 +112,7 @@
     currentSceneId = crypto.randomUUID();
     currentProduction = created;
     productionNameInput = created.name;
-    scriptDoc = { scenes: [{ heading: '', interior: undefined, setting: '', timeOfDay: '', beats: [] }], cast: [], diagnostics: [] };
+    loadSigilText(DEFAULT_SIGIL_TEMPLATE);
     diagnostics = [];
     statusMessage = '';
     showProductionPicker = false;
@@ -105,7 +125,7 @@
     currentSceneId = crypto.randomUUID();
     currentProduction = created;
     productionNameInput = created.name;
-    scriptDoc = DEFAULT_DOC;
+    loadSigilText(renderScript(DEFAULT_DOC));
     diagnostics = [];
     statusMessage = '';
     showProductionPicker = false;
@@ -117,7 +137,7 @@
     if (!currentProduction) return;
 
     // Compile current ScriptDocument → NamedScene[]
-    const compiled = compileScriptDocument(scriptDoc);
+    const compiled = compileScriptDocument(scriptDoc, userCatalogueEntries);
 
     diagnostics = compiled.diagnostics;
 
@@ -126,6 +146,10 @@
       return;
     }
 
+    // The sigil buffer is the authoring source of truth for this scene —
+    // persisted alongside the compiled output so re-opening the production
+    // restores the exact typed text, not a re-render of the compiled data.
+    compiled.scenes[0].dslSource = sigilText;
     const firstScene = compiled.scenes[0];
     const sceneId = firstScene.id;
 
@@ -141,7 +165,8 @@
     currentSceneId = sceneId;
     await ProductionStore.save(updated);
     productions = ProductionStore.list();
-    presenter?.loadModel(storedSceneToModel(firstScene.scene, compiled.actors), seekToStart ? 0 : undefined);
+    presenter?.loadModel(storedSceneToModel(firstScene.scene, compiled.actors, userCatalogueEntries), seekToStart ? 0 : undefined);
+
     statusMessage = compiled.diagnostics.length > 0 ? 'Updated (with warnings).' : 'Updated.';
   }
 
@@ -151,6 +176,12 @@
       compileAndApply(false);
       compileTimer = null;
     }, 500);
+  }
+
+  function handleSigilChange(text: string) {
+    sigilText = text;
+    scriptDoc = tokenizeScript(text).doc;
+    scheduleCompile();
   }
 
   async function renameProduction() {
@@ -168,115 +199,9 @@
     if (currentProduction?.id === id) {
       currentProduction = null;
       currentSceneId = '';
-      scriptDoc = { scenes: [], cast: [], diagnostics: [] };
+      loadSigilText('');
       presenter?.loadModel(storedSceneToModel(starterSceneShell(), []), 0);
     }
-  }
-
-  // ── Beat mutation helpers ────────────────────────────────────────────────
-
-  const VERBS: string[] = ['enter', 'exit', 'move', 'hold'];
-  const SIDES: string[] = ['left', 'right'];
-  const MARKS: string[] = ['left', 'center', 'right'];
-  const TIMES: string[] = ['DAY', 'NIGHT', 'DAWN', 'DUSK', 'MORNING', 'AFTERNOON', 'EVENING', 'LATER', 'CONTINUOUS'];
-  const SETTINGS: string[] = ['STAGE', "JO'S FLAT", 'CORRIDOR', 'SERVER ROOM'];
-  const INTERIORS: string[] = ['INT.', 'EXT.'];
-
-  function cloneDoc(): ScriptDocument {
-    return JSON.parse(JSON.stringify(scriptDoc));
-  }
-
-  function updateDoc(doc: ScriptDocument) {
-    scriptDoc = doc;
-    scheduleCompile();
-  }
-
-  function addBeat(type: 'dialogue' | 'action') {
-    const doc = cloneDoc();
-    if (doc.scenes.length === 0) doc.scenes = [{ heading: 'INT. STAGE - DAY', beats: [] }];
-    const defChar = doc.cast[0] ?? 'CHAR';
-    const beat: Beat = type === 'dialogue'
-      ? { type: 'dialogue', character: defChar, text: '' }
-      : { type: 'action', character: defChar, verb: 'enter' };
-    doc.scenes[0].beats.push(beat);
-    updateDoc(doc);
-  }
-
-  function removeBeat(i: number) {
-    const doc = cloneDoc();
-    doc.scenes[0].beats.splice(i, 1);
-    updateDoc(doc);
-  }
-
-  function updateHeading(field: 'interior' | 'setting' | 'time', value: string | boolean) {
-    const doc = cloneDoc();
-    if (doc.scenes.length === 0) return;
-    const h = doc.scenes[0];
-    if (field === 'interior') h.interior = value as boolean;
-    if (field === 'setting') h.setting = value as string;
-    if (field === 'time') h.timeOfDay = value as string;
-    const interior = h.interior;
-    const setting = h.setting;
-    const tod = h.timeOfDay;
-    if (interior == null && !setting && !tod) {
-      h.heading = 'UNTITLED';
-    } else {
-      const prefix = interior == null ? 'INT./EXT.' : (interior ? 'INT.' : 'EXT.');
-      h.heading = `${prefix} ${setting || 'UNTITLED'} - ${tod || 'DAY'}`;
-    }
-    updateDoc(doc);
-  }
-
-  // ── Cast management ──────────────────────────────────────────────────────
-
-  let addingCast = $state(false);
-  let newCastName = $state('');
-  let renamingCast = $state<string | null>(null);
-  let renameCastValue = $state('');
-
-  function addCastMember() {
-    const name = newCastName.trim().toUpperCase();
-    if (!name) return;
-    const doc = cloneDoc();
-    if (!doc.cast.includes(name)) doc.cast.push(name);
-    updateDoc(doc);
-    newCastName = '';
-    addingCast = false;
-  }
-
-  function startRenameCast(name: string) {
-    renamingCast = name;
-    renameCastValue = name;
-  }
-
-  function commitRenameCast() {
-    const oldName = renamingCast;
-    const newName = renameCastValue.trim().toUpperCase();
-    renamingCast = null;
-    if (!oldName || !newName || oldName === newName) return;
-    const doc = cloneDoc();
-    const idx = doc.cast.indexOf(oldName);
-    if (idx >= 0) doc.cast[idx] = newName;
-    // Propagate rename to all beats
-    for (const scene of doc.scenes) {
-      for (const beat of scene.beats) {
-        if (beat.type !== 'transition' && beat.character === oldName) {
-          beat.character = newName;
-        }
-      }
-    }
-    updateDoc(doc);
-  }
-
-  function removeCastMember(name: string) {
-    const doc = cloneDoc();
-    // Remove from cast list
-    doc.cast = doc.cast.filter((c) => c !== name);
-    // Remove all beats referencing this character
-    for (const scene of doc.scenes) {
-      scene.beats = scene.beats.filter((b) => b.type === 'transition' || b.character !== name);
-    }
-    updateDoc(doc);
   }
 </script>
 
@@ -329,96 +254,14 @@
 
   <div class="workspace">
     <div class="script-pane">
-      {#if scriptDoc.scenes.length > 0}
-        {@const s = scriptDoc.scenes[0]}
-        <div class="beat-editor">
-          <!-- Scene heading row -->
-          <div class="beat-row beat-heading">
-            <Combobox class="heading-interior" options={INTERIORS} value={s.interior == null ? '' : (s.interior ? 'INT.' : 'EXT.')} placeholder="INT./EXT." allowFreeform={false} style="width:55px"
-              onchange={(v) => updateHeading('interior', v === 'INT.')} />
-            <Combobox class="heading-setting" options={SETTINGS} value={s.setting ?? ''} placeholder="Setting" allowFreeform={true} style="width:160px"
-              onchange={(v) => updateHeading('setting', v)} />
-            <span class="heading-dash">-</span>
-            <Combobox class="heading-time" options={TIMES} value={s.timeOfDay ?? ''} placeholder="TIME" allowFreeform={false} style="width:100px"
-              onchange={(v) => updateHeading('time', v)} />
-          </div>
-
-          <!-- Beat rows -->
-          {#each s.beats as b, i (i)}
-            {#if b.type !== 'transition'}
-              {@const beat = b as (ActionBeat | { type: 'dialogue'; character: string; text: string; parenthetical?: string })}
-              <div class="beat-row">
-                {#if beat.type === 'dialogue'}
-                  <div class="beat-fields">
-                    <Combobox class="bf-actor" options={scriptDoc.cast} value={beat.character} placeholder="actor" allowFreeform={false} style="width:90px"
-                      onchange={(v) => { beat.character = v; scheduleCompile(); }} />
-                    <input class="bf-dialogue" placeholder="dialogue" value={beat.text} spellcheck="false"
-                      onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); scheduleCompile(); } }}
-                      oninput={(e) => { beat.text = e.currentTarget.value; }} />
-                  </div>
-                {:else}
-                  {@const abeat = beat as ActionBeat}
-                  <div class="beat-fields">
-                    <Combobox class="bf-actor" options={scriptDoc.cast} value={abeat.character} placeholder="actor" allowFreeform={false} style="width:90px"
-                      onchange={(v) => { abeat.character = v; scheduleCompile(); }} />
-                    <Combobox class="bf-verb" options={VERBS} value={abeat.verb} placeholder="verb" allowFreeform={false} style="width:55px"
-                      onchange={(v) => { abeat.verb = v as ActionVerb; scheduleCompile(); }} />
-                    {#if abeat.verb === 'enter' || abeat.verb === 'exit'}
-                      <span class="beat-pretext">{abeat.verb === 'enter' ? 'from' : 'to'}</span>
-                      <Combobox class="bf-side" options={SIDES} value={abeat.side ?? ''} placeholder="side" allowFreeform={false} style="width:60px"
-                        onchange={(v) => { abeat.side = (v || undefined) as StageSide | undefined; scheduleCompile(); }} />
-                    {/if}
-                    {#if abeat.verb === 'move'}
-                      <span class="beat-pretext">to</span>
-                      <Combobox class="bf-target" options={MARKS} value={abeat.target ?? 'center'} placeholder="mark" allowFreeform={false} style="width:60px"
-                        onchange={(v) => { abeat.target = v as StageMark; scheduleCompile(); }} />
-                    {/if}
-                    {#if abeat.verb === 'hold'}
-                      <input class="bf-seconds" type="number" step="0.1" min="0.1" value={abeat.seconds ?? 1.0}
-                        oninput={(e) => { abeat.seconds = parseFloat(e.currentTarget.value) || 1.0; }} />
-                      <span class="beat-pretext">s</span>
-                    {/if}
-                  </div>
-                {/if}
-                <button class="beat-remove" onclick={() => removeBeat(i)} title="Remove beat">✕</button>
-              </div>
-            {/if}
-          {/each}
-
-          <div class="beat-add-row">
-            <button class="beat-add-btn" onclick={() => addBeat('dialogue')}>+ dialogue</button>
-            <button class="beat-add-btn" onclick={() => addBeat('action')}>+ action</button>
-          </div>
-
-          <!-- Cast management -->
-          <div class="cast-panel">
-            <span class="cast-label">Cast</span>
-            <div class="cast-names">
-              {#each scriptDoc.cast as name}
-                <div class="cast-name-row">
-                  {#if renamingCast === name}
-                    <input class="cast-rename-input" bind:value={renameCastValue} onkeydown={(e) => {
-                      if (e.key === 'Enter') commitRenameCast();
-                      if (e.key === 'Escape') { renamingCast = null; }
-                    }} onblur={commitRenameCast} />
-                  {:else}
-                    <span class="cast-name" role="button" tabindex="0" ondblclick={() => startRenameCast(name)} title="Double-click to rename">{name}</span>
-                    <button class="cast-remove-btn" onclick={() => removeCastMember(name)} title="Remove {name} and all their beats">✕</button>
-                  {/if}
-                </div>
-              {/each}
-              {#if addingCast}
-                <input class="cast-add-input" bind:value={newCastName} placeholder="Character name" onkeydown={(e) => {
-                  if (e.key === 'Enter') addCastMember();
-                  if (e.key === 'Escape') { addingCast = false; newCastName = ''; }
-                }} onblur={() => { if (newCastName.trim()) addCastMember(); else addingCast = false; }} />
-              {:else}
-                <button class="cast-add-btn" onclick={() => (addingCast = true)}>+ add</button>
-              {/if}
-            </div>
-          </div>
-        </div>
-      {/if}
+      <div class="sigil-editor-wrap">
+        <SigilTextarea
+          value={sigilText}
+          cast={scriptDoc.cast}
+          placeholder={'Type a scene using #scene, >action, @actor sigils…'}
+          onchange={handleSigilChange}
+        />
+      </div>
 
       <!-- Read-only Fountain preview -->
       <details class="fountain-preview">
@@ -670,183 +513,24 @@
   }
 
   .script-pane {
-    flex: 0 0 30%;
-    min-width: 280px;
-    display: flex;
-    flex-direction: column;
-    border-right: 1px solid #2a2a2a;
-    background: #141414;
-  }
-
-  .script-pane {
     flex: 0 0 36%;
     min-width: 320px;
     display: flex;
     flex-direction: column;
     border-right: 1px solid #2a2a2a;
     background: #141414;
-    overflow-y: auto;
+    min-height: 0;
   }
 
-  /* Beat editor */
-  .beat-editor {
+  .sigil-editor-wrap {
     flex: 1;
+    min-height: 0;
     padding: 8px;
     display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  .beat-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 0;
-    border-radius: 4px;
-    font-size: 13px;
-    border-bottom: 1px solid transparent;
-  }
-
-  .beat-row:hover .beat-remove {
-    opacity: 1;
-  }
-
-  .beat-heading {
-    border-bottom: 1px solid #1e3a1e;
-    margin-bottom: 4px;
-    padding-bottom: 6px;
-  }
-
-  .heading-dash {
-    color: #4a6a4a;
-  }
-
-  .beat-fields {
-    display: flex;
-    gap: 4px;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-
-  .bf-dialogue { flex: 1; min-width: 100px; font-style: italic; }
-  .bf-seconds { width: 40px; }
-
-  .beat-pretext {
-    color: #666;
-    font-size: 12px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  }
-
-  .beat-remove {
-    background: none;
-    border: none;
-    color: #430000;
-    cursor: pointer;
-    font-size: 10px;
-    padding: 1px 3px;
-    border-radius: 3px;
-    opacity: 0;
-    transition: opacity 0.15s;
-  }
-  .beat-remove:hover { color: #ff4444; background: rgba(255,0,0,0.15); opacity: 1; }
-
-  .beat-add-row {
-    display: flex;
-    gap: 6px;
-    padding: 8px;
-  }
-
-  .beat-add-btn {
-    background: #1e1e1e;
-    border: 1px solid #333;
-    border-radius: 5px;
-    color: #888;
-    padding: 5px 12px;
-    cursor: pointer;
-    font-size: 11px;
-  }
-  .beat-add-btn:hover { color: #bbb; border-color: #555; }
-
-  /* Cast panel */
-  .cast-panel {
-    border-top: 1px solid #2a2a2a;
-    padding: 8px 4px;
-    margin-top: 4px;
-  }
-
-  .cast-label {
-    font-size: 10px;
-    color: #555;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 4px;
-    display: block;
-  }
-
-  .cast-names {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    align-items: center;
-  }
-
-  .cast-name-row {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-  }
-
-  .cast-name {
-    color: #ccc;
-    font-weight: 700;
-    font-size: 12px;
-    padding: 3px 6px;
-    background: #1e1e1e;
-    border-radius: 4px;
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .cast-name:hover {
-    background: #2a2a2a;
-  }
-
-  .cast-remove-btn {
-    background: none;
-    border: none;
-    color: #430000;
-    cursor: pointer;
-    font-size: 10px;
-    padding: 1px 3px;
-    border-radius: 3px;
-  }
-
-  .cast-remove-btn:hover {
-    color: #ff4444;
-    background: rgba(255, 0, 0, 0.15);
-  }
-
-  .cast-add-btn, .cast-add-input, .cast-rename-input {
-    background: transparent;
-    border: 1px dashed #333;
-    border-radius: 4px;
-    color: #888;
-    padding: 3px 8px;
-    font-size: 11px;
-    cursor: pointer;
-  }
-
-  .cast-add-btn:hover { color: #bbb; border-color: #555; }
-
-  .cast-add-input, .cast-rename-input {
-    cursor: text;
-    color: #ddd;
-    border-style: solid;
-    min-width: 100px;
   }
 
   .fountain-preview {
-    margin-top: auto;
+    flex: 0 0 auto;
     border-top: 1px solid #2a2a2a;
     padding: 6px 10px;
     font-size: 11px;

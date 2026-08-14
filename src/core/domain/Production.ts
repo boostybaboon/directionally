@@ -16,7 +16,14 @@ export type Actor = {
   defaultRotation?: Vec3;
   /** Emissive tint as a 24-bit RGB integer. Applied to cloned materials after load. */
   tint?: number;
+  /**
+   * Set when this actor's cast name did not resolve to a real catalogue entry
+   * (Track CAT, CAT-1). The renderer shows a persistent lozenge label instead
+   * of treating the fallback body as a deliberate character choice.
+   */
+  placeholder?: boolean;
 };
+
 
 export class Production {
   readonly title: string;

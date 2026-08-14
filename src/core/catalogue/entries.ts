@@ -15,6 +15,18 @@ export const CATALOGUE_ENTRIES: CatalogueEntry[] = [
     // Native GLB height ~4.77 units; 0.35 ≈ 1.67m (human scale)
     defaultScale: 0.35,
   },
+  {
+    kind: 'character',
+    id: 'generic-human',
+    label: 'Generic Human',
+    // Exported via scripts/exportGenericHuman.mjs, which drives the real
+    // /character → Export to Catalogue flow with zero tuning (default
+    // ProceduralHumanoid params) — this is what a fresh session produces.
+    gltfPath: '/models/gltf/generic-human.glb',
+    defaultAnimation: 'idle',
+    defaultScale: 1,
+  },
+
   // ── Set pieces ────────────────────────────────────────────────────────────
   {
     kind: 'set-piece',

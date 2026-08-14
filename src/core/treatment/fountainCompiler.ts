@@ -7,18 +7,30 @@
  */
 
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
+import { getCharacters, getEnvironments, getSetPieces } from '../catalogue/catalogue.js';
 import { estimateDuration, starterSceneShell } from '../storage/sceneBuilder.js';
 import type { StoredActor, NamedScene } from '../storage/types.js';
+import type { CatalogueEntry, EnvironmentEntry, SetPieceEntry } from '../catalogue/types.js';
 import type { DialogueLine } from '../../lib/script/types.js';
 import type { ActorBlock, SceneAction, SetPiece, StagedActor, Vec3 } from '../domain/types.js';
 import type { ScriptDocument, SceneBlock, ActionBeat, Diagnostic, StageSide, StageMark } from './fountain.js';
+
+// Fallback catalogue id used when a cast name has no catalogue match (Track CAT, CAT-1).
+// A real bundled asset (not a blanket copy of some other character) so the placeholder
+// body is visually distinct and legible — see entries.ts for provenance.
+const PLACEHOLDER_CATALOGUE_ID = 'generic-human';
+
+// Track CAT, CAT-2: placeholder room constants. The floor mesh name is shared
+// with the renderer, which draws the typed setting name onto the floor plane.
+export const PLACEHOLDER_ROOM_MESH_NAME = 'placeholder-room';
+const PLACEHOLDER_ROOM_FOOTPRINT = 6;
+const PLACEHOLDER_ROOM_COLOR = 0x4a5560;
+
 
 // ── Stage coordinate constants ──────────────────────────────────────────────
 
 const STAGE_WORLD_MIN_X = -3;
 const STAGE_WORLD_MAX_X = 3;
-const STAGE_WORLD_DEPTH = 4;
-const WING_WORLD_WIDTH = 2;
 
 const MARK_X: Record<StageMark, number> = { left: 0.2, center: 0.5, right: 0.8 };
 const HOME_X: Record<StageSide, number> = { left: 0.4, right: 0.6 };
@@ -36,31 +48,63 @@ function homeSide(i: number): StageSide {
   return i % 2 === 0 ? 'left' : 'right';
 }
 
-// ── Floor ───────────────────────────────────────────────────────────────────
+// ── Setting resolution ───────────────────────────────────────────────────────
 
-function buildStageFloor(): SetPiece[] {
-  const stageWidth = STAGE_WORLD_MAX_X - STAGE_WORLD_MIN_X;
-  const centerX = (STAGE_WORLD_MIN_X + STAGE_WORLD_MAX_X) / 2;
+type SettingResolution =
+  | { kind: 'set-piece'; entry: SetPieceEntry }
+  | { kind: 'environment'; entry: EnvironmentEntry }
+  | { kind: 'placeholder'; label?: string };
+
+/**
+ * Resolves a scene heading's `setting` against the merged catalogue (bundled +
+ * user-authored OPFS entries) — SetPieceEntry first, then EnvironmentEntry.
+ * Case-insensitive label match, mirroring resolveCastName. Falls back to a
+ * labelled placeholder room; never throws, never blocks.
+ */
+function resolveSetting(
+  setting: string | undefined,
+  userEntries: CatalogueEntry[],
+): SettingResolution {
+  const label = (setting ?? '').trim();
+  if (!label) return { kind: 'placeholder' };
+  const normalised = label.toLowerCase();
+  const merged = [...CATALOGUE_ENTRIES, ...userEntries];
+  const setPiece = getSetPieces(merged).find((e) => e.label.trim().toLowerCase() === normalised);
+  if (setPiece) return { kind: 'set-piece', entry: setPiece };
+  const environment = getEnvironments(merged).find((e) => e.label.trim().toLowerCase() === normalised);
+  if (environment) return { kind: 'environment', entry: environment };
+  return { kind: 'placeholder', label };
+}
+
+/**
+ * Converts a catalogue SetPieceEntry into a StoredScene SetPiece. User-authored
+ * entries carry a session-scoped blob gltfPath; persist it as an `opfs://<id>`
+ * reference that storedSceneToModel resolves back to the live blob URL.
+ */
+function setPieceFromEntry(entry: SetPieceEntry): SetPiece {
+  const piece: SetPiece = {
+    name: entry.id,
+    geometry: entry.geometry,
+    material: entry.material,
+  };
+  if (entry.gltfPath) {
+    piece.gltfPath = entry.gltfPath.startsWith('blob:') ? `opfs://${entry.id}` : entry.gltfPath;
+  }
+  if (entry.defaultRotation) piece.rotation = entry.defaultRotation;
+  return piece;
+}
+
+/**
+ * Placeholder room for an unresolved setting: a single floor plane sized to a
+ * default footprint, visually distinct from the old hardcoded stage-and-wings.
+ */
+function buildPlaceholderRoom(): SetPiece[] {
   return [
     {
-      name: 'stage-floor',
-      geometry: { type: 'plane', width: stageWidth, height: STAGE_WORLD_DEPTH },
-      material: { color: 0x8b6914 },
-      position: [centerX, 0, 0],
-      rotation: [-Math.PI / 2, 0, 0],
-    },
-    {
-      name: 'stage-wing-left',
-      geometry: { type: 'plane', width: WING_WORLD_WIDTH, height: STAGE_WORLD_DEPTH },
-      material: { color: 0x2a2a2a },
-      position: [STAGE_WORLD_MIN_X - WING_WORLD_WIDTH / 2, 0, 0],
-      rotation: [-Math.PI / 2, 0, 0],
-    },
-    {
-      name: 'stage-wing-right',
-      geometry: { type: 'plane', width: WING_WORLD_WIDTH, height: STAGE_WORLD_DEPTH },
-      material: { color: 0x2a2a2a },
-      position: [STAGE_WORLD_MAX_X + WING_WORLD_WIDTH / 2, 0, 0],
+      name: PLACEHOLDER_ROOM_MESH_NAME,
+      geometry: { type: 'plane', width: PLACEHOLDER_ROOM_FOOTPRINT, height: PLACEHOLDER_ROOM_FOOTPRINT },
+      material: { color: PLACEHOLDER_ROOM_COLOR, roughness: 0.95, metalness: 0 },
+      position: [0, 0, 0],
       rotation: [-Math.PI / 2, 0, 0],
     },
   ];
@@ -74,25 +118,71 @@ export type FountainCompileResult = {
   diagnostics: Diagnostic[];
 };
 
-export function compileScriptDocument(doc: ScriptDocument): FountainCompileResult {
-  const diagnostics: Diagnostic[] = [...doc.diagnostics];
-  const fallbackId = CATALOGUE_ENTRIES.find((e) => e.kind === 'character')?.id ?? '';
+/**
+ * Resolves a typed cast name against the merged catalogue (bundled + user-authored
+ * OPFS entries). Case-insensitive label match — explicit catalogueId binding
+ * (once CAT-3 lands a UI to set one) will take priority ahead of this fallback.
+ * Returns the placeholder id when nothing matches; never throws, never blocks —
+ * this is what keeps sigil typing (Track SCR) safe to accept any name.
+ */
+function resolveCastName(
+  name: string,
+  userEntries: CatalogueEntry[],
+): { catalogueId: string; placeholder?: boolean } {
+  const allCharacters = getCharacters([...CATALOGUE_ENTRIES, ...userEntries]);
+  const normalised = name.trim().toLowerCase();
+  const match = allCharacters.find((c) => c.label.trim().toLowerCase() === normalised);
+  if (match) return { catalogueId: match.id };
+  return { catalogueId: PLACEHOLDER_CATALOGUE_ID, placeholder: true };
+}
 
-  // Build actor list from the cast (already normalised)
-  const actors: StoredActor[] = doc.cast.map((name) => ({
-    id: crypto.randomUUID(),
-    role: name,
-    catalogueId: fallbackId,
-  }));
+
+export function compileScriptDocument(
+  doc: ScriptDocument,
+  userEntries: CatalogueEntry[] = [],
+): FountainCompileResult {
+  const diagnostics: Diagnostic[] = [...doc.diagnostics];
+
+  // Build actor list from the cast (already normalised), resolving each name
+  // against the merged catalogue. Unresolved names fall back to the generic-human
+  // placeholder body with an info diagnostic — never a silent wrong-asset swap.
+  const actors: StoredActor[] = doc.cast.map((name) => {
+    const { catalogueId, placeholder } = resolveCastName(name, userEntries);
+    if (placeholder) {
+      diagnostics.push({
+        line: 0,
+        level: 'info',
+        message: `${name} has no catalogue match — using the generic placeholder.`,
+      });
+    }
+    return {
+      id: crypto.randomUUID(),
+      role: name,
+      catalogueId,
+      placeholder,
+    };
+  });
 
   const actorIdByName = new Map(actors.map((a) => [a.role, a.id]));
 
   const scenes: NamedScene[] = doc.scenes.map((sceneBlock, i) =>
-    compileSceneBlock(sceneBlock, actors, actorIdByName, i),
+    compileSceneBlock(sceneBlock, actors, actorIdByName, i, userEntries),
   );
+
+  // Track CAT, CAT-2: report each unresolved setting once per scene.
+  for (const ns of scenes) {
+    if (ns.scene.placeholderSetting) {
+      diagnostics.push({
+        line: 0,
+        level: 'info',
+        message: `${ns.scene.placeholderSetting} has no catalogue match — using a placeholder room.`,
+      });
+    }
+  }
 
   return { scenes, actors, diagnostics };
 }
+
 
 const WALK_CLIP = 'Walking';
 const ENTER_DURATION = 0.8;
@@ -105,6 +195,7 @@ function compileSceneBlock(
   actors: StoredActor[],
   actorIdByName: Map<string, string>,
   sceneIdx: number,
+  userEntries: CatalogueEntry[],
 ): NamedScene {
   // Gather actors referenced in this scene
   const inScene = new Map<string, StageSide>();
@@ -238,17 +329,31 @@ function compileSceneBlock(
   const sceneName = block.heading === 'UNTITLED' ? `Scene ${sceneIdx + 1}` : block.heading;
   const scene = starterSceneShell();
 
+  // Track CAT, CAT-2: resolve the heading's setting against the merged catalogue.
+  const setting = resolveSetting(block.setting, userEntries);
+  if (setting.kind === 'set-piece') {
+    scene.set = [setPieceFromEntry(setting.entry)];
+  } else if (setting.kind === 'environment') {
+    scene.environmentMap = setting.entry.id;
+    // Keep the starter ground plane so actors stand on something under the HDRI.
+  } else {
+    scene.set = buildPlaceholderRoom();
+    if (setting.label) scene.placeholderSetting = setting.label;
+  }
+
   return {
     id: crypto.randomUUID(),
     name: sceneName,
     scene: {
       camera: scene.camera,
       lights: scene.lights,
-      set: buildStageFloor(),
+      set: scene.set,
       stagedActors,
       actions: sceneActions,
       blocks,
       duration: Math.max(6, parseFloat((t + 1).toFixed(2))),
+      environmentMap: scene.environmentMap,
+      placeholderSetting: scene.placeholderSetting,
     },
     script: dialogueLines,
   };

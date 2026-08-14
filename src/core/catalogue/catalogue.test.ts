@@ -102,3 +102,20 @@ describe('CATALOGUE_ENTRIES seed data — Phase 9.B set pieces', () => {
     expect(p?.geometry.type).toBe('plane');
   });
 });
+
+describe('CATALOGUE_ENTRIES seed data — CAT-0 generic-human character', () => {
+  it('includes a generic-human character entry alongside the robot', () => {
+    const characters = getCharacters(CATALOGUE_ENTRIES);
+    const ids = characters.map((c) => c.id);
+    expect(ids).toContain('robot-expressive');
+    expect(ids).toContain('generic-human');
+  });
+
+  it('generic-human resolves via getById and has a real gltfPath + idle animation', () => {
+    const entry = getById('generic-human', CATALOGUE_ENTRIES) as CharacterEntry | undefined;
+    expect(entry?.kind).toBe('character');
+    expect(entry?.gltfPath).toBe('/models/gltf/generic-human.glb');
+    expect(entry?.defaultAnimation).toBeTruthy();
+  });
+});
+

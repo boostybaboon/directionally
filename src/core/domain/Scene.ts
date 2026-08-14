@@ -11,6 +11,8 @@ export type SceneOptions = {
   duration: number;
   backgroundColor?: number;
   environmentMap?: string;
+  /** Typed setting name that failed catalogue resolution (Track CAT, CAT-2). */
+  placeholderSetting?: string;
 };
 
 export class Scene {
@@ -18,6 +20,7 @@ export class Scene {
   readonly duration: number;
   readonly backgroundColor?: number;
   readonly environmentMap?: string;
+  readonly placeholderSetting?: string;
 
   camera: CameraConfig = { position: [0, 2, 8], lookAt: [0, 0, 0] };
   readonly lights: LightConfig[] = [];
@@ -30,6 +33,7 @@ export class Scene {
     this.duration = options.duration;
     this.backgroundColor = options.backgroundColor;
     this.environmentMap = options.environmentMap;
+    this.placeholderSetting = options.placeholderSetting;
   }
 
   setCamera(config: CameraConfig): this {

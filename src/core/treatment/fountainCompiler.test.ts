@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderFountain, createDefaultScriptDocument } from './fountain';
 import { compileScriptDocument } from './fountainCompiler';
 import type { ScriptDocument, Beat, ActionBeat, StageSide, StageMark } from './fountain';
+import type { CatalogueEntry } from '../catalogue/types.js';
 
 // ── Programmatic fixture builders ────────────────────────────────────────────
 
@@ -19,6 +20,10 @@ function say(character: string, text: string): Beat {
 
 function scene(heading: string, beats: Beat[]): ScriptDocument['scenes'][0] {
   return { heading, beats };
+}
+
+function sceneWithSetting(setting: string, beats: Beat[] = [say('Robot', 'Hi.')]): ScriptDocument['scenes'][0] {
+  return { heading: `INT. ${setting} - DAY`, interior: true, setting, timeOfDay: 'DAY', beats };
 }
 
 function allBlocks(result: ReturnType<typeof compileScriptDocument>) {
@@ -155,13 +160,130 @@ describe('compileScriptDocument', () => {
   });
 
   it('applies human-scale from catalogue to all staged actors', () => {
-    const doc = createDefaultScriptDocument();
+    // Cast names must match a real catalogue label ("Robot") to resolve to the
+    // scaled-down bundled entry — an unresolved name falls back to the
+    // generic-human placeholder (defaultScale 1), so use cast names that
+    // actually match the catalogue for this scaling-specific assertion.
+    const doc = buildDoc([
+      scene('INT. STAGE - DAY', [
+        act('Robot', 'enter', { side: 'left' }),
+        act('Robot2', 'enter', { side: 'right' }),
+      ]),
+    ], ['Robot', 'Robot2']);
     const result = compileScriptDocument(doc);
 
-    for (const s of result.scenes[0].scene.stagedActors) {
-      expect(s.startScale).toBeDefined();
-      expect(s.startScale![0]).toBeLessThan(1); // robot should be scaled down
-      expect(s.startScale![0]).toBeGreaterThan(0.1);
-    }
+    const robotActor = result.actors.find((a) => a.role === 'Robot')!;
+    const staged = result.scenes[0].scene.stagedActors.find((s) => s.actorId === robotActor.id)!;
+    expect(staged.startScale).toBeDefined();
+    expect(staged.startScale![0]).toBeLessThan(1); // robot should be scaled down
+    expect(staged.startScale![0]).toBeGreaterThan(0.1);
+  });
+
+
+  it('resolves a cast name matching a bundled catalogue label (case-insensitive)', () => {
+    const doc = buildDoc([scene('INT. STAGE - DAY', [say('robot', 'Beep.')])], ['robot']);
+    const result = compileScriptDocument(doc);
+
+    expect(result.actors[0].catalogueId).toBe('robot-expressive');
+    expect(result.actors[0].placeholder).toBeUndefined();
+    expect(result.diagnostics.some((d) => d.level === 'info')).toBe(false);
+  });
+
+  it('falls back to the generic-human placeholder for an unresolved cast name', () => {
+    const doc = buildDoc([scene('INT. STAGE - DAY', [say('BOB', 'Hi.')])], ['BOB']);
+    const result = compileScriptDocument(doc);
+
+    expect(result.actors[0].catalogueId).toBe('generic-human');
+    expect(result.actors[0].placeholder).toBe(true);
+    expect(result.diagnostics.some((d) => d.level === 'info' && d.message.includes('BOB'))).toBe(true);
+  });
+
+  it('resolves two cast members distinctly — one real, one placeholder', () => {
+    const doc = buildDoc([scene('INT. STAGE - DAY', [
+      say('Robot', 'Beep.'),
+      say('BOB', 'Hi.'),
+    ])], ['Robot', 'BOB']);
+    const result = compileScriptDocument(doc);
+
+    const robotActor = result.actors.find((a) => a.role === 'Robot')!;
+    const bobActor = result.actors.find((a) => a.role === 'BOB')!;
+    expect(robotActor.placeholder).toBeUndefined();
+    expect(bobActor.placeholder).toBe(true);
+    expect(robotActor.catalogueId).not.toBe(bobActor.catalogueId);
+  });
+
+  it('resolves against user-authored (OPFS) catalogue entries when provided', () => {
+    const doc = buildDoc([scene('INT. STAGE - DAY', [say('Custom Hero', 'Hi.')])], ['Custom Hero']);
+    const userEntry = {
+      kind: 'character' as const,
+      id: 'user-custom-hero',
+      label: 'Custom Hero',
+      gltfPath: '/opfs/blob-url',
+    };
+    const result = compileScriptDocument(doc, [userEntry]);
+
+    expect(result.actors[0].catalogueId).toBe('user-custom-hero');
+    expect(result.actors[0].placeholder).toBeUndefined();
+  });
+
+  it('resolves a setting matching a bundled set-piece label to the real geometry', () => {
+    const doc = buildDoc([sceneWithSetting('Stage Deck')], ['Robot']);
+    const result = compileScriptDocument(doc);
+
+    expect(result.scenes[0].scene.set).toHaveLength(1);
+    expect(result.scenes[0].scene.set[0].name).toBe('stage-deck');
+    expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
+    expect(result.diagnostics.some((d) => d.message.includes('placeholder room'))).toBe(false);
+  });
+
+  it('resolves a setting case-insensitively', () => {
+    const doc = buildDoc([sceneWithSetting('stage deck')], ['Robot']);
+    const result = compileScriptDocument(doc);
+
+    expect(result.scenes[0].scene.set[0].name).toBe('stage-deck');
+  });
+
+  it('falls back to a labelled placeholder room for an unmatched setting', () => {
+    const doc = buildDoc([sceneWithSetting('CLASSROOM')], ['Robot']);
+    const result = compileScriptDocument(doc);
+
+    expect(result.scenes[0].scene.set).toHaveLength(1);
+    expect(result.scenes[0].scene.set[0].name).toBe('placeholder-room');
+    expect(result.scenes[0].scene.placeholderSetting).toBe('CLASSROOM');
+    expect(result.diagnostics.some((d) => d.level === 'info' && d.message.includes('CLASSROOM'))).toBe(true);
+  });
+
+  it('resolves a user-authored (OPFS) set-piece entry with an opfs:// gltfPath', () => {
+    const doc = buildDoc([sceneWithSetting('Classroom')], ['Robot']);
+    const userEntry: CatalogueEntry = {
+      kind: 'set-piece',
+      id: 'user-classroom',
+      label: 'Classroom',
+      gltfPath: 'blob:http://localhost/abc',
+      geometry: { type: 'box', width: 1, height: 1, depth: 1 },
+      material: { color: 0xffffff },
+    };
+    const result = compileScriptDocument(doc, [userEntry]);
+
+    expect(result.scenes[0].scene.set[0].name).toBe('user-classroom');
+    expect(result.scenes[0].scene.set[0].gltfPath).toBe('opfs://user-classroom');
+    expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
+  });
+
+  it('resolves a setting matching an environment label to the environment map', () => {
+    const doc = buildDoc([sceneWithSetting('Studio (neutral)')], ['Robot']);
+    const result = compileScriptDocument(doc);
+
+    expect(result.scenes[0].scene.environmentMap).toBe('studio-neutral');
+    expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
+  });
+
+  it('does not emit a setting diagnostic when the heading has no setting', () => {
+    const doc = buildDoc([scene('INT. STAGE - DAY', [say('Robot', 'Beep.')])], ['Robot']);
+    const result = compileScriptDocument(doc);
+
+    expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
+    expect(result.diagnostics.some((d) => d.message.includes('placeholder room'))).toBe(false);
   });
 });
+

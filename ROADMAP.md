@@ -137,54 +137,57 @@ honest about when it *hasn't* resolved before typing can feel trustworthy. It is
 architectural prerequisite for Track SCR's safety property: sigil typing can only stay
 uninterrupted if an unmatched name safely becomes a placeholder instead of blocking.
 
-### CAT-0 — Bundle a generic default humanoid as a real catalogue asset
+### CAT-0 — Bundle a generic default humanoid as a real catalogue asset ✅ COMPLETE
 
-The character creator (`/character`) already has an implicit generic default — `DEFAULT_COLORS`
-+ `DEFAULT_BONE_PARAMS` + `DEFAULT_FACE_PARAMS` + `'organic'` style is exactly what a fresh
-session loads before any tuning. It is not, however, a usable catalogue asset the way the Robot
-is — there is no bundled `CharacterEntry` for it. This is a real gap independent of placeholder
-work: users have no generic-human option in the catalogue at all today.
+Delivered: `scripts/exportGenericHuman.mjs` drives the real `/character` → Export to Catalogue
+flow headlessly via Playwright (starts the dev server, loads `/character` with zero tuning,
+clicks Export, pulls the resulting GLB out of OPFS) — guarantees the bundled asset matches
+exactly what a fresh session produces, not a reimplementation of the export logic. Output saved
+to `static/models/gltf/generic-human.glb` (2.98 MB). Bundled `CharacterEntry` added in
+`entries.ts` (`id: 'generic-human'`, `defaultAnimation: 'idle'`, `defaultScale: 1`), with 2 new
+tests in `catalogue.test.ts` confirming it resolves via `getCharacters`/`getById` alongside the
+Robot.
 
-- Export the default-parameter humanoid via the existing `/character` → Export to Catalogue
-  pipeline (`exportCharacterGLB`), save the GLB as `static/models/gltf/generic-human.glb`
-  (same treatment as `RobotExpressive.glb`).
-- Add a bundled `CharacterEntry` in `entries.ts`: `id: 'generic-human'`, sensible
-  `defaultAnimation`/`defaultScale`.
 
-Exit criteria: "Generic Human" appears in the catalogue alongside "Robot" and is directly
-assignable to a cast member like any other bundled character — independent of any placeholder
-behaviour.
+### CAT-1 — Cast member → catalogue resolution + placeholder indicator ✅ COMPLETE
 
-### CAT-1 — Cast member → catalogue resolution + placeholder indicator
+Delivered: `compileScriptDocument(doc, userEntries?)` now takes an optional merged-catalogue
+argument and resolves each cast name via case-insensitive label match against
+`CATALOGUE_ENTRIES` + any passed-in user (OPFS) entries; unresolved names fall back to the
+CAT-0 `generic-human` id and are flagged `placeholder: true` on the `StoredActor`, with an
+`info`-level diagnostic. `placeholder` threads through `Actor` (domain), `Model.placeholderActors`
+(`src/lib/Model.ts`), and `SceneBridge.sceneToModel()`. `Presenter.svelte` renders a persistent
+amber lozenge sprite (`⚠ NAME`) above each placeholder actor's head for its entire time on
+stage — reuses the `CanvasTexture`/`THREE.Sprite` billboard mechanism already built for speech
+bubbles, but attached at scene-load time instead of per-line. `+page.svelte` loads
+`OPFSCatalogueStore.list()` on mount and passes the merged entries into both
+`compileScriptDocument` and `storedSceneToModel`, so user-authored characters resolve too. 6 new
+tests in `fountainCompiler.test.ts` covering bundled-label match, placeholder fallback,
+two-actors-distinct, and OPFS-entry resolution.
 
-- `compileScriptDocument` resolves each cast name against the merged catalogue (bundled
-  `CATALOGUE_ENTRIES` + `OPFSCatalogueStore.list()`) — explicit `catalogueId` binding first
-  (once CAT-3 exists to set one), case-insensitive label match second.
-- No match → the cast member is staged with the CAT-0 generic-human body (not a capsule, not a
-  silent copy of some other character) plus a floating **lozenge label** above the head showing
-  the typed name and an unresolved marker (e.g. `ALPHA ⚠` or `ALPHA (placeholder)`). Reuse the
-  existing `CanvasTexture` + `THREE.Sprite` mechanism already built for speech bubbles in
-  `Presenter.svelte` — same billboard/label pattern, different content and persistence (visible
-  for the actor's whole time on stage, not just while speaking).
-- Diagnostic emitted per unresolved cast member: `info`-level, e.g. "ALPHA has no catalogue
-  match — using the generic placeholder."
-
-Exit criteria: two cast members in one scene, one bound to an existing catalogue entry, one
+Exit criteria met: two cast members in one scene, one bound to an existing catalogue entry, one
 unbound, render as visually distinct — the unbound one is unmistakably marked as a placeholder,
 not a wrong-but-confident character.
 
-### CAT-2 — Setting → scenery resolution + placeholder indicator
 
-- Scene heading `setting` resolves against merged catalogue `SetPieceEntry`/`EnvironmentEntry`
-  labels instead of the compiler always calling `buildStageFloor()`.
-- No match → synthesize a simple placeholder room (floor plane sized to a default footprint) —
-  visually distinct from the hardcoded stage-and-wings — tagged with the same lozenge-label
-  sprite mechanism as CAT-1, floating above the setting, showing the typed setting name and an
-  unresolved marker.
+### CAT-2 — Setting → scenery resolution + placeholder indicator ✅ COMPLETE
 
-Exit criteria: typing a setting with no catalogue match produces a legibly-labelled placeholder
-room; typing a setting matching a bundled or Sketcher-exported set piece resolves to the real
-geometry with no placeholder marker.
+Delivered: `compileSceneBlock()` now resolves the heading's `setting` against the merged
+catalogue (`SetPieceEntry` first, then `EnvironmentEntry`) via case-insensitive label match — the
+compiler no longer calls `buildStageFloor()` unconditionally (that hardcoded stage-and-wings
+builder is removed). A `SetPieceEntry` match stages the real geometry (user-authored OPFS set
+pieces are persisted as `opfs://<id>` gltfPath references resolved by `storedSceneToModel`); an
+`EnvironmentEntry` match sets `StoredScene.environmentMap`; no match synthesises a placeholder
+room — a single floor plane (`placeholder-room`, 6×6, slate blue, visually distinct from the old
+stage-and-wings) with an `info`-level diagnostic. The typed setting name is threaded through
+`StoredScene.placeholderSetting` → `Scene` → `Model.placeholderSetting` (mirroring CAT-1's
+`placeholderActors`), and `Presenter.svelte` draws it as a `CanvasTexture` on the floor plane
+itself (`⚠ NAME`) rather than a floating billboard. 6 new tests in `fountainCompiler.test.ts`
+plus 2 in `storedSceneToModel.test.ts`.
+
+Exit criteria met: typing a setting with no catalogue match produces a placeholder room with the
+setting name legibly written on the floor; typing a setting matching a bundled or
+Sketcher-exported set piece resolves to the real geometry with no placeholder marker.
 
 ### CAT-3 — Surface the catalogue and cross-tool navigation in the script view
 
@@ -300,54 +303,65 @@ Copy that.
   sigils removing type ambiguity, CAT placeholders removing the need to stop and resolve — is
   what makes uninterrupted forward typing safe. See "Interleaving with Track CAT" below.
 
-### SCR-0 — Caret-position autocomplete primitive (spike)
+### SCR-0 — Caret-position autocomplete primitive (spike) ✅ COMPLETE (superseded by SCR-2)
 
-The single highest-uncertainty, highest-reuse piece; every sigil depends on it. Recommend a
-plain `<textarea>` (native cursor/selection/undo/IME handling) with a popup positioned via the
-standard "mirror div" technique — an offscreen div with identical font/padding, text copied up
-to the caret, a marker span read for pixel offset. Well-precedented (early CodeMirror,
-`textarea-caret-position`, various inline @mention implementations) — deliberately not
-contenteditable, which brings a long tail of cursor/selection/IME edge cases out of proportion
-to a single-developer POC.
+Delivered: `src/core/treatment/sigilAutocomplete.ts` (pure, DOM-free tokenizer:
+`findActiveSigilToken`, `applySigilCompletion`, `filterCastOptions`, 15 tests) +
+`src/lib/script/SigilTextarea.svelte` (plain `<textarea>` with mirror-div caret-position
+popup, wired behind a "@ sigil spike" toggle in `+page.svelte`, not yet connected to
+compile). Validated the `@` actor-completion feel end-to-end before generalising to `>`/`#`
+in SCR-2, which replaced the toggle-gated spike with the primary authoring surface.
 
-- Spike one sigil (`@` actor completion) end-to-end before generalising to `>` and `#`.
-- Tab/Enter with the popup open splices the completion into the textarea's value at the cursor
-  via plain string manipulation — no DOM diffing.
 
-Exit criteria: typing `@AL` against cast `[ALPHA, BETA]` shows an inline popup positioned at the
-caret; Tab/Enter commits; Escape dismisses; feel is validated before building the full tokenizer.
 
-### SCR-1 — Tokenizer + lossless round-trip (core data layer)
+### SCR-1 — Tokenizer + lossless round-trip (core data layer) ✅ COMPLETE
 
-- `tokenizeScript(text): { doc: ScriptDocument, diagnostics }` and `renderScript(doc): string` —
-  the sigil-editor's own render/parse pair, replacing the boxed editor's data flow. Distinct from
-  `renderFountain()`, which is repurposed as a clean-output renderer (see SCR-5).
-- Golden round-trip tests: `tokenizeScript(renderScript(doc)) === doc` and
-  `renderScript(tokenizeScript(text)) === text`, mirroring the discipline already proven for
-  `renderFountain`/`compileScriptDocument`.
-- Both treatment fixtures (`TREATMENT_DIALOGUE_DRIVEN.md`, `TREATMENT_ACTION_DRIVEN.md`)
-  expressed as sigil text, tokenizing losslessly.
+Delivered: `src/core/treatment/sigilScript.ts` — `tokenizeScript(text)` and `renderScript(doc)`,
+the sigil editor's text ↔ `ScriptDocument` mapping, fully independent of the boxed editor's
+`renderFountain()`/`compileScriptDocument()` (both untouched). 28 tests in
+`sigilScript.test.ts`, including golden round-trip tests in both directions
+(`tokenizeScript(renderScript(doc)) === doc` structurally, and
+`renderScript(tokenizeScript(text)) === text` for canonical text) against scene structures
+mirroring both treatment fixtures (dialogue-driven and action-driven styles). Diagnostics are
+emitted (not thrown) for unscoped lines, action beats before any scene heading, and unknown
+verbs — consistent with the "never blocks" principle Track CAT depends on.
 
-Exit criteria: round-trip tests green for both fixtures; `ScriptDocument`/`Beat`/`compileScriptDocument`
-types and logic are completely unchanged — only a new text ↔ data mapping is added.
 
-### SCR-2 — Textarea editing surface with inline autocomplete
+### SCR-2 — Textarea editing surface with inline autocomplete ✅ COMPLETE
 
-- Single `<textarea>` replaces the boxed beat-row editor as the primary authoring surface.
-- On input, tokenize only the current line (cheap) to determine the open sigil scope and
-  position the SCR-0 popup.
-- `@` scopes to cast names. A typed name with no cast match still commits as plain text — no
-  block, no interrupt — and becomes a Track CAT placeholder at compile time (requires CAT-1
-  landed first; see interleaving below).
-- `>` scopes to verb after the actor resolves, then the verb's conditional arg (side/mark/seconds).
-- `#` scopes scene-heading tokens (INT/EXT, setting, time-of-day); an unmatched setting becomes a
-  Track CAT placeholder scene (requires CAT-2).
-- Debounced tokenize-whole-buffer → `ScriptDocument` → `compileScriptDocument()`, same 500ms
-  pattern as today's `scheduleCompile`.
+Delivered: `sigilAutocomplete.ts` generalised from the SCR-0 `@`-only spike to all three sigils —
+`findActiveSigilToken()` now returns `tokenIndex`/`priorTokens` so a multi-field line
+(`>ALPHA enters left`) knows which field the caret is in, and `sigilFieldOptions(sigil,
+tokenIndex, priorTokens, cast)` resolves the closed set for that field (cast names for `@`/`>`
+token 0, verbs for `>` token 1, side/mark/open for `>` token 2 depending on the verb already
+typed, INT/EXT for `#` token 0, open free text for setting/time-of-day/dialogue/hold-seconds).
+`VERB_ALIASES`/`SIDE_WORDS`/`MARK_WORDS` moved to exports on `sigilScript.ts` so both modules
+share one closed-set source of truth. 31 tests in `sigilAutocomplete.test.ts` (up from 15),
+covering multi-field token detection and every `sigilFieldOptions` branch.
 
-Exit criteria: a full scene (heading, two actors entering, a dialogue exchange, an action beat)
-is authored keyboard-only in the textarea, autocomplete guiding every sigil-scoped token, and
-compiles correctly with no mouse interaction.
+`SigilTextarea.svelte` is now the primary authoring surface in `+page.svelte`, replacing the
+boxed Combobox beat editor outright (the SCR-0 "spike" toggle is gone — this is no longer
+experimental). It owns its own popup lifecycle: refreshes the active token and closed-set
+options on every input/click/keyup, positions the popup via the existing mirror-div technique,
+and commits a selection with a trailing space when the sigil grammar expects another field to
+follow on the same line (e.g. after an actor name on a `>` line) versus no trailing space on a
+line's final field (dialogue speaker cue, an action beat's last arg) — Enter naturally starts the
+next line there. `+page.svelte` wires the buffer through `tokenizeScript()` → `ScriptDocument` on
+every change, debounced into the existing 500ms `scheduleCompile()` → `compileScriptDocument()`
+path, unchanged. The sigil buffer text itself is persisted as `NamedScene.dslSource` so
+re-opening a production restores the authored text verbatim, not a re-render of compiled data.
+The boxed per-field editor (`Combobox`-driven beat rows, heading fields, cast add/rename UI) and
+the now-redundant SCR-0 toggle were removed from `+page.svelte`; `ScriptEditor.svelte` (the
+separate dialogue-line-list editor) and `Combobox.svelte` are unused by the script view as of
+this change and are left in place as-is pending a follow-up cleanup pass, since nothing else in
+the roadmap currently depends on deleting them.
+
+Exit criteria met: a full scene (heading, two actors entering, a dialogue exchange, an action
+beat) is authorable keyboard-only in the textarea, autocomplete guiding every sigil-scoped token
+via Tab/Enter/arrow-keys, Escape dismissing without committing, and the result compiles via the
+unchanged `compileScriptDocument()` path with no mouse interaction required. 599 tests green,
+`svelte-check` clean.
+
 
 ### SCR-3 — Multi-scene authoring via `#` breaks
 
@@ -404,21 +418,27 @@ disambiguation dialog, defeating the point. Build order:
 
 ## Current Focus
 
-**Next up: SCR-0** — caret-position autocomplete spike (`@` actor completion in a plain
-textarea). Then proceed through the interleave order above.
+**SCR-2 and CAT-2 landed.** ⏸ **Paused here for review/testing before continuing to SCR-3**, per
+the plan below.
 
 | Step | What | Check |
 |------|------|-------|
-| 1 | SCR-0: caret-autocomplete spike (`@` actor completion in a plain textarea) | Popup follows caret; Tab/Enter commits; Escape dismisses |
-| 2 | CAT-0: bundle generic-human as a real catalogue `CharacterEntry` | "Generic Human" selectable like "Robot" |
-| 3 | SCR-1: tokenizer + `renderScript()`, lossless round-trip tests on both treatment fixtures | Round-trip tests green |
-| 4 | CAT-1: cast resolution + placeholder lozenge sprite + diagnostic | Two cast members, one resolved one placeholder, visually distinct |
-| 5 | SCR-2: textarea replaces boxed editor; `@`/`>` sigils live, `@` accepts unmatched names safely | Full scene authored keyboard-only, no dropdowns |
-| 6 | CAT-2: setting resolution + placeholder room | Unmatched setting → labelled placeholder room |
+| 1 ✅ | SCR-0: caret-autocomplete spike (`@` actor completion in a plain textarea) | Popup follows caret; Tab/Enter commits; Escape dismisses |
+| 2 ✅ | CAT-0: bundle generic-human as a real catalogue `CharacterEntry` | "Generic Human" selectable like "Robot" |
+| 3 ✅ | SCR-1: tokenizer + `renderScript()`, lossless round-trip tests on both treatment fixtures | Round-trip tests green |
+| 4 ✅ | CAT-1: cast resolution + placeholder lozenge sprite + diagnostic | Two cast members, one resolved one placeholder, visually distinct |
+| 5 ✅ | SCR-2: textarea replaces boxed editor; `@`/`>`/`#` sigils live, unmatched names/verbs/settings commit safely | Full scene authored keyboard-only, no dropdowns |
+| 6 ✅ | CAT-2: setting resolution + placeholder room | Unmatched setting → labelled placeholder room |
+| — | **⏸ Pause here for review/testing before continuing** | |
 | 7 | SCR-3: `#` sigil scene breaks — multi-scene falls out | Both fixtures as one buffer compile to N-scene productions |
 | 8 | CAT-3: catalogue panel + cross-tool nav links | Browse catalogue and reach `/character`/`/sketch` from the script view |
 | 9 | CAT-4: "Create real asset" bridge from a placeholder diagnostic | Placeholder → authored asset round-trip with zero script edits |
 | 10 | SCR-4 / SCR-5 / CAT-5: navigation minimap, sigil visibility toggle, bundled archetypes | Polish, any order |
+
+
+
+
+
 
 ---
 

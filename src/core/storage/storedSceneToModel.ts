@@ -86,15 +86,18 @@ export function storedSceneToModel(
       voice:          sa.voice ?? defaultVoice(i),
       defaultRotation: resolvedDefaultRotation,
       tint:           sa.tint,
+      placeholder:    sa.placeholder,
     };
+
   });
 
   // Re-hydrate StoreScene into a domain Scene so we can reuse the existing
   // SceneBridge pipeline without duplicating its logic.
   const scene = new Scene('production', {
-    duration:        storedScene.duration ?? 10,
-    backgroundColor: storedScene.backgroundColor,
-    environmentMap:  storedScene.environmentMap,
+    duration:           storedScene.duration ?? 10,
+    backgroundColor:    storedScene.backgroundColor,
+    environmentMap:     storedScene.environmentMap,
+    placeholderSetting: storedScene.placeholderSetting,
   });
 
   scene.setCamera(storedScene.camera);

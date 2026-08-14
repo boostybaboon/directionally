@@ -273,5 +273,14 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
     }
   }
 
-  return new Model(camera, meshes, gltfs, actions, lights, scene.backgroundColor, speechEntries, scene.duration, scene.environmentMap);
+  const placeholderActors = actors
+    .filter((a) => a.placeholder)
+    .map((a) => ({ actorId: a.id, label: a.name }));
+
+  const placeholderSetting = scene.placeholderSetting
+    ? { label: scene.placeholderSetting }
+    : undefined;
+
+  return new Model(camera, meshes, gltfs, actions, lights, scene.backgroundColor, speechEntries, scene.duration, scene.environmentMap, placeholderActors, placeholderSetting);
 }
+

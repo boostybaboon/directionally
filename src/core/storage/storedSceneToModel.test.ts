@@ -251,3 +251,20 @@ describe('storedSceneToModel – actions', () => {
     expect(model.speechEntries[1].text).toBe('Line two.');
   });
 });
+
+// ── Placeholder setting (Track CAT, CAT-2) ────────────────────────────────────
+
+describe('storedSceneToModel – placeholder setting', () => {
+  it('threads placeholderSetting through to the model', () => {
+    const scene = baseScene({ placeholderSetting: 'CLASSROOM' });
+    const model = storedSceneToModel(scene, []);
+
+    expect(model.placeholderSetting).toEqual({ label: 'CLASSROOM' });
+  });
+
+  it('leaves placeholderSetting undefined when not set', () => {
+    const model = storedSceneToModel(baseScene(), []);
+
+    expect(model.placeholderSetting).toBeUndefined();
+  });
+});
