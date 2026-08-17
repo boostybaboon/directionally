@@ -14,6 +14,10 @@ export type Diagnostic = {
   line: number;
   level: 'error' | 'warning' | 'info';
   message: string;
+  /** Structured hint for actionable diagnostics (Track CAT, CAT-4 "Create →"). */
+  kind?: 'unresolved-cast' | 'unresolved-setting';
+  /** The typed name this diagnostic refers to. */
+  name?: string;
 };
 
 export type ActionVerb = 'enter' | 'exit' | 'move' | 'hold';

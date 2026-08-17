@@ -341,5 +341,40 @@ describe('compileScriptDocument', () => {
     expect(result.scenes[1].scene.set[0].name).toBe('placeholder-room');
     expect(result.scenes[1].scene.placeholderSetting).toBe('PARK');
   });
+
+  it('a cast binding overrides label-match resolution (CAT-3)', () => {
+    const doc = buildDoc([scene('INT. STAGE - DAY', [say('BOB', 'Hi.')])], ['BOB']);
+    const result = compileScriptDocument(doc, [], { cast: { BOB: 'robot-expressive' } });
+
+    expect(result.actors[0].catalogueId).toBe('robot-expressive');
+    expect(result.actors[0].placeholder).toBeUndefined();
+    expect(result.diagnostics.some((d) => d.kind === 'unresolved-cast')).toBe(false);
+  });
+
+  it('a setting binding overrides label-match resolution (CAT-3)', () => {
+    const doc = buildDoc([sceneWithSetting('CLASSROOM', [say('Robot', 'Hi.')])], ['Robot']);
+    const result = compileScriptDocument(doc, [], { setting: { CLASSROOM: 'stage-deck' } });
+
+    expect(result.scenes[0].scene.set[0].name).toBe('stage-deck');
+    expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
+  });
+
+  it('diagnostics carry structured kind + name for unresolved cast names (CAT-4)', () => {
+    const doc = buildDoc([scene('INT. STAGE - DAY', [say('BOB', 'Hi.')])], ['BOB']);
+    const result = compileScriptDocument(doc);
+
+    const castDiag = result.diagnostics.find((d) => d.kind === 'unresolved-cast');
+    expect(castDiag).toBeDefined();
+    expect(castDiag?.name).toBe('BOB');
+  });
+
+  it('diagnostics carry structured kind + name for unresolved settings (CAT-4)', () => {
+    const doc = buildDoc([sceneWithSetting('CLASSROOM', [say('Robot', 'Hi.')])], ['Robot']);
+    const result = compileScriptDocument(doc);
+
+    const settingDiag = result.diagnostics.find((d) => d.kind === 'unresolved-setting');
+    expect(settingDiag).toBeDefined();
+    expect(settingDiag?.name).toBe('CLASSROOM');
+  });
 });
 

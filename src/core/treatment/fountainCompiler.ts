@@ -69,9 +69,18 @@ type SettingResolution =
 function resolveSetting(
   setting: string | undefined,
   userEntries: CatalogueEntry[],
+  settingBindings?: Record<string, string>,
 ): SettingResolution {
   const label = (setting ?? '').trim();
   if (!label) return { kind: 'placeholder' };
+
+  const bound = settingBindings?.[label.toUpperCase()];
+  if (bound) {
+    const entry = [...CATALOGUE_ENTRIES, ...userEntries].find((e) => e.id === bound);
+    if (entry?.kind === 'set-piece') return { kind: 'set-piece', entry };
+    if (entry?.kind === 'environment') return { kind: 'environment', entry };
+  }
+
   const normalised = label.toLowerCase();
   const merged = [...CATALOGUE_ENTRIES, ...userEntries];
   const setPiece = getSetPieces(merged).find((e) => e.label.trim().toLowerCase() === normalised);
@@ -124,16 +133,35 @@ export type FountainCompileResult = {
 };
 
 /**
+ * Explicit asset bindings (Track CAT, CAT-3) keyed by role name (`cast`) and
+ * setting name (`setting`), both uppercase. Applied ahead of label-match
+ * resolution so a deliberate catalogue choice outranks a name that happens to
+ * match a bundled label.
+ */
+export type ResolveBindings = {
+  cast?: Record<string, string>;
+  setting?: Record<string, string>;
+};
+
+/**
  * Resolves a typed cast name against the merged catalogue (bundled + user-authored
- * OPFS entries). Case-insensitive label match — explicit catalogueId binding
- * (once CAT-3 lands a UI to set one) will take priority ahead of this fallback.
- * Returns the placeholder id when nothing matches; never throws, never blocks —
- * this is what keeps sigil typing (Track SCR) safe to accept any name.
+ * OPFS entries). An explicit catalogueId binding (Track CAT, CAT-3) takes priority
+ * ahead of case-insensitive label match. Returns the placeholder id when nothing
+ * matches; never throws, never blocks — this is what keeps sigil typing (Track SCR)
+ * safe to accept any name.
  */
 function resolveCastName(
   name: string,
   userEntries: CatalogueEntry[],
+  castBindings?: Record<string, string>,
 ): { catalogueId: string; placeholder?: boolean } {
+  const bound = castBindings?.[name.toUpperCase()];
+  if (bound) {
+    const allCharacters = getCharacters([...CATALOGUE_ENTRIES, ...userEntries]);
+    if (allCharacters.some((c) => c.id === bound)) {
+      return { catalogueId: bound };
+    }
+  }
   const allCharacters = getCharacters([...CATALOGUE_ENTRIES, ...userEntries]);
   const normalised = name.trim().toLowerCase();
   const match = allCharacters.find((c) => c.label.trim().toLowerCase() === normalised);
@@ -157,6 +185,7 @@ function resolveWalkClip(actor: StoredActor, userEntries: CatalogueEntry[]): str
 export function compileScriptDocument(
   doc: ScriptDocument,
   userEntries: CatalogueEntry[] = [],
+  bindings: ResolveBindings = {},
 ): FountainCompileResult {
   const diagnostics: Diagnostic[] = [...doc.diagnostics];
 
@@ -164,12 +193,14 @@ export function compileScriptDocument(
   // against the merged catalogue. Unresolved names fall back to the generic-human
   // placeholder body with an info diagnostic — never a silent wrong-asset swap.
   const actors: StoredActor[] = doc.cast.map((name) => {
-    const { catalogueId, placeholder } = resolveCastName(name, userEntries);
+    const { catalogueId, placeholder } = resolveCastName(name, userEntries, bindings.cast);
     if (placeholder) {
       diagnostics.push({
         line: 0,
         level: 'info',
         message: `${name} has no catalogue match — using the generic placeholder.`,
+        kind: 'unresolved-cast',
+        name,
       });
     }
     return {
@@ -183,7 +214,7 @@ export function compileScriptDocument(
   const actorIdByName = new Map(actors.map((a) => [a.role, a.id]));
 
   const scenes: NamedScene[] = doc.scenes.map((sceneBlock, i) =>
-    compileSceneBlock(sceneBlock, actors, actorIdByName, i, userEntries),
+    compileSceneBlock(sceneBlock, actors, actorIdByName, i, userEntries, bindings),
   );
 
   // Track CAT, CAT-2: report each unresolved setting once per scene.
@@ -193,6 +224,8 @@ export function compileScriptDocument(
         line: 0,
         level: 'info',
         message: `${ns.scene.placeholderSetting} has no catalogue match — using a placeholder room.`,
+        kind: 'unresolved-setting',
+        name: ns.scene.placeholderSetting,
       });
     }
   }
@@ -212,6 +245,7 @@ function compileSceneBlock(
   actorIdByName: Map<string, string>,
   sceneIdx: number,
   userEntries: CatalogueEntry[],
+  bindings: ResolveBindings,
 ): NamedScene {
   // Gather actors referenced in this scene
   const inScene = new Map<string, StageSide>();
@@ -353,7 +387,7 @@ function compileSceneBlock(
   const scene = starterSceneShell();
 
   // Track CAT, CAT-2: resolve the heading's setting against the merged catalogue.
-  const setting = resolveSetting(block.setting, userEntries);
+  const setting = resolveSetting(block.setting, userEntries, bindings.setting);
   if (setting.kind === 'set-piece') {
     scene.set = [setPieceFromEntry(setting.entry)];
   } else if (setting.kind === 'environment') {

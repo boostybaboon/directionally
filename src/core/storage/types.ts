@@ -157,4 +157,11 @@ export type StoredProduction = {
    * not a single scene's fragment.
    */
   scriptSource?: string;
+  /**
+   * Explicit asset bindings set via the catalogue panel (Track CAT, CAT-3).
+   * Keyed by role name (cast) / setting name (setting) — both uppercase — and
+   * applied ahead of label-match resolution during compile.
+   */
+  castBindings?: Record<string, string>;
+  settingBindings?: Record<string, string>;
 };

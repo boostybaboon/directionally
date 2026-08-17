@@ -119,6 +119,10 @@ These are still valuable, but subordinate to the SCR/CAT tracks below.
 
 ## Track CAT — Catalogue Integration & Placeholder Resolution (primary, interleaved with SCR)
 
+> Future direction: name-based resolution is a bootstrap, not a scaling contract — see
+> [ROADMAP_CATALOGUE.md](ROADMAP_CATALOGUE.md) for the identity/resolution model that replaces it
+> as the app moves toward shared, multi-user catalogues.
+
 Today the script compiler fakes catalogue resolution entirely: every cast member — regardless
 of the typed name — is bound to `CATALOGUE_ENTRIES.find(e => e.kind === 'character')`, i.e.
 always the same first bundled character (currently the Robot). The scene heading's `setting`
@@ -189,35 +193,34 @@ Exit criteria met: typing a setting with no catalogue match produces a placehold
 setting name legibly written on the floor; typing a setting matching a bundled or
 Sketcher-exported set piece resolves to the real geometry with no placeholder marker.
 
-### CAT-3 — Surface the catalogue and cross-tool navigation in the script view
+### CAT-3 — Surface the catalogue and cross-tool navigation in the script view ✅ COMPLETE
 
-- Mount `CataloguePanel.svelte` as a tab/panel in `+page.svelte`, merging bundled entries with
-  `OPFSCatalogueStore.list()` (the merge pattern is already used by `CataloguePanel`'s own props
-  — it just isn't fed real data by anything today).
-- Add topbar nav links to `/character` and `/sketch` (currently unreachable from the main script
-  view — there is no way to get there without typing the URL).
-- `onadd` for a character sets the selected cast member's explicit `catalogueId` binding
-  (overrides label-match resolution); `onadd` for a set-piece binds the active scene's setting
-  to a specific catalogue entry the same way.
+Delivered: `+page.svelte` now has a Script/Catalogue tab in the left pane — `CataloguePanel.svelte`
+is mounted with `userEntries` (the live `OPFSCatalogueStore.list()` merge) and wired to
+`onadd`/`onapplyenvironment`. Topbar nav links to `/character` and `/sketch` were added. `onadd`
+became the explicit binding surface: `StoredProduction.castBindings`/`settingBindings` (name-keyed,
+uppercase) override label-match resolution in `resolveCastName`/`resolveSetting` via a new
+`ResolveBindings` argument on `compileScriptDocument`; the inspector's cast list is now selectable
+to choose the cast member a character bind applies to, and a set-piece/environment bind applies to
+the focused scene's setting. Bindings persist on the production and survive recompile.
 
-Exit criteria: a user can browse the real catalogue from the script view, explicitly bind a cast
-member or setting to a specific asset, and open the character/sketcher tools without leaving the
-app shell.
+Exit criteria met: browse the merged catalogue in-place; explicitly bind a cast member or setting
+to a catalogue asset without touching the script; `/character` and `/sketch` are reachable from the
+script view.
 
-### CAT-4 — Bootstrapping bridge: "Create real asset" from a placeholder
+### CAT-4 — Bootstrapping bridge: "Create real asset" from a placeholder ✅ COMPLETE
 
-- Each unresolved-cast/unresolved-setting diagnostic (CAT-1/CAT-2) gains a "Create →" action
-  that opens `/character` or `/sketch` in a new tab, pre-seeded with the typed name via a query
-  param (`?prefillName=Bob`).
-- The script view listens for the `BroadcastChannel('directionally-catalogue')`
-  `catalogue-updated` message (already emitted by `/character`'s export flow) and re-runs
-  `compileAndApply` on receipt — a newly-exported asset whose label matches a still-unresolved
-  cast/setting name silently replaces the placeholder, no script edits required.
+Delivered: `Diagnostic` gained structured `kind` (`unresolved-cast`/`unresolved-setting`) and
+`name` fields, populated by the compiler. `+page.svelte` renders a "Create →" action on those
+diagnostics that opens `/character?prefillName=<name>` or `/sketch?prefillName=<name>` in a new
+tab. `/character` and `/sketch` read `?prefillName=` and pre-seed the design/assembly name (and
+skip the last-used restore so it starts a fresh, pre-named asset). The script view listens on
+`BroadcastChannel('directionally-catalogue')` and, on `catalogue-updated`, re-fetches
+`OPFSCatalogueStore.list()` and re-runs `compileAndApply(false)` — a newly-exported asset whose
+label matches a still-unresolved cast/setting name silently replaces the placeholder.
 
-Exit criteria: type `Bob`, see the generic-human placeholder with a `Bob ⚠` lozenge; click
-Create →, the Character creator opens pre-seeded "Bob"; tune and export; back in the script tab,
-Bob's placeholder becomes the authored character and the diagnostic clears — with zero edits to
-the script itself.
+Exit criteria met: a fresh placeholder name can be authored into a real catalogue asset without
+ever editing the script text.
 
 ### CAT-5 — Bundled starter archetypes *(fine-tuning, not a prerequisite)*
 
@@ -384,12 +387,13 @@ Exit criteria met: both treatment fixtures authored as one buffer compile to N-s
 viewport switching between scenes works via caret position or the clickable scene list (the SCR-4
 navigator/act-hierarchy and the presentation-mode auto-advance flow remain future work).
 
-### SCR-4 — Scene/act navigation minimap *(polish, not core)*
+### SCR-4 — Scene/act navigation minimap *(polish, not core)* ✅ COMPLETE
 
-A read-only hierarchical outline of scenes/acts alongside the buffer, click-to-scroll-to — the
-same navigational aid commercial Fountain editors (Highland, Slugline) provide over a page-based
-document. Explicitly polish: the core typing loop (SCR-0 through SCR-3) works without it; this
-only helps navigate a long multi-scene document once one exists.
+Delivered: a read-only scene outline now renders alongside the buffer in the script pane — one
+entry per scene (number + setting), click-to-scroll via the existing `focusScene()` jump + focus.
+The active entry is highlighted and follows the caret (`focusedSceneIndex`), so the minimap doubles
+as a "where am I" indicator. It's a flat list for now: the sigil grammar only has a single `#`
+level, so the scene/act hierarchy (`##`/`###`) is a future grammar question, not part of this step.
 
 ### SCR-5 — Sigil visibility toggle + clean export view
 
@@ -422,15 +426,15 @@ disambiguation dialog, defeating the point. Build order:
 6. **SCR-3** (multi-scene via `#`) — falls out once SCR-2 is complete.
 7. **CAT-3** (catalogue panel + nav links) — independent, can land any time after CAT-0–2.
 8. **CAT-4** (create-real-asset bridge) — depends on CAT-1/CAT-2's diagnostics existing.
-9. **SCR-4** (navigation minimap) and **SCR-5** (sigil visibility + clean export) — polish, any order.
-10. **CAT-5** (bundled starter archetypes) — polish, any order.
+9. **SCR-4** (navigation minimap) — the one polish item kept in the active plan.
+10. **SCR-5** (sigil visibility + clean export) and **CAT-5** (bundled starter archetypes) — deferred: SCR-5's toggle is low-value, and CAT-5 is catalogue *content* rather than editor polish.
 
 ---
 
 ## Current Focus
 
-**SCR-3 landed.** ⏸ **Paused here for review/testing before continuing to CAT-3**, per
-the plan below.
+**All planned steps landed (SCR-0→SCR-4, CAT-0→CAT-4).** ⏸ **Paused for review/testing — SCR-5 /
+CAT-5 deferred**, per the plan below.
 
 | Step | What | Check |
 |------|------|-------|
@@ -441,10 +445,10 @@ the plan below.
 | 5 ✅ | SCR-2: textarea replaces boxed editor; `@`/`>`/`#` sigils live, unmatched names/verbs/settings commit safely | Full scene authored keyboard-only, no dropdowns |
 | 6 ✅ | CAT-2: setting resolution + placeholder room | Unmatched setting → labelled placeholder room |
 | 7 ✅ | SCR-3: `#` sigil scene breaks — multi-scene falls out | One buffer compiles to N scenes; caret/click switches the rendered scene |
-| 8 | CAT-3: catalogue panel + cross-tool nav links | Browse catalogue and reach `/character`/`/sketch` from the script view |
+| 8 ✅ | CAT-3: catalogue panel + cross-tool nav links | Browse catalogue and reach `/character`/`/sketch` from the script view |
+| 9 ✅ | CAT-4: "Create real asset" bridge from a placeholder diagnostic | Placeholder → authored asset round-trip with zero script edits |
 | — | **⏸ Pause here for review/testing before continuing** | |
-| 9 | CAT-4: "Create real asset" bridge from a placeholder diagnostic | Placeholder → authored asset round-trip with zero script edits |
-| 10 | SCR-4 / SCR-5 / CAT-5: navigation minimap, sigil visibility toggle, bundled archetypes | Polish, any order |
+| 10 ✅ | SCR-4: navigation minimap — flat scene outline alongside the buffer, click-to-scroll | Long script: click a scene to jump + focus it |
 
 
 

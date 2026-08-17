@@ -3,6 +3,7 @@
   import Presenter from '$lib/Presenter.svelte';
   import TransportBar from '$lib/TransportBar.svelte';
   import TimelinePanel from '$lib/TimelinePanel.svelte';
+  import CataloguePanel from '$lib/CataloguePanel.svelte';
   import type { VoiceBackend } from '$lib/types.js';
   import { storedSceneToModel } from '../core/storage/storedSceneToModel.js';
   import { starterSceneShell } from '../core/storage/sceneBuilder.js';
@@ -47,6 +48,11 @@
   let sceneStartLines = $state<number[]>([]);
   let caretLine = $state(1);
   let sigilEditor: SigilTextarea | undefined = $state();
+  // Track CAT, CAT-3: explicit asset bindings keyed by (uppercase) role/setting name.
+  let castBindings = $state<Record<string, string>>({});
+  let settingBindings = $state<Record<string, string>>({});
+  let selectedCastName = $state<string | null>(null);
+  let leftTab = $state<'script' | 'catalogue'>('script');
   let fountainSource = $derived(renderFountain(scriptDoc));
   let diagnostics = $state<Diagnostic[]>([]);
   let statusMessage = $state('');
@@ -88,6 +94,15 @@
     await ProductionStore.init();
     productions = ProductionStore.list();
     userCatalogueEntries = await OPFSCatalogueStore.list();
+
+    // Track CAT, CAT-4: re-fetch entries + recompile when /character or /sketch
+    // exports a new asset, so placeholders auto-resolve with zero script edits.
+    const catalogueChannel = new BroadcastChannel('directionally-catalogue');
+    catalogueChannel.onmessage = async () => {
+      userCatalogueEntries = await OPFSCatalogueStore.list();
+      compileAndApply(false);
+    };
+
     if (productions.length > 0) {
       openProduction(productions[0]);
     } else {
@@ -111,6 +126,9 @@
     const source = prod.scriptSource ?? ns?.dslSource ?? DEFAULT_SIGIL_TEMPLATE;
     caretLine = 1;
     loadSigilText(source);
+    castBindings = prod.castBindings ?? {};
+    settingBindings = prod.settingBindings ?? {};
+    selectedCastName = null;
     diagnostics = [];
     statusMessage = '';
     showProductionPicker = false;
@@ -124,6 +142,9 @@
     productionNameInput = created.name;
     loadSigilText(DEFAULT_SIGIL_TEMPLATE);
     caretLine = 1;
+    castBindings = {};
+    settingBindings = {};
+    selectedCastName = null;
     diagnostics = [];
     statusMessage = '';
     showProductionPicker = false;
@@ -138,6 +159,9 @@
     productionNameInput = created.name;
     loadSigilText(renderScript(DEFAULT_DOC));
     caretLine = 1;
+    castBindings = {};
+    settingBindings = {};
+    selectedCastName = null;
     diagnostics = [];
     statusMessage = '';
     showProductionPicker = false;
@@ -149,7 +173,7 @@
     if (!currentProduction) return;
 
     // Compile current ScriptDocument → NamedScene[]
-    const compiled = compileScriptDocument(scriptDoc, userCatalogueEntries);
+    const compiled = compileScriptDocument(scriptDoc, userCatalogueEntries, { cast: castBindings, setting: settingBindings });
 
     diagnostics = compiled.diagnostics;
 
@@ -166,6 +190,8 @@
       actors: compiled.actors,
       tree: compiled.scenes,
       scriptSource: sigilText,
+      castBindings,
+      settingBindings,
       activeSceneId: focusedId,
       modifiedAt: Date.now(),
     };
@@ -210,6 +236,57 @@
     caretLine = line;
     sigilEditor?.focusLine(line);
     renderFocusedScene({ seek: false, force: true });
+  }
+
+  // Track CAT, CAT-3: bind the selected cast member / focused setting to a
+  // catalogue entry so it overrides label-match resolution on the next compile.
+  function handleCatalogueAdd(kind: 'character' | 'setpiece' | 'light', id: string) {
+    if (kind === 'light') return;
+    if (!currentProduction) return;
+    if (kind === 'character') {
+      const role = selectedCastName;
+      if (!role) {
+        statusMessage = 'Select a cast member in the inspector first.';
+        return;
+      }
+      castBindings = { ...castBindings, [role.toUpperCase()]: id };
+    } else {
+      const settingName = scriptDoc.scenes[focusedSceneIndex]?.setting;
+      if (!settingName) {
+        statusMessage = 'The focused scene has no setting to bind.';
+        return;
+      }
+      settingBindings = { ...settingBindings, [settingName.toUpperCase()]: id };
+    }
+    scheduleCompile();
+  }
+
+  function handleApplyEnvironment(environmentId: string | undefined) {
+    if (!currentProduction) return;
+    const settingName = scriptDoc.scenes[focusedSceneIndex]?.setting;
+    if (!settingName) {
+      statusMessage = 'The focused scene has no setting to bind.';
+      return;
+    }
+    const key = settingName.toUpperCase();
+    if (environmentId) {
+      settingBindings = { ...settingBindings, [key]: environmentId };
+    } else {
+      const next = { ...settingBindings };
+      delete next[key];
+      settingBindings = next;
+    }
+    scheduleCompile();
+  }
+
+  // Track CAT, CAT-4: open the matching authoring tool pre-seeded with the name.
+  function handleCreateAsset(d: Diagnostic) {
+    if (!d.name) return;
+    if (d.kind === 'unresolved-cast') {
+      window.open(`/character?prefillName=${encodeURIComponent(d.name)}`, '_blank');
+    } else if (d.kind === 'unresolved-setting') {
+      window.open(`/sketch?prefillName=${encodeURIComponent(d.name)}`, '_blank');
+    }
   }
 
   function scheduleCompile() {
@@ -288,6 +365,8 @@
     {#if statusMessage}
       <span class="status-msg">{statusMessage}</span>
     {/if}
+    <a class="nav-link" href="/character" target="_blank" rel="noopener">Character</a>
+    <a class="nav-link" href="/sketch" target="_blank" rel="noopener">Sketcher</a>
     <button
       class="debug-toggle"
       class:active={showDebugPanels}
@@ -298,31 +377,65 @@
 
   <div class="workspace">
     <div class="script-pane">
-      <div class="sigil-editor-wrap">
-        <SigilTextarea
-          bind:this={sigilEditor}
-          value={sigilText}
-          cast={scriptDoc.cast}
-          placeholder={'Type a scene using #scene, >action, @actor sigils…'}
-          onchange={handleSigilChange}
-          oncaret={handleCaretMove}
-        />
+      <div class="script-tabs">
+        <button class:active={leftTab === 'script'} onclick={() => (leftTab = 'script')}>Script</button>
+        <button class:active={leftTab === 'catalogue'} onclick={() => (leftTab = 'catalogue')}>Catalogue</button>
       </div>
 
-      <!-- Read-only Fountain preview -->
-      <details class="fountain-preview">
-        <summary>Fountain render</summary>
-        <pre class="fountain-pre">{fountainSource}</pre>
-      </details>
+      {#if leftTab === 'script'}
+        <div class="script-editor-row">
+          <nav class="scene-minimap" aria-label="Scenes">
+            {#each scriptDoc.scenes as scene, si}
+              <button
+                class="minimap-scene"
+                class:active={si === focusedSceneIndex}
+                onclick={() => focusScene(si)}
+                title={scene.heading}
+              >
+                <span class="minimap-num">{si + 1}</span>
+                <span class="minimap-setting">{scene.setting ?? 'UNTITLED'}</span>
+              </button>
+            {/each}
+          </nav>
+          <div class="sigil-editor-wrap">
+            <SigilTextarea
+              bind:this={sigilEditor}
+              value={sigilText}
+              cast={scriptDoc.cast}
+              placeholder={'Type a scene using #scene, >action, @actor sigils…'}
+              onchange={handleSigilChange}
+              oncaret={handleCaretMove}
+            />
+          </div>
+        </div>
 
-      {#if diagnostics.length > 0}
-        <ul class="diagnostics">
-          {#each diagnostics as d}
-            <li class:err={d.level === 'error'} class:warn={d.level === 'warning'} class:info={d.level === 'info'}>
-              {d.line > 0 ? `L${d.line}: ` : ''}{d.message}
-            </li>
-          {/each}
-        </ul>
+        <!-- Read-only Fountain preview -->
+        <details class="fountain-preview">
+          <summary>Fountain render</summary>
+          <pre class="fountain-pre">{fountainSource}</pre>
+        </details>
+
+        {#if diagnostics.length > 0}
+          <ul class="diagnostics">
+            {#each diagnostics as d}
+              <li class:err={d.level === 'error'} class:warn={d.level === 'warning'} class:info={d.level === 'info'}>
+                {d.line > 0 ? `L${d.line}: ` : ''}{d.message}
+                {#if d.kind}
+                  <button class="create-asset-btn" onclick={() => handleCreateAsset(d)}>Create →</button>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      {:else}
+        <div class="catalogue-wrap">
+          <CataloguePanel
+            userEntries={userCatalogueEntries}
+            onadd={handleCatalogueAdd}
+            onapplyenvironment={handleApplyEnvironment}
+            activeEnvironmentId={compiledScene?.environmentMap}
+          />
+        </div>
       {/if}
     </div>
 
@@ -392,7 +505,12 @@
             <div class="inspector-section-label">Cast:</div>
             <div class="inspector-cast-names">
               {#each scriptDoc.cast as name}
-                <span class="inspector-cast-name">{name}</span>
+                <button
+                  class="inspector-cast-name"
+                  class:selected={name === selectedCastName}
+                  onclick={() => (selectedCastName = selectedCastName === name ? null : name)}
+                  title="Select to bind a catalogue character"
+                >{name}</button>
               {/each}
             </div>
           </div>
@@ -557,6 +675,21 @@
     margin-left: auto;
   }
 
+  .nav-link {
+    color: #8a9bb0;
+    text-decoration: none;
+    font-size: 12px;
+    padding: 4px 9px;
+    border: 1px solid #333;
+    border-radius: 5px;
+    margin-left: 6px;
+  }
+
+  .nav-link:hover {
+    color: #fff;
+    border-color: #555;
+  }
+
   .workspace {
     flex: 1;
     min-height: 0;
@@ -571,6 +704,88 @@
     border-right: 1px solid #2a2a2a;
     background: #141414;
     min-height: 0;
+  }
+
+  .script-tabs {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 4px;
+    padding: 6px 8px 0;
+  }
+
+  .script-tabs button {
+    background: none;
+    border: 1px solid #333;
+    border-radius: 5px 5px 0 0;
+    color: #777;
+    padding: 4px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .script-tabs button:hover { color: #ccc; }
+  .script-tabs button.active { color: #77bfff; background: #0a1a2a; border-color: #3a6fa0; }
+
+  .catalogue-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .script-editor-row {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+
+  .scene-minimap {
+    flex: 0 0 96px;
+    overflow-y: auto;
+    border-right: 1px solid #222;
+    padding: 6px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .minimap-scene {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    width: 100%;
+    background: none;
+    border: none;
+    border-radius: 3px;
+    color: #888;
+    text-align: left;
+    padding: 3px 6px;
+    cursor: pointer;
+    font-size: 11px;
+    font-family: inherit;
+  }
+
+  .minimap-scene:hover {
+    color: #ccc;
+    background: #1a1a1a;
+  }
+
+  .minimap-scene.active {
+    color: #77bfff;
+    background: #0a1a2a;
+  }
+
+  .minimap-num {
+    color: #555;
+    font-size: 9px;
+    flex-shrink: 0;
+  }
+
+  .minimap-scene.active .minimap-num { color: #77bfff; }
+
+  .minimap-setting {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .sigil-editor-wrap {
@@ -625,6 +840,23 @@
 
   .diagnostics .info {
     color: #77a9ff;
+  }
+
+  .create-asset-btn {
+    margin-left: 6px;
+    background: none;
+    border: 1px solid #3a6fa0;
+    border-radius: 3px;
+    color: #77bfff;
+    font-size: 10px;
+    padding: 1px 6px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .create-asset-btn:hover {
+    background: #0a1a2a;
+    color: #fff;
   }
 
   .viewport-pane {
@@ -777,6 +1009,23 @@
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+    background: none;
+    border: 1px solid #2a2a2a;
+    border-radius: 4px;
+    padding: 3px 8px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .inspector-cast-name:hover {
+    color: #fff;
+    border-color: #555;
+  }
+
+  .inspector-cast-name.selected {
+    color: #77bfff;
+    border-color: #3a6fa0;
+    background: #0a1a2a;
   }
 
   .transport {

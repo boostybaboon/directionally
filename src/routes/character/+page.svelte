@@ -261,9 +261,11 @@
       }
 
       // Restore last-used design (URL param ?id=<id> takes priority over localStorage).
+      // CAT-4: ?prefillName starts a fresh, pre-named design instead of restoring.
       savedDesigns = await CharacterDesignStore.list();
+      const prefill = new URLSearchParams(window.location.search).get('prefillName');
       const urlId = new URLSearchParams(window.location.search).get('id');
-      const lastId = urlId ?? localStorage.getItem('character-design-id');
+      const lastId = prefill ? null : (urlId ?? localStorage.getItem('character-design-id'));
       if (lastId) {
         const design = await CharacterDesignStore.get(lastId);
         const meta = savedDesigns.find((d) => d.id === lastId);
@@ -278,6 +280,10 @@
           localStorage.setItem('character-design-id', lastId);
           buildHumanoid(design.style);
         }
+      }
+
+      if (prefill) {
+        designName = prefill.trim() || 'Untitled';
       }
 
       loading = false;

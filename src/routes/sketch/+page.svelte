@@ -298,8 +298,10 @@
     void (async () => {
       savedAssemblies = await SketcherAssemblyStore.list();
       // Allow deep-linking to a specific assembly via ?assemblyId=<id> (e.g. "Edit in Sketcher").
+      // CAT-4: ?prefillName starts a fresh, pre-named assembly instead of restoring.
+      const prefill = new URLSearchParams(window.location.search).get('prefillName');
       const urlAssemblyId = new URLSearchParams(window.location.search).get('assemblyId');
-      const lastId = urlAssemblyId ?? localStorage.getItem('sketcher-assembly-id');
+      const lastId = prefill ? null : (urlAssemblyId ?? localStorage.getItem('sketcher-assembly-id'));
     if (lastId) {
       const draft = await SketcherAssemblyStore.get(lastId);
       const meta = savedAssemblies.find((a) => a.id === lastId);
@@ -328,6 +330,10 @@
           // Corrupt legacy draft — ignore and start fresh.
         }
       }
+    }
+
+    if (prefill) {
+      assemblyName = prefill.trim() || 'Untitled';
     }
     })();
 
