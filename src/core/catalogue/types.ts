@@ -10,6 +10,12 @@ export interface CharacterEntry {
   gltfPath: string;
   /** Clip name to use for the idle/standing pose in scene authoring. */
   defaultAnimation?: string;
+  /**
+   * Clip name to use for locomotion (enter/exit/move) beats. Characters don't
+   * agree on a single convention — the Robot's walk clip is "Walking" while
+   * procedural humanoid exports use "walk" — so each entry declares its own.
+   */
+  walkAnimation?: string;
   defaultScale?: number;
   /**
    * Euler XYZ rotation (radians) to apply when no authored rotation exists.

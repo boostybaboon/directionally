@@ -211,6 +211,39 @@ five-slider shape UI; exported GLBs render correctly in the production catalogue
 with no `SceneBridge`/`storedSceneToModel` changes required (bone-driven animation is unchanged,
 so this should be transparent to the rest of the app).
 
+## Phase HP-3.5 — First-class face animation (blink loop + jaw-hinge talking)
+
+The face is already a separate overlay (see Decisions table), but its *animation* is currently
+procedural — `ProceduralHumanoid.update()` tweens eyelid rotations for blink, and `setMouth()`
+**disposes and rebuilds** lip/hole geometry for mouth shapes. Neither survives export: a GLB
+bakes the mesh and bone clips but not the per-frame driver, so the production `Presenter` shows
+a frozen face. Blink is already addressed — the production scene view synthesises the same 4s
+cycle as a real looping `AnimationClip` (`src/lib/scene/blink.ts`) and plays it through the
+actor's mixer, so it blends/seeks like any other clip.
+
+The mouth cannot be first-class as-is, because `AnimationClip` tracks animate node transforms,
+not geometry. Proposal: re-model the mouth as a **jaw hinge** so talking becomes transform-based
+and therefore animatable/schedulable like `idle`/`walk`:
+
+- Parent the lower lip, mouth-hole fill, and lower lip caps to the jaw pivot (today the hole is
+  parented to the head — a mismatch), and hinge `jawPivot.rotation.x` around the ear-line axis.
+- Replace `setMouth()`'s geometry rebuild with jaw-pivot rotation (+ an upper-lip raise pivot if
+  lip-raise is wanted); keep `smile`/`frown` as corner-lift pivots if desired, or defer them.
+- Name the jaw hinge and bake a neutral rest in `exportCharacterGLB` so the scene view can find
+  and drive it.
+- In the production scene view, synthesise a looping "talk" clip (jaw open/close wobble, same
+  runtime synthesis as blink) and schedule it per `speechEntry` window (start = line start,
+  end = start + `estimateDuration(text)`), so mouth movement syncs to TTS through the normal
+  mixer/Tone schedule.
+
+Trade-off vs today: a jaw hinge gives a simpler open/close (no lip bowing) but becomes a
+first-class, blendable, seekable animation — and makes `/character`'s speak preview match the
+scene view by driving the same transform path.
+
+Exit criteria: a talking line in the production view opens/closes the jaw in sync with its
+speech window; blink already loops as a first-class clip; `/character`'s speak toggle uses the
+same jaw-hinge path so preview and playback agree.
+
 ## Phase HP-4 — Advanced panel + appearance field simplification
 
 - Collapse `BodyColors`'s 5 regions to the target set's `skinTone` + `outfitColor` (top/bottom/

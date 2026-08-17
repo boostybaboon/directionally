@@ -20,6 +20,11 @@ import type { ScriptDocument, SceneBlock, ActionBeat, Diagnostic, StageSide, Sta
 // body is visually distinct and legible — see entries.ts for provenance.
 const PLACEHOLDER_CATALOGUE_ID = 'generic-human';
 
+// Default locomotion clip for characters that don't declare one. Matches the
+// ProceduralHumanoid export convention ("walk"); bundled entries override it
+// (the Robot declares "Walking").
+const DEFAULT_WALK_CLIP = 'walk';
+
 // Track CAT, CAT-2: placeholder room constants. The floor mesh name is shared
 // with the renderer, which draws the typed setting name onto the floor plane.
 export const PLACEHOLDER_ROOM_MESH_NAME = 'placeholder-room';
@@ -136,6 +141,18 @@ function resolveCastName(
   return { catalogueId: PLACEHOLDER_CATALOGUE_ID, placeholder: true };
 }
 
+/**
+ * Resolves the locomotion clip for a cast member from its catalogue entry.
+ * Characters don't share a clip-name convention (Robot = "Walking", procedural
+ * humanoids = "walk"), so the entry declares it; falls back to the humanoid
+ * convention for user-authored entries that predate `walkAnimation`.
+ */
+function resolveWalkClip(actor: StoredActor, userEntries: CatalogueEntry[]): string {
+  const allCharacters = getCharacters([...CATALOGUE_ENTRIES, ...userEntries]);
+  const entry = allCharacters.find((c) => c.id === actor.catalogueId);
+  return entry?.walkAnimation ?? DEFAULT_WALK_CLIP;
+}
+
 
 export function compileScriptDocument(
   doc: ScriptDocument,
@@ -184,7 +201,6 @@ export function compileScriptDocument(
 }
 
 
-const WALK_CLIP = 'Walking';
 const ENTER_DURATION = 0.8;
 const ENTER_PREROLL = 0.25;
 const MOVE_DURATION = 2.0;
@@ -229,6 +245,13 @@ function compileSceneBlock(
   const sceneActions: SceneAction[] = [];
   const blocks: ActorBlock[] = [];
 
+  // Per-actor locomotion clip, resolved from the merged catalogue — the Robot's
+  // walk clip is "Walking" while procedural humanoids use "walk".
+  const walkClipByActorId = new Map<string, string>();
+  for (const actor of actors) {
+    walkClipByActorId.set(actor.id, resolveWalkClip(actor, userEntries));
+  }
+
   for (const beat of block.beats) {
     if (beat.type === 'transition') { t += 0.5; continue; }
 
@@ -256,7 +279,7 @@ function compileSceneBlock(
         const targetX = HOME_X[entrySide];
         const startX = OFFSTAGE_X[entrySide];
         blocks.push({
-          type: 'actorBlock', actorId, clip: WALK_CLIP,
+          type: 'actorBlock', actorId, clip: walkClipByActorId.get(actorId) ?? DEFAULT_WALK_CLIP,
           startTime: parseFloat((t + ENTER_PREROLL).toFixed(2)),
           endTime: parseFloat((t + ENTER_PREROLL + ENTER_DURATION).toFixed(2)),
           startPosition: toWorldPos(startX), endPosition: toWorldPos(targetX),
@@ -270,7 +293,7 @@ function compileSceneBlock(
         const targetX = OFFSTAGE_X[exitSide];
         const startX = curStageX.get(beat.character) ?? HOME_X[side];
         blocks.push({
-          type: 'actorBlock', actorId, clip: WALK_CLIP,
+          type: 'actorBlock', actorId, clip: walkClipByActorId.get(actorId) ?? DEFAULT_WALK_CLIP,
           startTime: parseFloat(t.toFixed(2)),
           endTime: parseFloat((t + EXIT_DURATION).toFixed(2)),
           startPosition: toWorldPos(startX), endPosition: toWorldPos(targetX),
@@ -283,7 +306,7 @@ function compileSceneBlock(
         const targetX = MARK_X[beat.target ?? 'center'];
         const startX = curStageX.get(beat.character) ?? HOME_X[side];
         blocks.push({
-          type: 'actorBlock', actorId, clip: WALK_CLIP,
+          type: 'actorBlock', actorId, clip: walkClipByActorId.get(actorId) ?? DEFAULT_WALK_CLIP,
           startTime: parseFloat(t.toFixed(2)),
           endTime: parseFloat((t + MOVE_DURATION).toFixed(2)),
           startPosition: toWorldPos(startX), endPosition: toWorldPos(targetX),

@@ -3,6 +3,7 @@ import { PerspectiveCameraAsset } from '../model/Camera.js';
 import { MeshStandardMaterialAsset } from '../model/Material.js';
 import type { Model } from '../Model.js';
 import type { AnimationDict } from '../model/Action.js';
+import { findEyelids, buildBlinkClip } from './blink.js';
 
 export type SceneGraphResult = {
   scene: THREE.Scene;
@@ -122,6 +123,39 @@ export async function buildSceneGraph(model: Model): Promise<SceneGraphResult> {
       actorMixerMap,
     );
   });
+
+  // Synthesise a first-class looping blink clip for any actor whose GLTF exposes
+  // named eyelid meshes (procedural humanoids). Added directly to animationDict so
+  // the engine's seek/play/pause treats it like any other clip.
+  for (const gltf of model.gltfs) {
+    const lids = findEyelids(gltf.threeObject);
+    if (lids.length === 0) continue;
+    const clip = buildBlinkClip(gltf.name, lids);
+    let mixer = actorMixerMap.get(gltf.name);
+    if (!mixer) {
+      mixer = new THREE.AnimationMixer(gltf.threeObject);
+      actorMixerMap.set(gltf.name, mixer);
+      mixers.push(mixer);
+    }
+    const action = mixer.clipAction(clip);
+    action.loop = THREE.LoopRepeat;
+    action.clampWhenFinished = false;
+    action.setEffectiveWeight(0);
+    action.play();
+
+    const key = `${gltf.name}_blink`;
+    if (!animationDict[key]) animationDict[key] = [];
+    animationDict[key].push({
+      anim: action,
+      start: 0,
+      end: Infinity,
+      clipDuration: clip.duration,
+      loop: THREE.LoopRepeat,
+      repetitions: Infinity,
+      fadeIn: 0,
+      fadeOut: 0,
+    });
+  }
 
   return { scene, camera, authoredFov, animationDict, mixers, discoveredClips };
 }

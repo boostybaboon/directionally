@@ -117,5 +117,12 @@ describe('CATALOGUE_ENTRIES seed data — CAT-0 generic-human character', () => 
     expect(entry?.gltfPath).toBe('/models/gltf/generic-human.glb');
     expect(entry?.defaultAnimation).toBeTruthy();
   });
+
+  it('declares per-character locomotion clips (walkAnimation)', () => {
+    const robot = getById('robot-expressive', CATALOGUE_ENTRIES) as CharacterEntry | undefined;
+    const human = getById('generic-human', CATALOGUE_ENTRIES) as CharacterEntry | undefined;
+    expect(robot?.walkAnimation).toBe('Walking');
+    expect(human?.walkAnimation).toBe('walk');
+  });
 });
 

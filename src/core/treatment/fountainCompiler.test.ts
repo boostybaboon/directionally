@@ -285,5 +285,32 @@ describe('compileScriptDocument', () => {
     expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
     expect(result.diagnostics.some((d) => d.message.includes('placeholder room'))).toBe(false);
   });
+
+  it('uses the resolved character\'s walk clip for locomotion beats', () => {
+    const doc = buildDoc([scene('INT. STAGE - DAY', [act('Robot', 'enter', { side: 'left' })])], ['Robot']);
+    const result = compileScriptDocument(doc);
+
+    expect(actorBlocks(result)[0].clip).toBe('Walking');
+  });
+
+  it('uses the procedural humanoid walk clip for placeholder characters', () => {
+    const doc = buildDoc([scene('INT. STAGE - DAY', [act('ALPHA', 'enter', { side: 'left' })])], ['ALPHA']);
+    const result = compileScriptDocument(doc);
+
+    expect(actorBlocks(result)[0].clip).toBe('walk');
+  });
+
+  it('falls back to the humanoid walk clip for user entries without walkAnimation', () => {
+    const doc = buildDoc([scene('INT. STAGE - DAY', [act('Custom Hero', 'enter', { side: 'left' })])], ['Custom Hero']);
+    const userEntry: CatalogueEntry = {
+      kind: 'character',
+      id: 'user-custom-hero',
+      label: 'Custom Hero',
+      gltfPath: '/opfs/blob-url',
+    };
+    const result = compileScriptDocument(doc, [userEntry]);
+
+    expect(actorBlocks(result)[0].clip).toBe('walk');
+  });
 });
 

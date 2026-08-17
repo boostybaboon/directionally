@@ -12,6 +12,7 @@ export const CATALOGUE_ENTRIES: CatalogueEntry[] = [
     label: 'Robot',
     gltfPath: '/models/gltf/RobotExpressive.glb',
     defaultAnimation: 'Idle',
+    walkAnimation: 'Walking',
     // Native GLB height ~4.77 units; 0.35 ≈ 1.67m (human scale)
     defaultScale: 0.35,
   },
@@ -24,6 +25,7 @@ export const CATALOGUE_ENTRIES: CatalogueEntry[] = [
     // ProceduralHumanoid params) — this is what a fresh session produces.
     gltfPath: '/models/gltf/generic-human.glb',
     defaultAnimation: 'idle',
+    walkAnimation: 'walk',
     defaultScale: 1,
   },
 

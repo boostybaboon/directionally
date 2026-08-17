@@ -577,6 +577,7 @@ export class ProceduralHumanoid {
               new THREE.SphereGeometry(lidR, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2),
               lidMat,
             );
+            upperLid.name = isLeft ? 'eyeLidUpperL' : 'eyeLidUpperR';
             upperLid.rotation.x = openRx;
             eyePivot.add(upperLid);
             this.bodyMeshes.push(upperLid);
@@ -592,6 +593,7 @@ export class ProceduralHumanoid {
               new THREE.SphereGeometry(lidR, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2),
               lidMat,
             );
+            lowerLid.name = isLeft ? 'eyeLidLowerL' : 'eyeLidLowerR';
             lowerLid.rotation.x = openRx;
             lidWrapper.add(lowerLid);
             this.bodyMeshes.push(lowerLid);
