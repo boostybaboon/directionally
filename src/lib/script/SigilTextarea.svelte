@@ -26,6 +26,8 @@
     cast: string[];
     placeholder?: string;
     onchange?: (value: string) => void;
+    /** Reports the caret's 1-based line whenever the caret moves. */
+    oncaret?: (line: number) => void;
   }
 
   let {
@@ -33,6 +35,7 @@
     cast,
     placeholder = '',
     onchange,
+    oncaret,
   }: Props = $props();
 
   let textareaEl: HTMLTextAreaElement | undefined = $state();
@@ -127,8 +130,26 @@
     });
   }
 
+  function reportCaret() {
+    if (!textareaEl) return;
+    const line = value.slice(0, textareaEl.selectionStart).split('\n').length;
+    oncaret?.(line);
+  }
+
+  /** Moves the caret to the start of the given 1-based line (used by scene navigation). */
+  export function focusLine(line: number) {
+    if (!textareaEl) return;
+    const lines = value.split('\n');
+    const target = Math.max(1, Math.min(line, lines.length));
+    let offset = 0;
+    for (let i = 0; i < target - 1; i++) offset += lines[i].length + 1;
+    textareaEl.focus();
+    textareaEl.setSelectionRange(offset, offset);
+  }
+
   function handleInput() {
     onchange?.(value);
+    reportCaret();
     refreshToken();
   }
 
@@ -144,6 +165,7 @@
   }
 
   function handleSelectionChange() {
+    reportCaret();
     refreshToken();
   }
 </script>

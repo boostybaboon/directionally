@@ -112,10 +112,11 @@ function parseActionLine(rest: string, lineNo: number, diagnostics: Diagnostic[]
  * character (`#`, `>`, `@`) before any of its content is read. Dialogue text
  * (the one genuinely free-form field) is taken verbatim, never tokenized.
  */
-export function tokenizeScript(text: string): { doc: ScriptDocument; diagnostics: Diagnostic[] } {
+export function tokenizeScript(text: string): { doc: ScriptDocument; diagnostics: Diagnostic[]; sceneStartLines: number[] } {
   const lines = text.split('\n');
   const diagnostics: Diagnostic[] = [];
   const scenes: SceneBlock[] = [];
+  const sceneStartLines: number[] = [];
   const cast: string[] = [];
   const castSeen = new Set<string>();
 
@@ -149,6 +150,7 @@ export function tokenizeScript(text: string): { doc: ScriptDocument; diagnostics
       currentSpeaker = null;
       currentScene = parseSceneHeadingLine(trimmed.slice(1).trim(), lineNo, diagnostics);
       scenes.push(currentScene);
+      sceneStartLines.push(lineNo);
       continue;
     }
 
@@ -184,7 +186,21 @@ export function tokenizeScript(text: string): { doc: ScriptDocument; diagnostics
   }
   flushDialogue();
 
-  return { doc: { scenes, cast, diagnostics }, diagnostics };
+  return { doc: { scenes, cast, diagnostics }, diagnostics, sceneStartLines };
+}
+
+/**
+ * Maps a 1-based line number to the index of the scene whose `#` heading is the
+ * nearest at-or-above that line. Returns 0 when the line precedes the first
+ * heading. `sceneStartLines` is sorted ascending (tokenizer output).
+ */
+export function sceneIndexForLine(sceneStartLines: number[], line: number): number {
+  let index = 0;
+  for (let i = 0; i < sceneStartLines.length; i++) {
+    if (sceneStartLines[i] <= line) index = i;
+    else break;
+  }
+  return index;
 }
 
 // ── Renderer ─────────────────────────────────────────────────────────────────

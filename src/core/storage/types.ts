@@ -150,4 +150,11 @@ export type StoredProduction = {
   speechSettings?: ProductionSpeechSettings;
   /** Dialogue lines. Populated on legacy productions; cleared after migration to the scene path. */
   script?: ScriptLine[];
+  /**
+   * The whole-production sigil-tokenized buffer (Track SCR). The single source of
+   * truth for the script-first flow — contains every scene, separated by `#`
+   * headings. Stored at production level because the buffer is the entire script,
+   * not a single scene's fragment.
+   */
+  scriptSource?: string;
 };

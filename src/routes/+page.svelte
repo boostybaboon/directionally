@@ -15,7 +15,7 @@
   import { renderFountain, createDefaultScriptDocument } from '../core/treatment/fountain.js';
   import type { Diagnostic, ScriptDocument } from '../core/treatment/fountain.js';
   import { compileScriptDocument } from '../core/treatment/fountainCompiler.js';
-  import { tokenizeScript, renderScript } from '../core/treatment/sigilScript.js';
+  import { tokenizeScript, renderScript, sceneIndexForLine } from '../core/treatment/sigilScript.js';
   import SigilTextarea from '$lib/script/SigilTextarea.svelte';
 
 
@@ -40,10 +40,13 @@
   let showProductionPicker = $state(false);
 
   // Primary authoring surface (Track SCR, SCR-2): sigil-tokenized text buffer.
-  // Persisted per-scene as NamedScene.dslSource; ScriptDocument is derived from
-  // it via tokenizeScript() on every edit — never the other way round.
+  // Persisted at production level as StoredProduction.scriptSource; ScriptDocument
+  // is derived from it via tokenizeScript() on every edit — never the other way round.
   let sigilText = $state('');
   let scriptDoc = $state<ScriptDocument>({ scenes: [], cast: [], diagnostics: [] });
+  let sceneStartLines = $state<number[]>([]);
+  let caretLine = $state(1);
+  let sigilEditor: SigilTextarea | undefined = $state();
   let fountainSource = $derived(renderFountain(scriptDoc));
   let diagnostics = $state<Diagnostic[]>([]);
   let statusMessage = $state('');
@@ -70,8 +73,11 @@
   // Derived blocks for timeline / compiled inspector — read-only
   const compiledActors = $derived(currentProduction?.actors ?? []);
   const compiledScene = $derived(
-    getScenes(currentProduction?.tree ?? [])[0]?.scene ?? null
+    getScenes(currentProduction?.tree ?? []).find((ns) => ns.id === currentSceneId)?.scene ?? null
   );
+
+  // The scene the caret is currently in — derived from its 1-based line.
+  const focusedSceneIndex = $derived(sceneIndexForLine(sceneStartLines, caretLine));
   const compiledActorBlocks = $derived<{ block: ActorBlock; index: number }[]>(
     (compiledScene?.blocks ?? [])
       .map((b, i) => ({ block: b, index: i }))
@@ -92,7 +98,9 @@
   /** Sets the sigil buffer and re-derives scriptDoc from it. Does not compile. */
   function loadSigilText(text: string) {
     sigilText = text;
-    scriptDoc = tokenizeScript(text).doc;
+    const { doc, sceneStartLines: lines } = tokenizeScript(text);
+    scriptDoc = doc;
+    sceneStartLines = lines;
   }
 
   function openProduction(prod: StoredProduction) {
@@ -100,7 +108,9 @@
     productionNameInput = prod.name;
     const ns = getScenes(prod.tree ?? [])[0];
     currentSceneId = ns?.id ?? crypto.randomUUID();
-    loadSigilText(ns?.dslSource ?? DEFAULT_SIGIL_TEMPLATE);
+    const source = prod.scriptSource ?? ns?.dslSource ?? DEFAULT_SIGIL_TEMPLATE;
+    caretLine = 1;
+    loadSigilText(source);
     diagnostics = [];
     statusMessage = '';
     showProductionPicker = false;
@@ -113,6 +123,7 @@
     currentProduction = created;
     productionNameInput = created.name;
     loadSigilText(DEFAULT_SIGIL_TEMPLATE);
+    caretLine = 1;
     diagnostics = [];
     statusMessage = '';
     showProductionPicker = false;
@@ -126,6 +137,7 @@
     currentProduction = created;
     productionNameInput = created.name;
     loadSigilText(renderScript(DEFAULT_DOC));
+    caretLine = 1;
     diagnostics = [];
     statusMessage = '';
     showProductionPicker = false;
@@ -146,28 +158,58 @@
       return;
     }
 
-    // The sigil buffer is the authoring source of truth for this scene —
-    // persisted alongside the compiled output so re-opening the production
-    // restores the exact typed text, not a re-render of the compiled data.
-    compiled.scenes[0].dslSource = sigilText;
-    const firstScene = compiled.scenes[0];
-    const sceneId = firstScene.id;
+    const focusedId = compiled.scenes[Math.min(focusedSceneIndex, compiled.scenes.length - 1)].id;
 
     const updated: StoredProduction = {
       ...currentProduction,
       name: productionNameInput,
       actors: compiled.actors,
       tree: compiled.scenes,
-      activeSceneId: sceneId,
+      scriptSource: sigilText,
+      activeSceneId: focusedId,
       modifiedAt: Date.now(),
     };
     currentProduction = updated;
-    currentSceneId = sceneId;
     await ProductionStore.save(updated);
     productions = ProductionStore.list();
-    presenter?.loadModel(storedSceneToModel(firstScene.scene, compiled.actors, userCatalogueEntries), seekToStart ? 0 : undefined);
+
+    renderFocusedScene({ seek: seekToStart, force: true });
 
     statusMessage = compiled.diagnostics.length > 0 ? 'Updated (with warnings).' : 'Updated.';
+  }
+
+  /**
+   * Renders the scene the caret is currently in. `force` reloads even when the
+   * caret hasn't changed scene (used after a compile); otherwise a same-scene
+   * caret move is a no-op.
+   */
+  function renderFocusedScene(opts: { seek: boolean; force: boolean }) {
+    if (!currentProduction) return;
+    const scenes = getScenes(currentProduction.tree ?? []);
+    if (scenes.length === 0) return;
+    const idx = Math.min(focusedSceneIndex, scenes.length - 1);
+    const scene = scenes[idx];
+    if (!opts.force && scene.id === currentSceneId) return;
+    currentSceneId = scene.id;
+    presenter?.loadModel(
+      storedSceneToModel(scene.scene, currentProduction.actors ?? [], userCatalogueEntries),
+      opts.seek ? 0 : undefined,
+    );
+  }
+
+  function handleCaretMove(line: number) {
+    caretLine = line;
+    // If a compile is pending it will render the focused scene when it lands;
+    // otherwise re-render now so clicking between scenes switches immediately.
+    if (compileTimer !== null) return;
+    renderFocusedScene({ seek: false, force: false });
+  }
+
+  function focusScene(si: number) {
+    const line = sceneStartLines[si] ?? 1;
+    caretLine = line;
+    sigilEditor?.focusLine(line);
+    renderFocusedScene({ seek: false, force: true });
   }
 
   function scheduleCompile() {
@@ -180,7 +222,9 @@
 
   function handleSigilChange(text: string) {
     sigilText = text;
-    scriptDoc = tokenizeScript(text).doc;
+    const { doc, sceneStartLines: lines } = tokenizeScript(text);
+    scriptDoc = doc;
+    sceneStartLines = lines;
     scheduleCompile();
   }
 
@@ -256,10 +300,12 @@
     <div class="script-pane">
       <div class="sigil-editor-wrap">
         <SigilTextarea
+          bind:this={sigilEditor}
           value={sigilText}
           cast={scriptDoc.cast}
           placeholder={'Type a scene using #scene, >action, @actor sigils…'}
           onchange={handleSigilChange}
+          oncaret={handleCaretMove}
         />
       </div>
 
@@ -302,7 +348,12 @@
         {:else}
           {#each scriptDoc.scenes as scene, si}
             <div class="inspector-scene">
-              <div class="inspector-scene-heading">{si + 1}. {scene.heading}</div>
+              <button
+                class="inspector-scene-heading"
+                class:active={si === focusedSceneIndex}
+                onclick={() => focusScene(si)}
+                title="Jump to this scene"
+              >{si + 1}. {scene.heading}</button>
               <div class="inspector-meta">Interior: {scene.interior ?? true ? 'INT.' : 'EXT.'}</div>
               {#if scene.setting}<div class="inspector-meta">Setting: {scene.setting}</div>{/if}
               {#if scene.timeOfDay}<div class="inspector-meta">Time: {scene.timeOfDay}</div>{/if}
@@ -616,10 +667,27 @@
   }
 
   .inspector-scene-heading {
+    display: block;
+    width: 100%;
     padding: 2px 10px;
     color: #aaa;
     font-weight: 600;
     font-size: 11px;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .inspector-scene-heading:hover {
+    color: #ccc;
+    background: #1a1a1a;
+  }
+
+  .inspector-scene-heading.active {
+    color: #77bfff;
+    background: #0a1a2a;
   }
 
   .inspector-meta {

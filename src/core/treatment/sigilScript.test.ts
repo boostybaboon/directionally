@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tokenizeScript, renderScript } from './sigilScript';
+import { tokenizeScript, renderScript, sceneIndexForLine } from './sigilScript';
 import type { ScriptDocument, Beat, ActionBeat, SceneBlock } from './fountain';
 
 // ── Programmatic fixture builders (mirrors fountainCompiler.test.ts) ────────
@@ -296,5 +296,36 @@ describe('lossless round-trip: renderScript(tokenizeScript(text)) === text (cano
 
     const { doc: parsed } = tokenizeScript(text);
     expect(renderScript(parsed)).toBe(text);
+  });
+});
+
+describe('sceneStartLines / sceneIndexForLine', () => {
+  it('records the 1-based line of each # heading', () => {
+    const text = [
+      '#INT STAGE DAY',
+      '',
+      '@ALPHA',
+      'Hi.',
+      '',
+      '#EXT PARK NIGHT',
+      '',
+      '@BETA',
+      'Bye.',
+    ].join('\n');
+    const result = tokenizeScript(text);
+    expect(result.doc.scenes).toHaveLength(2);
+    expect(result.sceneStartLines).toEqual([1, 6]);
+  });
+
+  it('maps a caret line to the scene whose heading is at-or-above it', () => {
+    expect(sceneIndexForLine([1, 6], 0)).toBe(0);
+    expect(sceneIndexForLine([1, 6], 1)).toBe(0);
+    expect(sceneIndexForLine([1, 6], 3)).toBe(0);
+    expect(sceneIndexForLine([1, 6], 6)).toBe(1);
+    expect(sceneIndexForLine([1, 6], 9)).toBe(1);
+  });
+
+  it('returns 0 when there are no scenes', () => {
+    expect(sceneIndexForLine([], 5)).toBe(0);
   });
 });

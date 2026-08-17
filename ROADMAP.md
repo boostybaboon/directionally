@@ -363,15 +363,26 @@ unchanged `compileScriptDocument()` path with no mouse interaction required. 599
 `svelte-check` clean.
 
 
-### SCR-3 — Multi-scene authoring via `#` breaks
+### SCR-3 — Multi-scene authoring via `#` breaks ✅ COMPLETE
 
 Because `#` both starts a heading and marks a scene boundary, a multi-scene document falls out of
 SCR-1/SCR-2 directly — keep typing past one scene into the next, no separate scene-switcher UI
 needed for *authoring*.
 
-Exit criteria: both treatment fixtures authored as one continuous buffer compile to N-scene
-productions; switching the viewport to a given scene works from the SCR-4 navigator (or a
-temporary scene-index fallback if SCR-4 hasn't landed yet).
+Delivered: `tokenizeScript()` now returns `sceneStartLines` (the 1-based line of each `#` heading)
+and `sceneIndexForLine()` maps a caret line to a scene. `SigilTextarea` reports the caret line via
+an `oncaret` callback and exposes `focusLine()` for programmatic jumps. `+page.svelte` renders the
+scene the caret is in (viewport follows the caret), the inspector's scene list is clickable (jumps
+the caret and loads that scene), and `StoredProduction.scriptSource` now holds the whole buffer at
+production level (it was previously bolted onto scene 0's `dslSource`). Cast subsets and per-scene
+set resolution were verified working: each scene stages only the cast that appears in it, and each
+resolves its own setting. Tests cover scene-line mapping, compiler-level multi-scene (cast subsets,
+per-scene sets), and a tokenize → compile → `storedSceneToModel` pipeline
+(`multiScene.integration.test.ts`).
+
+Exit criteria met: both treatment fixtures authored as one buffer compile to N-scene productions;
+viewport switching between scenes works via caret position or the clickable scene list (the SCR-4
+navigator/act-hierarchy and the presentation-mode auto-advance flow remain future work).
 
 ### SCR-4 — Scene/act navigation minimap *(polish, not core)*
 
@@ -418,7 +429,7 @@ disambiguation dialog, defeating the point. Build order:
 
 ## Current Focus
 
-**SCR-2 and CAT-2 landed.** ⏸ **Paused here for review/testing before continuing to SCR-3**, per
+**SCR-3 landed.** ⏸ **Paused here for review/testing before continuing to CAT-3**, per
 the plan below.
 
 | Step | What | Check |
@@ -429,9 +440,9 @@ the plan below.
 | 4 ✅ | CAT-1: cast resolution + placeholder lozenge sprite + diagnostic | Two cast members, one resolved one placeholder, visually distinct |
 | 5 ✅ | SCR-2: textarea replaces boxed editor; `@`/`>`/`#` sigils live, unmatched names/verbs/settings commit safely | Full scene authored keyboard-only, no dropdowns |
 | 6 ✅ | CAT-2: setting resolution + placeholder room | Unmatched setting → labelled placeholder room |
-| — | **⏸ Pause here for review/testing before continuing** | |
-| 7 | SCR-3: `#` sigil scene breaks — multi-scene falls out | Both fixtures as one buffer compile to N-scene productions |
+| 7 ✅ | SCR-3: `#` sigil scene breaks — multi-scene falls out | One buffer compiles to N scenes; caret/click switches the rendered scene |
 | 8 | CAT-3: catalogue panel + cross-tool nav links | Browse catalogue and reach `/character`/`/sketch` from the script view |
+| — | **⏸ Pause here for review/testing before continuing** | |
 | 9 | CAT-4: "Create real asset" bridge from a placeholder diagnostic | Placeholder → authored asset round-trip with zero script edits |
 | 10 | SCR-4 / SCR-5 / CAT-5: navigation minimap, sigil visibility toggle, bundled archetypes | Polish, any order |
 

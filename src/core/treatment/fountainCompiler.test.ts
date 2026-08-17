@@ -312,5 +312,34 @@ describe('compileScriptDocument', () => {
 
     expect(actorBlocks(result)[0].clip).toBe('walk');
   });
+
+  it('compiles multiple scenes with per-scene cast subsets (SCR-3)', () => {
+    const doc = buildDoc([
+      sceneWithSetting('STAGE', [say('ALPHA', 'Hi.')]),
+      sceneWithSetting('PARK', [say('BETA', 'Bye.')]),
+    ], ['ALPHA', 'BETA']);
+    const result = compileScriptDocument(doc);
+
+    expect(result.scenes).toHaveLength(2);
+    expect(result.actors.map((a) => a.role)).toEqual(['ALPHA', 'BETA']);
+
+    const alpha = result.actors.find((a) => a.role === 'ALPHA')!;
+    const beta = result.actors.find((a) => a.role === 'BETA')!;
+    expect(result.scenes[0].scene.stagedActors.map((s) => s.actorId)).toEqual([alpha.id]);
+    expect(result.scenes[1].scene.stagedActors.map((s) => s.actorId)).toEqual([beta.id]);
+  });
+
+  it('resolves each scene\'s setting independently (SCR-3)', () => {
+    const doc = buildDoc([
+      sceneWithSetting('Stage Deck', [say('ALPHA', 'Hi.')]),
+      sceneWithSetting('PARK', [say('BETA', 'Bye.')]),
+    ], ['ALPHA', 'BETA']);
+    const result = compileScriptDocument(doc);
+
+    expect(result.scenes[0].scene.set[0].name).toBe('stage-deck');
+    expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
+    expect(result.scenes[1].scene.set[0].name).toBe('placeholder-room');
+    expect(result.scenes[1].scene.placeholderSetting).toBe('PARK');
+  });
 });
 
