@@ -142,6 +142,25 @@ Both map cleanly onto the ten fields above with no rig knowledge required — th
 
 ---
 
+## Risks, dependencies & scope clarifications
+
+- **Blender authoring is the critical path.** HP-1 (sculpted base mesh + weight painting) and HP-2
+  (sculpted morph targets) are artist labour, not programmer effort — the *code* side of both is
+  small (`SkinnedMesh` + `morphTargetInfluences`). If that sculpting isn't available, the HP-1→HP-3
+  chain stalls; HP-0.5 below exists specifically as a no-Blender path that de-risks the surface
+  first.
+- **Morph range is discrete, not continuous.** Four-to-six hand-authored morphs bound the shape
+  space. `feminineMasculine` is the first candidate to under-deliver: it bundles bust +
+  hip-to-shoulder ratio + jaw into one morph pair — split into separate morphs if the combined pair
+  proves under-expressive.
+- **"Costuming" here is recolouring, not clothing shapes.** `outfitColor` recolours the existing
+  body regions; actual costume silhouettes (uniforms, coats, hats) are a separate accessory-preset
+  concern, out of scope for this roadmap.
+- **The minimal set drops facial shaping.** The 19 `FaceParams` collapse to `hairColor` +
+  `hairStyle` by default, so the face loses its nose/eye/mouth shape axes — the highest-signal axis
+  for "humanoid stereotype" variety. Consider keeping 2–3 face-shape presets on the default surface
+  rather than only hair.
+
 ## Phase HP-0 — Stop-gap seam smoothing (Option A, no mesh rework)
 
 Cheapest possible visual improvement, shippable independently of everything else below, while
@@ -154,6 +173,70 @@ the single-mesh rework (HP-1+) is designed/built.
 
 Exit criteria: bent elbow/knee poses show a softer, less obviously-segmented silhouette; zero
 new dependencies; `organic` style only, `c3po`/`sonny` untouched.
+
+## Phase HP-0.5 — Semantic sliders + first-order skinning over the segmented mesh *(no Blender)*
+
+A code-only intermediate that delivers the Mii-like tuner surface *and* closes the joint seam on
+the existing generated geometry, before any sculpting exists. Two halves, both independent of
+HP-1/HP-2:
+
+1. **Semantic → `BoneParams` mapping.** Drive the current segmented tubes from the five semantic
+   sliders (`height`, `build`, `muscularity`, `age`, `feminineMasculine`) via a small mapping onto
+   `BoneParams` (bone scale ratios, joint radii, `tubeOffsetForward`, skin/outfit colours). This
+   proves the slider surface, the data model, and the AI-facing schema today, and is superseded —
+   not thrown away — when morph targets land.
+2. **First-order skinning of the tubes ("zero → first order" FEM).** Treat the current rigid
+   per-bone tubes as zero-order (piecewise-constant) skinning; upgrade to first-order by emitting
+   the generated body as one `THREE.SkinnedMesh` with per-vertex bone weights computed
+   procedurally from each vertex's parametric position along its tube — plain linear-blend
+   skinning, the same technique the Mixamo skinned meshes already use. A vertex at parameter `t`
+   along a tube between joints A→B gets weight `smoothstep(t)` to bone B and `1 − smoothstep(t)`
+   to bone A, so the two tube ends at a shared joint deform together and the seam closes. No
+   weight painting and no Blender: the geometry is generated, so the weights are known in code. The
+   existing `xbot` skeleton and `AnimationMixer` drive the bones unchanged.
+
+Exit criteria: the five semantic sliders drive the current segmented body; bent elbows/knees stay
+connected (no seam/crease separation) with no sculpting; `c3po`/`sonny` remain rigid-segment.
+Known limit: LBS is C0, not C1 — extreme bends still show slight candy-wrapper pinching (a
+dual-quaternion skinning pass is the cheap later fix), and a genuinely *smooth* elbow silhouette
+still needs the sculpted/lofted mesh from HP-1.
+
+## Phase HP-0.6 — Non-Blender escalation ceiling (volume-preserving, then stop at the tubes)
+
+The honest ceiling of pushing the *tube-specific* HP-0.5 approach further:
+
+- **Volume-preserving skinning (cheap, worthwhile if needed).** If HP-0.5's linear blend shows
+  candy-wrapper pinching at extreme bends, swap in dual-quaternion skinning (or spherical blend
+  skinning) — blend dual quaternions instead of matrices. Code-only, `three.js`-native
+  (`USE_DUAL_QUATERNIONS` in the skinning shader), and it removes most pinching without touching
+  the geometry. Applies to any skinned mesh, including HP-5's output.
+- **C1 tube-lofting (superseded — skip).** Smoothing the tube-into-sphere crease by lofting the
+  joint region is a tube-specific fix that becomes wasted effort once the single-surface goal moves
+  to SDF (HP-5). Don't invest here; the smooth silhouette is HP-5's job, not a lofting job.
+
+Exit criteria: none — a decision guide. Ship HP-0.5, add DQS only if pinching is visible, and go
+straight to HP-5 for the single surface rather than polishing the tubes.
+
+## Phase HP-0.5+ — Appearance coupling + the "no M/F skeleton" note *(contingent, try if skinning lands)*
+
+A cheap follow-on to HP-0.5, only worth doing once first-order skinning (Part 2) works — if that
+fails, none of this is reached. Two small items:
+
+1. **Couple appearance to the shape sliders.** The HP-0.5 schema is shape-only (`height`, `build`,
+   `muscularity`, `age`, `feminineMasculine`). Add the appearance fields already in the target set
+   (`skinTone`, `hairColor`, `hairStyle`, `outfitColor`) and two derived couplings: `age` → hair
+   greying (desaturate/whiten `hairColor`) plus a subtle skin-tone shift; `feminineMasculine` →
+   hair-length / brow-thickness / facial-hair bias (via `hairStyle` presets + `FaceParams`). The raw
+   appearance fields stay individually overridable.
+2. **No distinct Mixamo M/F skeleton.** The Mixamo male/female characters share the same
+   `mixamorig` bones — the body-shape difference lives in their skinned *mesh*, not in a distinct
+   skeleton. We generate our own body on `xbot-rig.glb`'s bones, so there is no "female skeleton"
+   to swap in; dimorphism is geometry (girth via `semanticParams` now, skinning/morph later), not a
+   rig change. Proportional differences (limb length, pelvis placement) would require a rig /
+   bone-position change, not a Mixamo asset choice.
+
+Exit criteria: none — a "try if cheap" follow-on, not a prerequisite. Applies only if HP-0.5's
+skinning lands and the semantic surface still feels under-expressive.
 
 ## Phase HP-1 — Base mesh authoring + skinning pipeline
 
@@ -258,15 +341,124 @@ same jaw-hinge path so preview and playback agree.
 Exit criteria: a first-time user sees ~10 fields and gets a good-enough result; a power user can
 still reach every knob the current system exposes, one disclosure click away.
 
-## Phase HP-5 — Research spike: implicit/SDF skinning *(only if HP-2 proves insufficient)*
+## Phase HP-5 — SDF soft-union: the non-Blender "single surface" *(now the intended target)*
 
-Not committed work. If, after HP-2/HP-3 ship, the hand-authored morph library turns out not to
-cover enough persona range (e.g. very extreme builds, or body types the sculpted morphs simply
-weren't designed for), investigate a signed-distance-field or similar implicit body
-representation, meshed at runtime. This is a substantial engineering investment with no existing
-precedent in this codebase's geometry stack (the sketcher deliberately chose
-`THREE.Shape`/`ExtrudeGeometry` for simplicity) — do not start this without first exhausting
-whether more/better-authored morph targets solve the gap more cheaply.
+Reframed: this is no longer a fallback gated on HP-2. For the cartoon rapid-visualiser goal, a
+single continuous body of smoothly-stitched primitives is the natural end-state of the non-Blender
+route — and it's a *programming* task, not a sculpting task.
+
+Re-express the current tube-bone/sphere-joint system as one smooth field: each bone becomes a
+**capsule** (a line segment + radius — the smooth version of a tube+two-spheres), the head an
+**ellipsoid**, and the body is the **smooth-min union** of all of them, meshed at runtime via
+marching cubes. The head/pelvis/shoulder cases that defeat tube-stitching fall out naturally:
+
+- **Head** = ellipsoid smooth-min'd into the neck capsule.
+- **Pelvis** = smooth-min of the two leg capsules + the spine capsule (a natural 3-way junction).
+- **Shoulder** = smooth-min of the torso capsule + the arm capsule, deforming as a socket as the
+  arm rotates.
+
+This is also the enabler for **programmatic body sculpting**: every localised feature becomes "add
+a primitive and let the field blend it" — a subtle **bust** is two chest ellipsoids smooth-min'd
+into the chest capsule (the demo feature); hips/belly/muscle-bulges are the same trick with
+different primitives. The `BoneParams`/semantic sliders (HP-0.5 Part 1) feed the capsule radii, and
+the `SkinnedMesh`+skeleton plumbing (Part 2) skins the marching-cubes output — both carry over;
+only the tube *geometry* is thrown away.
+
+Honest costs: (1) a substantial engineering chunk — SDF evaluation + marching cubes + deriving
+per-vertex bone weights from the per-bone field (elegant but fiddly); (2) the result is smooth and
+"doll-like" — ideal for cartoon, wrong for anatomical realism. Do a small spike first (one limb +
+one joint, meshed + skinned) before committing.
+
+## Phase HP-6 — Junction volumes with ports (hybrid: elliptical lofts + local SDF)
+
+Refines HP-5 into two concerns, each solved the simplest way:
+
+- **1-D chains (limbs, neck, spine, fingers) = elliptical lofts.** Each bone becomes a stack of
+  **rings** — ellipses in the bone's X/Z plane whose radii interpolate between the joint and tube
+  cross-sections already in `BoneParams` (`tubeRadiusX/Z`, `jointRadius`, `jointRadiusY/Z`,
+  `tubeOffsetForward`, frustum ratios). Consecutive rings stitch into triangle strips — a
+  generalized cylinder that tapers and bends — giving analytic normals and the exact current
+  silhouette, without HP-5's constant-radius blobbiness.
+- **Junctions (pelvis, shoulders, hands) = local SDF, or an authored junction mesh.** The general
+  answer to "knit a tube into another tube" is a **junction volume with ports**: a small solid
+  whose surface the incoming tubes terminate on, each tube's end ring being a port. The pelvis is
+  a **hip girdle** (wide, shallow ellipsoid), each shoulder a rounded cap, each hand a flattened
+  palm ellipsoid. The smooth-min is applied only to the junction volume and its tubes, isolating
+  the hard branching to a few small tunable pieces.
+- **Head** stays the existing ellipsoid; the neck loft terminates on its surface.
+
+Why not pure SDF? SDF blends N-way junctions for free, but constant-radius capsules were blobby;
+re-deriving tapered elliptical capsules is more work than lofting cross-sections we already have.
+Why not pure loft? A loft cannot express a branch without a merge volume. The hybrid uses each
+where it is strongest.
+
+**Pelvis / "trousers" note:** replace the current wide tube + two leg balls with a hip girdle —
+extend the girdle's rings down from the waist to a shallow bottom face, and terminate the two leg
+lofts on that underside, so the legs enter the bottom of a trouser-like pelvis instead of bulging
+out of two spheres. The crotch is the smooth-min (or a small gusset patch) of the two leg tops +
+the girdle bottom.
+
+**Ring debug visualisation:** the final implementation exposes a debug overlay that renders the
+ring/ellipse skeleton (and the junction volumes) directly, so the cross-section layout can be
+inspected without committing to the skinned mesh.
+
+Exit criteria: the organic body is one skinned mesh built from lofts + junction volumes, the
+pelvis reads as trousers rather than two balls, and the ring overlay can be toggled for debugging.
+
+*Superseded by HP-7 — HP-6's per-bone loft + SDF projection is the prototype; keep the SDF
+projection as the fallback for oblique ports.*
+
+---
+
+## Phase HP-7 — Ring-graph skin (envelopes + ports, explicit loft)
+
+A wholly separate path from the segmented **tube** body (HP-0.5). The tube body keeps its own
+manually-tuned offsets (`tubeOffsetForward`, `jointOffset*`, frustum ratios) and stays selectable
+as the `tubes` body mode; HP-7 does not consume or modify those — it borrows only the tube
+cross-section numbers as starting values. Implemented behind the existing `loft` body mode,
+replacing HP-6's per-bone prototype.
+
+**Ring graph.** The skin is one set of rings over the skeleton, **one ring per joint (shared)**.
+A ring = { centre, frame, `rx`, `rz` }. Along a 1-D chain a bone ramps its ellipse from its own
+tube radius (at its start) to the child's tube radius (at its end) and adds **no ring at the end**
+— the child's start ring sits there. Adjacent bones share the same ring vertices, so lofting them
+is watertight by construction (no coplanar ring pairs, no separate welding pass).
+
+**Envelopes.** Branching bones become an **envelope** — a short ring set with **ports** (closed
+loops of vertices on its surface) where child tubes attach:
+
+- **Hips** = pelvis girdle (waist → leg holes); spine exits the top, the two legs exit the bottom.
+- **Spine2 + left/right shoulder** = chest girdle; neck exits the top, the two arms exit the sides.
+- **Hand** = palm frustum; four fingers exit the knuckle edge, the thumb exits the radial side.
+
+**Ports come in two kinds:**
+
+- **Fan** — several ports on one ring (legs at the pelvis base, fingers at the knuckle edge):
+  partition the ring's perimeter into arcs, one per child, and loft each arc to its child ring.
+- **Side port** — the child's base ring welded onto the envelope's surface (arm into the chest
+  girdle side, thumb into the palm side).
+
+**Side-port junction algorithm** — the arm → chest side is the canonical case, and the clean one,
+because the arm's base ring and the girdle's side wall are co-planar, so the bridge is a plain
+tube with no twist:
+
+1. Choose the attach ring (girdle ring at shoulder height) and the arm base ring `A₀`.
+2. **Cut the hole:** snap `A₀`'s N vertices onto the girdle surface — merge onto near-vertices,
+   split crossed triangles — then delete the enclosed disc of girdle triangles. `A₀` becomes the
+   hole boundary.
+3. **Loft the arm** from `A₀` (`A₀ → A₁ → … → Aₖ`) using the shared ring vertices.
+4. **Skin:** weights from ring ownership (girdle rings → spine2/shoulder, arm rings → shoulder/arm).
+
+**Shoulder decision (cheap):** the chest envelope is a **shoulder plate** — a short stack of wide
+rings at the `Spine2` level (shoulder-to-shoulder), with the neck exiting its top and the two arms
+tucked just inside its sides (overlap, no stitch). If the flat plate reads badly, radiuss the top
+plate (blend its top ring toward the neck). The explicit cut+bridge side port is deferred.
+
+**Thumb** is the awkward case: its ring is oblique to the palm side, so its bridge twists (unlike
+the arm). HP-6's SDF projection remains the fallback for any cut/bridge that proves too fiddly.
+
+Exit criteria: the `loft` body mode shows one watertight ring-graph mesh (hips, chest, arms,
+hands, fingers, feet), with the Rings overlay rendering the graph before lofting.
 
 ---
 
@@ -291,3 +483,121 @@ whether more/better-authored morph targets solve the gap more cheaply.
   swap) is reused directly as `hairStyle`'s implementation.
 - `scripts/extractRig.py`, `scripts/extractAnimations.py` — existing Blender-headless export
   pattern this roadmap's `exportSkinnedBase.py` (HP-1) extends.
+
+---
+
+## Implementation task list — non-Blender route *(checkboxes track progress)*
+
+Concrete, ordered, testable steps. Parts 1–2 give the durable foundation (semantic schema +
+skinning plumbing); Part 3 is optional; Part 4 was the HP-5 SDF spike; Part 5 was the HP-6 hybrid
+prototype. **Part 6 is the current target** — HP-7 ring-graph skin: a single shared ring set over
+the skeleton, envelopes with ports, and explicit loft. Scoped to the live `/character` editor and
+`ProceduralHumanoid`; the compiler/domain/storage layers are untouched. The only cross-boundary
+items are the export round-trip checks.
+
+### Part 1 — Semantic sliders over the segmented mesh
+
+- [x] 1. Semantic schema + `semanticToBoneParams` + `semanticHeightScale` in
+  `src/core/character/semanticParams.ts` (pure, tested).
+- [x] 2. 5 sliders as the default `/character` body UI; per-bone sliders behind "Advanced".
+
+### Part 2 — First-order skinning of the tubes
+
+- [x] 3. Weight math (`tubeSkinWeights`, `assignTubeWeights`) in `src/core/character/skinning.ts`
+  (pure, tested).
+- [x] 4. Organic body tubes as per-region `SkinnedMesh` with procedural weights
+  (`_attachSkinnedBodyTubes`).
+- [x] 5. Round-trip: `exportCharacterGLB` → `GLTFLoader` reproduces the skinned body (or scope
+  skinning to the live editor and file the export follow-up separately).
+
+### Part 3 — HP-0.6 volume-preserving skinning *(optional)*
+
+- [ ] 6. DQS (`USE_DUAL_QUATERNIONS`) if the elbow/knee crook pinches — applies to any skinned
+  mesh, including HP-5's output.
+
+### Part 4 — HP-5 SDF soft-union *(done, superseded by Part 5)*
+
+- [x] 7. **Spike:** one limb (upper arm + forearm) as two capsules, smooth-min at the elbow,
+  meshed and skinned with per-bone field weights — bends with no seam/tear. Core proven in Node
+  tests (`sdf.ts`, `marchingTetra.ts`, `fieldSkinning.ts` + `sdfLimb.test.ts`): marching tetra for
+  now (marching cubes is the production refinement); synthetic 2-bone chain (real `xbot` bind lands
+  in step 10).
+- [x] 8. Generalise to the whole body: per-bone capsules + head ellipsoid + smooth-min junctions
+  (pelvis/shoulder); tune blend radius against webbing/melting. Done in `_attachSdfBody`
+  (`ProceduralHumanoid.ts`) — blend radius 4 cm.
+- [ ] 9. **Bust demo** — two chest ellipsoids smooth-min'd into the chest capsule (scale param):
+  the "add a primitive, let it blend" proof.
+- [x] 10. Swap in for `_attachSkinnedBodyTubes` (organic only, behind a `bodyMode` toggle); keep
+  the face separate, keep `c3po`/`sonny` rigid; reuse Part 1's sliders → capsule radii and Part 2's
+  skeleton/skinning.
+- [ ] 11. Round-trip export + Presenter check for the SDF body.
+
+### Part 5 — HP-6 junction volumes (hybrid loft + local SDF) *(prototype, superseded by Part 6)*
+
+- [x] 12. **Spike — one arm:** loft upper arm + forearm from elliptical `BoneParams` rings (taper +
+  `tubeOffsetForward`), bridge the elbow, and knit the shoulder into a small junction volume (local
+  smooth-min). Done: `loft.ts` (`loftRings`, `boneRings`, `projectPointToSurface`) + `loft.test.ts`;
+  generalised into `_attachLoftBody` in `ProceduralHumanoid.ts`.
+- [x] 13. Generalise the loft to the remaining 1-D chains: legs (heel), feet, neck, spine, fingers.
+  Done for hips/spine/neck/shoulders/arms/forearms/legs/feet; **fingers/toes deferred** and the foot
+  is a simplified loft (its `jointRadiusY`/`jointOffsetY` heel shape not yet modelled).
+- [x] 14. Add the junction volumes. Done via local SDF smooth-min (reuse `sdf.ts`): each tube's end
+  rings are projected onto the union field so pelvis/shoulders/elbow/knee blend. The explicit
+  hip-girdle "trousers" shape is a later refinement, not yet done.
+- [x] 15. **Ring debug overlay** — toggle to render the ring/ellipse skeleton + junction volumes so
+  the cross-section layout can be inspected before skinning. Rings done (`Rings` button +
+  `setRingDebugVisible`); junction-volume visualisation not yet drawn.
+- [x] 16. Swap in for the organic body (behind a `bodyMode` toggle — `tubes`/`sdf`/`loft` buttons),
+  keeping the face separate and `c3po`/`sonny` rigid; reuses Part 1's sliders → cross-sections and
+  Part 2's skinning plumbing.
+- [ ] 17. Round-trip export + Presenter check.
+
+### Part 6 — HP-7 ring-graph skin *(the target)*
+
+- [x] 18. **Ring graph as pure data:** one ring per joint (shared), each = { centre, frame, rx, rz };
+  envelopes for hips / chest+shoulders / palm with ports. Extend the Rings overlay to render the
+  graph (not per-bone tubes). Done — `ringGraph.ts` (`buildRingGraph`) + the Rings overlay show
+  shared ramping rings; chest/shoulders are a widened Spine2 ring and the hips are a custom girdle
+  (two wide rings below the pelvis). Palm envelope still pending.
+- [x] 19. Loft the linear chains with shared rings (hip→…→foot, shoulder→…→hand, fingers, toes);
+  verify watertight. Done — `buildRingLoft` stitches each bone's rings plus the child's start ring.
+- [ ] 20. **Side port — arm into chest:** cut+bridge (snap/merge/split + delete disc + loft) at the
+  shoulder; verify a single mesh with no twist. Shoulder is still overlap-only (no cut/bridge).
+- [ ] 21. **Fan** the legs into the pelvis base and fingers into the knuckle edge (partition ring
+  perimeter into arcs). Legs still overlap the girdle base (fan deferred).
+- [ ] 22. **Side port — thumb** into the palm radial side (oblique bridge).
+- [x] 23. Skin the ring graph (weights from ring ownership) and swap into the `loft` body mode,
+  replacing HP-6's per-bone prototype. Done — `_attachLoftBody` binds one SkinnedMesh from
+  `buildRingLoft` with `tubeSkinWeights`.
+- [ ] 24. Round-trip export + Presenter check.
+
+#### HP-7 leg fan — mini-plan *(incremental; visualise + stop each step)*
+
+The pelvis→legs junction is a 1→2 branch, done as small geometric steps. Check the Rings overlay after each.
+
+- [x] **1. `loftStrip` primitive** — general N→M open-polyline strip lofter (`ringGraph.ts`).
+- [x] **2. Split the girdle bottom ring into two hemi-disks** — `splitRingArcs` partitions the
+  ring into left/right arcs sharing two seam verts; the Rings overlay draws them in red/green.
+- [x] **3. D-shape hemi-disk** — a straight seam chord (`seamEdgePoints`) closes each hemi into
+  a loop of `segments` verts, matching the leg ring for a 1:1 stitch.
+- [x] **4. Girdle = pelvis + buttocks** — the hips bone carries a single cross-section from the
+  waist, widening to the hips at the hip joint, then narrowing to the crotch (the split ring).
+- [x] **5. Upper-leg skin starts at the crotch** — the upleg's rings begin ~¼ down the femur
+  with dense top spacing (no artificial interpolated rings).
+- [x] **6. Skinning: 3-bone chain hips→upleg→leg** — top leg rings blend hips↔upleg at the
+  crotch (`BodyRing.parentWeight`), bottom rings blend upleg↔leg at the knee.
+- [x] **7. Stitch** the girdle crotch ring into the two leg tops (`buildLegFans`: D-shape
+  hemi-disk → leg ring, 1:1, shared crotch chord with hips + both uplegs), then full
+  `vitest` + `tsc`.
+
+### Do-not-do *(keeps the POC bounded)*
+
+- Sculpted/morph anatomy (HP-1/HP-2) — only if realism over cartoon is ever needed.
+- C1 procedural lofting of joint regions — superseded by HP-7's ring-graph skin (one shared ring
+  per joint, envelopes with ports, explicit loft).
+- Tube-offset manual tuning (`tubeOffsetForward`, `jointOffset*`, frustum ratios) stays
+  tube-body-only — the HP-7 ring path borrows the cross-section numbers as starting values but
+  must not mutate the tube parameters.
+- Face geometry — stays the existing bone-pivot overlay; these sliders are body-only.
+- Compiler/domain/storage changes — none needed; confined to `ProceduralHumanoid`, the character
+  route, and the new pure mapping module.

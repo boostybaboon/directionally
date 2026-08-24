@@ -1,4 +1,10 @@
 import * as THREE from 'three';
+import { assignTubeWeights } from './skinning.js';
+import { marchingTetraByStep } from './marchingTetra.js';
+import { capsuleSDFScalar, ellipsoidSDFScalar, smoothMin } from './sdf.js';
+import { deriveFieldWeights } from './fieldSkinning.js';
+import { buildRingGraph, ringWorldPoints, buildRingLoft, splitRingArcs, seamEdgePoints } from './ringGraph.js';
+import type { BodyRing } from './ringGraph.js';
 
 /**
  * Colour palette for body regions.
@@ -22,6 +28,9 @@ export const DEFAULT_COLORS: BodyColors = {
 
 /** Visual style for the procedural body geometry. */
 export type RobotStyle = 'organic' | 'c3po' | 'sonny';
+
+/** How the organic body is built: segmented tubes, or a smooth SDF union. */
+export type BodyMode = 'tubes' | 'sdf' | 'loft';
 
 /** Warm gold palette for a C3PO-style robot. */
 export const C3PO_COLORS: BodyColors = {
@@ -298,6 +307,24 @@ const BONE_SPECS: Record<string, BoneSpec> = {
   mixamorigRightToe_End:   { region: 'shoes', group: 'toe'   },
 };
 
+/** A capsule/ellipsoid primitive of the body SDF field (flat for scalar eval). */
+interface BodyPrim {
+  kind: 'capsule' | 'ellipsoid';
+  ax: number; ay: number; az: number; bx: number; by: number; bz: number; r: number;
+  inv: THREE.Matrix4 | null; cx: number; cy: number; cz: number; rx: number; ry: number; rz: number;
+  bone: number;
+}
+
+function regionColors(colors: BodyColors): Record<keyof BodyColors, THREE.Color> {
+  return {
+    skin: new THREE.Color(colors.skin),
+    torso: new THREE.Color(colors.torso),
+    legs: new THREE.Color(colors.legs),
+    shoes: new THREE.Color(colors.shoes),
+    hands: new THREE.Color(colors.hands),
+  };
+}
+
 const _up = new THREE.Vector3(0, 1, 0);
 const JOINT_RADIUS = 1.8; // cm
 const BONE_RADIUS  = 0.7; // cm
@@ -347,6 +374,8 @@ export class ProceduralHumanoid {
   private skeletonLinks: Array<{ child: THREE.Bone; mesh: THREE.Mesh }> = [];
   /** Body tube links re-synced every frame when animation moves bone positions. */
   private bodyLinks: Array<{ child: THREE.Bone; mesh: THREE.Mesh; inset: number; forwardOffset: number }> = [];
+  /** HP-0.5: organic body tubes pending first-order skinned-mesh construction. */
+  private _skinnedTubeDefs: Array<{ bone: THREE.Bone; childBone: THREE.Bone; region: keyof BodyColors; rx: number; rz: number; inset: number; forwardOffset: number }> = [];
   /** Lazily-generated in-place variants: kept for potential future use. */
   private inPlaceCache = new Map<string, THREE.AnimationClip>();
   /** Reference to mixamorigHips for runtime root-motion cancellation. */
@@ -359,6 +388,25 @@ export class ProceduralHumanoid {
   private _neckTiltDeg = 0;
   /** Atlas joint sphere parented to the neck bone, repositioned each frame to the tube top. */
   private _atlasJointMesh: THREE.Mesh | null = null;
+  /** HP-6 loft ring overlay (line loops); built in `_attachLoftBody`, hidden by default. */
+  private _ringDebug: THREE.Group | null = null;
+  /** Per-ring line loops + their owning bones, re-projected each frame when visible. */
+  private _ringDebugLines: Array<{ ring: BodyRing; bone: THREE.Bone; line: THREE.LineLoop }> = [];
+  /** Girdle-bottom split visualisation: left/right hemi-arcs + shared seam points. */
+  private _ringSplitDebug: {
+    bone: THREE.Bone;
+    ring: BodyRing;
+    posIdx: number[];
+    negIdx: number[];
+    seamsIdx: [number, number];
+    segs: number;
+    posLine: THREE.Line;
+    negLine: THREE.Line;
+    seamEdgeLine: THREE.Line;
+    seamInterior: number;
+  } | null = null;
+  /** Front-facing wireframe overlay for the loft body (depth-tested against the filled body). */
+  private _wireMesh: THREE.SkinnedMesh | null = null;
   constructor(
     gltfScene: THREE.Group,
     clips: THREE.AnimationClip[],
@@ -368,6 +416,7 @@ export class ProceduralHumanoid {
     insetFactor: number = 0,
     faceParams: FaceParams = DEFAULT_FACE_PARAMS,
     neckTiltDeg: number = -20,
+    bodyMode: BodyMode = 'tubes',
   ) {
     this.root = gltfScene;
     this.clips = clips;
@@ -375,7 +424,14 @@ export class ProceduralHumanoid {
     this._neckTiltDeg = neckTiltDeg;
 
     this._hideSkinnedMeshes();
-    this._attachBodyGeom(colors, style, boneParamMap, insetFactor);
+    if (style === 'organic' && bodyMode === 'sdf') {
+      this._attachSdfBody(colors, boneParamMap);
+    } else if (style === 'organic' && bodyMode === 'loft') {
+      this._attachLoftBody(colors, boneParamMap);
+    } else {
+      this._attachBodyGeom(colors, style, boneParamMap, insetFactor);
+      this._attachSkinnedBodyTubes(colors);
+    }
     this._attachFaceGeom(style, colors, boneParamMap, faceParams);
     this._attachSkeletonGeom();
     this.setSkeletonVisible(false);
@@ -475,6 +531,26 @@ export class ProceduralHumanoid {
       const childBone = obj.children.find((c) => c instanceof THREE.Bone) as THREE.Bone | undefined;
       if (!childBone || childBone.position.length() < 1e-5) return;
 
+      const inset = bp.jointRadius * insetFactor;
+      const forwardOffset = bp.tubeOffsetForward ?? 0;
+
+      // HP-0.5: for the organic style, body tubes (except the neck, which keeps
+      // its tilt/atlas special case) are emitted as a first-order skinned mesh
+      // instead of a rigid per-bone tube. Collected here, built after the
+      // traverse in _attachSkinnedBodyTubes.
+      if (style === 'organic' && obj.name !== 'mixamorigNeck') {
+        this._skinnedTubeDefs.push({
+          bone: obj as THREE.Bone,
+          childBone,
+          region: spec.region,
+          rx: bp.tubeRadiusX,
+          rz: bp.tubeRadiusZ,
+          inset,
+          forwardOffset,
+        });
+        return;
+      }
+
       // Unit geometry (radius 1, height 1).
       // scale.x / scale.z set the elliptical cross-section and are fixed per-frame.
       // scale.y carries the actual tube length and is updated every frame by _syncBodyLinks.
@@ -482,8 +558,6 @@ export class ProceduralHumanoid {
       const tubeMesh = new THREE.Mesh(tubeGeom, m);
       tubeMesh.scale.x = bp.tubeRadiusX;
       tubeMesh.scale.z = bp.tubeRadiusZ;
-      const inset = bp.jointRadius * insetFactor;
-      const forwardOffset = bp.tubeOffsetForward ?? 0;
       tubeMesh.userData.boneName = obj.name;
       this._applyBoneLink(tubeMesh, childBone.position, inset);
       tubeMesh.position.z += forwardOffset;
@@ -492,6 +566,439 @@ export class ProceduralHumanoid {
       this.bodyLinks.push({ child: childBone, mesh: tubeMesh, inset, forwardOffset });
       if (obj.name === 'mixamorigNeck') this._neckTube = tubeMesh;
     });
+  }
+
+  /**
+   * HP-0.5 (first-order skinning): build the organic body tubes as one
+   * `THREE.SkinnedMesh` per body region, with per-vertex two-bone weights
+   * computed procedurally (`assignTubeWeights`). Geometry is baked into the
+   * skeleton's bind pose so the `AnimationMixer` deforms it directly — no
+   * per-frame `_syncBodyLinks` for the body tubes.
+   */
+  private _attachSkinnedBodyTubes(colors: BodyColors): void {
+    if (this._skinnedTubeDefs.length === 0) return;
+
+    this.root.updateMatrixWorld(true);
+
+    const bones: THREE.Bone[] = [];
+    this.root.traverse((o) => { if (o instanceof THREE.Bone) bones.push(o); });
+    const skeleton = new THREE.Skeleton(bones);
+    const boneIndex = new Map<string, number>(bones.map((b, i) => [b.name, i]));
+
+    const qFor = (dir: THREE.Vector3): THREE.Quaternion => {
+      const q = new THREE.Quaternion();
+      const dot = _up.dot(dir);
+      if (dot > 0.9999) q.identity();
+      else if (dot < -0.9999) q.set(1, 0, 0, 0);
+      else {
+        const axis = new THREE.Vector3().crossVectors(_up, dir).normalize();
+        q.setFromAxisAngle(axis, Math.acos(dot));
+      }
+      return q;
+    };
+
+    type Acc = { pos: number[]; norm: number[]; idx: number[]; si: number[]; sw: number[] };
+    const regions = new Map<keyof BodyColors, Acc>();
+    const tmp = new THREE.Vector3();
+    const tmpN = new THREE.Vector3();
+
+    for (const def of this._skinnedTubeDefs) {
+      const aIdx = boneIndex.get(def.bone.name);
+      const bIdx = boneIndex.get(def.childBone.name);
+      if (aIdx === undefined || bIdx === undefined) continue;
+
+      const childLocal = def.childBone.position;
+      const usable = Math.max(0, childLocal.length() - 2 * def.inset);
+      const mid = childLocal.clone().multiplyScalar(0.5);
+      const q = qFor(childLocal.clone().normalize());
+
+      const tubeGeom = new THREE.CylinderGeometry(1, 1, 1, 16, 8);
+      const { skinIndex, skinWeight } = assignTubeWeights(tubeGeom, aIdx, bIdx);
+
+      const pos = tubeGeom.attributes.position as THREE.BufferAttribute;
+      const norm = tubeGeom.attributes.normal as THREE.BufferAttribute;
+      const index = tubeGeom.index as THREE.BufferAttribute;
+
+      let acc = regions.get(def.region);
+      if (!acc) { acc = { pos: [], norm: [], idx: [], si: [], sw: [] }; regions.set(def.region, acc); }
+      const vertBase = acc.pos.length / 3;
+      const invRx = 1 / def.rx;
+      const invRz = 1 / def.rz;
+
+      for (let i = 0; i < pos.count; i++) {
+        // Unit-cylinder vertex → bone-local tube vertex → root bind space.
+        tmp.set(pos.getX(i) * def.rx, pos.getY(i) * usable, pos.getZ(i) * def.rz).applyQuaternion(q);
+        tmp.x += mid.x; tmp.y += mid.y; tmp.z += mid.z + def.forwardOffset;
+        tmp.applyMatrix4(def.bone.matrixWorld);
+        acc.pos.push(tmp.x, tmp.y, tmp.z);
+
+        // Normals: inverse-transpose of the non-uniform scale, then rotation.
+        tmpN.set(norm.getX(i) * invRx, norm.getY(i), norm.getZ(i) * invRz).applyQuaternion(q).normalize();
+        acc.norm.push(tmpN.x, tmpN.y, tmpN.z);
+
+        acc.si.push(skinIndex[i * 4], skinIndex[i * 4 + 1], skinIndex[i * 4 + 2], skinIndex[i * 4 + 3]);
+        acc.sw.push(skinWeight[i * 4], skinWeight[i * 4 + 1], skinWeight[i * 4 + 2], skinWeight[i * 4 + 3]);
+      }
+      for (let i = 0; i < index.count; i++) {
+        acc.idx.push(vertBase + index.getX(i));
+      }
+    }
+
+    for (const [region, acc] of regions) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(acc.pos, 3));
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(acc.norm, 3));
+      geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(new Uint16Array(acc.si), 4));
+      geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(acc.sw, 4));
+      geo.setIndex(acc.idx);
+
+      const mesh = new THREE.SkinnedMesh(geo, new THREE.MeshToonMaterial({ color: colors[region] }));
+      mesh.name = `body-${region}`;
+      mesh.bind(skeleton);
+      this.root.add(mesh);
+      this.bodyMeshes.push(mesh);
+    }
+  }
+
+  /**
+   * HP-5: build the organic body as a single skinned mesh from a smooth-min
+   * union of per-bone capsules (plus head/hand ellipsoids), meshed at runtime.
+   * Each bone becomes one capsule (bone→child, radius = widest local
+   * cross-section); the head and hands are triaxial ellipsoids in their own
+   * bone frames. Per-vertex bone weights fall out of the per-primitive field
+   * distances, and vertex colours come from the dominant bone's region.
+   */
+  private _buildBodyField(boneParamMap: BoneParamMap): {
+    skeleton: THREE.Skeleton;
+    bones: THREE.Bone[];
+    boneIndex: Map<string, number>;
+    cmToWorld: number;
+    prims: BodyPrim[];
+    regionByBone: Map<number, keyof BodyColors>;
+    minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number;
+    dist: (px: number, py: number, pz: number, i: number) => number;
+    field: (p: THREE.Vector3) => number;
+  } {
+    this.root.updateMatrixWorld(true);
+
+    const bones: THREE.Bone[] = [];
+    this.root.traverse((o) => { if (o instanceof THREE.Bone) bones.push(o); });
+    const boneIndex = new Map<string, number>(bones.map((b, i) => [b.name, i]));
+    const skeleton = new THREE.Skeleton(bones);
+
+    // The Mixamo rig is authored in cm but its Armature carries a 0.01 scale
+    // (metres). Derive that uniform scale so cm radii/blend/step can be kept
+    // while the field is evaluated in the skeleton's world space.
+    const cmToWorld = bones.find((b) => b.name === 'mixamorigHips')?.matrixWorld.getMaxScaleOnAxis() ?? 1;
+
+    const fallback: BoneParams = { tubeRadiusX: 2, tubeRadiusZ: 2, jointRadius: 2 };
+
+    const prims: BodyPrim[] = [];
+    const regionByBone = new Map<number, keyof BodyColors>();
+
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+
+    for (const obj of bones) {
+      const spec = BONE_SPECS[obj.name];
+      if (!spec) continue;
+      const group = spec.group;
+      if (group === 'finger' || group === 'toe') continue;
+      const bp = boneParamMap[group] ?? DEFAULT_BONE_PARAMS[group] ?? fallback;
+      const bi = boneIndex.get(obj.name);
+      if (bi === undefined) continue;
+      regionByBone.set(bi, spec.region);
+
+      if (group === 'head' || group === 'hand') {
+        const ry = bp.jointRadiusY ?? bp.jointRadius;
+        const rz = bp.jointRadiusZ ?? bp.jointRadius;
+        prims.push({
+          kind: 'ellipsoid',
+          ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0, r: 0,
+          inv: obj.matrixWorld.clone().invert(),
+          cx: 0, cy: bp.jointOffsetY ?? 0, cz: bp.jointOffsetZ ?? 0,
+          rx: bp.jointRadius, ry, rz,
+          bone: bi,
+        });
+        const rad = Math.max(bp.jointRadius, ry, rz) * cmToWorld;
+        b.set(0, bp.jointOffsetY ?? 0, bp.jointOffsetZ ?? 0).applyMatrix4(obj.matrixWorld);
+        minX = Math.min(minX, b.x - rad); maxX = Math.max(maxX, b.x + rad);
+        minY = Math.min(minY, b.y - rad); maxY = Math.max(maxY, b.y + rad);
+        minZ = Math.min(minZ, b.z - rad); maxZ = Math.max(maxZ, b.z + rad);
+        continue;
+      }
+
+      const child = obj.children.find((c) => c instanceof THREE.Bone) as THREE.Bone | undefined;
+      // Tube cross-section only — drop the ball joint so the field follows the
+      // cylinder, matching the loft rings.
+      const radiusCm = Math.max(bp.tubeRadiusX, bp.tubeRadiusZ);
+      if (radiusCm < 1e-5) continue;
+      const radiusWorld = radiusCm * cmToWorld;
+
+      obj.getWorldPosition(a);
+      if (child && child.position.lengthSq() > 1e-8) {
+        child.getWorldPosition(b);
+        prims.push({
+          kind: 'capsule',
+          ax: a.x, ay: a.y, az: a.z, bx: b.x, by: b.y, bz: b.z, r: radiusWorld,
+          inv: null, cx: 0, cy: 0, cz: 0, rx: 0, ry: 0, rz: 0,
+          bone: bi,
+        });
+      } else {
+        prims.push({
+          kind: 'ellipsoid',
+          ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0, r: 0,
+          inv: obj.matrixWorld.clone().invert(),
+          cx: 0, cy: 0, cz: 0,
+          rx: radiusCm, ry: radiusCm, rz: radiusCm,
+          bone: bi,
+        });
+      }
+      minX = Math.min(minX, a.x - radiusWorld); maxX = Math.max(maxX, a.x + radiusWorld);
+      minY = Math.min(minY, a.y - radiusWorld); maxY = Math.max(maxY, a.y + radiusWorld);
+      minZ = Math.min(minZ, a.z - radiusWorld); maxZ = Math.max(maxZ, a.z + radiusWorld);
+      if (child && child.position.lengthSq() > 1e-8) {
+        minX = Math.min(minX, b.x - radiusWorld); maxX = Math.max(maxX, b.x + radiusWorld);
+        minY = Math.min(minY, b.y - radiusWorld); maxY = Math.max(maxY, b.y + radiusWorld);
+        minZ = Math.min(minZ, b.z - radiusWorld); maxZ = Math.max(maxZ, b.z + radiusWorld);
+      }
+    }
+
+    const blend = 4 * cmToWorld; // smooth-min blend radius
+    const tmp = new THREE.Vector3();
+    const dist = (px: number, py: number, pz: number, i: number): number => {
+      const q = prims[i];
+      if (q.kind === 'capsule') {
+        return capsuleSDFScalar(px, py, pz, q.ax, q.ay, q.az, q.bx, q.by, q.bz, q.r);
+      }
+      const l = tmp.set(px, py, pz).applyMatrix4(q.inv!);
+      return ellipsoidSDFScalar(l.x, l.y, l.z, q.cx, q.cy, q.cz, q.rx, q.ry, q.rz) * cmToWorld;
+    };
+
+    const field = (p: THREE.Vector3): number => {
+      if (prims.length === 0) return Infinity;
+      let d = dist(p.x, p.y, p.z, 0);
+      for (let i = 1; i < prims.length; i++) d = smoothMin(d, dist(p.x, p.y, p.z, i), blend);
+      return d;
+    };
+
+    return { skeleton, bones, boneIndex, cmToWorld, prims, regionByBone, minX, minY, minZ, maxX, maxY, maxZ, dist, field };
+  }
+
+  private _attachSdfBody(colors: BodyColors, boneParamMap: BoneParamMap): void {
+    const f = this._buildBodyField(boneParamMap);
+    if (f.prims.length === 0) return;
+
+    const step = 2.5 * f.cmToWorld;
+    const sigma = 2 * f.cmToWorld;
+    const mesh = marchingTetraByStep(
+      f.field,
+      new THREE.Vector3(f.minX - 2 * f.cmToWorld, f.minY - 2 * f.cmToWorld, f.minZ - 2 * f.cmToWorld),
+      new THREE.Vector3(f.maxX + 2 * f.cmToWorld, f.maxY + 2 * f.cmToWorld, f.maxZ + 2 * f.cmToWorld),
+      step,
+    );
+
+    const vcount = mesh.positions.length / 3;
+    const skinIndex = new Float32Array(vcount * 4);
+    const skinWeight = new Float32Array(vcount * 4);
+    const vertexColors = new Float32Array(vcount * 3);
+
+    const regionColor = regionColors(colors);
+    const boneOf = f.prims.map((q) => q.bone);
+    const distances = new Array<number>(f.prims.length);
+
+    for (let v = 0; v < vcount; v++) {
+      const px = mesh.positions[v * 3];
+      const py = mesh.positions[v * 3 + 1];
+      const pz = mesh.positions[v * 3 + 2];
+      for (let i = 0; i < f.prims.length; i++) distances[i] = f.dist(px, py, pz, i);
+      const w = deriveFieldWeights(distances, boneOf, sigma);
+      const col = regionColor[f.regionByBone.get(w.indices[0]) ?? 'skin'];
+      vertexColors[v * 3] = col.r;
+      vertexColors[v * 3 + 1] = col.g;
+      vertexColors[v * 3 + 2] = col.b;
+      for (let c = 0; c < 4; c++) {
+        skinIndex[v * 4 + c] = w.indices[c];
+        skinWeight[v * 4 + c] = w.weights[c];
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(mesh.positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(mesh.normals, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(vertexColors, 3));
+    geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(new Uint16Array(skinIndex), 4));
+    geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeight, 4));
+    geo.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+
+    const meshObj = new THREE.SkinnedMesh(geo, new THREE.MeshToonMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+    meshObj.name = 'sdf-body';
+    meshObj.bind(f.skeleton);
+    this.root.add(meshObj);
+    this.bodyMeshes.push(meshObj);
+  }
+
+  /**
+   * HP-7 (Part 6): loft the shared-ring graph into one watertight tube for the
+   * 1-D chains, plus a wide shoulder plate overlapping the Spine2/arm region.
+   */
+  private _attachLoftBody(colors: BodyColors, boneParamMap: BoneParamMap): void {
+    const f = this._buildBodyField(boneParamMap);
+    if (f.prims.length === 0) return;
+
+    const fallback: BoneParams = { tubeRadiusX: 2, tubeRadiusZ: 2, jointRadius: 2 };
+    const segments = 16;
+    const ringsPerBone = 5;
+    const regionColor = regionColors(colors);
+
+    const positions: number[] = [];
+    const colorsArr: number[] = [];
+    const skinIndex: number[] = [];
+    const skinWeight: number[] = [];
+    const indices: number[] = [];
+
+    this._ringDebug = new THREE.Group();
+    this._ringDebug.name = 'ring-debug';
+    this._ringDebug.visible = false;
+    this.root.add(this._ringDebug);
+    const ringMat = new THREE.LineBasicMaterial({ color: 0x00e0e0 });
+
+    // Ring graph: the shared-ring skeleton (one ring per joint, ramping radii).
+    // Widen the Spine2 ring to the shoulder span so the single loft forms a
+    // shoulder plate (no separate mesh).
+    let shoulderHalfCm: number | null = null;
+    {
+      const la = f.bones.find((b) => b.name === 'mixamorigLeftArm');
+      const ra = f.bones.find((b) => b.name === 'mixamorigRightArm');
+      if (la && ra) {
+        const l = new THREE.Vector3();
+        const r = new THREE.Vector3();
+        la.getWorldPosition(l);
+        ra.getWorldPosition(r);
+        shoulderHalfCm = Math.max(Math.abs(l.x), Math.abs(r.x)) / f.cmToWorld * 1.08;
+      }
+    }
+    const armBp = boneParamMap['arm'] ?? DEFAULT_BONE_PARAMS['arm'] ?? fallback;
+    const tubeParams = (name: string) => {
+      const spec = BONE_SPECS[name];
+      if (!spec) return null;
+      const group = spec.group;
+      if (group === 'head' || group === 'hand') return null;
+      const bp = boneParamMap[group] ?? DEFAULT_BONE_PARAMS[group] ?? fallback;
+      let rx = bp.tubeRadiusX;
+      let rz = bp.tubeRadiusZ;
+      if (group === 'spine2' && shoulderHalfCm !== null) rx = shoulderHalfCm;
+      if (group === 'shoulder') { rx = armBp.tubeRadiusX; rz = armBp.tubeRadiusZ; }
+      return { tubeRadiusX: rx, tubeRadiusZ: rz, tubeOffsetForward: bp.tubeOffsetForward, group };
+    };
+    const graph = buildRingGraph(f.bones, f.boneIndex, tubeParams, 5);
+    this._ringDebugLines = [];
+    for (const ring of graph.rings) {
+      const bone = f.bones[ring.boneIndex];
+      const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(ringWorldPoints(ring, bone, segments)), ringMat);
+      this._ringDebug.add(line);
+      this._ringDebugLines.push({ ring, bone, line });
+    }
+
+    // Visualise the girdle-bottom split (the source of the leg fan): left/right
+    // hemi-arcs in distinct colours, plus the two shared seam points.
+    const hipsBone = f.bones.find((b) => b.name === 'mixamorigHips');
+    const hipsRings = graph.rings.filter((r) => r.boneName === 'mixamorigHips');
+    const splitRing = hipsRings.length ? hipsRings.reduce((a, b) => (b.y < a.y ? b : a)) : undefined;
+    const lu = f.bones.find((b) => b.name === 'mixamorigLeftUpLeg');
+    const ru = f.bones.find((b) => b.name === 'mixamorigRightUpLeg');
+    if (hipsBone && splitRing && lu && ru) {
+      const l = new THREE.Vector3();
+      const r = new THREE.Vector3();
+      lu.getWorldPosition(l);
+      ru.getWorldPosition(r);
+      const axis = r.clone().sub(l).normalize();
+      const pts = ringWorldPoints(splitRing, hipsBone, segments);
+      const center = new THREE.Vector3();
+      for (const p of pts) center.add(p);
+      center.multiplyScalar(1 / pts.length);
+      const split = splitRingArcs(pts, center, axis);
+
+      const arcGeom = (idxs: number[]) =>
+        new THREE.BufferGeometry().setFromPoints(idxs.map((j) => pts[j]));
+      const posLine = new THREE.Line(arcGeom(split.pos), new THREE.LineBasicMaterial({ color: 0xff5555 }));
+      const negLine = new THREE.Line(arcGeom(split.neg), new THREE.LineBasicMaterial({ color: 0x55ff55 }));
+      // Straight seam chord: closes each hemi-disk into a D-shape whose loop
+      // carries `segments` verts (curved arc + chord), matching the leg ring.
+      const seamInterior = segments / 2 - 1;
+      const seamEdge = seamEdgePoints(pts[split.seams[0]], pts[split.seams[1]], seamInterior);
+      const seamEdgeLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(seamEdge),
+        new THREE.LineBasicMaterial({ color: 0x5599ff }),
+      );
+      this._ringDebug.add(posLine, negLine, seamEdgeLine);
+      this._ringSplitDebug = {
+        bone: hipsBone, ring: splitRing,
+        posIdx: split.pos, negIdx: split.neg, seamsIdx: split.seams,
+        segs: segments, posLine, negLine, seamEdgeLine, seamInterior,
+      };
+
+    }
+
+    // Loft the shared-ring graph into a single watertight tube for the 1-D chains.
+    const loft = buildRingLoft(f.bones, f.boneIndex, tubeParams, segments, ringsPerBone);
+    const loftBase = positions.length / 3;
+    for (let i = 0; i < loft.positions.length; i++) positions.push(loft.positions[i]);
+    for (let i = 0; i < loft.skinIndex.length; i++) skinIndex.push(loft.skinIndex[i]);
+    for (let i = 0; i < loft.skinWeight.length; i++) skinWeight.push(loft.skinWeight[i]);
+    for (let v = 0; v < loft.skinIndex.length / 4; v++) {
+      const col = regionColor[f.regionByBone.get(loft.skinIndex[v * 4]) ?? 'skin'];
+      colorsArr.push(col.r, col.g, col.b);
+    }
+    for (const idx of loft.indices) indices.push(loftBase + idx);
+
+    // Head and hands stay ellipsoids (as in the tube body), not lofts.
+    for (const obj of f.bones) {
+      const spec = BONE_SPECS[obj.name];
+      if (!spec) continue;
+      const group = spec.group;
+      if (group !== 'head' && group !== 'hand') continue;
+      const bp = boneParamMap[group] ?? DEFAULT_BONE_PARAMS[group] ?? fallback;
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 24, 18),
+        new THREE.MeshToonMaterial({ color: colors[spec.region] }),
+      );
+      mesh.scale.set(bp.jointRadius, bp.jointRadiusY ?? bp.jointRadius, bp.jointRadiusZ ?? bp.jointRadius);
+      mesh.position.set(0, bp.jointOffsetY ?? 0, bp.jointOffsetZ ?? 0);
+      mesh.userData.boneName = obj.name;
+      obj.add(mesh);
+      this.bodyMeshes.push(mesh);
+    }
+
+    if (indices.length === 0) return;
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colorsArr, 3));
+    geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(new Uint16Array(skinIndex), 4));
+    geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeight, 4));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+
+    const meshObj = new THREE.SkinnedMesh(geo, new THREE.MeshToonMaterial({ vertexColors: true }));
+    meshObj.name = 'loft-body';
+    meshObj.bind(f.skeleton);
+    this.root.add(meshObj);
+    this.bodyMeshes.push(meshObj);
+
+    // Wireframe overlay: renders the loft body's edges with depth-testing against
+    // the filled body (depth-only occluder when wireframe is on), so only the
+    // front-facing edges are visible.
+    const wireMesh = new THREE.SkinnedMesh(geo, new THREE.MeshBasicMaterial({ color: 0x00e0e0, wireframe: true, depthWrite: false }));
+    wireMesh.name = 'loft-wire';
+    wireMesh.bind(f.skeleton);
+    wireMesh.renderOrder = 1;
+    wireMesh.visible = false;
+    this.root.add(wireMesh);
+    this._wireMesh = wireMesh;
   }
 
   private _attachFaceGeom(
@@ -918,6 +1425,40 @@ export class ProceduralHumanoid {
     }
   }
 
+  private _syncRingDebug(): void {
+    if (!this._ringDebug || !this._ringDebug.visible || this._ringDebugLines.length === 0) return;
+    this.root.updateMatrixWorld(true);
+    for (const { ring, bone, line } of this._ringDebugLines) {
+      const attr = line.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const pts = ringWorldPoints(ring, bone, attr.count);
+      for (let i = 0; i < pts.length; i++) {
+        attr.setXYZ(i, pts[i].x, pts[i].y, pts[i].z);
+      }
+      attr.needsUpdate = true;
+    }
+
+    const sd = this._ringSplitDebug;
+    if (sd) {
+      const pts = ringWorldPoints(sd.ring, sd.bone, sd.segs);
+      const setPts = (line: THREE.Line, idxs: number[]) => {
+        const attr = line.geometry.getAttribute('position') as THREE.BufferAttribute;
+        for (let k = 0; k < idxs.length; k++) {
+          const p = pts[idxs[k]];
+          attr.setXYZ(k, p.x, p.y, p.z);
+        }
+        attr.needsUpdate = true;
+      };
+      setPts(sd.posLine, sd.posIdx);
+      setPts(sd.negLine, sd.negIdx);
+      const seamEdge = seamEdgePoints(pts[sd.seamsIdx[0]], pts[sd.seamsIdx[1]], sd.seamInterior);
+      const edgeAttr = sd.seamEdgeLine.geometry.getAttribute('position') as THREE.BufferAttribute;
+      for (let k = 0; k < seamEdge.length; k++) {
+        edgeAttr.setXYZ(k, seamEdge[k].x, seamEdge[k].y, seamEdge[k].z);
+      }
+      edgeAttr.needsUpdate = true;
+    }
+  }
+
   /** Advance animations and sync geometry to the skeleton's current pose. */
   update(delta: number): void {
     this.mixer.update(delta);
@@ -931,6 +1472,7 @@ export class ProceduralHumanoid {
     }
     this._syncSkeletonLinks();
     this._syncBodyLinks();
+    this._syncRingDebug();
 
     // Autonomous blink — suppressed when no clip is playing (T-pose / static preview).
     if (this._upperLids.length > 0) {
@@ -982,6 +1524,26 @@ export class ProceduralHumanoid {
     this.skeletonMeshes = [];
     this.bodyLinks = [];
     this.skeletonLinks = [];
+    this._skinnedTubeDefs = [];
+    if (this._ringDebug) {
+      this._ringDebug.traverse((o) => {
+        if (o instanceof THREE.Line) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      });
+      this._ringDebug.parent?.remove(this._ringDebug);
+      this._ringDebug = null;
+      this._ringDebugLines = [];
+      this._ringSplitDebug = null;
+    }
+    if (this._wireMesh) {
+      const mat = this._wireMesh.material;
+      if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+      else mat.dispose();
+      this._wireMesh.parent?.remove(this._wireMesh);
+      this._wireMesh = null;
+    }
     this.mixer.stopAllAction();
   }
 
@@ -1003,6 +1565,20 @@ export class ProceduralHumanoid {
   /** Show or hide the body geometry layer. */
   setBodyVisible(visible: boolean): void {
     this.bodyMeshes.forEach((m) => (m.visible = visible));
+  }
+
+  /** Show the loft body as a front-facing-only wireframe (rear edges hidden). */
+  setWireframe(wireframe: boolean): void {
+    for (const m of this.bodyMeshes) {
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats) mat.colorWrite = !wireframe;
+    }
+    if (this._wireMesh) this._wireMesh.visible = wireframe;
+  }
+
+  /** Show or hide the loft ring overlay (only populated in `loft` mode). */
+  setRingDebugVisible(visible: boolean): void {
+    if (this._ringDebug) this._ringDebug.visible = visible;
   }
 
   /**
