@@ -438,24 +438,34 @@ loops of vertices on its surface) where child tubes attach:
 - **Side port** — the child's base ring welded onto the envelope's surface (arm into the chest
   girdle side, thumb into the palm side).
 
-**Side-port junction algorithm** — the arm → chest side is the canonical case, and the clean one,
-because the arm's base ring and the girdle's side wall are co-planar, so the bridge is a plain
-tube with no twist:
+**Side-port junction algorithm** — the arm → chest side is the canonical case. The child tube
+leaves the parent surface roughly perpendicular to its axis (a T-junction), so the hole is cut
+**in ring space** as a bracket of parent rings, not in triangle space as a post-hoc deletion.
+Choose a set of **bracket rings** on the parent envelope spanning the child's attachment height
+(`N` rings; 3 for the shoulder, 2 for the thumb), then for each bracket ring split it into three
+arcs — a **cut arc** that opens into the port, plus a **front residual arc** and **back residual
+arc** that keep the parent surface continuous on either side. Two seam vertices on each bracket
+ring separate the arcs. The port boundary loop chains those arcs across all `N` bracket heights:
 
-1. Choose the attach ring (girdle ring at shoulder height) and the arm base ring `A₀`.
-2. **Cut the hole:** snap `A₀`'s N vertices onto the girdle surface — merge onto near-vertices,
-   split crossed triangles — then delete the enclosed disc of girdle triangles. `A₀` becomes the
-   hole boundary.
-3. **Loft the arm** from `A₀` (`A₀ → A₁ → … → Aₖ`) using the shared ring vertices.
-4. **Skin:** weights from ring ownership (girdle rings → spine2/shoulder, arm rings → shoulder/arm).
+1. bottom cut arc (bottom front seam → bottom back seam);
+2. front seam chain (bottom front seam → … → top front seam, one chord per ring interval);
+3. top cut arc, reversed (top back seam → top front seam);
+4. back seam chain (top back seam → … → bottom back seam).
 
-**Shoulder decision (cheap):** the chest envelope is a **shoulder plate** — a short stack of wide
-rings at the `Spine2` level (shoulder-to-shoulder), with the neck exiting its top and the two arms
-tucked just inside its sides (overlap, no stitch). If the flat plate reads badly, radiuss the top
-plate (blend its top ring toward the neck). The explicit cut+bridge side port is deferred.
+That loop is inherently non-planar (it spans `N` different ring heights), which is what lets the
+hole wrap the arm's bulge instead of reading as a flat disk; with `N` bracket rings it has `2N − 2`
+sides (a quad at 2 rings, a hexagon at 3). Then weld the boundary loop to the child's base ring
+with the existing closed-loop loft, and skin the weld with directional weights.
 
-**Thumb** is the awkward case: its ring is oblique to the palm side, so its bridge twists (unlike
-the arm). HP-6's SDF projection remains the fallback for any cut/bridge that proves too fiddly.
+**Shoulder:** a stack of wide rings at the `Spine2` level, with the neck exiting the top. Three
+additive bracket rings at shoulder-socket height carry a hand-authored narrow→wide→narrow cut-arc
+profile (armpit crease → widest deltoid cross-section → shoulder cap); their boundary loop forms a
+hexagon around the arm. Weld the arm's base ring to it with front-deltoid-follows-arm /
+back-follows-chest weighting. See the HP-8 "Side-port junction — implementation sequence".
+
+**Thumb:** same mechanism at the palm's radial side, with a two-ring bracket (quad boundary loop)
+at the thumb base. Its base ring is oblique to the palm side, so the weld is a twisted bridge; the
+two-ring bracket keeps it in the existing loft machinery rather than HP-6's SDF projection.
 
 Exit criteria: the `loft` body mode shows one watertight ring-graph mesh (hips, chest, arms,
 hands, fingers, feet), with the Rings overlay rendering the graph before lofting.
@@ -561,11 +571,12 @@ items are the export round-trip checks.
   (two wide rings below the pelvis). Palm envelope still pending.
 - [x] 19. Loft the linear chains with shared rings (hip→…→foot, shoulder→…→hand, fingers, toes);
   verify watertight. Done — `buildRingLoft` stitches each bone's rings plus the child's start ring.
-- [ ] 20. **Side port — arm into chest:** cut+bridge (snap/merge/split + delete disc + loft) at the
-  shoulder; verify a single mesh with no twist. Shoulder is still overlap-only (no cut/bridge).
+- [ ] 20. **Side port — arm into chest:** ring-space bracket cut + closed-loop loft at the
+  shoulder (see HP-8 "Side-port junction — implementation sequence"); verify a single mesh with
+  no twist. Shoulder is still overlap-only (no cut/bridge).
 - [ ] 21. **Fan** the legs into the pelvis base and fingers into the knuckle edge (partition ring
   perimeter into arcs). Legs still overlap the girdle base (fan deferred).
-- [ ] 22. **Side port — thumb** into the palm radial side (oblique bridge).
+- [ ] 22. **Side port — thumb** into the palm radial side (2-ring bracket + oblique bridge).
 - [x] 23. Skin the ring graph (weights from ring ownership) and swap into the `loft` body mode,
   replacing HP-6's per-bone prototype. Done — `_attachLoftBody` binds one SkinnedMesh from
   `buildRingLoft` with `tubeSkinWeights`.
@@ -592,7 +603,9 @@ The pelvis→legs junction is a 1→2 branch, done as small geometric steps. Che
 
 ### Do-not-do *(keeps the POC bounded)*
 
-- Sculpted/morph anatomy (HP-1/HP-2) — only if realism over cartoon is ever needed.
+- Sculpted/morph anatomy (HP-1/HP-2) — only if realism over cartoon is ever needed. Note:
+  cosmetic body-shape features (e.g. bust) no longer require this — see HP-9's branch-envelope
+  technique below, which reuses the ring-graph/fan machinery instead of morph targets.
 - C1 procedural lofting of joint regions — superseded by HP-7's ring-graph skin (one shared ring
   per joint, envelopes with ports, explicit loft).
 - Tube-offset manual tuning (`tubeOffsetForward`, `jointOffset*`, frustum ratios) stays
@@ -601,3 +614,152 @@ The pelvis→legs junction is a 1→2 branch, done as small geometric steps. Che
 - Face geometry — stays the existing bone-pivot overlay; these sliders are body-only.
 - Compiler/domain/storage changes — none needed; confined to `ProceduralHumanoid`, the character
   route, and the new pure mapping module.
+
+---
+
+## Part 7 — HP-8+: the long-term vision, and where we actually stand
+
+Not scheduled work; a checkpoint written after HP-7's leg fan shipped, to answer "how far is the
+ring-graph approach from a fully procedural, configurable, AI-drivable humanoid?" The dream
+pipeline, stage by stage, mapped onto concrete phases below:
+
+| # | Stage (as envisioned) | Status | Phase |
+|---|---|---|---|
+| 1 | Bones | **Done** — Mixamo `xbot` skeleton, unchanged since project start | — |
+| 2 | Rings along linear bones, custom ring sets around branching bones | **Done for hips**; shoulders/wrists/ankles still generic overlap | HP-7 (done) / HP-8 |
+| 3 | Stitching of tubes to custom ring sets at branches | **Done for hips** (`buildLegFans`); shoulder/wrist/ankle unstitched | HP-8 |
+| 4 | Triangulation from rings | **Done** — `buildRingLoft` for every linear chain + the hip fan | HP-7 (done) |
+| 5 | Ellipsoidal capping on open ends (fingers, toes) | **Done** — `capTerminalEnds` fans each terminal ring to an apex vertex | HP-8 |
+| 6 | Wholly special treatment of the head | **Done** — head stays a separate ellipsoid + face-overlay system, deliberately not merged into the ring graph (see Decisions table) | — |
+| 7 | Bone weights to triangulation vertices | **Done** — `tubeSkinWeights` (linear chains) + `parentWeight` (crotch) + 3-bone fan weights (`buildLegFans`) | HP-7 (done) |
+| 8 | Animatable skin | **Done** — one `SkinnedMesh` bound to the real skeleton, driven by the existing `AnimationMixer`/clips, no export changes needed | — |
+| 9 | Feminising enhancements | **Not done** — see HP-9's branch-envelope proposal (no morph targets, no Blender) | HP-9 |
+| 10 | Region mapping → texture / clothing approximation | **Partially done** — vertex-colour regions (`regionColors`/`BodyColors`) exist; no UV/texture layer | HP-9 |
+| 11 | Accessories (hair, beard, glasses, …) | **Partially done** — `SKETCHER_ROADMAP.md` CB3 (hair swap) designed but not ported to the ring-graph body | HP-9 |
+| 12 | API for AI driving | **Designed, not wired to the ring graph** — `ROADMAP_AI.md` AI-1 targets the legacy `BoneParams` schema; needs re-pointing at the semantic-slider surface once HP-10 lands | HP-10 |
+| 13 | Configurable humanoid | **Partially done** — `semanticParams.ts`'s 5 sliders drive `BoneParams` (HP-0.5); not yet wired to the ring graph's own radii | HP-10 |
+
+Nice-to-haves called out separately: animatable face (blink done, jaw-hinge talking designed —
+HP-3.5), hair length/colour and glasses as accessory presets (HP-9), sitting/gesture poses as
+additional bundled clips (HP-11).
+
+**Assessment: this is more reachable than it looks.** The hard part of the whole pipeline —
+turning a bone graph into one watertight, correctly-weighted skin at an actual branch — is what
+HP-7's leg fan just proved out. Stages 9–13 above are largely the *same four techniques* applied
+to new sites, not new architecture:
+
+- **Ring set** (`buildBoneRings` per-bone envelope, as the hips girdle already is).
+- **Split** (`splitRingArcs`) when one ring must feed two or more children.
+- **Directional/3-bone weights** (front-vs-back blend, shared-vertex multi-bone weights) at the
+  weld.
+- **Fan/loft** (`loftStrip`/`buildLegFans`-style 1:1 stitch) to close the gap watertightly.
+
+### HP-8 — Generalise the ring-graph skin to every remaining junction
+
+- [~] **Shoulder side-port.** Redo as a ring-space side port: `Spine2` becomes a shoulder girdle
+  (deep cross-section at the shoulder joint, the clavicle bones are absorbed — no separate tube)
+  and each arm's start ring welds to a roughly-circular hexagon cut into the girdle side.
+  Sequence below. First pass landed (`buildShoulderPorts` + `weldSidePort` + `bracketRingsAround`,
+  watertightness test); remaining polish is the hard weld weight seam (directional deltoid/chest
+  blend) and tuning the girdle depth/arm widths once visualised.
+- [~] **Thumb side-port.** Same side-port mechanism at the palm's radial side, but as a hexagon:
+  the port spans the hand rings from the wrist up to `t=0.4` (the thumb is shallow to the hand, so
+  its junction is an elongated slit, not a short collar), with a middle bracket ring at `t=0.2`.
+  The thumb's base ring welds to the hexagonal boundary loop. Sequence below. First pass landed
+  (`buildThumbPorts` + `thumbPortCuts` + `thumbBracketRings`, watertightness test, Rings-overlay
+  cut/seam-chain visualisation); per-ring cut widths taper `1.2× → 2× → 1.2×` thumb radius so the
+  junction bulges in the middle, the thumb tube starts just outside the palm (distal start-ring
+  offset), and each cut is centred on the thumb root (local X/Z distance window) so the seam chains
+  stay in line with the thumb. Remaining polish: the hard weld weight seam and any final tweak to
+  the widths/offset once visualised.
+- [~] **Wrist → palm envelope + finger ports.** Palm envelope done (`buildBoneRings` hand case:
+  a flattened wrist→knuckle tube, replacing the hand ellipsoid). Finger fan into the knuckle ring
+  is the next item.
+- [ ] **Ankle → foot + toe ports.** Same shape as the wrist/palm case, smaller.
+- [x] **Terminal end caps.** Fingertip and toe-tip rings are now closed — `capTerminalEnds`
+  fans each terminal ring to a single apex vertex weighted 100% to the terminal bone, leaving no
+  open boundaries at the extremities.
+- [ ] Regenerate the round-trip export test with a fully closed mesh and confirm no boundary
+  edges (`geometry` has no edges with only one adjacent triangle).
+
+#### HP-8 side-port junction — implementation sequence
+
+The side port generalises the hip-fan / knuckle-fan machinery (`splitRingArcs` →
+`seamEdgePoints` → `buildLegFans` / `assembleKnucklePlates`) from "split a whole ring into N
+children and stop" to "cut one arc out of a ring that also keeps going". It stays entirely in ring
+space — no triangle-intersection pass, no mesh deletion — so the existing winding/watertightness
+tests and the `Rings` overlay keep applying.
+
+1. **Ring-arc split helper.** Generalise `splitRingArcs` to cut a ring into *three* arcs — cut,
+   front residual, back residual — with two seam vertices each shared by two arcs. Add an
+   assertion that each residual arc stays non-degenerate (non-zero angle) at every bracket ring,
+   so a too-wide cut can't pinch the parent surface shut.
+2. **Bracket rings.** Give the parent envelope additive stops *dedicated to the port*, independent
+   of its general shading cadence (the same way the hips girdle carries its own `below` stops).
+   - **Shoulder (`Spine2` chest girdle): 3 bracket rings** at shoulder-socket height, with a
+     hand-authored narrow→wide→narrow cut-arc width/offset profile (armpit crease → widest
+     deltoid → shoulder cap), expressed as explicit per-ring numbers like the palm envelope's
+     fixed stops rather than derived.
+   - **Thumb (palm envelope): 2 bracket rings** at the thumb base, cut on the palm's radial side.
+3. **Port boundary loop.** Chain each bracket ring's cut arc through the front/back seam chains as
+   in the HP-7 algorithm — a quad loop for the thumb, a hexagon for the shoulder.
+4. **Weld to the child ring.** Reuse the existing closed-loop loft for the arm/thumb base ring →
+   port loop stitch, but factor one canonical "weld an N-vertex boundary loop to an M-vertex ring"
+   re-order helper from `orderLegRingForHemi` / `bestFingerRotation` instead of adding a third
+   bespoke variant.
+5. **Skin weights.** Directional blend at the weld, following the existing `parentWeight`
+   convention: front deltoid (and the port seam on the arm-facing side) follows the arm, the back
+   (and the residual parent arcs) follows the chest; for the thumb, the radial side follows the
+   thumb while the rest of the palm stays with the hand.
+6. **Test.** Add a `ringGraph.test.ts` watertightness/winding case per site — every edge in the
+   port region has exactly two adjacent triangles, and the port loop's Newell winding agrees with
+   the child ring — mirroring the hand-fan checks.
+7. **Order of work.** Thumb first (simpler 2-ring quad, smaller site, validates the new primitive
+   in isolation), then the 3-ring shoulder hexagon, then mirror the shoulder port to the right
+   side. Finish with full `vitest` + `tsc`.
+
+The bracket-ring count is a tunable, not a fixed constant: `N` bracket rings yield a `2N − 2`-sided
+port loop, so the same sequence covers both the thumb (2) and shoulder (3) without new machinery.
+
+### HP-9 — Cosmetic & identity layer (no Blender, no morph targets)
+
+- [ ] **Feminising/masculinising enhancements as a branch envelope**, not a morph target: e.g. a
+  bust is two small "breast" pseudo-bones (like the existing finger tips) parented to Spine2,
+  each with its own tiny ring set fanned into the chest ring exactly like the crotch fan — scale
+  the fan's radius/protrusion from the existing `feminineMasculine` semantic slider. Same
+  technique for hip width, jaw/shoulder breadth, etc. This keeps every enhancement inside the
+  ring-graph/skinning system already built, instead of introducing a second (morph-target) shape
+  pipeline.
+- [ ] **Region → texture.** Promote `regionColors`'s per-vertex flat colour to a small UV atlas
+  (skin / top / bottom / shoes regions get their own UV island) so "clothing" becomes a swappable
+  texture instead of only a flat tint — still no cloth simulation, just a richer material layer
+  over the same mesh.
+- [ ] **Accessories.** Port `SKETCHER_ROADMAP.md` CB3 (hair/hat as a child `Object3D` on
+  `mixamorigHead`) onto the ring-graph body; add beard/glasses as the same pattern (small preset
+  meshes parented to head/jaw bones, no new skinning).
+
+### HP-10 — Configurable humanoid + AI-driving API
+
+- [ ] Re-point the semantic sliders (`semanticParams.ts`) at the ring graph's own radii/lengths
+  directly, instead of the legacy `BoneParams` intermediate — the ring graph is now the real
+  skin, so the sliders should shape it natively rather than through a compatibility shim.
+- [ ] Publish the resulting schema (five shape sliders + appearance fields, per the Decisions
+  table above) as the target for `ROADMAP_AI.md`'s AI-1 phase — that phase already exists and is
+  designed around this exact minimal schema; it currently targets `BoneParams` and should be
+  re-pointed here once this lands.
+- [ ] Add a small validation/clamping layer so AI-authored parameter sets can't produce
+  degenerate rings (negative radius, zero-length bone, etc.) before they reach `ProceduralHumanoid`.
+
+### HP-11 — Pose & animation nice-to-haves
+
+- [ ] Jaw-hinge talking + blink as first-class exportable clips — already designed in HP-3.5
+  above; do this once the face overlay is confirmed compatible with the ring-graph body (it
+  should be, since the head stays a separate system by design).
+- [ ] Hair length/colour and a small glasses preset set, as HP-9 accessory presets.
+- [ ] A handful of bundled static poses (sitting, common gestures) as additional Mixamo-style
+  clips, reusing the existing `AnimationMixer`/clip pipeline — no new runtime mechanism, just more
+  bundled `.glb` clip assets.
+
+**Sequencing note:** HP-8 (finish every junction) should land before HP-9/HP-10, since HP-9's
+bust-branch technique and HP-10's "sliders shape the ring graph directly" both assume the ring
+graph is the complete, watertight skin — not a mix of ring-graph limbs and ellipsoid stopgaps.

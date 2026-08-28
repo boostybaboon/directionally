@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { ProceduralHumanoid } from './ProceduralHumanoid.js';
+import { ProceduralHumanoid, DEFAULT_BONE_PARAMS } from './ProceduralHumanoid.js';
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
@@ -47,6 +47,35 @@ describe('HP-6 loft body', () => {
     const sw = geo.getAttribute('skinWeight') as THREE.BufferAttribute;
     for (let v = 0; v < sw.count; v++) {
       expect(sw.getX(v) + sw.getY(v) + sw.getZ(v) + sw.getW(v)).toBeCloseTo(1, 5);
+    }
+  });
+
+  it('caps both the left and right toe tips', async () => {
+    const rig = await new GLTFLoader().parseAsync(toArrayBuffer(await readFile(RIG_PATH)), RIG_PATH);
+    rig.scene.updateMatrixWorld(true);
+    const humanoid = new ProceduralHumanoid(rig.scene, [], undefined, 'organic', {}, 0, undefined, -20, 'loft');
+
+    const skinned: THREE.SkinnedMesh[] = [];
+    humanoid.root.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) skinned.push(o as THREE.SkinnedMesh); });
+    const body = skinned.find((m) => m.name === 'loft-body');
+    expect(body).toBeDefined();
+    if (!body) return;
+
+    const pos = body.geometry.getAttribute('position') as THREE.BufferAttribute;
+    // The toe cap apex sits at capDistance = min(tubeRadiusX, tubeRadiusZ) along
+    // the bone's +Y, transformed by its bind-pose matrixWorld.
+    const capDistance = Math.min(DEFAULT_BONE_PARAMS.toe.tubeRadiusX, DEFAULT_BONE_PARAMS.toe.tubeRadiusZ);
+    for (const name of ['mixamorigLeftToe_End', 'mixamorigRightToe_End']) {
+      const bone = body.skeleton.bones.find((b) => b.name === name);
+      expect(bone, name).toBeDefined();
+      if (!bone) continue;
+      const apex = new THREE.Vector3(0, capDistance, 0).applyMatrix4(bone.matrixWorld);
+      let found = false;
+      for (let i = 0; i < pos.count; i++) {
+        const v = new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
+        if (v.distanceToSquared(apex) < 1e-6) { found = true; break; }
+      }
+      expect(found, `${name} cap apex`).toBe(true);
     }
   });
 });

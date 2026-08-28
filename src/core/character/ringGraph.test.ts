@@ -1,10 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { buildRingGraph, ringWorldPoints, buildRingLoft, loftStrip, splitRingArcs, seamEdgePoints, orderLegRingForHemi } from './ringGraph.js';
+import { buildRingGraph, ringWorldPoints, buildRingLoft, loftStrip, splitRingArcs, seamEdgePoints, orderLegRingForHemi, splitKnuckleRing, assembleKnucklePlates } from './ringGraph.js';
 
 function params(name: string) {
   if (name === 'A') return { tubeRadiusX: 4, tubeRadiusZ: 3, tubeOffsetForward: 1, group: 'arm' };
   if (name === 'B') return { tubeRadiusX: 2, tubeRadiusZ: 1.5, tubeOffsetForward: 0.5, group: 'forearm' };
+  return null;
+}
+
+function handParams(name: string) {
+  if (name === 'mixamorigLeftHand') return { tubeRadiusX: 0, tubeRadiusZ: 0, group: 'hand' };
   return null;
 }
 
@@ -44,6 +49,304 @@ describe('buildRingGraph', () => {
     expect(b0.rz).toBeCloseTo(1.5);
     expect(b0.y).toBeCloseTo(0);
     expect(b0.fwd).toBeCloseTo(0.5);
+  });
+});
+
+describe('palm envelope', () => {
+  it('reaches full width by the pinky knuckle so the pinky tube is enclosed', () => {
+    const hand = new THREE.Bone();
+    hand.name = 'mixamorigLeftHand';
+
+    const mk = (name: string, x: number, y: number, z: number) => {
+      const b = new THREE.Bone();
+      b.name = name;
+      b.position.set(x, y, z);
+      hand.add(b);
+    };
+    // Mirrors xbot-walk.glb: middle furthest along +Y, pinky nearest and most lateral.
+    mk('mixamorigLeftHandIndex1', -2.26, 9.11, 0.52);
+    mk('mixamorigLeftHandMiddle1', 0, 9.53, 0);
+    mk('mixamorigLeftHandRing1', 1.87, 9.10, 0.04);
+    mk('mixamorigLeftHandPinky1', 3.81, 8.08, 0.49);
+
+    const graph = buildRingGraph([hand], new Map([['mixamorigLeftHand', 0]]), handParams, 5);
+
+    // wrist, mid ×2, pinky knuckle.
+    expect(graph.rings.length).toBe(4);
+
+    // Pinky tube outer edge = 3.81 (root) + 1 (tube radius) = 4.81, plus 1 cm
+    // margin = 5.81. The palm's pinky edge (xOff + rx) must reach that at the
+    // pinky's knuckle Y so it wraps the tube with a visible margin.
+    const pinkyRing = graph.rings.find((r) => Math.abs(r.y - 8.08) < 0.001);
+    expect(pinkyRing).toBeDefined();
+    expect((pinkyRing!.xOff ?? 0) + pinkyRing!.rx).toBeCloseTo(5.81);
+
+    // The end ring is the pinky knuckle at full width; the fan covers the span
+    // out to the index/middle/ring knuckles.
+    const last = graph.rings[graph.rings.length - 1];
+    expect(last.y).toBeCloseTo(8.08);
+    expect((last.xOff ?? 0) + last.rx).toBeCloseTo(5.81);
+    expect(last.rz).toBeCloseTo(2);
+  });
+});
+
+describe('splitKnuckleRing', () => {
+  it('places three web chords at the X midpoints between adjacent fingers', () => {
+    const verts: THREE.Vector3[] = [];
+    for (let j = 0; j < 16; j++) {
+      const a = (j / 16) * Math.PI * 2;
+      verts.push(new THREE.Vector3(5 * Math.cos(a), 0, 5 * Math.sin(a)));
+    }
+    const fingers = [-2.26, 0, 1.87, 3.81].map((x) => new THREE.Vector3(x, 0, 0));
+    const split = splitKnuckleRing(verts, fingers);
+
+    expect(split.webs.length).toBe(3);
+
+    const webXs = [-1.13, 0.935, 2.84];
+    split.webs.forEach((web, i) => {
+      const front = verts[web.front];
+      const back = verts[web.back];
+      const xf = front.clone().sub(split.center).dot(split.xAxis);
+      const xb = back.clone().sub(split.center).dot(split.xAxis);
+      // Seams snap to the nearest ring vertex, so allow one vertex spacing.
+      expect(Math.abs(xf - webXs[i])).toBeLessThan(2.5);
+      expect(Math.abs(xb - webXs[i])).toBeLessThan(2.5);
+      // front and back sit on opposite sides of the X axis
+      const zf = front.clone().sub(split.center).dot(split.zAxis);
+      const zb = back.clone().sub(split.center).dot(split.zAxis);
+      expect(Math.sign(zf)).not.toBe(Math.sign(zb));
+    });
+  });
+});
+
+describe('assembleKnucklePlates', () => {
+  it('carves the knuckle ring into four finger plates by the web chords', () => {
+    const verts: THREE.Vector3[] = [];
+    for (let j = 0; j < 16; j++) {
+      const a = (j / 16) * Math.PI * 2;
+      verts.push(new THREE.Vector3(5 * Math.cos(a), 0, 5 * Math.sin(a)));
+    }
+    const fingers = [-2.26, 0, 1.87, 3.81].map((x) => new THREE.Vector3(x, 0, 0));
+    const plates = assembleKnucklePlates(verts, fingers);
+
+    expect(plates.length).toBe(4);
+    const split = splitKnuckleRing(verts, fingers);
+    const xOf = (p: THREE.Vector3) => p.clone().sub(split.center).dot(split.xAxis);
+    const webXs = [-1.13, 0.935, 2.84];
+
+    // Seams snap to the nearest vertex, so allow one vertex spacing of slack.
+    const snap = 2.0;
+    const bounds: Array<[number, number]> = [
+      [-Infinity, webXs[0] + snap],
+      [webXs[0] - snap, webXs[1] + snap],
+      [webXs[1] - snap, webXs[2] + snap],
+      [webXs[2] - snap, Infinity],
+    ];
+    plates.forEach((loop, i) => {
+      expect(loop.length).toBeGreaterThan(2);
+      const [lo, hi] = bounds[i];
+      for (const j of loop) {
+        const x = xOf(verts[j]);
+        expect(x).toBeGreaterThanOrEqual(lo - 1e-6);
+        expect(x).toBeLessThanOrEqual(hi + 1e-6);
+      }
+    });
+  });
+});
+
+describe('buildRingLoft hand fan', () => {
+  it('welds the palm knuckle ring to the four fingers reusing ring verts', () => {
+    const hand = new THREE.Bone();
+    hand.name = 'mixamorigLeftHand';
+    const mk = (name: string, x: number, y: number, z: number) => {
+      const b = new THREE.Bone();
+      b.name = name;
+      b.position.set(x, y, z);
+      hand.add(b);
+    };
+    mk('mixamorigLeftHandIndex1', -2.26, 9.11, 0.52);
+    mk('mixamorigLeftHandMiddle1', 0, 9.53, 0);
+    mk('mixamorigLeftHandRing1', 1.87, 9.10, 0.04);
+    mk('mixamorigLeftHandPinky1', 3.81, 8.08, 0.49);
+    hand.updateMatrixWorld(true);
+
+    const bones = [hand, ...hand.children.filter((c) => c instanceof THREE.Bone) as THREE.Bone[]];
+    const boneIndex = new Map([
+      ['mixamorigLeftHand', 0],
+      ['mixamorigLeftHandIndex1', 1],
+      ['mixamorigLeftHandMiddle1', 2],
+      ['mixamorigLeftHandRing1', 3],
+      ['mixamorigLeftHandPinky1', 4],
+    ]);
+    const params = (name: string) => {
+      if (name === 'mixamorigLeftHand') return { tubeRadiusX: 0, tubeRadiusZ: 0, group: 'hand' };
+      if (/Hand(Index|Middle|Ring|Pinky)1$/.test(name)) return { tubeRadiusX: 1, tubeRadiusZ: 1, group: 'finger' };
+      return null;
+    };
+
+    const segments = 16;
+    const loft = buildRingLoft(bones, boneIndex, params, segments, 5);
+
+    // The palm now ends at the pinky knuckle: 4 palm rings + 4 finger rings.
+    // Each terminal finger also gets one cap apex. The fan reuses the palm's
+    // knuckle-ring verts, so it adds NO extra plate verts.
+    const expectedVerts = (4 + 4) * segments + 4;
+    expect(loft.positions.length / 3).toBe(expectedVerts);
+
+    for (const idx of loft.indices) {
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(idx).toBeLessThan(expectedVerts);
+    }
+
+    // Winding consistency: each directed edge must appear exactly once. A face
+    // wound opposite to its neighbour re-uses the shared edge in the same
+    // direction, so a count of 2 (or 0) flags a flip.
+    const directed = new Map<string, number>();
+    for (let i = 0; i < loft.indices.length; i += 3) {
+      const a = loft.indices[i], b = loft.indices[i + 1], c = loft.indices[i + 2];
+      for (const [u, v] of [[a, b], [b, c], [c, a]]) {
+        const k = `${u}>${v}`;
+        directed.set(k, (directed.get(k) ?? 0) + 1);
+      }
+    }
+    for (const [k, count] of directed) {
+      expect(count, `directed edge ${k}`).toBe(1);
+    }
+  });
+});
+
+describe('buildRingLoft thumb port', () => {
+  it('welds the thumb base ring into a palm side port watertightly', () => {
+    const hand = new THREE.Bone();
+    hand.name = 'mixamorigLeftHand';
+    const mk = (name: string, x: number, y: number, z: number) => {
+      const b = new THREE.Bone();
+      b.name = name;
+      b.position.set(x, y, z);
+      hand.add(b);
+      return b;
+    };
+    mk('mixamorigLeftHandIndex1', -2.26, 9.11, 0.52);
+    mk('mixamorigLeftHandMiddle1', 0, 9.53, 0);
+    mk('mixamorigLeftHandRing1', 1.87, 9.10, 0.04);
+    mk('mixamorigLeftHandPinky1', 3.81, 8.08, 0.49);
+    // Oblique thumb root: radial side of the palm, angled out from the wrist.
+    const thumb1 = mk('mixamorigLeftHandThumb1', -2.68, 2.47, 1.58);
+    const thumb2 = new THREE.Bone();
+    thumb2.name = 'mixamorigLeftHandThumb2';
+    thumb2.position.set(0, 4, 0);
+    thumb1.add(thumb2);
+    const dir = thumb1.position.clone().normalize();
+    thumb1.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    hand.updateMatrixWorld(true);
+
+    const bones = [hand, ...hand.children.filter((c) => c instanceof THREE.Bone) as THREE.Bone[], thumb2];
+    const boneIndex = new Map(bones.map((b, i) => [b.name, i]));
+    const params = (name: string) => {
+      if (name === 'mixamorigLeftHand') return { tubeRadiusX: 0, tubeRadiusZ: 0, group: 'hand' };
+      if (/Hand(Index|Middle|Ring|Pinky)1$/.test(name)) return { tubeRadiusX: 1, tubeRadiusZ: 1, group: 'finger' };
+      if (/HandThumb[12]$/.test(name)) return { tubeRadiusX: 1, tubeRadiusZ: 1, group: 'finger' };
+      return null;
+    };
+
+    const segments = 16;
+    const loft = buildRingLoft(bones, boneIndex, params, segments, 5);
+    const vertCount = loft.positions.length / 3;
+
+    for (const idx of loft.indices) {
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(idx).toBeLessThan(vertCount);
+    }
+
+    // Watertight: every directed edge appears exactly once (a flip would make a
+    // shared edge appear twice in the same direction, or not at all).
+    const directed = new Map<string, number>();
+    for (let i = 0; i < loft.indices.length; i += 3) {
+      const a = loft.indices[i], b = loft.indices[i + 1], c = loft.indices[i + 2];
+      for (const [u, v] of [[a, b], [b, c], [c, a]]) {
+        const k = `${u}>${v}`;
+        directed.set(k, (directed.get(k) ?? 0) + 1);
+      }
+    }
+    for (const [k, count] of directed) {
+      expect(count, `directed edge ${k}`).toBe(1);
+    }
+  });
+});
+
+describe('buildRingLoft shoulder port', () => {
+  it('welds both arm start rings into chest side ports watertightly', () => {
+    const spine2 = new THREE.Bone();
+    spine2.name = 'mixamorigSpine2';
+
+    const neck = new THREE.Bone();
+    neck.name = 'mixamorigNeck';
+    neck.position.set(0, 16.87, 0);
+
+    const mkSide = (shoulderName: string, armName: string, x: number, shoulderQ: THREE.Quaternion) => {
+      const shoulder = new THREE.Bone();
+      shoulder.name = shoulderName;
+      shoulder.position.set(x, 11.20, -0.807);
+      shoulder.quaternion.copy(shoulderQ);
+      const arm = new THREE.Bone();
+      arm.name = armName;
+      arm.position.set(0, 10.84, 0);
+      shoulder.add(arm);
+      return { shoulder, arm };
+    };
+
+    const left = mkSide(
+      'mixamorigLeftShoulder', 'mixamorigLeftArm', 4.57,
+      new THREE.Quaternion(0.4844229221343994, 0.5709704160690308, -0.5261617302894592, 0.4030895531177521),
+    );
+    const right = mkSide(
+      'mixamorigRightShoulder', 'mixamorigRightArm', -4.57,
+      new THREE.Quaternion(0.4844307005405426, -0.5709637999534607, 0.5261635780334473, 0.4030871093273163),
+    );
+    spine2.add(neck, left.shoulder, right.shoulder);
+    spine2.updateMatrixWorld(true);
+
+    const bones = [spine2, neck, left.shoulder, left.arm, right.shoulder, right.arm];
+    const boneIndex = new Map(bones.map((b, i) => [b.name, i]));
+    const params = (name: string) => {
+      if (name === 'mixamorigSpine2') return { tubeRadiusX: 16.5, tubeRadiusZ: 11, tubeOffsetForward: 2.5, group: 'spine2' };
+      if (name === 'mixamorigNeck') return { tubeRadiusX: 5, tubeRadiusZ: 5, group: 'neck' };
+      if (/Arm$/.test(name)) return { tubeRadiusX: 4, tubeRadiusZ: 3.5, group: 'arm' };
+      if (/Shoulder$/.test(name)) return { tubeRadiusX: 2, tubeRadiusZ: 2, group: 'shoulder' };
+      return null;
+    };
+
+    const segments = 32;
+    const loft = buildRingLoft(bones, boneIndex, params, segments, 5);
+    const vertCount = loft.positions.length / 3;
+
+    for (const idx of loft.indices) {
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(idx).toBeLessThan(vertCount);
+    }
+
+    // The arm rings must be welded, not orphaned: every arm-ring vertex appears
+    // in at least one triangle. Positions run spine2 (8 rings) → neck (1 ring) →
+    // left arm (1 ring) → right arm (1 ring), so the left arm ring starts at
+    // (8 + 1) × segments.
+    const used = new Set(loft.indices);
+    for (let v = 9 * segments; v < 11 * segments; v++) {
+      expect(used.has(v), `arm-ring vertex ${v} welded`).toBe(true);
+    }
+
+    // Winding consistency: every directed edge appears exactly once (a flip would
+    // make a shared edge appear twice in the same direction, or not at all).
+    const directed = new Map<string, number>();
+    for (let i = 0; i < loft.indices.length; i += 3) {
+      const a = loft.indices[i], b = loft.indices[i + 1], c = loft.indices[i + 2];
+      for (const [u, v] of [[a, b], [b, c], [c, a]]) {
+        const k = `${u}>${v}`;
+        directed.set(k, (directed.get(k) ?? 0) + 1);
+      }
+    }
+    for (const [k, count] of directed) {
+      expect(count, `directed edge ${k}`).toBe(1);
+    }
   });
 });
 
@@ -280,5 +583,32 @@ describe('buildRingLoft leg fan', () => {
       expect(idx).toBeGreaterThanOrEqual(0);
       expect(idx).toBeLessThan(187);
     }
+  });
+});
+
+describe('buildRingLoft terminal caps', () => {
+  it('caps a terminal finger/toe bone with an apex fan', () => {
+    const finger = new THREE.Bone();
+    finger.name = 'mixamorigLeftHandIndex4';
+    finger.updateMatrixWorld(true);
+
+    const bones = [finger];
+    const boneIndex = new Map([['mixamorigLeftHandIndex4', 0]]);
+    const params = (name: string) => {
+      if (name === 'mixamorigLeftHandIndex4') return { tubeRadiusX: 1, tubeRadiusZ: 1, group: 'finger' };
+      return null;
+    };
+
+    const segments = 8;
+    const loft = buildRingLoft(bones, boneIndex, params, segments, 5);
+
+    // 1 ring (8 verts) + 1 apex = 9 verts; 8 cap triangles = 24 indices.
+    expect(loft.positions.length / 3).toBe(9);
+    expect(loft.indices.length).toBe(8 * 3);
+
+    // apex (vertex 8) is 100% the terminal bone.
+    expect(loft.skinIndex[8 * 4]).toBe(0);
+    expect(loft.skinWeight[8 * 4]).toBeCloseTo(1);
+    expect(loft.skinWeight[8 * 4 + 1]).toBeCloseTo(0);
   });
 });
