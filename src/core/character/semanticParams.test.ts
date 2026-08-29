@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_BONE_PARAMS } from './ProceduralHumanoid.js';
+import { DEFAULT_RING_PARAMS } from './ringSurface.js';
 import {
   DEFAULT_SEMANTIC,
   semanticToBoneParams,
+  semanticToRingParams,
   semanticHeightScale,
   type SemanticCharacter,
 } from './semanticParams.js';
@@ -64,5 +66,29 @@ describe('semanticToBoneParams', () => {
         expect(Number.isFinite(bp.jointRadius)).toBe(true);
       }
     }
+  });
+});
+
+describe('semanticToRingParams', () => {
+  it('reproduces DEFAULT_RING_PARAMS at the neutral position', () => {
+    expect(semanticToRingParams(DEFAULT_SEMANTIC)).toEqual(DEFAULT_RING_PARAMS);
+  });
+
+  it('scales only cross-section radii, leaving forward offsets untouched', () => {
+    const heavy = semanticToRingParams(s({ build: 1 }));
+    expect(heavy.hips.rx).toBeCloseTo(DEFAULT_RING_PARAMS.hips.rx * 1.2);
+    expect(heavy.hips.fwd).toBeCloseTo(DEFAULT_RING_PARAMS.hips.fwd);
+    expect(heavy.hips.rz).toBeCloseTo(DEFAULT_RING_PARAMS.hips.rz * 1.2);
+  });
+
+  it('feminineMasculine swaps hip vs shoulder girth', () => {
+    const feminine = semanticToRingParams(s({ feminineMasculine: -1 }));
+    const masculine = semanticToRingParams(s({ feminineMasculine: 1 }));
+    expect(feminine.hips.rx).toBeGreaterThan(masculine.hips.rx);
+    expect(feminine.shoulder.rx).toBeLessThan(masculine.shoulder.rx);
+  });
+
+  it('omits the head group (it stays an ellipsoid, not a ring)', () => {
+    expect(semanticToRingParams(DEFAULT_SEMANTIC).head).toBeUndefined();
   });
 });

@@ -1,12 +1,15 @@
 import { DEFAULT_BONE_PARAMS } from './ProceduralHumanoid.js';
 import type { BoneParamMap, BoneParams } from './ProceduralHumanoid.js';
+import { DEFAULT_RING_PARAMS } from './ringSurface.js';
+import type { RingParamMap } from './ringSurface.js';
 
 /**
  * Semantic character-shape schema (HP-0.5). The low-dimensional, Mii-like surface
- * an LLM or human can fill confidently — maps onto the high-dimensional
- * `BoneParamMap` below. Each slider is normalised so its neutral position
- * reproduces `DEFAULT_BONE_PARAMS` exactly. Doubles as ROADMAP_AI.md's AI-1
- * character-generation schema.
+ * an LLM or human can fill confidently — maps onto the ring surface's per-group
+ * cross-sections (`RingParamMap`, the primary output) and, until the tube/SDF
+ * bodies retire, the legacy `BoneParamMap`. Each slider is normalised so its
+ * neutral position reproduces the defaults exactly. Doubles as ROADMAP_AI.md's
+ * AI-1 character-generation schema.
  */
 export type SemanticCharacter = {
   /** 0..1, 0.5 = default. Whole-body height via uniform root scale. */
@@ -61,12 +64,11 @@ function scaleCrossSection(bp: BoneParams, s: number): BoneParams {
 }
 
 /**
- * Maps the semantic sliders onto the full `BoneParamMap`. Every per-slider scale
- * is multiplicative and equals 1.0 at neutral, so `semanticToBoneParams(
- * DEFAULT_SEMANTIC)` reproduces `DEFAULT_BONE_PARAMS`; all sliders are monotonic
- * and clamped, so no input can produce NaN.
+ * Per-group cross-section scale from the five sliders. Every scale is
+ * multiplicative and equals 1.0 at neutral; all are monotonic and clamped, so
+ * no input can produce NaN.
  */
-export function semanticToBoneParams(s: SemanticCharacter): BoneParamMap {
+function groupScales(s: SemanticCharacter): Record<string, number> {
   const build = clamp11(s.build);
   const fem = clamp11(s.feminineMasculine);
 
@@ -77,7 +79,7 @@ export function semanticToBoneParams(s: SemanticCharacter): BoneParamMap {
   const shoulderScale = 1 + fem * 0.15;                            // fem 0.85 .. masc 1.15
   const waistScale = 1 - fem * 0.05;
 
-  const groupScales: Record<string, number> = {
+  return {
     hips: buildScale * hipScale,
     spine: buildScale * waistScale,
     spine1: buildScale * waistScale,
@@ -94,11 +96,32 @@ export function semanticToBoneParams(s: SemanticCharacter): BoneParamMap {
     toe: buildScale,
     finger: 1,
   };
+}
 
+/**
+ * Maps the semantic sliders onto the ring surface's per-group cross-sections.
+ * `semanticToRingParams(DEFAULT_SEMANTIC)` reproduces `DEFAULT_RING_PARAMS`.
+ */
+export function semanticToRingParams(s: SemanticCharacter): RingParamMap {
+  const out: RingParamMap = {};
+  for (const [key, scale] of Object.entries(groupScales(s))) {
+    const base = DEFAULT_RING_PARAMS[key];
+    if (base) out[key] = { rx: base.rx * scale, rz: base.rz * scale, fwd: base.fwd };
+  }
+  return out;
+}
+
+/**
+ * Maps the semantic sliders onto the full `BoneParamMap` (tubes/SDF/face, and
+ * the persisted design schema until those bodies retire). `semanticToBoneParams(
+ * DEFAULT_SEMANTIC)` reproduces `DEFAULT_BONE_PARAMS`.
+ */
+export function semanticToBoneParams(s: SemanticCharacter): BoneParamMap {
   const out: BoneParamMap = {};
-  for (const [key, scale] of Object.entries(groupScales)) {
+  for (const [key, scale] of Object.entries(groupScales(s))) {
     const base = DEFAULT_BONE_PARAMS[key];
     if (base) out[key] = scaleCrossSection(base, scale);
   }
   return out;
 }
+

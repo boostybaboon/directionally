@@ -4,8 +4,8 @@
   import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
   import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
   import { ProceduralHumanoid, C3PO_COLORS, SONNY_COLORS, DEFAULT_COLORS, DEFAULT_BONE_PARAMS, BONE_GROUPS, DEFAULT_FACE_PARAMS } from '../../core/character/ProceduralHumanoid.js';
-  import type { RobotStyle, BoneParamMap, FaceParams, BodyMode } from '../../core/character/ProceduralHumanoid.js';
-  import { semanticToBoneParams, semanticHeightScale, DEFAULT_SEMANTIC } from '../../core/character/semanticParams.js';
+  import type { RobotStyle, BoneParamMap, FaceParams } from '../../core/character/ProceduralHumanoid.js';
+  import { semanticToBoneParams, semanticToRingParams, semanticHeightScale, DEFAULT_SEMANTIC } from '../../core/character/semanticParams.js';
   import type { SemanticCharacter } from '../../core/character/semanticParams.js';
   import { exportCharacterGLB } from '../../core/character/exportCharacterGLB.js';
   import * as CharacterDesignStore from '../../core/storage/CharacterDesignStore.js';
@@ -44,7 +44,6 @@
   let wireframe = $state(false);
   let inPlace = $state(true);
   let robotStyle = $state<RobotStyle>('organic');
-  let bodyMode = $state<BodyMode>('tubes');
   let boneParams = $state<BoneParamMap>({ ...DEFAULT_BONE_PARAMS });
   let selectedGroup = $state<string>(BONE_GROUPS[0].key);
   let faceParams = $state<FaceParams>({ ...DEFAULT_FACE_PARAMS });
@@ -83,7 +82,8 @@
       humanoid.dispose();
     }
     const colors = style === 'c3po' ? C3PO_COLORS : style === 'sonny' ? SONNY_COLORS : DEFAULT_COLORS;
-    humanoid = new ProceduralHumanoid(rigGltfScene, [...allLoadedClips], colors, style, boneParams, insetFactor, faceParams, neckTiltDeg, bodyMode);
+    const ringParams = semanticToRingParams(semantic);
+    humanoid = new ProceduralHumanoid(rigGltfScene, [...allLoadedClips], colors, style, boneParams, insetFactor, faceParams, neckTiltDeg, ringParams);
     humanoid.setInPlace(inPlace);
     humanoid.setBodyVisible(bodyVisible);
     humanoid.setSkeletonVisible(skeletonVisible);
@@ -475,14 +475,6 @@
           class:active={robotStyle === s}
           onclick={() => { robotStyle = s; buildHumanoid(s); }}
         >{s === 'organic' ? 'Organic' : s === 'c3po' ? 'C-3PO' : 'Sonny'}</button>
-      {/each}
-      <span class="style-label">Body:</span>
-      {#each (['tubes', 'sdf', 'loft'] as BodyMode[]) as m}
-        <button
-          class="layer-btn style-btn"
-          class:active={bodyMode === m}
-          onclick={() => { bodyMode = m; buildHumanoid(robotStyle); }}
-        >{m === 'tubes' ? 'Tubes' : m === 'sdf' ? 'SDF' : 'Loft'}</button>
       {/each}
     </div>
     {#if clipNames.length > 0}

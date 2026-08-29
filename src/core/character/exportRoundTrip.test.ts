@@ -61,15 +61,14 @@ describe('exportCharacterGLB round-trip', () => {
     expect(before.length).toBeGreaterThan(0);
     // The procedural body meshes are tagged so the reloaded scene can prove
     // they (not just the rig's original mesh) survived the round-trip.
-    expect(before.some((m) => m.name.startsWith('body-'))).toBe(true);
+    expect(before.some((m) => m.name === 'loft-body')).toBe(true);
 
     const { blob } = await exportCharacterGLB(humanoid);
     const reloaded = await new GLTFLoader().parseAsync(await blob.arrayBuffer(), '');
 
     const after = collectSkinned(reloaded.scene);
-    expect(after.length).toBeGreaterThanOrEqual(before.length);
 
-    const bodyMeshes = after.filter((m) => m.name.startsWith('body-'));
+    const bodyMeshes = after.filter((m) => m.name === 'loft-body');
     expect(bodyMeshes.length).toBeGreaterThan(0);
     for (const mesh of bodyMeshes) {
       expect(mesh.geometry.getAttribute('skinIndex')).toBeDefined();

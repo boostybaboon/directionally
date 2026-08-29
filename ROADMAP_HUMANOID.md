@@ -654,6 +654,50 @@ to new sites, not new architecture:
   weld.
 - **Fan/loft** (`loftStrip`/`buildLegFans`-style 1:1 stitch) to close the gap watertightly.
 
+### HP-7.5 — Ring parameter surface (data-driven ring system)
+
+The ring system already produces the mesh causally (`buildRingGraph` → `buildRingLoft` → one
+`SkinnedMesh`), but it has no *parameter surface*: its inputs are the legacy tube `BoneParams`
+(shimmed through `tubeParams` in `_attachLoftBody`) and its customisations are hardcoded,
+bone-name-keyed special cases. So there is nothing clean for the sliders (`semanticParams.ts`),
+the API (`ROADMAP_AI.md` AI-1), or a hand-tuning file to drive. This phase turns the ring system
+from a generator into a declarative model — the through-line `bones → rings → ring customisations
+→ triangulated skin → regions → sliders → API`.
+
+The numeric settings are currently scattered across four places:
+
+- `DEFAULT_BONE_PARAMS` (radii/offsets, still the tube schema);
+- `buildBoneRings`' per-bone cases (hips girdle `below` stops, upleg `parentWeight` tapers, palm
+  stops/margin, thumb start offset, Spine2 girdle `sigma`/`count`/`deepRz`);
+- the port functions (`buildLegFans` chord/weights, `buildThumbPorts`/`buildShoulderPorts`
+  half-widths, hand-fan web chords);
+- `tubeSkinWeights` + the inline directional-weight arithmetic in the welds.
+
+- [x] **Collate into one file** (`src/core/character/ringSurface.ts`): every number above as a
+  named constant/type — a `RingEnvelopeSpec` per group (`{ group, shape, name? }`) and a
+  `PortSpec` (`{ kind: 'fan' | 'sidePort', parent, child, widths/weights }`). Reference them
+  from the existing code *without changing behaviour* — this step is pure extraction, safe
+  against the current tests.
+- [x] **Migrate** `buildBoneRings` + the four port functions + the weight logic to consume the
+  spec, deleting the per-bone-name special cases. Each junction (hips, hand/fingers, thumb,
+  shoulder, and later ankle/toe) becomes a data entry, not a new function. *(Ports are
+  `PORT_SPECS` data entries via `buildPorts`; envelopes are `RING_ENVELOPE_SPECS` data entries
+  dispatched by shape in `buildBoneRings`; weld weights come from the specs.)*
+- [x] **Re-point** `semanticParams.ts` at `ringSurface.ts` instead of `BoneParams` (hands off to
+  HP-10 once the spec exists). *(`semanticToRingParams` → `RingParamMap` drives the loft natively
+  via `DEFAULT_RING_PARAMS`; `semanticToBoneParams` remains only for the not-yet-retired
+  tubes/SDF/face and the persisted design schema.)*
+- [x] **Retire tubes/SDF**: collapse `BodyMode` to `loft`; delete `_attachTubeBody`,
+  `_attachSdfBody`, `BONE_GROUPS`, and the tube half of `DEFAULT_BONE_PARAMS` (git keeps history).
+  *(`BodyMode` removed — organic now always lofts; `_attachSdfBody` + `_attachSkinnedBodyTubes` +
+  the SDF field builder deleted; the robot styles (`c3po`/`sonny`) keep `_attachBodyGeom` and the
+  full `DEFAULT_BONE_PARAMS`/`semanticToBoneParams` for the head ellipsoid + face.)*
+
+Do this *before* finishing the remaining HP-8 junctions (ankle/toe), so each new site lands as a
+spec entry rather than another special-case function. It is also the prerequisite HP-10 assumes
+("re-point sliders at the ring graph's own radii/lengths") and it lets HP-9's bust be declared as
+a `PortSpec` (branch envelope) instead of new code.
+
 ### HP-8 — Generalise the ring-graph skin to every remaining junction
 
 - [~] **Shoulder side-port.** Redo as a ring-space side port: `Spine2` becomes a shoulder girdle
@@ -675,7 +719,9 @@ to new sites, not new architecture:
 - [~] **Wrist → palm envelope + finger ports.** Palm envelope done (`buildBoneRings` hand case:
   a flattened wrist→knuckle tube, replacing the hand ellipsoid). Finger fan into the knuckle ring
   is the next item.
-- [ ] **Ankle → foot + toe ports.** Same shape as the wrist/palm case, smaller.
+- [~] **Ankle → foot + toe ports.** Deprecated — xbot has no toe bones (the foot chain
+  terminates at `mixamorig{Left,Right}Toe_End`, already closed by `capTerminalEnds`), and feet
+  won't be modelled digit-by-digit. Approximate with a foot tube + a textured toe cap instead.
 - [x] **Terminal end caps.** Fingertip and toe-tip rings are now closed — `capTerminalEnds`
   fans each terminal ring to a single apex vertex weighted 100% to the terminal bone, leaving no
   open boundaries at the extremities.
@@ -740,9 +786,9 @@ port loop, so the same sequence covers both the thumb (2) and shoulder (3) witho
 
 ### HP-10 — Configurable humanoid + AI-driving API
 
-- [ ] Re-point the semantic sliders (`semanticParams.ts`) at the ring graph's own radii/lengths
-  directly, instead of the legacy `BoneParams` intermediate — the ring graph is now the real
-  skin, so the sliders should shape it natively rather than through a compatibility shim.
+- [ ] Re-point the semantic sliders (`semanticParams.ts`) at the HP-7.5 ring surface
+  (`ringSurface.ts`) instead of the legacy `BoneParams` intermediate — the ring surface is now
+  the real skin, so the sliders should shape it natively rather than through a compatibility shim.
 - [ ] Publish the resulting schema (five shape sliders + appearance fields, per the Decisions
   table above) as the target for `ROADMAP_AI.md`'s AI-1 phase — that phase already exists and is
   designed around this exact minimal schema; it currently targets `BoneParams` and should be
@@ -760,6 +806,8 @@ port loop, so the same sequence covers both the thumb (2) and shoulder (3) witho
   clips, reusing the existing `AnimationMixer`/clip pipeline — no new runtime mechanism, just more
   bundled `.glb` clip assets.
 
-**Sequencing note:** HP-8 (finish every junction) should land before HP-9/HP-10, since HP-9's
-bust-branch technique and HP-10's "sliders shape the ring graph directly" both assume the ring
-graph is the complete, watertight skin — not a mix of ring-graph limbs and ellipsoid stopgaps.
+**Sequencing note:** HP-7.5 (the ring parameter surface) should land before HP-10, since HP-10's
+"sliders shape the ring surface directly" assumes a data-driven surface that doesn't exist while
+the ring system is still imperative. HP-8 (finish every junction) should also land before
+HP-9/HP-10, since HP-9's bust-branch technique and HP-10's sliders both assume the ring graph is
+the complete, watertight skin — not a mix of ring-graph limbs and ellipsoid stopgaps.

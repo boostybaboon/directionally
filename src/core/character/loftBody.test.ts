@@ -14,7 +14,7 @@ const RIG_PATH = fileURLToPath(new URL('../../../static/models/gltf/xbot-rig.glb
 describe('HP-6 loft body', () => {
   it('builds a lofted skinned body with field-projected joints', async () => {
     const rig = await new GLTFLoader().parseAsync(toArrayBuffer(await readFile(RIG_PATH)), RIG_PATH);
-    const humanoid = new ProceduralHumanoid(rig.scene, [], undefined, 'organic', {}, 0, undefined, -20, 'loft');
+    const humanoid = new ProceduralHumanoid(rig.scene, [], undefined, 'organic', {}, 0, undefined, -20);
 
     const skinned: THREE.SkinnedMesh[] = [];
     humanoid.root.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) skinned.push(o as THREE.SkinnedMesh); });
@@ -53,7 +53,7 @@ describe('HP-6 loft body', () => {
   it('caps both the left and right toe tips', async () => {
     const rig = await new GLTFLoader().parseAsync(toArrayBuffer(await readFile(RIG_PATH)), RIG_PATH);
     rig.scene.updateMatrixWorld(true);
-    const humanoid = new ProceduralHumanoid(rig.scene, [], undefined, 'organic', {}, 0, undefined, -20, 'loft');
+    const humanoid = new ProceduralHumanoid(rig.scene, [], undefined, 'organic', {}, 0, undefined, -20);
 
     const skinned: THREE.SkinnedMesh[] = [];
     humanoid.root.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) skinned.push(o as THREE.SkinnedMesh); });

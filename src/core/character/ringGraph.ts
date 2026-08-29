@@ -1,5 +1,31 @@
 import * as THREE from 'three';
 import { tubeSkinWeights, smoothstep01 } from './skinning.js';
+import {
+  GIRDLE_CROTCH_FRACTION,
+  GIRDLE_HIP_WIDENING,
+  GIRDLE_WAIST_PADDING,
+  PALM_MARGIN,
+  PALM_RZ,
+  PALM_STOPS,
+  PALM_THUMB_BRACKET_T,
+  PALM_WRIST_RX,
+  PALM_WRIST_RZ,
+  PORT_SPECS,
+  RING_ENVELOPE_SPECS,
+  SHOULDER_GIRDLE_JOINT_FALLBACK_T,
+  SHOULDER_GIRDLE_RING_COUNT,
+  SHOULDER_GIRDLE_SIGMA,
+  SHOULDER_PORT_BRACKET_COUNT,
+  TAPER_HOLD,
+  THUMB_START_OFFSET_FACTOR,
+  THUMB_START_OFFSET_MAX_FRACTION,
+  TUBE_WEIGHT_INFLUENCE,
+  UPLEG_PARENT_FADE_SPAN,
+  UPLEG_PARENT_FADE_T,
+  UPLEG_PARENT_MAX_WEIGHT,
+  UPLEG_STOPS,
+} from './ringSurface.js';
+import type { EnvelopeShape, LegFanSpec, SidePortSpec } from './ringSurface.js';
 
 /**
  * Ease the cross-section ramp so a bone holds its own radius for most of its
@@ -7,17 +33,16 @@ import { tubeSkinWeights, smoothstep01 } from './skinning.js';
  * shape), instead of coning linearly along the whole bone.
  */
 function holdThenTaper(t: number): number {
-  const hold = 0.7;
+  const hold = TAPER_HOLD;
   if (t <= hold) return 0;
   const x = (t - hold) / (1 - hold);
   return x * x * (3 - 2 * x);
 }
 
 /**
- * The local rings for one bone. The hips bone is a special "girdle" envelope:
- * two wide rings below its origin (the crotch, so the legs have something to
- * emerge from) plus the normal up-ramp to the spine. Every other bone uses the
- * plain hold-then-taper ramp to its child.
+ * The local rings for one bone, selected by its group's envelope spec. Each
+ * shape has a dedicated builder below; groups not in `RING_ENVELOPE_SPECS`
+ * (and shapes that decline) fall back to the generic hold-then-taper ramp.
  */
 function buildBoneRings(
   bone: THREE.Bone,
@@ -26,208 +51,289 @@ function buildBoneRings(
   params: (name: string) => BoneRingParams | null,
   ringsPerBone: number,
 ): BodyRing[] {
+  const target = childTarget(bone, bp, params);
+  switch (envelopeShapeFor(bp.group, bone.name)) {
+    case 'hips': return buildHipsEnvelope(bone, bi, bp, target, ringsPerBone);
+    case 'upleg': return buildUpLegEnvelope(bone, bi, bp, target);
+    case 'palm': {
+      const palm = buildPalmEnvelope(bone, bi, bp, params);
+      if (palm) return palm;
+      break;
+    }
+    case 'thumb': {
+      const thumb = buildThumbEnvelope(bone, bi, bp, target, ringsPerBone);
+      if (thumb) return thumb;
+      break;
+    }
+    case 'spine2': return buildSpine2Envelope(bone, bi, bp, params);
+    case 'absorbed': return [];
+  }
+  return buildGenericEnvelope(bone, bi, bp, target, ringsPerBone);
+}
+
+/** The child bone's cross-section + length — the target the generic ramp tapers toward. */
+interface ChildTarget {
+  cRx: number;
+  cRz: number;
+  cFwd: number;
+  length: number;
+  hasChild: boolean;
+}
+
+function childTarget(bone: THREE.Bone, bp: BoneRingParams, params: (name: string) => BoneRingParams | null): ChildTarget {
   const child = bone.children.find((c) => c instanceof THREE.Bone) as THREE.Bone | undefined;
   const childBp = child ? params(child.name) : null;
-  const cRx = childBp?.tubeRadiusX ?? bp.tubeRadiusX;
-  const cRz = childBp?.tubeRadiusZ ?? bp.tubeRadiusZ;
-  const cFwd = childBp?.tubeOffsetForward ?? 0;
-  const length = child ? child.position.length() : 0;
+  return {
+    cRx: childBp?.tubeRadiusX ?? bp.tubeRadiusX,
+    cRz: childBp?.tubeRadiusZ ?? bp.tubeRadiusZ,
+    cFwd: childBp?.tubeOffsetForward ?? 0,
+    length: child ? child.position.length() : 0,
+    hasChild: child !== undefined,
+  };
+}
 
+/** The envelope shape for a bone, from `RING_ENVELOPE_SPECS` (default `generic`). */
+function envelopeShapeFor(group: string, name: string): EnvelopeShape {
+  for (const spec of RING_ENVELOPE_SPECS) {
+    if (spec.group === group && (!spec.name || spec.name.test(name))) return spec.shape;
+  }
+  return 'generic';
+}
+
+/** Plain hold-then-taper ramp from the bone's radius to its child's. */
+function buildGenericEnvelope(
+  bone: THREE.Bone,
+  bi: number,
+  bp: BoneRingParams,
+  target: ChildTarget,
+  ringsPerBone: number,
+): BodyRing[] {
   const rings: BodyRing[] = [];
-
-  if (bone.name === 'mixamorigHips') {
-    // The girdle is the whole pelvis + buttocks: a single cross-section from the
-    // waist, widening to the hips at the hip joint, then narrowing to the crotch
-    // where the legs split. The split ring sits at the crotch, not the joint, so
-    // the leg split happens below the widest point (not as a flat plate).
-    const upLeg = bone.children.find((c) => c instanceof THREE.Bone && /UpLeg/.test(c.name)) as THREE.Bone | undefined;
-    const upLegChild = upLeg?.children.find((c) => c instanceof THREE.Bone) as THREE.Bone | undefined;
-    const jointY = upLeg ? upLeg.position.y : -7;
-    const upLegLen = upLegChild ? upLegChild.position.length() : 40;
-    const crotchY = jointY - upLegLen * 0.15;
-    const waistRx = bp.tubeRadiusX;
-    const hipsRx = waistRx + 2;
-    const below: Array<[number, number]> = [
-      // Written bottom-to-top (crotch → waist) so the loft stitches the girdle
-      // as one continuous run into the up-ramp, with no jump back up to the waist.
-      [crotchY, waistRx + 1],
-      [(jointY + crotchY) / 2, (hipsRx + waistRx + 1) / 2],
-      [jointY, hipsRx],
-      [jointY / 2, waistRx + 1],
-    ];
-    for (const [y, rx] of below) {
-      rings.push({
-        boneIndex: bi, boneName: bone.name, group: bp.group,
-        y, fwd: bp.tubeOffsetForward ?? 0, rx, rz: bp.tubeRadiusZ, t: 0,
-      });
-    }
-  }
-
-  if (/UpLeg$/.test(bone.name)) {
-    // The upper leg's skin starts at the crotch (~1/4 down the femur) with dense
-    // rings at the top so the thigh emerges smoothly from the girdle; the rest
-    // tapers toward the knee as usual.
-    for (const t of [0.25, 0.32, 0.4, 0.5, 0.65, 0.8]) {
-      const e = holdThenTaper(t);
-      // Top rings blend toward the hips (parent), fading to 0 by t=0.4 so the
-      // rest of the leg blends toward the knee (child) as usual.
-      const parentWeight = t < 0.4 ? 0.5 * smoothstep01((0.4 - t) / 0.15) : undefined;
-      rings.push({
-        boneIndex: bi, boneName: bone.name, group: bp.group,
-        y: t * length,
-        fwd: THREE.MathUtils.lerp(bp.tubeOffsetForward ?? 0, cFwd, e),
-        rx: THREE.MathUtils.lerp(bp.tubeRadiusX, cRx, e),
-        rz: THREE.MathUtils.lerp(bp.tubeRadiusZ, cRz, e),
-        t,
-        parentWeight,
-      });
-    }
-    return rings;
-  }
-
-  if (bone.name === 'mixamorigLeftHand' || bone.name === 'mixamorigRightHand') {
-    // Palm envelope: a flattened, asymmetric wedge from the wrist to the
-    // knuckles. The hand's local +Y points along the middle finger, and the
-    // pinky root sits further laterally (and more proximally) than the index, so
-    // the tube's cross-section is offset in X and sized from the finger tubes'
-    // outer edges. It reaches full width at the pinky's knuckle Y (then holds),
-    // so the pinky tube is enclosed. The fingers fan into its knuckle ring
-    // (HP-8 item 3).
-    const fingerChildren = bone.children.filter((c) => c instanceof THREE.Bone) as THREE.Bone[];
-    const fingers = fingerChildren.filter((c) => /(Index|Middle|Ring|Pinky)1$/.test(c.name));
-    if (fingers.length > 0) {
-      const fingerR = (f: THREE.Bone) => params(f.name)?.tubeRadiusX ?? 1;
-      // Extra lateral padding beyond the finger tube radius, so the palm visibly
-      // wraps the finger bases instead of tangentially touching them.
-      const margin = 1;
-      const palmLen = fingers.reduce((m, c) => Math.max(m, c.position.y), 0);
-      const pinkyY = fingers.reduce((m, c) => Math.min(m, c.position.y), Infinity);
-      const minX = fingers.reduce((m, c) => Math.min(m, c.position.x - fingerR(c) - margin), Infinity);
-      const maxX = fingers.reduce((m, c) => Math.max(m, c.position.x + fingerR(c) + margin), -Infinity);
-      const xOffEnd = (minX + maxX) / 2;
-      const rxEnd = (maxX - minX) / 2;
-
-      const wristRx = 3;
-      const wristRz = 2.5;
-      const palmRz = 2;
-      // The palm must already be full-width at the pinky's knuckle (the most
-      // proximal finger), so ramp the cross-section to `fullT` then hold.
-      const fullT = palmLen > 0 ? Math.min(1, pinkyY / palmLen) : 1;
-
-      const palmRingAt = (y: number): BodyRing => {
-        const t = palmLen > 0 ? y / palmLen : 0;
-        const w = fullT > 0 ? Math.min(1, t / fullT) : 1;
-        return {
-          boneIndex: bi, boneName: bone.name, group: bp.group,
-          y,
-          fwd: 0,
-          rx: THREE.MathUtils.lerp(wristRx, rxEnd, w),
-          rz: THREE.MathUtils.lerp(wristRz, palmRz, w),
-          xOff: xOffEnd * w,
-          t: 0,
-        };
-      };
-
-      const ys = new Set<number>();
-      for (const t of [...new Set([0, 0.4, 0.6, fullT])]) ys.add(t * palmLen);
-
-      // Thumb side-port: add the middle bracket ring at t=0.2 (the widest part
-      // of the junction) so the port spans wrist → t=0.2 → t=0.4 as a hexagon.
-      if (fingerChildren.some((c) => /Thumb1$/.test(c.name))) {
-        ys.add(0.2 * palmLen);
-      }
-
-      for (const y of [...ys].sort((a, b) => a - b)) rings.push(palmRingAt(y));
-      return rings;
-    }
-    // No finger children: fall through to the generic tube below.
-  }
-
-  if (/Thumb1$/.test(bone.name) && length > 0) {
-    // The thumb skin starts just outside the palm surface (not at the joint) so
-    // the tube doesn't pierce the hand; buildThumbPorts welds this first ring to
-    // the palm port instead of the joint ring.
-    const startOffset = Math.min(bp.tubeRadiusX * 1.3, length * 0.5);
-    const count = child ? ringsPerBone : 1;
-    for (let i = 0; i < count; i++) {
-      const t = i / ringsPerBone;
-      const e = holdThenTaper(t);
-      rings.push({
-        boneIndex: bi, boneName: bone.name, group: bp.group,
-        y: startOffset + t * (length - startOffset),
-        fwd: THREE.MathUtils.lerp(bp.tubeOffsetForward ?? 0, cFwd, e),
-        rx: THREE.MathUtils.lerp(bp.tubeRadiusX, cRx, e),
-        rz: THREE.MathUtils.lerp(bp.tubeRadiusZ, cRz, e),
-        t,
-      });
-    }
-    return rings;
-  }
-
-  if (/Shoulder$/.test(bone.name)) {
-    // The clavicle's volume is the Spine2 shoulder girdle; no separate tube.
-    // The arm (its child) welds directly to the girdle via buildShoulderPorts.
-    return rings;
-  }
-
-  if (bone.name === 'mixamorigSpine2') {
-    // Shoulder girdle: widen AND deepen at the shoulder joint so the arms exit
-    // through the girdle surface instead of a shallow "shoulder plate". Tapers
-    // to the neck (not to whichever child happens to be first).
-    const neck = bone.children.find((c) => c instanceof THREE.Bone && c.name === 'mixamorigNeck') as THREE.Bone | undefined;
-    const neckBp = neck ? params(neck.name) : null;
-    const neckRx = neckBp?.tubeRadiusX ?? bp.tubeRadiusX;
-    const neckRz = neckBp?.tubeRadiusZ ?? bp.tubeRadiusZ;
-    const neckFwd = neckBp?.tubeOffsetForward ?? 0;
-    const spineLen = neck ? neck.position.length() : 0;
-
-    const shoulder = bone.children.find((c) => c instanceof THREE.Bone && /Shoulder$/.test(c.name)) as THREE.Bone | undefined;
-    const arm = shoulder?.children.find((c) => c instanceof THREE.Bone) as THREE.Bone | undefined;
-    const fwd = bp.tubeOffsetForward ?? 0;
-    let jointY = spineLen * 0.65;
-    let deepRz = bp.tubeRadiusZ;
-    if (shoulder && arm) {
-      const joint = shoulder.position.clone().add(arm.position.clone().applyQuaternion(shoulder.quaternion));
-      jointY = joint.y;
-      const dx = Math.abs(joint.x);
-      const dz = Math.abs(joint.z - fwd);
-      const inside = 1 - (dx / bp.tubeRadiusX) ** 2;
-      if (inside > 1e-6) deepRz = Math.max(bp.tubeRadiusZ, dz / Math.sqrt(inside));
-    }
-
-    const count = 8;
-    const sigma = 2.5;
-    for (let i = 0; i < count; i++) {
-      const t = i / count;
-      const e = holdThenTaper(t);
-      const y = t * spineLen;
-      const bulge = Math.exp(-((y - jointY) ** 2) / (2 * sigma * sigma));
-      rings.push({
-        boneIndex: bi, boneName: bone.name, group: bp.group,
-        y,
-        fwd: THREE.MathUtils.lerp(fwd, neckFwd, e),
-        rx: THREE.MathUtils.lerp(bp.tubeRadiusX, neckRx, e),
-        rz: THREE.MathUtils.lerp(bp.tubeRadiusZ, neckRz, e) + (deepRz - bp.tubeRadiusZ) * bulge,
-        t,
-      });
-    }
-    return rings;
-  }
-
-  const count = child ? ringsPerBone : 1;
+  const count = target.hasChild ? ringsPerBone : 1;
   for (let i = 0; i < count; i++) {
     const t = i / ringsPerBone;
     const e = holdThenTaper(t);
     rings.push({
       boneIndex: bi, boneName: bone.name, group: bp.group,
-      y: t * length,
-      fwd: THREE.MathUtils.lerp(bp.tubeOffsetForward ?? 0, cFwd, e),
-      rx: THREE.MathUtils.lerp(bp.tubeRadiusX, cRx, e),
-      rz: THREE.MathUtils.lerp(bp.tubeRadiusZ, cRz, e),
+      y: t * target.length,
+      fwd: THREE.MathUtils.lerp(bp.tubeOffsetForward ?? 0, target.cFwd, e),
+      rx: THREE.MathUtils.lerp(bp.tubeRadiusX, target.cRx, e),
+      rz: THREE.MathUtils.lerp(bp.tubeRadiusZ, target.cRz, e),
       t,
     });
   }
+  return rings;
+}
 
+/** The pelvis girdle: wide rings below the origin (crotch → waist) + the generic up-ramp. */
+function buildHipsEnvelope(
+  bone: THREE.Bone,
+  bi: number,
+  bp: BoneRingParams,
+  target: ChildTarget,
+  ringsPerBone: number,
+): BodyRing[] {
+  const rings: BodyRing[] = [];
+  // The girdle is the whole pelvis + buttocks: a single cross-section from the
+  // waist, widening to the hips at the hip joint, then narrowing to the crotch
+  // where the legs split. The split ring sits at the crotch, not the joint, so
+  // the leg split happens below the widest point (not as a flat plate).
+  const upLeg = bone.children.find((c) => c instanceof THREE.Bone && /UpLeg/.test(c.name)) as THREE.Bone | undefined;
+  const upLegChild = upLeg?.children.find((c) => c instanceof THREE.Bone) as THREE.Bone | undefined;
+  const jointY = upLeg ? upLeg.position.y : -7;
+  const upLegLen = upLegChild ? upLegChild.position.length() : 40;
+  const crotchY = jointY - upLegLen * GIRDLE_CROTCH_FRACTION;
+  const waistRx = bp.tubeRadiusX;
+  const hipsRx = waistRx + GIRDLE_HIP_WIDENING;
+  const below: Array<[number, number]> = [
+    // Written bottom-to-top (crotch → waist) so the loft stitches the girdle
+    // as one continuous run into the up-ramp, with no jump back up to the waist.
+    [crotchY, waistRx + GIRDLE_WAIST_PADDING],
+    [(jointY + crotchY) / 2, (hipsRx + waistRx + GIRDLE_WAIST_PADDING) / 2],
+    [jointY, hipsRx],
+    [jointY / 2, waistRx + GIRDLE_WAIST_PADDING],
+  ];
+  for (const [y, rx] of below) {
+    rings.push({
+      boneIndex: bi, boneName: bone.name, group: bp.group,
+      y, fwd: bp.tubeOffsetForward ?? 0, rx, rz: bp.tubeRadiusZ, t: 0,
+    });
+  }
+  return [...rings, ...buildGenericEnvelope(bone, bi, bp, target, ringsPerBone)];
+}
+
+/** Upper leg: dense rings near the crotch, blended toward the hips at the top. */
+function buildUpLegEnvelope(
+  bone: THREE.Bone,
+  bi: number,
+  bp: BoneRingParams,
+  target: ChildTarget,
+): BodyRing[] {
+  const rings: BodyRing[] = [];
+  // The upper leg's skin starts at the crotch (~1/4 down the femur) with dense
+  // rings at the top so the thigh emerges smoothly from the girdle; the rest
+  // tapers toward the knee as usual.
+  for (const t of UPLEG_STOPS) {
+    const e = holdThenTaper(t);
+    // Top rings blend toward the hips (parent), fading to 0 by t=UPLEG_PARENT_FADE_T
+    // so the rest of the leg blends toward the knee (child) as usual.
+    const parentWeight = t < UPLEG_PARENT_FADE_T
+      ? UPLEG_PARENT_MAX_WEIGHT * smoothstep01((UPLEG_PARENT_FADE_T - t) / UPLEG_PARENT_FADE_SPAN)
+      : undefined;
+    rings.push({
+      boneIndex: bi, boneName: bone.name, group: bp.group,
+      y: t * target.length,
+      fwd: THREE.MathUtils.lerp(bp.tubeOffsetForward ?? 0, target.cFwd, e),
+      rx: THREE.MathUtils.lerp(bp.tubeRadiusX, target.cRx, e),
+      rz: THREE.MathUtils.lerp(bp.tubeRadiusZ, target.cRz, e),
+      t,
+      parentWeight,
+    });
+  }
+  return rings;
+}
+
+/** Palm: a flattened, asymmetric wedge from the wrist to the knuckles (null → generic). */
+function buildPalmEnvelope(
+  bone: THREE.Bone,
+  bi: number,
+  bp: BoneRingParams,
+  params: (name: string) => BoneRingParams | null,
+): BodyRing[] | null {
+  const fingerChildren = bone.children.filter((c) => c instanceof THREE.Bone) as THREE.Bone[];
+  const fingers = fingerChildren.filter((c) => /(Index|Middle|Ring|Pinky)1$/.test(c.name));
+  if (fingers.length === 0) return null;
+
+  const rings: BodyRing[] = [];
+  // Palm envelope: a flattened, asymmetric wedge from the wrist to the
+  // knuckles. The hand's local +Y points along the middle finger, and the
+  // pinky root sits further laterally (and more proximally) than the index, so
+  // the tube's cross-section is offset in X and sized from the finger tubes'
+  // outer edges. It reaches full width at the pinky's knuckle Y (then holds),
+  // so the pinky tube is enclosed. The fingers fan into its knuckle ring.
+  const fingerR = (f: THREE.Bone) => params(f.name)?.tubeRadiusX ?? 1;
+  // Extra lateral padding beyond the finger tube radius, so the palm visibly
+  // wraps the finger bases instead of tangentially touching them.
+  const margin = PALM_MARGIN;
+  const palmLen = fingers.reduce((m, c) => Math.max(m, c.position.y), 0);
+  const pinkyY = fingers.reduce((m, c) => Math.min(m, c.position.y), Infinity);
+  const minX = fingers.reduce((m, c) => Math.min(m, c.position.x - fingerR(c) - margin), Infinity);
+  const maxX = fingers.reduce((m, c) => Math.max(m, c.position.x + fingerR(c) + margin), -Infinity);
+  const xOffEnd = (minX + maxX) / 2;
+  const rxEnd = (maxX - minX) / 2;
+
+  const wristRx = PALM_WRIST_RX;
+  const wristRz = PALM_WRIST_RZ;
+  const palmRz = PALM_RZ;
+  // The palm must already be full-width at the pinky's knuckle (the most
+  // proximal finger), so ramp the cross-section to `fullT` then hold.
+  const fullT = palmLen > 0 ? Math.min(1, pinkyY / palmLen) : 1;
+
+  const palmRingAt = (y: number): BodyRing => {
+    const t = palmLen > 0 ? y / palmLen : 0;
+    const w = fullT > 0 ? Math.min(1, t / fullT) : 1;
+    return {
+      boneIndex: bi, boneName: bone.name, group: bp.group,
+      y,
+      fwd: 0,
+      rx: THREE.MathUtils.lerp(wristRx, rxEnd, w),
+      rz: THREE.MathUtils.lerp(wristRz, palmRz, w),
+      xOff: xOffEnd * w,
+      t: 0,
+    };
+  };
+
+  const ys = new Set<number>();
+  for (const t of [...new Set([...PALM_STOPS, fullT])]) ys.add(t * palmLen);
+
+  // Thumb side-port: add the middle bracket ring at t=0.2 (the widest part
+  // of the junction) so the port spans wrist → t=0.2 → t=0.4 as a hexagon.
+  if (fingerChildren.some((c) => /Thumb1$/.test(c.name))) {
+    ys.add(PALM_THUMB_BRACKET_T * palmLen);
+  }
+
+  for (const y of [...ys].sort((a, b) => a - b)) rings.push(palmRingAt(y));
+  return rings;
+}
+
+/** Thumb: start just outside the palm surface (distally offset) instead of at the joint. */
+function buildThumbEnvelope(
+  bone: THREE.Bone,
+  bi: number,
+  bp: BoneRingParams,
+  target: ChildTarget,
+  ringsPerBone: number,
+): BodyRing[] | null {
+  if (target.length <= 0) return null;
+  const rings: BodyRing[] = [];
+  // The thumb skin starts just outside the palm surface (not at the joint) so
+  // the tube doesn't pierce the hand; the thumb side-port welds this first
+  // ring to the palm port instead of the joint ring.
+  const startOffset = Math.min(bp.tubeRadiusX * THUMB_START_OFFSET_FACTOR, target.length * THUMB_START_OFFSET_MAX_FRACTION);
+  const count = target.hasChild ? ringsPerBone : 1;
+  for (let i = 0; i < count; i++) {
+    const t = i / ringsPerBone;
+    const e = holdThenTaper(t);
+    rings.push({
+      boneIndex: bi, boneName: bone.name, group: bp.group,
+      y: startOffset + t * (target.length - startOffset),
+      fwd: THREE.MathUtils.lerp(bp.tubeOffsetForward ?? 0, target.cFwd, e),
+      rx: THREE.MathUtils.lerp(bp.tubeRadiusX, target.cRx, e),
+      rz: THREE.MathUtils.lerp(bp.tubeRadiusZ, target.cRz, e),
+      t,
+    });
+  }
+  return rings;
+}
+
+/** Spine2 shoulder girdle: widen AND deepen at the shoulder joint, taper to the neck. */
+function buildSpine2Envelope(
+  bone: THREE.Bone,
+  bi: number,
+  bp: BoneRingParams,
+  params: (name: string) => BoneRingParams | null,
+): BodyRing[] {
+  const rings: BodyRing[] = [];
+  // Shoulder girdle: widen AND deepen at the shoulder joint so the arms exit
+  // through the girdle surface instead of a shallow "shoulder plate". Tapers
+  // to the neck (not to whichever child happens to be first).
+  const neck = bone.children.find((c) => c instanceof THREE.Bone && c.name === 'mixamorigNeck') as THREE.Bone | undefined;
+  const neckBp = neck ? params(neck.name) : null;
+  const neckRx = neckBp?.tubeRadiusX ?? bp.tubeRadiusX;
+  const neckRz = neckBp?.tubeRadiusZ ?? bp.tubeRadiusZ;
+  const neckFwd = neckBp?.tubeOffsetForward ?? 0;
+  const spineLen = neck ? neck.position.length() : 0;
+
+  const shoulder = bone.children.find((c) => c instanceof THREE.Bone && /Shoulder$/.test(c.name)) as THREE.Bone | undefined;
+  const arm = shoulder?.children.find((c) => c instanceof THREE.Bone) as THREE.Bone | undefined;
+  const fwd = bp.tubeOffsetForward ?? 0;
+  let jointY = spineLen * SHOULDER_GIRDLE_JOINT_FALLBACK_T;
+  let deepRz = bp.tubeRadiusZ;
+  if (shoulder && arm) {
+    const joint = shoulder.position.clone().add(arm.position.clone().applyQuaternion(shoulder.quaternion));
+    jointY = joint.y;
+    const dx = Math.abs(joint.x);
+    const dz = Math.abs(joint.z - fwd);
+    const inside = 1 - (dx / bp.tubeRadiusX) ** 2;
+    if (inside > 1e-6) deepRz = Math.max(bp.tubeRadiusZ, dz / Math.sqrt(inside));
+  }
+
+  const count = SHOULDER_GIRDLE_RING_COUNT;
+  const sigma = SHOULDER_GIRDLE_SIGMA;
+  for (let i = 0; i < count; i++) {
+    const t = i / count;
+    const e = holdThenTaper(t);
+    const y = t * spineLen;
+    const bulge = Math.exp(-((y - jointY) ** 2) / (2 * sigma * sigma));
+    rings.push({
+      boneIndex: bi, boneName: bone.name, group: bp.group,
+      y,
+      fwd: THREE.MathUtils.lerp(fwd, neckFwd, e),
+      rx: THREE.MathUtils.lerp(bp.tubeRadiusX, neckRx, e),
+      rz: THREE.MathUtils.lerp(bp.tubeRadiusZ, neckRz, e) + (deepRz - bp.tubeRadiusZ) * bulge,
+      t,
+    });
+  }
   return rings;
 }
 
@@ -644,7 +750,10 @@ function loftClosedLoops(a: number[], b: number[], indices: number[]): void {
  * re-weighted so the front follows the leg (groin) while the back stays on the
  * pelvis (buttock).
  */
-function buildLegFans(
+function buildLegFan(
+  spec: LegFanSpec,
+  hips: THREE.Bone,
+  upLegs: THREE.Bone[],
   boneIndex: Map<string, number>,
   ringBases: Map<string, number[]>,
   positions: number[],
@@ -653,14 +762,15 @@ function buildLegFans(
   indices: number[],
   segments: number,
 ): void {
-  const hipsBases = ringBases.get('mixamorigHips');
-  const leftBases = ringBases.get('mixamorigLeftUpLeg');
-  const rightBases = ringBases.get('mixamorigRightUpLeg');
+  if (upLegs.length < 2) return;
+  const hipsBases = ringBases.get(hips.name);
+  const leftBases = ringBases.get(upLegs[0].name);
+  const rightBases = ringBases.get(upLegs[1].name);
   if (!hipsBases || !leftBases || !rightBases) return;
 
-  const hipsBi = boneIndex.get('mixamorigHips') ?? 0;
-  const leftBi = boneIndex.get('mixamorigLeftUpLeg') ?? 0;
-  const rightBi = boneIndex.get('mixamorigRightUpLeg') ?? 0;
+  const hipsBi = boneIndex.get(hips.name) ?? 0;
+  const leftBi = boneIndex.get(upLegs[0].name) ?? 0;
+  const rightBi = boneIndex.get(upLegs[1].name) ?? 0;
 
   const hipsBase = hipsBases[0];
   const leftBase = leftBases[0];
@@ -684,7 +794,7 @@ function buildLegFans(
     const v = positions.length / 3;
     positions.push(chordPts[k].x, chordPts[k].y, chordPts[k].z);
     skinIndex.push(hipsBi, leftBi, rightBi, 0);
-    skinWeight.push(0.5, 0.25, 0.25, 0);
+    skinWeight.push(...spec.chordWeights, 0);
     chordNew.push(v);
   }
 
@@ -716,7 +826,7 @@ function buildLegFans(
     // Re-weight the girdle arc verts: front follows the leg, back stays hips.
     for (const j of arc) {
       const a = (j / segments) * Math.PI * 2;
-      const uplegWeight = 0.4 * ((1 + Math.sin(a)) / 2);
+      const uplegWeight = spec.arcMaxWeight * ((1 + Math.sin(a)) / 2);
       const v = hipsBase + j;
       skinIndex[v * 4] = hipsBi;
       skinIndex[v * 4 + 1] = leg.bi;
@@ -737,35 +847,35 @@ function buildLegFans(
  * lofted onto its finger ring. The finger ring's vertices keep their finger
  * weights.
  */
-function buildHandFans(
+function buildHandFan(
+  hand: THREE.Bone,
+  fingers: THREE.Bone[],
   ringBases: Map<string, number[]>,
   positions: number[],
   indices: number[],
   segments: number,
 ): void {
-  for (const handName of ['mixamorigLeftHand', 'mixamorigRightHand']) {
-    const handBases = ringBases.get(handName);
-    if (!handBases || handBases.length === 0) continue;
-    const knuckleBase = handBases[handBases.length - 1];
+  const handBases = ringBases.get(hand.name);
+  if (!handBases || handBases.length === 0) return;
+  const knuckleBase = handBases[handBases.length - 1];
 
-    const fingers = ['Index1', 'Middle1', 'Ring1', 'Pinky1']
-      .map((s) => ringBases.get(handName + s)?.[0])
-      .filter((f): f is number => f !== undefined);
-    if (fingers.length < 4) continue;
+  const fingerBases = fingers
+    .map((f) => ringBases.get(f.name)?.[0])
+    .filter((f): f is number => f !== undefined);
+  if (fingerBases.length < 4) return;
 
-    const kv = readRing(positions, knuckleBase, segments);
-    const fingerVerts = fingers.map((f) => readRing(positions, f, segments));
-    const fingerCenters = fingerVerts.map(ringCentroid);
-    const plates = assembleKnucklePlates(kv, fingerCenters);
-    if (plates.length < 4) continue;
+  const kv = readRing(positions, knuckleBase, segments);
+  const fingerVerts = fingerBases.map((f) => readRing(positions, f, segments));
+  const fingerCenters = fingerVerts.map(ringCentroid);
+  const plates = assembleKnucklePlates(kv, fingerCenters);
+  if (plates.length < 4) return;
 
-    for (let i = 0; i < 4; i++) {
-      const platePoints = plates[i].map((j) => kv[j]);
-      const fingerOrder = bestFingerRotation(platePoints, fingerVerts[i]);
-      const plateLoop = plates[i].map((j) => knuckleBase + j);
-      const fingerLoop = fingerOrder.map((j) => fingers[i] + j);
-      loftClosedLoops(plateLoop, fingerLoop, indices);
-    }
+  for (let i = 0; i < 4; i++) {
+    const platePoints = plates[i].map((j) => kv[j]);
+    const fingerOrder = bestFingerRotation(platePoints, fingerVerts[i]);
+    const plateLoop = plates[i].map((j) => knuckleBase + j);
+    const fingerLoop = fingerOrder.map((j) => fingerBases[i] + j);
+    loftClosedLoops(plateLoop, fingerLoop, indices);
   }
 }
 
@@ -887,164 +997,139 @@ export function bracketRingsAround(localYs: number[], targetY: number, count: nu
 }
 
 /**
- * Weld a closed child ring (thumb / arm) to a hole cut across a run of parent
- * bracket rings. Each bracket ring is split into a cut arc (the hole) and a
- * residual arc; the residual arcs re-loft the parent surface around the hole,
- * and the cut arcs plus the seam chains form the boundary loop lofted to the
- * child ring (with a rotational reorder to absorb the parent/child plane twist).
+ * Bones in `bones` that are descendants of `root` and match `pattern`, ordered
+ * left→right along the parent's X axis so fans/side-ports weld deterministically
+ * (index→pinky, left→right).
  */
-function weldSidePort(
-  rings: THREE.Vector3[][],
-  bases: number[],
-  childBase: number,
-  positions: number[],
-  indices: number[],
-  segments: number,
-  inv: THREE.Matrix4,
-  centerLocal: THREE.Vector3,
-  halfWidths: number[],
-): void {
-  const port = thumbPortCuts(rings, inv, centerLocal, halfWidths);
-  if (port.cuts[0].length < 2) return;
-
-  // Re-loft the residual arcs of each strip in the run so the parent closes
-  // around the hole instead of bridging straight across it.
-  for (let k = 0; k + 1 < bases.length; k++) {
-    loftStrip(
-      port.residuals[k].map((j) => bases[k] + j),
-      port.residuals[k + 1].map((j) => bases[k + 1] + j),
-      indices,
-    );
+function childrenOf(root: THREE.Bone, pattern: RegExp, bones: THREE.Bone[]): THREE.Bone[] {
+  const matches: THREE.Bone[] = [];
+  for (const b of bones) {
+    if (b === root || !pattern.test(b.name)) continue;
+    for (let p = b.parent; p; p = p.parent) {
+      if (p === root) { matches.push(b); break; }
+    }
   }
-
-  // Boundary loop: bottom cut reversed + front seam chain + top cut + back
-  // seam chain. Intermediate rings contribute only their two seam vertices as
-  // via-points in the chains (the hexagon's extra corners).
-  const last = bases.length - 1;
-  const portLoop: number[] = [];
-  for (const j of [...port.cuts[0]].reverse()) portLoop.push(bases[0] + j);
-  for (let k = 1; k < last; k++) portLoop.push(bases[k] + port.starts[k]);
-  for (const j of port.cuts[last]) portLoop.push(bases[last] + j);
-  for (let k = last - 1; k >= 1; k--) portLoop.push(bases[k] + port.ends[k]);
-
-  const portPts = portLoop.map((v) => new THREE.Vector3(positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2]));
-  const childVerts = readRing(positions, childBase, segments);
-  const childOrder = bestFingerRotation(portPts, childVerts);
-  loftClosedLoops(portLoop, childOrder.map((j) => childBase + j), indices);
+  matches.sort((a, b) => a.getWorldPosition(new THREE.Vector3()).x - b.getWorldPosition(new THREE.Vector3()).x);
+  return matches;
 }
 
 /**
- * Cut a thumb port into the palm's radial side and weld the thumb's base ring
- * to it (see weldSidePort). The thumb is shallow to the hand, so the hole is an
- * elongated hexagon: the ends taper and the middle bulges to the thumb's base.
+ * Cut side ports across a run of parent bracket rings and weld one or more
+ * child rings to them (thumb → palm, arms → chest). The run is selected by
+ * `spec.bracket`; each ring is split into per-child cut arcs and residual arcs
+ * between consecutive holes, which re-loft the parent around the holes. Each
+ * child ring welds to its own boundary loop (cut arcs + seam chains).
  */
-function buildThumbPorts(
-  bones: THREE.Bone[],
+function buildSidePorts(
+  spec: SidePortSpec,
+  parent: THREE.Bone,
+  children: THREE.Bone[],
   ringBases: Map<string, number[]>,
   positions: number[],
   indices: number[],
   segments: number,
   params: (name: string) => BoneRingParams | null,
 ): void {
-  for (const handName of ['mixamorigLeftHand', 'mixamorigRightHand']) {
-    const hand = bones.find((b) => b.name === handName);
-    const handBases = ringBases.get(handName);
-    const thumb = bones.find((b) => b.name === handName + 'Thumb1');
-    const thumbBase = ringBases.get(handName + 'Thumb1')?.[0];
-    if (!hand || !handBases || !thumb || thumbBase === undefined) continue;
+  const parentBases = ringBases.get(parent.name);
+  if (!parentBases || children.length === 0) return;
 
-    const inv = hand.matrixWorld.clone().invert();
-    const thumbRoot = thumb.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv);
-    const handLocalYs = handBases.map((base) => {
-      const c = ringCentroid(readRing(positions, base, segments));
-      return c.applyMatrix4(inv).y;
-    });
-    const run = thumbBracketRings(handLocalYs, thumbRoot.y);
-    if (run.length < 2) continue;
-    const bases = run.map((i) => handBases[i]);
-    const rings = bases.map((base) => readRing(positions, base, segments));
+  const inv = parent.matrixWorld.clone().invert();
+  const localYs = parentBases.map((base) => ringCentroid(readRing(positions, base, segments)).applyMatrix4(inv).y);
 
-    const thumbR = params(thumb.name)?.tubeRadiusX ?? 1;
-    const halfWidths = bases.map((_, k) => thumbR * (k === 0 || k === bases.length - 1 ? 1.2 : 2.0));
-    weldSidePort(rings, bases, thumbBase, positions, indices, segments, inv, thumbRoot, halfWidths);
-  }
-}
-
-/**
- * Cut an arm port into the Spine2 shoulder girdle and weld the arm's start ring
- * to it (see weldSidePort). The arm is a perpendicular T-junction, so the hole
- * is roughly circular (uniform widths) rather than the thumb's elongated slit.
- */
-function buildShoulderPorts(
-  bones: THREE.Bone[],
-  ringBases: Map<string, number[]>,
-  positions: number[],
-  indices: number[],
-  segments: number,
-  params: (name: string) => BoneRingParams | null,
-): void {
-  const spine2 = bones.find((b) => b.name === 'mixamorigSpine2');
-  const spine2Bases = ringBases.get('mixamorigSpine2');
-  if (!spine2 || !spine2Bases) return;
-
-  const inv = spine2.matrixWorld.clone().invert();
-  const spine2LocalYs = spine2Bases.map((base) => {
-    const c = ringCentroid(readRing(positions, base, segments));
-    return c.applyMatrix4(inv).y;
-  });
-
-  const arms = (['Left', 'Right'] as const)
-    .map((side) => {
-      const arm = bones.find((b) => b.name === `mixamorig${side}Arm`);
-      const armBase = ringBases.get(`mixamorig${side}Arm`)?.[0];
-      if (!arm || armBase === undefined) return null;
-      const jointLocal = arm.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv);
-      return { arm, armBase, jointLocal };
+  const childEntries = children
+    .map((child) => {
+      const childBase = ringBases.get(child.name)?.[0];
+      return childBase === undefined ? null : {
+        childBase,
+        local: child.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv),
+      };
     })
-    .filter((a): a is { arm: THREE.Bone; armBase: number; jointLocal: THREE.Vector3 } => a !== null);
-  if (arms.length === 0) return;
+    .filter((e): e is { childBase: number; local: THREE.Vector3 } => e !== null);
+  if (childEntries.length === 0) return;
 
-  const run = bracketRingsAround(spine2LocalYs, arms[0].jointLocal.y, 3);
+  const run = spec.bracket === 'thumb'
+    ? thumbBracketRings(localYs, childEntries[0].local.y)
+    : bracketRingsAround(localYs, childEntries[0].local.y, spec.bracketCount ?? SHOULDER_PORT_BRACKET_COUNT);
   if (run.length < 2) return;
-  const bases = run.map((i) => spine2Bases[i]);
+  const bases = run.map((i) => parentBases[i]);
   const rings = bases.map((base) => readRing(positions, base, segments));
 
-  const armR = params(arms[0].arm.name)?.tubeRadiusX ?? 4;
-  const halfWidths = bases.map((_, k) => armR * (k === 1 && bases.length > 2 ? 1.2 : 1.0));
-  const ports = arms.map((a) => ({ ...a, port: thumbPortCuts(rings, inv, a.jointLocal, halfWidths) }));
-  if (ports.some((p) => p.port.cuts[0].length < 2)) return;
+  const childR = params(children[0].name)?.tubeRadiusX ?? spec.fallbackRadius;
+  const halfWidths = bases.map((_, k) => childR * (
+    spec.bracket === 'thumb'
+      ? (k === 0 || k === bases.length - 1 ? spec.endWidth : spec.middleWidth)
+      : (k === 1 && bases.length > 2 ? spec.middleWidth : spec.endWidth)
+  ));
 
-  // The two arms share the same girdle rings, so each ring has two holes and
-  // its residual is two arcs (front + back), not a single complement. Build the
-  // union residual arcs from the two cuts' seam pairs.
-  const n = segments;
-  const fronts: number[][] = [];
-  const backs: number[][] = [];
-  for (let k = 0; k < rings.length; k++) {
-    const left = ports[0];
-    const right = ports[ports.length - 1];
-    fronts.push(walkArc(left.port.ends[k], right.port.starts[k], n));
-    backs.push(walkArc(right.port.ends[k], left.port.starts[k], n));
-  }
+  const ports = childEntries.map((e) => thumbPortCuts(rings, inv, e.local, halfWidths));
+  if (ports.some((p) => p.cuts[0].length < 2)) return;
 
-  for (let k = 0; k + 1 < bases.length; k++) {
-    loftStrip(fronts[k].map((j) => bases[k] + j), fronts[k + 1].map((j) => bases[k + 1] + j), indices);
-    loftStrip(backs[k].map((j) => bases[k] + j), backs[k + 1].map((j) => bases[k + 1] + j), indices);
-  }
-
-  // Weld each arm ring to its own boundary loop (cut arcs + seam chains).
+  // Re-loft the residual arcs: with one hole per child, each ring's residual is
+  // the arcs between consecutive holes (in circular order). For one child that
+  // is the single complement arc; for two, the front and back arcs.
   const last = bases.length - 1;
-  for (const p of ports) {
+  const order = ports.map((_, i) => i).sort((a, b) => ports[a].starts[0] - ports[b].starts[0]);
+  const nPorts = ports.length;
+  for (let g = 0; g < nPorts; g++) {
+    const a = order[g];
+    const b = order[(g + 1) % nPorts];
+    for (let k = 0; k + 1 < bases.length; k++) {
+      loftStrip(
+        walkArc(ports[a].ends[k], ports[b].starts[k], segments).map((j) => bases[k] + j),
+        walkArc(ports[a].ends[k + 1], ports[b].starts[k + 1], segments).map((j) => bases[k + 1] + j),
+        indices,
+      );
+    }
+  }
+
+  // Weld each child ring to its own boundary loop (cut arcs + seam chains).
+  for (let ci = 0; ci < childEntries.length; ci++) {
+    const port = ports[ci];
     const portLoop: number[] = [];
-    for (const j of [...p.port.cuts[0]].reverse()) portLoop.push(bases[0] + j);
-    for (let k = 1; k < last; k++) portLoop.push(bases[k] + p.port.starts[k]);
-    for (const j of p.port.cuts[last]) portLoop.push(bases[last] + j);
-    for (let k = last - 1; k >= 1; k--) portLoop.push(bases[k] + p.port.ends[k]);
+    for (const j of [...port.cuts[0]].reverse()) portLoop.push(bases[0] + j);
+    for (let k = 1; k < last; k++) portLoop.push(bases[k] + port.starts[k]);
+    for (const j of port.cuts[last]) portLoop.push(bases[last] + j);
+    for (let k = last - 1; k >= 1; k--) portLoop.push(bases[k] + port.ends[k]);
 
     const portPts = portLoop.map((v) => new THREE.Vector3(positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2]));
-    const armVerts = readRing(positions, p.armBase, segments);
-    const armOrder = bestFingerRotation(portPts, armVerts);
-    loftClosedLoops(portLoop, armOrder.map((j) => p.armBase + j), indices);
+    const childVerts = readRing(positions, childEntries[ci].childBase, segments);
+    const childOrder = bestFingerRotation(portPts, childVerts);
+    loftClosedLoops(portLoop, childOrder.map((j) => childEntries[ci].childBase + j), indices);
+  }
+}
+
+/**
+ * Weld every junction port configured by `PORT_SPECS`: resolve each spec's
+ * parent and descendant-child bones, then dispatch to the fan or side-port
+ * builder. The geometry lives in the builders; the bone wiring lives in the
+ * table.
+ */
+function buildPorts(
+  bones: THREE.Bone[],
+  boneIndex: Map<string, number>,
+  ringBases: Map<string, number[]>,
+  positions: number[],
+  skinIndex: number[],
+  skinWeight: number[],
+  indices: number[],
+  segments: number,
+  params: (name: string) => BoneRingParams | null,
+): void {
+  for (const spec of PORT_SPECS) {
+    const parents = bones.filter((b) => spec.parent.test(b.name));
+    for (const parent of parents) {
+      const children = childrenOf(parent, spec.child, bones);
+      if (children.length === 0) continue;
+      if (spec.kind === 'fan') {
+        if (spec.fan === 'leg') {
+          buildLegFan(spec, parent, children, boneIndex, ringBases, positions, skinIndex, skinWeight, indices, segments);
+        } else {
+          buildHandFan(parent, children, ringBases, positions, indices, segments);
+        }
+      } else {
+        buildSidePorts(spec, parent, children, ringBases, positions, indices, segments, params);
+      }
+    }
   }
 }
 
@@ -1124,7 +1209,7 @@ export function buildRingLoft(
       for (const p of ringWorldPoints(ring, bone, segments)) positions.push(p.x, p.y, p.z);
 
       const useParent = ring.parentWeight !== undefined && parentBi !== undefined;
-      const childW: [number, number] = useParent ? [0, 0] : tubeSkinWeights(ring.t, 0.3);
+      const childW: [number, number] = useParent ? [0, 0] : tubeSkinWeights(ring.t, TUBE_WEIGHT_INFLUENCE);
       const pBi = parentBi ?? 0;
       const pw = ring.parentWeight ?? 0;
       for (let j = 0; j < segments; j++) {
@@ -1152,7 +1237,7 @@ export function buildRingLoft(
     // Spine2 tapers into the neck; its shoulder children are girdle branches
     // welded separately, so don't stitch the chain to whichever child is first.
     let child = bone.children.find((c) => c instanceof THREE.Bone) as THREE.Bone | undefined;
-    if (bone.name === 'mixamorigSpine2') {
+    if (params(bone.name)?.group === 'spine2') {
       child = (bone.children.find((c) => c instanceof THREE.Bone && c.name === 'mixamorigNeck') as THREE.Bone | undefined) ?? child;
     }
     const childStart = child ? ringBases.get(child.name)?.[0] : undefined;
@@ -1163,8 +1248,7 @@ export function buildRingLoft(
     if (childStart !== undefined && params(bone.name)?.group !== 'hand') stops.push(childStart);
 
     // Side ports replace the parent strips across their bracket-ring runs, so
-    // those strips are emitted by buildThumbPorts/buildShoulderPorts instead of
-    // the generic loft.
+    // those strips are emitted by buildPorts instead of the generic loft.
     const skipStrips = new Set<number>();
     if (params(bone.name)?.group === 'hand') {
       const thumb = bone.children.find((c) => c instanceof THREE.Bone && /Thumb1$/.test(c.name)) as THREE.Bone | undefined;
@@ -1174,7 +1258,7 @@ export function buildRingLoft(
         const handLocalYs = bases.map((base) => ringCentroid(readRing(positions, base, segments)).applyMatrix4(inv).y);
         for (const k of thumbBracketRings(handLocalYs, thumbLocalY).slice(0, -1)) skipStrips.add(k);
       }
-    } else if (bone.name === 'mixamorigSpine2') {
+    } else if (params(bone.name)?.group === 'spine2') {
       const inv = bone.matrixWorld.clone().invert();
       const spine2LocalYs = bases.map((base) => ringCentroid(readRing(positions, base, segments)).applyMatrix4(inv).y);
       const shoulders = bone.children.filter((c) => c instanceof THREE.Bone && /Shoulder$/.test(c.name)) as THREE.Bone[];
@@ -1182,7 +1266,7 @@ export function buildRingLoft(
         const arm = shoulder.children.find((c) => c instanceof THREE.Bone) as THREE.Bone | undefined;
         if (!arm) continue;
         const jointLocalY = arm.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv).y;
-        for (const k of bracketRingsAround(spine2LocalYs, jointLocalY, 3).slice(0, -1)) skipStrips.add(k);
+        for (const k of bracketRingsAround(spine2LocalYs, jointLocalY, SHOULDER_PORT_BRACKET_COUNT).slice(0, -1)) skipStrips.add(k);
       }
     }
 
@@ -1197,17 +1281,9 @@ export function buildRingLoft(
     }
   }
 
-  // Fan the girdle bottom into the two legs (the crotch weld).
-  buildLegFans(boneIndex, ringBases, positions, skinIndex, skinWeight, indices, segments);
-
-  // Fan the palm knuckle rings into the four fingers.
-  buildHandFans(ringBases, positions, indices, segments);
-
-  // Cut a port into each palm's radial side and weld the thumb to it.
-  buildThumbPorts(bones, ringBases, positions, indices, segments, params);
-
-  // Cut arm ports into the shoulder girdle and weld the arms to them.
-  buildShoulderPorts(bones, ringBases, positions, indices, segments, params);
+  // Weld the junction ports (legs, fingers, thumbs, arms) as configured by
+  // PORT_SPECS.
+  buildPorts(bones, boneIndex, ringBases, positions, skinIndex, skinWeight, indices, segments, params);
 
   // Cap the open finger/toe ends.
   capTerminalEnds(bones, boneIndex, ringBases, params, positions, skinIndex, skinWeight, indices, segments);
