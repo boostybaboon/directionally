@@ -177,6 +177,30 @@ describe('storedSceneToModel – staged actors', () => {
 
 // ── Duration ──────────────────────────────────────────────────────────────────
 
+// ── Instance (ref) expansion ──────────────────────────────────────────────────
+
+describe('storedSceneToModel – ref instances', () => {
+  it('expands a set piece with a ref against the bundled catalogue into its composite meshes', () => {
+    const scene = baseScene({
+      set: [
+        { name: 'chair-1', ref: 'chair', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 }, position: [2, 0, 0] },
+      ],
+    });
+    const model = storedSceneToModel(scene, []);
+    const names = model.meshes.map((m) => m.name);
+    expect(names.length).toBeGreaterThan(1);
+    expect(names.every((n) => n.startsWith('chair-1/'))).toBe(true);
+  });
+
+  it('leaves a plain (non-ref) set piece unaffected', () => {
+    const scene = baseScene({
+      set: [{ name: 'ground', geometry: { type: 'plane', width: 10, height: 10 }, material: { color: 0x888888 } }],
+    });
+    const model = storedSceneToModel(scene, []);
+    expect(model.meshes.map((m) => m.name)).toEqual(['ground']);
+  });
+});
+
 describe('storedSceneToModel – duration', () => {
   it('passes duration through to the model', () => {
     const model = storedSceneToModel(baseScene({ duration: 42 }), []);

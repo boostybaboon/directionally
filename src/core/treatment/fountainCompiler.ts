@@ -8,6 +8,7 @@
 
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
 import { getCharacters, getEnvironments, getSetPieces } from '../catalogue/catalogue.js';
+import { expandEntry } from '../setting/settingSpec.js';
 import { estimateDuration, starterSceneShell } from '../storage/sceneBuilder.js';
 import type { StoredActor, NamedScene } from '../storage/types.js';
 import type { CatalogueEntry, EnvironmentEntry, SetPieceEntry } from '../catalogue/types.js';
@@ -88,24 +89,6 @@ function resolveSetting(
   const environment = getEnvironments(merged).find((e) => e.label.trim().toLowerCase() === normalised);
   if (environment) return { kind: 'environment', entry: environment };
   return { kind: 'placeholder', label };
-}
-
-/**
- * Converts a catalogue SetPieceEntry into a StoredScene SetPiece. User-authored
- * entries carry a session-scoped blob gltfPath; persist it as an `opfs://<id>`
- * reference that storedSceneToModel resolves back to the live blob URL.
- */
-function setPieceFromEntry(entry: SetPieceEntry): SetPiece {
-  const piece: SetPiece = {
-    name: entry.id,
-    geometry: entry.geometry,
-    material: entry.material,
-  };
-  if (entry.gltfPath) {
-    piece.gltfPath = entry.gltfPath.startsWith('blob:') ? `opfs://${entry.id}` : entry.gltfPath;
-  }
-  if (entry.defaultRotation) piece.rotation = entry.defaultRotation;
-  return piece;
 }
 
 /**
@@ -389,7 +372,9 @@ function compileSceneBlock(
   // Track CAT, CAT-2: resolve the heading's setting against the merged catalogue.
   const setting = resolveSetting(block.setting, userEntries, bindings.setting);
   if (setting.kind === 'set-piece') {
-    scene.set = [setPieceFromEntry(setting.entry)];
+    scene.set = expandEntry(setting.entry, undefined, [...CATALOGUE_ENTRIES, ...userEntries]);
+    if (setting.entry.environmentId) scene.environmentMap = setting.entry.environmentId;
+    if (setting.entry.lights) scene.lights = setting.entry.lights;
   } else if (setting.kind === 'environment') {
     scene.environmentMap = setting.entry.id;
     // Keep the starter ground plane so actors stand on something under the HDRI.

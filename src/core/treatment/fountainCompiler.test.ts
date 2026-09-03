@@ -270,12 +270,40 @@ describe('compileScriptDocument', () => {
     expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
   });
 
+  it('applies environment and lights from a saved setting set-piece entry', () => {
+    const doc = buildDoc([sceneWithSetting('Classroom')], ['Robot']);
+    const userEntry: CatalogueEntry = {
+      kind: 'set-piece',
+      id: 'user-classroom-setting',
+      label: 'Classroom',
+      compose: [
+        { geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0xffffff } },
+      ],
+      environmentId: 'exterior-sky',
+      lights: [{ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 1 }],
+    };
+    const result = compileScriptDocument(doc, [userEntry]);
+
+    expect(result.scenes[0].scene.environmentMap).toBe('exterior-sky');
+    expect(result.scenes[0].scene.lights).toHaveLength(1);
+    expect(result.scenes[0].scene.set.length).toBeGreaterThan(0);
+    expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
+  });
+
   it('resolves a setting matching an environment label to the environment map', () => {
     const doc = buildDoc([sceneWithSetting('Studio (neutral)')], ['Robot']);
     const result = compileScriptDocument(doc);
 
     expect(result.scenes[0].scene.environmentMap).toBe('studio-neutral');
     expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
+  });
+
+  it('flattens a composite set-piece entry into multiple pieces', () => {
+    const doc = buildDoc([sceneWithSetting('Chair')], ['Robot']);
+    const result = compileScriptDocument(doc);
+
+    expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
+    expect(result.scenes[0].scene.set.length).toBeGreaterThan(1);
   });
 
   it('does not emit a setting diagnostic when the heading has no setting', () => {

@@ -32,7 +32,28 @@ export type SetPiece = {
   rotation?: Vec3;   // Euler XYZ in radians
   scale?: Vec3;
   parent?: string;   // name of another SetPiece or actor to attach to (for hierarchical assemblies)
+  /**
+   * Catalogue SetPieceEntry id this piece is an Instance of (Track SET, N2).
+   * When set, `resolveInstance`/`resolveInstances` (settingSpec.ts) expand this
+   * piece into its rendered children before it reaches the renderer — `geometry`/
+   * `material` on an instance piece are a placeholder only, never rendered directly.
+   */
+  ref?: string;
 };
+
+// A placed prop: a reference to a catalogue set piece (`ref`) or an inline
+// procedural primitive, with an optional placement transform. Shared by the
+// setting resolver and by composite catalogue entries (`SetPieceEntry.compose`).
+export type PropSpec =
+  | { ref: string }
+  | { geometry: GeometryConfig; material: MaterialConfig; name?: string };
+
+export type PlacedProp =
+  | { ref: string; position?: Vec3; rotation?: Vec3; scale?: Vec3; localId?: string }
+  | { geometry: GeometryConfig; material: MaterialConfig; name?: string; position?: Vec3; rotation?: Vec3; scale?: Vec3; localId?: string };
+
+/** A placement transform (no prop body) — used by `expandEntry` to place an entry. */
+export type Placement = { position?: Vec3; rotation?: Vec3; scale?: Vec3 };
 
 export type ActorAsset =
   | { type: 'gltf'; url: string }

@@ -612,3 +612,88 @@ describe('buildRingLoft terminal caps', () => {
     expect(loft.skinWeight[8 * 4 + 1]).toBeCloseTo(0);
   });
 });
+
+describe('buildRingLoft UVs', () => {
+  it('wraps U around each ring and runs V 0→1 along each bone', () => {
+    const a = new THREE.Bone();
+    a.name = 'A';
+    const b = new THREE.Bone();
+    b.name = 'B';
+    b.position.set(0, 10, 0);
+    a.add(b);
+    a.updateMatrixWorld(true);
+
+    const loft = buildRingLoft([a, b], new Map([['A', 0], ['B', 1]]), params, 4, 5);
+
+    // One (u, v) pair per vertex.
+    expect(loft.uv.length).toBe((loft.positions.length / 3) * 2);
+
+    // Bone A ring 0 (t=0): U = j/4 around the ring, V = 0 at the bone origin.
+    expect(loft.uv[0]).toBeCloseTo(0);     // j=0
+    expect(loft.uv[1]).toBeCloseTo(0);     // v
+    expect(loft.uv[2]).toBeCloseTo(0.25);  // j=1 → U = 1/4
+
+    // Bone A ring 4 (t=0.8, y=8 = top of the bone): V = 1.
+    const ring4 = 4 * 4 * 2;               // vertex index 16 → uv offset 32
+    expect(loft.uv[ring4 + 1]).toBeCloseTo(1);
+  });
+});
+
+describe('ring chest relief', () => {
+  it('pushes the front of a bust ring forward while leaving the back ellipse intact', () => {
+    const bone = new THREE.Bone();
+    bone.name = 'mixamorigSpine2';
+    bone.updateMatrixWorld(true);
+
+    const ring = {
+      boneIndex: 0, boneName: 'mixamorigSpine2', group: 'spine2',
+      y: 0, fwd: 2.5, rx: 16, rz: 11, t: 0, bust: 0.2,
+    };
+    const pts = ringWorldPoints(ring, bone, 32);
+
+    // Front (a = π/2) is index 8; back (a = 3π/2) is index 24.
+    expect(pts[8].z).toBeGreaterThan(2.5 + 11); // sternum pushed forward
+    expect(pts[24].z).toBeCloseTo(2.5 - 11, 5); // back unchanged
+    // The two bumps flank the sternum, so the lateral peak sits forward of centre.
+    expect(pts[6].z).toBeGreaterThan(pts[8].z);
+  });
+
+  it('is a no-op at bust = 0 (pure ellipse)', () => {
+    const bone = new THREE.Bone();
+    bone.updateMatrixWorld(true);
+    const ring = {
+      boneIndex: 0, boneName: 'mixamorigSpine2', group: 'spine2',
+      y: 0, fwd: 2.5, rx: 16, rz: 11, t: 0,
+    };
+    const pts = ringWorldPoints(ring, bone, 32);
+    expect(pts[8].z).toBeCloseTo(2.5 + 11, 5);
+    expect(pts[24].z).toBeCloseTo(2.5 - 11, 5);
+  });
+
+  it('distributes the relief along the spine2 girdle, peaking at nipple level', () => {
+    const spine2 = new THREE.Bone();
+    spine2.name = 'mixamorigSpine2';
+    const neck = new THREE.Bone();
+    neck.name = 'mixamorigNeck';
+    neck.position.set(0, 16.87, 0);
+    spine2.add(neck);
+    spine2.updateMatrixWorld(true);
+
+    const bones = [spine2, neck];
+    const boneIndex = new Map([['mixamorigSpine2', 0], ['mixamorigNeck', 1]]);
+    const params = (name: string) => {
+      if (name === 'mixamorigSpine2') return { tubeRadiusX: 16.5, tubeRadiusZ: 11, tubeOffsetForward: 2.5, bust: 0.2, group: 'spine2' };
+      if (name === 'mixamorigNeck') return { tubeRadiusX: 5, tubeRadiusZ: 5, group: 'neck' };
+      return null;
+    };
+
+    const graph = buildRingGraph(bones, boneIndex, params, 5);
+    const rings = graph.rings.filter((r) => r.boneName === 'mixamorigSpine2');
+    expect(rings.length).toBeGreaterThan(2);
+
+    const peak = rings.reduce((a, b) => ((b.bust ?? 0) > (a.bust ?? 0) ? b : a));
+    expect(peak.bust).toBeGreaterThan(0.15); // near the full 0.2 amplitude
+    expect(rings[0].bust).toBeLessThan(0.01); // waist ring fades to ~0
+    expect(rings[rings.length - 1].bust).toBeLessThan(0.01); // neck ring fades to ~0
+  });
+});

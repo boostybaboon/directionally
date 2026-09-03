@@ -6,28 +6,89 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 
 ## Background & decisions
 
-**Goal:** A fast, fun cartoon-style 3D sketcher (think Spore creature creator, not FreeCAD) built on Three.js. User-created GLB assets flow directly into the production asset catalogue and are usable in productions.
+**Goal:** A single Set Design tool (think Spore creature creator crossed with a lightweight Unity/USD-style prefab system, not FreeCAD) built on Three.js. User-created assets — from raw primitives up through whole dressed settings — flow directly into the production asset catalogue and are reusable across scenes.
 
 **Key documents:**
 - `docs/sketcher.md` — implementation design for the polygon sketcher + extrusion pipeline
 - `docs/asset-authoring-decision.md` — geometry kernel decision (mesh-first wins; monorepo ruled out)
+- `set-staging-architecture.md` / `set-staging-architecture-plus-implementation-notes.md` — the Definition/Instance/override model this roadmap's **Track SET** implements, and the USD/Unity/Blender prior art it's adapted from
 
 | Decision | Choice | Rationale |
 |---|---|---|
 | Package location | `src/core/sketcher/` inside existing app | Extractable later if needed; zero tooling cost now |
-| Navigation | Separate SvelteKit route `/sketch` | Clean URL; dev-only guard until production-ready |
+| Navigation | Single SvelteKit route `/sketch` | One editor for modelling and assembly (Track SET); `/studio` (Set Studio) is retired once Track SET's routing lands |
 | Geometry kernel | `THREE.Shape` + `ExtrudeGeometry` | Cartoon aesthetic; trivial GLB export |
 | Monorepo | Ruled out | Premature for a single-developer project |
+
+**Why one tool, not three:** modelling (Sketcher), assembly (attach/group), and set dressing (Set Studio's catalogue + lights + environment) were built as separate surfaces because they grew at different times. They are the same operation at different scales — insert a node, position it, optionally save the selection as a reusable catalogue Definition. Track SET below merges them: the Sketcher's viewport gains a catalogue panel and lights/environment (so it can build whole dressed settings, not just individual props), and a placed catalogue item becomes a single reference (`ref`) node rather than an eagerly-flattened pile of parts. See the design docs above for the full reasoning, including what a hierarchical (parent/child) node model keeps and loses versus the original flat/symmetric attach-joint model (short answer: nothing practical is lost — glue/weld scale semantics survive as a `rigid`/`snap` edge distinction on a tree; only true multi-parent cycles, which set dressing never needs, are given up).
 
 ---
 
 ## Current state — April 2026
 
-The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → attach parts into assemblies (structural group + live joint) → transform (group-level and member-edit) → numeric transform inspector → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 473 tests passing.
+The sketcher is a viable cheap-and-cheerful cartoon asset creator, and Track SET (below) is under way to fold set assembly and dressing into it. The core sketch loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → attach parts into assemblies (structural group + live joint) → transform (group-level and member-edit) → numeric transform inspector → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing.
 
 **Completed phases:** S0, S1, S2, S3, S4, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a, SA14b, SA15, SA9, SA12, SA6, SA16, SA17, SA18.
 
-No phases with open obligations remain. The items below are enhancements.
+No phases with open obligations remain in the original sketch-only scope. Track SET (below) is the active work; the SA-phase items below it are enhancements to the sketch loop itself.
+
+---
+
+## Track SET — Set Design Tool unification (level 0)
+
+Implements the Definition/Instance model from `set-staging-architecture*.md`: a catalogue **Definition** is a `SetPieceEntry` (already supports nested `compose`); an **Instance** is a placed `SetPiece` carrying a `ref` to a Definition. Flattening a `ref` into its rendered children happens only at render time (`resolveInstance`/`resolveInstances`) — the authored scene keeps the reference, never the expansion. Level 0 deliberately excludes per-instance **overrides**, an isolated **Edit Source** mode, and the venue/dressing **layering** split described in the design docs — those are real, understood, and named below as deferred, not forgotten.
+
+### N1 — Stable `localId` foundation ✅ COMPLETE
+
+Every child of a catalogue Definition's `compose` list needs an identity that survives reordering/insertion — a prerequisite for any future override mechanism (N5+) to keep addressing "the same child" across edits to the Definition.
+
+- `PlacedProp.localId?: string` added (`domain/types.ts`).
+- `generateLocalId()` / `assignLocalIds()` (`core/catalogue/localId.ts`) — idempotent: entries that already carry a `localId` are left untouched, so calling this on load is a safe migration step.
+- **Tests:** `core/catalogue/localId.test.ts` — uniqueness, idempotency, non-mutation of the input.
+
+### N2 — Instance (`ref`) resolution ✅ COMPLETE
+
+A placed `SetPiece` can now be an **Instance** of a catalogue Definition instead of raw geometry.
+
+- `SetPiece.ref?: string` added (`domain/types.ts`) — when set, `geometry`/`material` on the piece are a placeholder only, never rendered directly.
+- `resolveInstance(piece, entries, unresolved)` / `resolveInstances(pieces, entries, unresolved)` (`core/setting/settingSpec.ts`) — expands a `ref` piece into its rendered children via the existing `expandEntry`/`resolveProp` (so nested `compose`-of-`compose` Definitions, the "systems of systems" case, already work with zero extra code — `expandEntry`'s `MAX_COMPOSITE_DEPTH` guard applies unchanged). Expanded child names are prefixed with the instance's own name (`chair-1/seat`) so multiple instances of the same Definition never collide. Unresolved refs fall back to rendering the piece's own placeholder and are reported, not silently dropped.
+- Wired into `storedSceneToModel()` — every stored scene's `set` list is resolved through `resolveInstances` immediately before scene assembly, so `ref` pieces work in every existing scene without any caller changes.
+- **Tests:** `core/setting/settingSpec.test.ts` (`resolveInstance`/`resolveInstances` — leaf, composite, multi-instance naming, unresolved fallback), `core/storage/storedSceneToModel.test.ts` (`ref` expansion reaches the render pipeline; plain pieces unaffected).
+
+### N3 — Sketcher gains lights, environment, and catalogue placement ⏳ IN PROGRESS
+
+Folds Set Studio's dressing capability into the Sketcher so one tool builds both individual items and whole settings.
+
+**Delivered (core layer):**
+- `SketcherSession.lights: LightConfig[]` / `SketcherSession.environmentMap?: string` (`core/sketcher/types.ts`).
+- `SketcherDraft.lights?` / `SketcherDraft.environmentMap?` — optional so legacy drafts (no lights/environment) load unchanged.
+- `CartoonSketcher.addLight()` / `.removeLight()` / `.getLights()` / `.setEnvironmentMap()` / `.environmentMap` — builds/removes the raw `THREE.Light` directly (mirrors `SceneBridge.buildLight`'s config→light mapping so the Sketcher stays independent of the domain `SceneBridge` module) and tracks placed lights alongside parts/joints/groups.
+- `getSession()`, `toDraft()`/`loadDraft()`, and `clearSession()` all carry lights/environmentMap through save, reload, and reset.
+- **Tests:** `core/sketcher/CartoonSketcher.test.ts` — add/remove light, hemisphere light without position, environment map get/set, session/draft round-trip, legacy-draft compatibility, `clearSession()` cleanup.
+
+**Not yet delivered (page/UI layer — the remaining N3 work):**
+- `/sketch`'s `<script>` does not yet import `CataloguePanel.svelte` or call the new `addLight`/`setEnvironmentMap` methods — the HUD has no way to drop a catalogue item, add a light, or apply an HDRI yet.
+- Dropping a catalogue **set-piece** entry should create a `ref`-based `AssemblyGroup` (one movable node) rather than eagerly expanding it into loose parts — this needs a new `insertCatalogueEntry(entry, placement)` on `CartoonSketcher` (analogous to `insertPrimitive`, but sourcing geometry from `expandEntry`'s output and wrapping the result in `attach.createGroup(...)`) plus the corresponding `InsertCatalogueEntryCommand`.
+- Environment texture loading (`RGBELoader` + `PMREMGenerator`) needs wiring in the page's `onMount`, mirroring `Presenter.svelte`'s existing pattern — the Sketcher has no renderer-owning code today (`CartoonSketcher.setEnvironmentMap()` only records the choice; loading the texture and setting `scene.environment`/`scene.background` is a page-level concern, same division as `Presenter.svelte`).
+
+### N4 — Promote / "Save as Catalogue Item" — deferred to next slice
+
+Generalises today's `exportToCatalogue` (GLB-only) and Set Studio's `saveAsSetting`/`saveAsSetPiece` (whole-scene-only) into one operation: select any subtree (however it was authored — sketched from scratch, or dropped in from the catalogue and never touched again) → name it → it becomes a catalogue Definition, and the selection is replaced in-scene by a `ref` Instance pointing at it. "Save as Setting" is the same operation applied to the whole scene, additionally capturing `lights`/`environmentId` (which `OPFSCatalogueStore.addSetPiece` already accepts). Needs: a "selected subtree → `compose` with fresh `localId`s" flattener (distinct from the existing whole-scene `setPiecesToCompose`, which has no concept of "selection"), and post-save re-parenting of the selection to a `ref` node.
+
+### Deferred beyond level 0
+
+These are real, named requirements from the design docs — not gaps discovered later — deliberately excluded from level 0 because "put premade items into a room" doesn't need them yet.
+
+| Phase | Content |
+|---|---|
+| N5 | **Edit Source** — an isolated editing context for a Definition (double-click an instance to open its source; edits there write to the Definition and ripple to every instance), mirroring Unity's Prefab Mode / Blender's linked-collection edit. |
+| N6 | **Overrides + Apply/Revert** — per-instance sparse diffs (`{ path, op: 'remove' \| 'swap_ref' \| 'set', value }`) resolved by replaying the override list over a deep copy of the Definition at load time; an Outliner highlight for overridden nodes; one-click Apply (push to Definition) / Revert (discard), mirroring Unity's bold-blue-bar property affordance. |
+| N7 | **Per-scene setting overrides ("dressing" layer)** — extends `settingBindings` with an overrides list per scene, giving "same classroom, minus one chair, for this scene only" without forking the Definition. Layers 1 (Venue/Definition) and 3 (Shot — `Block[]` camera/light timeline) already exist; this is the only new layer. |
+| N8 | **Stable animation addressing** — formalise `SetPieceBlock.targetId` as keying off a stable `SetPiece` id rather than the mutable `name`, closing the fragile name-key gap once instances are common. |
+| N9 | **Outliner panel** — a simple indented tree view of the scene's nodes/groups/instances, reusing `SelectionManager`. |
+| N10 | **Route consolidation** — retire `/studio` from nav entirely (superseded by N3's catalogue-in-Sketcher); `Create →` for an unresolved setting (Track CAT, CAT-4) points at `/sketch?prefillName=…`. |
+| — | Nested groups-of-groups in the *session* model (a group containing another group, not just parts) — the catalogue already supports Definition-of-Definitions via nested `compose`/`ref`; a session-level group-of-groups is a separate, lower-priority ask. |
+| — | Full USD-style LIVRPS composition-arc generality, payload lazy-loading — level 0's fixed 2–3 layer resolution (N7) captures the practical benefit without the generality. |
 
 ---
 

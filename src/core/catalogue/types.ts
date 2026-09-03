@@ -1,4 +1,4 @@
-import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
+import type { GeometryConfig, LightConfig, MaterialConfig, PlacedProp, Vec3 } from '../domain/types.js';
 
 export type CatalogueKind = 'character' | 'set-piece' | 'light' | 'environment';
 
@@ -31,8 +31,16 @@ export interface SetPieceEntry {
   label: string;
   /** When set, load this GLB path instead of using procedural geometry. */
   gltfPath?: string;
-  geometry: GeometryConfig;
-  material: MaterialConfig;
+  /** Procedural geometry for a leaf entry; omit when `compose` is set. */
+  geometry?: GeometryConfig;
+  /** Procedural material for a leaf entry; omit when `compose` is set. */
+  material?: MaterialConfig;
+  /** Compose this entry from placed sub-items (catalogue refs or inline primitives). */
+  compose?: PlacedProp[];
+  /** Optional environment (catalogue id) applied when this entry is used as a setting. */
+  environmentId?: string;
+  /** Optional lights applied when this entry is used as a setting. */
+  lights?: LightConfig[];
   /**
    * Euler XYZ rotation (radians) applied to the SetPiece on first placement.
    * Use this to correct geometry whose default orientation differs from the scene

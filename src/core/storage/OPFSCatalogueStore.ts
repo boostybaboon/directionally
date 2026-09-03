@@ -1,5 +1,5 @@
 import type { CharacterEntry, SetPieceEntry } from '../catalogue/types.js';
-import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
+import type { GeometryConfig, LightConfig, MaterialConfig, PlacedProp, Vec3 } from '../domain/types.js';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -18,11 +18,25 @@ export type NewSetPieceMeta = Omit<SetPieceEntry, 'id' | 'geometry' | 'material'
 };
 export type NewAssetMeta = NewCharacterMeta | NewSetPieceMeta;
 
+/** Metadata for a procedural set-piece saved without a GLB — a leaf
+ *  (`geometry` + `material`) or a composite (`compose`). When used as a
+ *  setting, an optional environment and lights are captured too. */
+export type NewProceduralSetPiece = {
+  label: string;
+  compose?: PlacedProp[];
+  geometry?: GeometryConfig;
+  material?: MaterialConfig;
+  defaultRotation?: Vec3;
+  environmentId?: string;
+  lights?: LightConfig[];
+};
+
 // ── Serialised form ───────────────────────────────────────────────────────────
 
 // gltfPath is runtime-only (object URL); all other fields are stored in JSON.
 type StoredEntry = {
   id: string;
+  /** GLB filename for GLB-backed entries; empty string for metadata-only (procedural) entries. */
   filename: string;
   addedAt: number;
   kind: 'character' | 'set-piece';
@@ -32,6 +46,12 @@ type StoredEntry = {
   defaultAnimation?: string;
   geometry?: GeometryConfig;
   material?: MaterialConfig;
+  /** Composite of placed sub-items for metadata-only composite set-pieces. */
+  compose?: PlacedProp[];
+  /** Environment catalogue id captured when this entry was saved as a setting. */
+  environmentId?: string;
+  /** Lights captured when this entry was saved as a setting. */
+  lights?: LightConfig[];
   /** ID of the SketcherAssemblyStore entry that produced this asset. */
   sourceAssemblyId?: string;
 };
@@ -82,13 +102,13 @@ async function writeMeta(dir: FileSystemDirectoryHandle, entries: StoredEntry[])
   await writable.close();
 }
 
-function toUserEntry(s: StoredEntry, gltfPath: string): UserCatalogueEntry {
+function toUserEntry(s: StoredEntry, gltfPath?: string): UserCatalogueEntry {
   if (s.kind === 'character') {
     return {
       kind: 'character',
       id: s.id,
       label: s.label,
-      gltfPath,
+      gltfPath: gltfPath ?? '',
       defaultAnimation: s.defaultAnimation,
       defaultScale: s.defaultScale,
       defaultRotation: s.defaultRotation,
@@ -96,20 +116,33 @@ function toUserEntry(s: StoredEntry, gltfPath: string): UserCatalogueEntry {
       addedAt: s.addedAt,
       sourceAssemblyId: s.sourceAssemblyId,
     };
-  } else {
+  }
+  if (s.compose) {
     return {
       kind: 'set-piece',
       id: s.id,
       label: s.label,
-      gltfPath,
-      geometry: s.geometry ?? PLACEHOLDER_GEOMETRY,
-      material: s.material ?? PLACEHOLDER_MATERIAL,
+      compose: s.compose,
       defaultRotation: s.defaultRotation,
+      ...(s.environmentId ? { environmentId: s.environmentId } : {}),
+      ...(s.lights ? { lights: s.lights } : {}),
       userAdded: true,
       addedAt: s.addedAt,
       sourceAssemblyId: s.sourceAssemblyId,
     };
   }
+  return {
+    kind: 'set-piece',
+    id: s.id,
+    label: s.label,
+    ...(gltfPath ? { gltfPath } : {}),
+    geometry: s.geometry ?? PLACEHOLDER_GEOMETRY,
+    material: s.material ?? PLACEHOLDER_MATERIAL,
+    defaultRotation: s.defaultRotation,
+    userAdded: true,
+    addedAt: s.addedAt,
+    sourceAssemblyId: s.sourceAssemblyId,
+  };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -124,6 +157,11 @@ export async function list(): Promise<UserCatalogueEntry[]> {
   const stored = await readMeta(dir);
   const results: UserCatalogueEntry[] = [];
   for (const s of stored) {
+    if (s.filename === '') {
+      // Metadata-only entry (procedural leaf or composite) — no GLB file to read.
+      results.push(toUserEntry(s));
+      continue;
+    }
     try {
       const fh = await dir.getFileHandle(s.filename);
       const file = await fh.getFile();
@@ -237,11 +275,72 @@ export async function remove(id: string): Promise<void> {
   const entry = stored.find((e) => e.id === id);
   if (!entry) return;
 
-  try {
-    await dir.removeEntry(entry.filename);
-  } catch {
-    // File already gone — continue with metadata cleanup
+  if (entry.filename) {
+    try {
+      await dir.removeEntry(entry.filename);
+    } catch {
+      // File already gone — continue with metadata cleanup
+    }
   }
 
   await writeMeta(dir, stored.filter((e) => e.id !== id));
+}
+
+function isPlacedProp(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const item = value as Record<string, unknown>;
+  if (typeof item.ref === 'string') return true;
+  return Boolean(item.geometry && item.material);
+}
+
+/**
+ * Validate the metadata for a procedural set-piece. Returns an error message,
+ * or null when valid.
+ */
+export function validateSetPieceMeta(meta: NewProceduralSetPiece): string | null {
+  if (!meta.label || !meta.label.trim()) return 'label is required';
+  const hasCompose = Boolean(meta.compose && meta.compose.length > 0);
+  const hasLeaf = Boolean(meta.geometry && meta.material);
+  if (hasCompose && hasLeaf) return 'provide either `compose` or `geometry` + `material`, not both';
+  if (!hasCompose && !hasLeaf) return 'provide `compose` (composite) or `geometry` + `material` (leaf)';
+  if (hasCompose) {
+    for (const item of meta.compose!) {
+      if (!isPlacedProp(item)) return 'each `compose` item needs a `ref` or `geometry` + `material`';
+    }
+  }
+  return null;
+}
+
+/**
+ * Persist a procedural set-piece (leaf geometry or a composite of primitives)
+ * with no GLB file. Returns the new catalogue entry — composites carry no
+ * gltfPath and expand via the setting resolver's `expandEntry`.
+ */
+export async function addSetPiece(meta: NewProceduralSetPiece): Promise<UserCatalogueEntry> {
+  const error = validateSetPieceMeta(meta);
+  if (error) throw new Error(error);
+
+  const id = crypto.randomUUID();
+  const addedAt = Date.now();
+  const dir = await _getDir();
+
+  const entry: StoredEntry = {
+    id,
+    filename: '',
+    addedAt,
+    kind: 'set-piece',
+    label: meta.label.trim(),
+    defaultRotation: meta.defaultRotation,
+    ...(meta.compose && meta.compose.length > 0
+      ? { compose: meta.compose }
+      : { geometry: meta.geometry, material: meta.material }),
+    ...(meta.environmentId ? { environmentId: meta.environmentId } : {}),
+    ...(meta.lights && meta.lights.length > 0 ? { lights: meta.lights } : {}),
+  };
+
+  const stored = await readMeta(dir);
+  stored.push(entry);
+  await writeMeta(dir, stored);
+
+  return toUserEntry(entry);
 }

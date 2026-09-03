@@ -7,6 +7,8 @@
   import type { RobotStyle, BoneParamMap, FaceParams } from '../../core/character/ProceduralHumanoid.js';
   import { semanticToBoneParams, semanticToRingParams, semanticHeightScale, DEFAULT_SEMANTIC } from '../../core/character/semanticParams.js';
   import type { SemanticCharacter } from '../../core/character/semanticParams.js';
+  import { OUTFIT_PRESETS, SKIN_TONES, HAIR_COLORS, EYE_COLORS } from '../../core/character/clothing.js';
+  import type { Outfit } from '../../core/character/clothing.js';
   import { exportCharacterGLB } from '../../core/character/exportCharacterGLB.js';
   import * as CharacterDesignStore from '../../core/storage/CharacterDesignStore.js';
   import type { DesignMeta } from '../../core/storage/CharacterDesignStore.js';
@@ -42,8 +44,11 @@
   let skeletonVisible = $state(false);
   let ringDebug = $state(false);
   let wireframe = $state(false);
+  let uvCheck = $state(false);
   let inPlace = $state(true);
   let robotStyle = $state<RobotStyle>('organic');
+  let outfit = $state<Outfit>(OUTFIT_PRESETS.casual);
+  let skinTone = $state<number>(SKIN_TONES[1].color); // Light
   let boneParams = $state<BoneParamMap>({ ...DEFAULT_BONE_PARAMS });
   let selectedGroup = $state<string>(BONE_GROUPS[0].key);
   let faceParams = $state<FaceParams>({ ...DEFAULT_FACE_PARAMS });
@@ -81,14 +86,16 @@
       scene.remove(humanoid.root);
       humanoid.dispose();
     }
-    const colors = style === 'c3po' ? C3PO_COLORS : style === 'sonny' ? SONNY_COLORS : DEFAULT_COLORS;
+    const baseColors = style === 'c3po' ? C3PO_COLORS : style === 'sonny' ? SONNY_COLORS : DEFAULT_COLORS;
+    const colors = { ...baseColors, skin: skinTone };
     const ringParams = semanticToRingParams(semantic);
-    humanoid = new ProceduralHumanoid(rigGltfScene, [...allLoadedClips], colors, style, boneParams, insetFactor, faceParams, neckTiltDeg, ringParams);
+    humanoid = new ProceduralHumanoid(rigGltfScene, [...allLoadedClips], colors, style, boneParams, insetFactor, faceParams, neckTiltDeg, ringParams, outfit);
     humanoid.setInPlace(inPlace);
     humanoid.setBodyVisible(bodyVisible);
     humanoid.setSkeletonVisible(skeletonVisible);
     humanoid.setRingDebugVisible(ringDebug);
     humanoid.setWireframe(wireframe);
+    humanoid.setUVCheck(uvCheck);
     scene.add(humanoid.root);
     humanoid.root.scale.setScalar(semanticHeightScale(semantic));
     if (activeClip) humanoid.playClip(activeClip, inPlace);
@@ -468,6 +475,11 @@
         class:active={wireframe}
         onclick={() => { wireframe = !wireframe; humanoid?.setWireframe(wireframe); }}
       >Wire</button>
+      <button
+        class="layer-btn"
+        class:active={uvCheck}
+        onclick={() => { uvCheck = !uvCheck; humanoid?.setUVCheck(uvCheck); }}
+      >UV</button>
       <span class="style-label">Style:</span>
       {#each (['organic', 'c3po', 'sonny'] as RobotStyle[]) as s}
         <button
@@ -475,6 +487,38 @@
           class:active={robotStyle === s}
           onclick={() => { robotStyle = s; buildHumanoid(s); }}
         >{s === 'organic' ? 'Organic' : s === 'c3po' ? 'C-3PO' : 'Sonny'}</button>
+      {/each}
+      <span class="style-label">Outfit:</span>
+      {#each [['casual', 'Casual'], ['teeShorts', 'Tee & Shorts'], ['layered', 'Vest over Shirt'], ['bare', 'Bare']] as [key, label]}
+        <button
+          class="layer-btn style-btn"
+          class:active={outfit === OUTFIT_PRESETS[key]}
+          onclick={() => { outfit = OUTFIT_PRESETS[key]; buildHumanoid(robotStyle); }}
+        >{label}</button>
+      {/each}
+      <span class="style-label">Skin:</span>
+      {#each SKIN_TONES as t}
+        <button
+          class="layer-btn style-btn"
+          class:active={skinTone === t.color}
+          onclick={() => { skinTone = t.color; buildHumanoid(robotStyle); }}
+        >{t.label}</button>
+      {/each}
+      <span class="style-label">Hair:</span>
+      {#each HAIR_COLORS as t}
+        <button
+          class="layer-btn style-btn"
+          class:active={faceParams.hairColor === t.color}
+          onclick={() => { faceParams = { ...faceParams, hairColor: t.color }; buildHumanoid(robotStyle); }}
+        >{t.label}</button>
+      {/each}
+      <span class="style-label">Eyes:</span>
+      {#each EYE_COLORS as t}
+        <button
+          class="layer-btn style-btn"
+          class:active={faceParams.irisColor === t.color}
+          onclick={() => { faceParams = { ...faceParams, irisColor: t.color }; buildHumanoid(robotStyle); }}
+        >{t.label}</button>
       {/each}
     </div>
     {#if clipNames.length > 0}

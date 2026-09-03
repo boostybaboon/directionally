@@ -10,6 +10,21 @@ yarn test:coverage    # Coverage report
 yarn build
 yarn preview
 ```
+
+## Long-running commands
+
+`yarn test` (full suite) and `yarn check` routinely take 30 s+, and shell tools that
+drive them cap a single command at ~30 s. Run long commands detached and poll the log:
+
+```bash
+(nohup yarn test > /tmp/test.log 2>&1 &)   # returns immediately
+tail -c 3000 /tmp/test.log                 # poll with separate short reads
+```
+
+Do not chain a `sleep` longer than ~20 s together with the follow-up read in one
+command — the sleep alone hits the cap. When a change touches only a few files,
+prefer a targeted run (`yarn test <path>`, ~5 s) over the full suite.
+
 ## Development Principles
 
 1. **Only production code** – No comments or files whose sole purpose is narrating refactors or AI changes.

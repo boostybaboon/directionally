@@ -130,6 +130,94 @@ export const CATALOGUE_ENTRIES: CatalogueEntry[] = [
     material: { color: 0xffffff, roughness: 0.85, metalness: 0.0, textureUrl: '/textures/plaster.jpg', repeatU: 2, repeatV: 1.5 },
   },
 
+  // ── Composite set pieces (reusable props assembled from primitives) ────────
+  {
+    kind: 'set-piece',
+    id: 'chair',
+    label: 'Chair',
+    compose: [
+      { geometry: { type: 'box', width: 0.45, height: 0.06, depth: 0.45 }, material: { color: 0x6b4a2f, roughness: 0.7, metalness: 0 }, position: [0, 0.46, 0] },
+      { geometry: { type: 'box', width: 0.45, height: 0.5, depth: 0.06 }, material: { color: 0x6b4a2f, roughness: 0.7, metalness: 0 }, position: [0, 0.74, -0.2] },
+      { geometry: { type: 'box', width: 0.05, height: 0.46, depth: 0.05 }, material: { color: 0x3a2a1a, roughness: 0.6, metalness: 0 }, position: [-0.18, 0.23, -0.18] },
+      { geometry: { type: 'box', width: 0.05, height: 0.46, depth: 0.05 }, material: { color: 0x3a2a1a, roughness: 0.6, metalness: 0 }, position: [0.18, 0.23, -0.18] },
+      { geometry: { type: 'box', width: 0.05, height: 0.46, depth: 0.05 }, material: { color: 0x3a2a1a, roughness: 0.6, metalness: 0 }, position: [-0.18, 0.23, 0.18] },
+      { geometry: { type: 'box', width: 0.05, height: 0.46, depth: 0.05 }, material: { color: 0x3a2a1a, roughness: 0.6, metalness: 0 }, position: [0.18, 0.23, 0.18] },
+    ],
+  },
+  {
+    kind: 'set-piece',
+    id: 'desk',
+    label: 'Desk',
+    compose: [
+      { geometry: { type: 'box', width: 1.0, height: 0.05, depth: 0.6 }, material: { color: 0xb08d57, roughness: 0.5, metalness: 0.1 }, position: [0, 0.72, 0] },
+      { geometry: { type: 'box', width: 0.05, height: 0.72, depth: 0.6 }, material: { color: 0x8a6a40, roughness: 0.5, metalness: 0 }, position: [-0.45, 0.36, 0] },
+      { geometry: { type: 'box', width: 0.05, height: 0.72, depth: 0.6 }, material: { color: 0x8a6a40, roughness: 0.5, metalness: 0 }, position: [0.45, 0.36, 0] },
+    ],
+  },
+  {
+    kind: 'set-piece',
+    id: 'bench',
+    label: 'Bench',
+    compose: [
+      { geometry: { type: 'box', width: 1.6, height: 0.08, depth: 0.5 }, material: { color: 0x6b4a2f, roughness: 0.7, metalness: 0 }, position: [0, 0.45, 0] },
+      { geometry: { type: 'box', width: 1.6, height: 0.45, depth: 0.08 }, material: { color: 0x3a2a1a, roughness: 0.6, metalness: 0 }, position: [0, 0.22, -0.21] },
+    ],
+  },
+  {
+    kind: 'set-piece',
+    id: 'whiteboard',
+    label: 'Whiteboard',
+    compose: [
+      { geometry: { type: 'box', width: 2.4, height: 1.2, depth: 0.05 }, material: { color: 0xf2f2f2, roughness: 0.2, metalness: 0.1 }, position: [0, 1.8, 0] },
+    ],
+  },
+  {
+    kind: 'set-piece',
+    id: 'blackboard',
+    label: 'Blackboard',
+    compose: [
+      { geometry: { type: 'box', width: 2.4, height: 1.2, depth: 0.05 }, material: { color: 0x1a2f1a, roughness: 0.8, metalness: 0 }, position: [0, 1.8, 0] },
+    ],
+  },
+  {
+    kind: 'set-piece',
+    id: 'window-flat',
+    label: 'Window',
+    compose: [
+      { geometry: { type: 'box', width: 1.2, height: 1.4, depth: 0.06 }, material: { color: 0x9ec5d0, roughness: 0.1, metalness: 0.1 }, position: [0, 1.8, 0] },
+      { geometry: { type: 'box', width: 1.3, height: 1.5, depth: 0.04 }, material: { color: 0xd9d9d9, roughness: 0.5, metalness: 0.2 }, position: [0, 1.8, 0.02] },
+    ],
+  },
+  {
+    kind: 'set-piece',
+    id: 'door',
+    label: 'Door',
+    compose: [
+      { geometry: { type: 'box', width: 0.9, height: 2.0, depth: 0.06 }, material: { color: 0x5a3a24, roughness: 0.6, metalness: 0.1 }, position: [0, 1.0, 0] },
+      { geometry: { type: 'sphere', radius: 0.04 }, material: { color: 0xcccccc, roughness: 0.3, metalness: 0.8 }, position: [0.35, 1.0, 0.04] },
+    ],
+  },
+  {
+    kind: 'set-piece',
+    id: 'bookshelf',
+    label: 'Bookshelf',
+    compose: [
+      { geometry: { type: 'box', width: 1.0, height: 2.0, depth: 0.3 }, material: { color: 0x6b4a2f, roughness: 0.6, metalness: 0 }, position: [0, 1.0, 0] },
+      { geometry: { type: 'box', width: 0.9, height: 0.35, depth: 0.25 }, material: { color: 0x7a5a3a, roughness: 0.6, metalness: 0 }, position: [0, 0.5, 0.02] },
+      { geometry: { type: 'box', width: 0.9, height: 0.35, depth: 0.25 }, material: { color: 0x7a5a3a, roughness: 0.6, metalness: 0 }, position: [0, 1.0, 0.02] },
+      { geometry: { type: 'box', width: 0.9, height: 0.35, depth: 0.25 }, material: { color: 0x7a5a3a, roughness: 0.6, metalness: 0 }, position: [0, 1.5, 0.02] },
+    ],
+  },
+  {
+    kind: 'set-piece',
+    id: 'cabin-seat',
+    label: 'Cabin Seat',
+    compose: [
+      { geometry: { type: 'box', width: 0.55, height: 0.5, depth: 0.55 }, material: { color: 0x334466, roughness: 0.6, metalness: 0 }, position: [0, 0.45, 0] },
+      { geometry: { type: 'box', width: 0.55, height: 0.6, depth: 0.08 }, material: { color: 0x334466, roughness: 0.6, metalness: 0 }, position: [0, 0.95, -0.22] },
+    ],
+  },
+
   // ── Lights ────────────────────────────────────────────────────────────────
   {
     kind: 'light',

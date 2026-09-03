@@ -367,6 +367,7 @@
     {/if}
     <a class="nav-link" href="/character" target="_blank" rel="noopener">Character</a>
     <a class="nav-link" href="/sketch" target="_blank" rel="noopener">Sketcher</a>
+    <a class="nav-link" href="/studio" target="_blank" rel="noopener">Set Studio</a>
     <button
       class="debug-toggle"
       class:active={showDebugPanels}

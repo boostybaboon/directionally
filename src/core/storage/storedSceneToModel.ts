@@ -2,6 +2,8 @@ import { Scene } from '../domain/Scene.js';
 import { sceneToModel } from '../domain/SceneBridge.js';
 import { getById } from '../catalogue/catalogue.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
+import { resolveInstances } from '../setting/settingSpec.js';
+import type { CatalogueEntry } from '../catalogue/types.js';
 import { actorBlockToTracks, lightBlockToTracks, setPieceBlockToTracks, cameraBlockToTracks } from '../domain/blockCompiler.js';
 import type { Actor } from '../domain/Production.js';
 import type { ActorVoice, ActorBlock, LightBlock, SetPieceBlock, CameraBlock, Vec3, SceneAction, SetPiece } from '../domain/types.js';
@@ -105,7 +107,12 @@ export function storedSceneToModel(
   for (const light of storedScene.lights) {
     scene.addLight(light);
   }
-  for (const piece of storedScene.set) {
+  // Expand any `ref` (Instance) pieces into their rendered children before the
+  // opfs:// gltfPath resolution and scene assembly below — flattening happens
+  // here, at render time, never persisted back onto the stored scene.
+  const mergedCatalogueEntries = [...CATALOGUE_ENTRIES, ...(userEntries as unknown as CatalogueEntry[])];
+  const resolvedSet = resolveInstances(storedScene.set, mergedCatalogueEntries);
+  for (const piece of resolvedSet) {
     scene.addSetPiece(resolveOpfsGltfPath(piece, userEntries));
   }
   for (const staged of storedScene.stagedActors) {

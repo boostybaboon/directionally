@@ -12,6 +12,9 @@ export interface RingParam {
   rx: number;
   rz: number;
   fwd: number;
+  /** Chest front-relief fraction of `rz` (0 = flat ellipse). Set by the
+   *  feminine/masculine slider and distributed per-ring on the Spine2 girdle. */
+  bust?: number;
 }
 
 export type RingParamMap = Record<string, RingParam>;
@@ -83,6 +86,18 @@ export const SHOULDER_GIRDLE_RING_COUNT = 8;
 export const SHOULDER_GIRDLE_SIGMA = 2.5;
 /** Fallback shoulder-joint `t` when no shoulder/arm child is present. */
 export const SHOULDER_GIRDLE_JOINT_FALLBACK_T = 0.65;
+
+// ── Chest relief (HP-9 feminising envelope) ──────────────────────────────────
+/** Peak front-relief fraction of `rz` at full feminine (masculine/neutral = 0). */
+export const BUST_MAX_AMP = 0.18;
+/** Ring `t` where the relief peaks (nipple level, below the shoulder joint). */
+export const BUST_PEAK_T = 0.42;
+/** Vertical falloff of the relief along the girdle (in `t`). */
+export const BUST_VERTICAL_SIGMA = 0.12;
+/** Lateral position of each bump in `cos(a)` units (0 = sternum, 1 = side). */
+export const BUST_LATERAL_SPREAD = 0.4;
+/** Softness of each bump; larger = broader, flatter (pectoral shelf). */
+export const BUST_LATERAL_SIGMA = 0.25;
 
 // ── Ports / weld weights ─────────────────────────────────────────────────────
 /** Crotch chord vertex weights: hips + both upper legs. */

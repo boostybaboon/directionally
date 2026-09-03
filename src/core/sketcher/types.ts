@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import type { LightConfig } from '../domain/types.js';
 
 export type SketcherPart = {
   id: string;
@@ -77,6 +78,14 @@ export type SketcherSession = {
   parts: SketcherPart[];
   joints: AttachJoint[];
   assemblyGroups: AssemblyGroup[];
+  /**
+   * Lights placed via the catalogue panel (Track SET, N3). Kept alongside
+   * parts/joints/groups so the Set tool can save a whole scene ("Save as
+   * Setting") with its baseline lighting, not just geometry.
+   */
+  lights: LightConfig[];
+  /** Applied HDRI environment (catalogue EnvironmentEntry id), or undefined. */
+  environmentMap?: string;
 };
 
 /**
@@ -178,6 +187,10 @@ export type SketcherDraft = {
   parts: PartDraft[];
   joints: JointSnapshot[];
   groups?: GroupSnapshot[];
+  /** Placed lights (Track SET, N3). Absent/omitted on legacy drafts — treated as empty. */
+  lights?: LightConfig[];
+  /** Applied HDRI environment id (Track SET, N3). Absent on legacy drafts. */
+  environmentMap?: string;
 };
 
 /** Drawing mode for the polygon sketcher. */

@@ -9,7 +9,34 @@ import {
   THUMB_PORT_MIDDLE_WIDTH,
 } from './ringSurface.js';
 import type { RingParamMap } from './ringSurface.js';
+import { DEFAULT_OUTFIT, GROUP_REGION, resolveOutfitColor } from './clothing.js';
+import type { ClothingRegion, Outfit } from './clothing.js';
 import type { BodyRing } from './ringGraph.js';
+
+/** Checkerboard UV-visualisation texture (DOM-free, so it also works under Node). */
+let _uvChecker: THREE.DataTexture | null = null;
+function uvCheckerTexture(): THREE.DataTexture {
+  if (_uvChecker) return _uvChecker;
+  const size = 256;
+  const cells = 8;
+  const a = [0xff, 0x88, 0x00]; // orange
+  const b = [0x22, 0x66, 0xcc]; // blue
+  const data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    const cy = Math.floor((y / size) * cells);
+    for (let x = 0; x < size; x++) {
+      const cx = Math.floor((x / size) * cells);
+      const c = (cx + cy) % 2 === 0 ? a : b;
+      const i = (y * size + x) * 4;
+      data[i] = c[0]; data[i + 1] = c[1]; data[i + 2] = c[2]; data[i + 3] = 255;
+    }
+  }
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  tex.needsUpdate = true;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  _uvChecker = tex;
+  return tex;
+}
 
 /**
  * Colour palette for body regions.
@@ -309,17 +336,6 @@ const BONE_SPECS: Record<string, BoneSpec> = {
   mixamorigRightToe_End:   { region: 'shoes', group: 'toe'   },
 };
 
-/** A capsule/ellipsoid primitive of the body SDF field (flat for scalar eval). */
-function regionColors(colors: BodyColors): Record<keyof BodyColors, THREE.Color> {
-  return {
-    skin: new THREE.Color(colors.skin),
-    torso: new THREE.Color(colors.torso),
-    legs: new THREE.Color(colors.legs),
-    shoes: new THREE.Color(colors.shoes),
-    hands: new THREE.Color(colors.hands),
-  };
-}
-
 const _up = new THREE.Vector3(0, 1, 0);
 const JOINT_RADIUS = 1.8; // cm
 const BONE_RADIUS  = 0.7; // cm
@@ -400,6 +416,8 @@ export class ProceduralHumanoid {
   } | null = null;
   /** Front-facing wireframe overlay for the loft body (depth-tested against the filled body). */
   private _wireMesh: THREE.SkinnedMesh | null = null;
+  /** Loft body material, for the UV-check visualisation toggle. */
+  private _loftMaterial: THREE.MeshToonMaterial | null = null;
   /** Shoulder-junction visualisation: chest ring + arm top rings, re-projected each frame. */
   private _shoulderDebug: Array<{ ring: BodyRing; bone: THREE.Bone; line: THREE.LineLoop }> = [];
   /** Shoulder girdle visualisation: the arm's exit point + a proposed deep torso ring. */
@@ -460,6 +478,7 @@ export class ProceduralHumanoid {
     faceParams: FaceParams = DEFAULT_FACE_PARAMS,
     neckTiltDeg: number = -20,
     ringParamMap: RingParamMap = DEFAULT_RING_PARAMS,
+    outfit: Outfit = DEFAULT_OUTFIT,
   ) {
     this.root = gltfScene;
     this.clips = clips;
@@ -468,7 +487,7 @@ export class ProceduralHumanoid {
 
     this._hideSkinnedMeshes();
     if (style === 'organic') {
-      this._attachLoftBody(colors, boneParamMap, ringParamMap);
+      this._attachLoftBody(colors, boneParamMap, ringParamMap, outfit);
     } else {
       this._attachBodyGeom(colors, style, boneParamMap, insetFactor);
     }
@@ -601,7 +620,7 @@ export class ProceduralHumanoid {
     bones: THREE.Bone[];
     boneIndex: Map<string, number>;
     cmToWorld: number;
-    regionByBone: Map<number, keyof BodyColors>;
+    regionByBone: Map<number, ClothingRegion>;
   } {
     this.root.updateMatrixWorld(true);
 
@@ -615,14 +634,13 @@ export class ProceduralHumanoid {
     // loft is built in the skeleton's world space.
     const cmToWorld = bones.find((b) => b.name === 'mixamorigHips')?.matrixWorld.getMaxScaleOnAxis() ?? 1;
 
-    const regionByBone = new Map<number, keyof BodyColors>();
+    const regionByBone = new Map<number, ClothingRegion>();
     for (const obj of bones) {
       const spec = BONE_SPECS[obj.name];
       if (!spec) continue;
-      if (spec.group === 'finger' || spec.group === 'toe') continue;
       const bi = boneIndex.get(obj.name);
       if (bi === undefined) continue;
-      regionByBone.set(bi, spec.region);
+      regionByBone.set(bi, GROUP_REGION[spec.group]);
     }
 
     return { skeleton, bones, boneIndex, cmToWorld, regionByBone };
@@ -632,7 +650,7 @@ export class ProceduralHumanoid {
    * HP-7 (Part 6): loft the shared-ring graph into one watertight tube for the
    * 1-D chains, plus a wide shoulder plate overlapping the Spine2/arm region.
    */
-  private _attachLoftBody(colors: BodyColors, boneParamMap: BoneParamMap, ringParamMap: RingParamMap): void {
+  private _attachLoftBody(colors: BodyColors, boneParamMap: BoneParamMap, ringParamMap: RingParamMap, outfit: Outfit): void {
     const f = this._buildSkeleton();
     if (f.bones.length === 0) return;
 
@@ -642,7 +660,18 @@ export class ProceduralHumanoid {
     // resolution for the arm port to span more than one vertex.
     const segments = 32;
     const ringsPerBone = 5;
-    const regionColor = regionColors(colors);
+    // Resolve each region's clothing colour once, then stamp the per-vertex colour.
+    const skinVec = new THREE.Color(colors.skin);
+    const regionColors = new Map<ClothingRegion, THREE.Color>();
+    const colorFor = (region: ClothingRegion | undefined): THREE.Color => {
+      if (!region) return skinVec;
+      let c = regionColors.get(region);
+      if (!c) {
+        c = new THREE.Color(resolveOutfitColor(outfit, region, colors.skin));
+        regionColors.set(region, c);
+      }
+      return c;
+    };
 
     const positions: number[] = [];
     const colorsArr: number[] = [];
@@ -684,7 +713,7 @@ export class ProceduralHumanoid {
       let rz = rp.rz;
       if (group === 'spine2' && shoulderHalfCm !== null) rx = shoulderHalfCm;
       if (group === 'shoulder') { rx = armR.rx; rz = armR.rz; }
-      return { tubeRadiusX: rx, tubeRadiusZ: rz, tubeOffsetForward: rp.fwd, group };
+      return { tubeRadiusX: rx, tubeRadiusZ: rz, tubeOffsetForward: rp.fwd, bust: rp.bust, group };
     };
     const graph = buildRingGraph(f.bones, f.boneIndex, ringParams, 5);
     this._ringDebugLines = [];
@@ -895,7 +924,7 @@ export class ProceduralHumanoid {
     for (let i = 0; i < loft.skinIndex.length; i++) skinIndex.push(loft.skinIndex[i]);
     for (let i = 0; i < loft.skinWeight.length; i++) skinWeight.push(loft.skinWeight[i]);
     for (let v = 0; v < loft.skinIndex.length / 4; v++) {
-      const col = regionColor[f.regionByBone.get(loft.skinIndex[v * 4]) ?? 'skin'];
+      const col = colorFor(f.regionByBone.get(loft.skinIndex[v * 4]));
       colorsArr.push(col.r, col.g, col.b);
     }
     for (const idx of loft.indices) indices.push(loftBase + idx);
@@ -925,10 +954,14 @@ export class ProceduralHumanoid {
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colorsArr, 3));
     geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(new Uint16Array(skinIndex), 4));
     geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeight, 4));
+    // UVs come from the ring graph's natural per-ring U / per-bone V mapping.
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(loft.uv, 2));
     geo.setIndex(indices);
     geo.computeVertexNormals();
 
-    const meshObj = new THREE.SkinnedMesh(geo, new THREE.MeshToonMaterial({ vertexColors: true }));
+    const material = new THREE.MeshToonMaterial({ vertexColors: true });
+    this._loftMaterial = material;
+    const meshObj = new THREE.SkinnedMesh(geo, material);
     meshObj.name = 'loft-body';
     meshObj.bind(f.skeleton);
     this.root.add(meshObj);
@@ -1619,6 +1652,7 @@ export class ProceduralHumanoid {
       this._wireMesh.parent?.remove(this._wireMesh);
       this._wireMesh = null;
     }
+    this._loftMaterial = null;
     this.mixer.stopAllAction();
   }
 
@@ -1660,6 +1694,14 @@ export class ProceduralHumanoid {
       for (const mat of mats) mat.colorWrite = !wireframe;
     }
     if (this._wireMesh) this._wireMesh.visible = wireframe;
+  }
+
+  /** Overlay a checkerboard on the loft body to visualise its cylindrical UVs. */
+  setUVCheck(on: boolean): void {
+    if (!this._loftMaterial) return;
+    this._loftMaterial.map = on ? uvCheckerTexture() : null;
+    this._loftMaterial.vertexColors = !on;
+    this._loftMaterial.needsUpdate = true;
   }
 
   /** Show or hide the loft ring overlay (only populated in `loft` mode). */

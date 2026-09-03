@@ -105,7 +105,7 @@
             >
               <span class="item-icon" aria-hidden="true">◻</span>
               <span class="item-label">{entry.label}</span>
-              <span class="item-meta">{GEOMETRY_LABELS[entry.geometry.type] ?? entry.geometry.type}</span>
+              <span class="item-meta">{entry.compose ? `${entry.compose.length} parts` : entry.geometry ? (GEOMETRY_LABELS[entry.geometry.type] ?? entry.geometry.type) : '—'}</span>
             </button>
             <div class="setpiece-actions">
               {#if userEntry?.sourceAssemblyId}

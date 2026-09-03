@@ -1,6 +1,6 @@
 import { DEFAULT_BONE_PARAMS } from './ProceduralHumanoid.js';
 import type { BoneParamMap, BoneParams } from './ProceduralHumanoid.js';
-import { DEFAULT_RING_PARAMS } from './ringSurface.js';
+import { DEFAULT_RING_PARAMS, BUST_MAX_AMP } from './ringSurface.js';
 import type { RingParamMap } from './ringSurface.js';
 
 /**
@@ -108,6 +108,10 @@ export function semanticToRingParams(s: SemanticCharacter): RingParamMap {
     const base = DEFAULT_RING_PARAMS[key];
     if (base) out[key] = { rx: base.rx * scale, rz: base.rz * scale, fwd: base.fwd };
   }
+  // Chest relief (HP-9): the feminine slider grows a subtle double-convex front
+  // bulge on the Spine2 girdle; masculine and neutral keep it a pure ellipse.
+  const bust = Math.max(0, -clamp11(s.feminineMasculine)) * BUST_MAX_AMP;
+  if (bust > 0) out.spine2.bust = bust;
   return out;
 }
 

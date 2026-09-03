@@ -7,7 +7,13 @@ import {
   remove,
   update,
   findByAssemblyId,
+  addSetPiece,
+  validateSetPieceMeta,
 } from './OPFSCatalogueStore';
+import type { SetPieceEntry } from '../catalogue/types.js';
+import type { PlacedProp } from '../domain/types.js';
+import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
+import { resolveSettingSpec } from '../setting/settingSpec.js';
 
 // ── In-memory OPFS mock ───────────────────────────────────────────────────────
 
@@ -225,5 +231,98 @@ describe('OPFSCatalogueStore – update', () => {
     const result = await update('non-existent-id', new Blob(['new']));
     expect(result).toBeNull();
     expect(await list()).toHaveLength(1);
+  });
+});
+
+describe('OPFSCatalogueStore – addSetPiece (procedural / composite)', () => {
+  const composeChair: PlacedProp[] = [
+    { name: 'seat', geometry: { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, material: { color: 0x663311 }, position: [0, 0.45, 0] },
+  ];
+
+  it('persists a composite set-piece and lists it with compose (no gltfPath)', async () => {
+    const entry = await addSetPiece({ label: 'AI Chair', compose: composeChair });
+
+    expect(entry.kind).toBe('set-piece');
+    expect(entry.label).toBe('AI Chair');
+    expect('gltfPath' in entry).toBe(false);
+    expect((entry as SetPieceEntry).compose).toEqual(composeChair);
+    expect(entry.userAdded).toBe(true);
+
+    const listed = await list();
+    expect(listed).toHaveLength(1);
+    expect((listed[0] as SetPieceEntry).compose).toEqual(composeChair);
+  });
+
+  it('persists a procedural leaf set-piece with geometry + material', async () => {
+    await addSetPiece({
+      label: 'AI Blackboard',
+      geometry: { type: 'box', width: 2, height: 1, depth: 0.1 },
+      material: { color: 0x112233 },
+    });
+
+    const listed = await list();
+    expect((listed[0] as SetPieceEntry).geometry).toMatchObject({ type: 'box' });
+    expect((listed[0] as SetPieceEntry).material?.color).toBe(0x112233);
+    expect('gltfPath' in listed[0]).toBe(false);
+  });
+
+  it('rejects invalid metadata', async () => {
+    await expect(addSetPiece({ label: '' })).rejects.toThrow('label is required');
+    await expect(addSetPiece({ label: 'X' })).rejects.toThrow('compose');
+    await expect(addSetPiece({ label: 'X', compose: [{ ref: 'box' }, {} as never] })).rejects.toThrow('ref');
+  });
+
+  it('remove() deletes a metadata-only entry', async () => {
+    const entry = await addSetPiece({ label: 'Temp', compose: composeChair });
+    await remove(entry.id);
+    expect(await list()).toHaveLength(0);
+  });
+
+  it('composite metadata survives across list() calls', async () => {
+    await addSetPiece({ label: 'Persistent Chair', compose: composeChair });
+    expect((await list())[0].label).toBe('Persistent Chair');
+    expect((await list())[0].label).toBe('Persistent Chair');
+  });
+
+  it('a saved composite is reusable by the setting resolver', async () => {
+    await addSetPiece({ label: 'AI Chair', compose: composeChair });
+    const listed = await list();
+
+    const r = resolveSettingSpec({ props: [{ ref: 'AI Chair' }] }, [...CATALOGUE_ENTRIES, ...listed]);
+    expect(r.unresolved).toEqual([]);
+    expect(r.set.some((p) => p.name === 'seat')).toBe(true);
+  });
+
+  it('round-trips environmentId and lights for a saved setting', async () => {
+    await addSetPiece({
+      label: 'AI Classroom',
+      compose: composeChair,
+      environmentId: 'exterior-sky',
+      lights: [{ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 1 }],
+    });
+
+    const listed = await list();
+    const piece = listed[0] as SetPieceEntry;
+    expect(piece.environmentId).toBe('exterior-sky');
+    expect(piece.lights).toHaveLength(1);
+    expect(piece.lights?.[0].id).toBe('sky');
+  });
+});
+
+describe('validateSetPieceMeta', () => {
+  it('accepts a composite and a leaf', () => {
+    expect(validateSetPieceMeta({ label: 'Chair', compose: [{ ref: 'box' }] })).toBeNull();
+    expect(
+      validateSetPieceMeta({ label: 'Board', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0 } }),
+    ).toBeNull();
+  });
+
+  it('rejects missing label, empty/both shapes, and malformed compose items', () => {
+    expect(validateSetPieceMeta({ label: '' })).toBe('label is required');
+    expect(validateSetPieceMeta({ label: 'X' })).toContain('compose');
+    expect(
+      validateSetPieceMeta({ label: 'X', compose: [{ ref: 'box' }], geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0 } }),
+    ).toContain('not both');
+    expect(validateSetPieceMeta({ label: 'X', compose: [{ ref: 'box' }, {} as never] })).toContain('ref');
   });
 });

@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { tubeSkinWeights, smoothstep01 } from './skinning.js';
 import {
+  BUST_LATERAL_SIGMA,
+  BUST_LATERAL_SPREAD,
+  BUST_MAX_AMP,
+  BUST_PEAK_T,
+  BUST_VERTICAL_SIGMA,
   GIRDLE_CROTCH_FRACTION,
   GIRDLE_HIP_WIDENING,
   GIRDLE_WAIST_PADDING,
@@ -325,6 +330,9 @@ function buildSpine2Envelope(
     const e = holdThenTaper(t);
     const y = t * spineLen;
     const bulge = Math.exp(-((y - jointY) ** 2) / (2 * sigma * sigma));
+    // Chest relief: the feminine slider's amplitude, tapered along the girdle so
+    // it peaks at nipple level and fades toward the neck and waist.
+    const bust = (bp.bust ?? 0) * Math.exp(-((t - BUST_PEAK_T) ** 2) / (2 * BUST_VERTICAL_SIGMA * BUST_VERTICAL_SIGMA));
     rings.push({
       boneIndex: bi, boneName: bone.name, group: bp.group,
       y,
@@ -332,6 +340,7 @@ function buildSpine2Envelope(
       rx: THREE.MathUtils.lerp(bp.tubeRadiusX, neckRx, e),
       rz: THREE.MathUtils.lerp(bp.tubeRadiusZ, neckRz, e) + (deepRz - bp.tubeRadiusZ) * bulge,
       t,
+      bust,
     });
   }
   return rings;
@@ -359,6 +368,8 @@ export interface BodyRing {
    *  front (so the quads stay on the femur), ramping to this maximum at the
    *  back (hamstring/gluteal fold). Used by the upper-leg top rings. */
   parentWeight?: number;
+  /** Chest front-relief fraction of `rz` for this ring (0 = flat ellipse). */
+  bust?: number;
 }
 
 export interface RingGraph {
@@ -369,6 +380,8 @@ export interface BoneRingParams {
   tubeRadiusX: number;
   tubeRadiusZ: number;
   tubeOffsetForward?: number;
+  /** Chest front-relief fraction of `rz` (Spine2 girdle only). */
+  bust?: number;
   group: string;
 }
 
@@ -405,9 +418,20 @@ export function buildRingGraph(
 export function ringWorldPoints(ring: BodyRing, bone: THREE.Bone, segments = 16): THREE.Vector3[] {
   const pts: THREE.Vector3[] = [];
   const local = new THREE.Vector3();
+  const bust = ring.bust ?? 0;
   for (let j = 0; j < segments; j++) {
     const a = (j / segments) * Math.PI * 2;
-    local.set(ring.rx * Math.cos(a) + (ring.xOff ?? 0), ring.y, ring.fwd + ring.rz * Math.sin(a));
+    let z = ring.fwd + ring.rz * Math.sin(a);
+    if (bust > 0) {
+      // Double-convex front relief (HP-9): two soft bumps flanking the sternum,
+      // added along the forward (+Z) axis. The back half stays a clean ellipse.
+      const u = Math.cos(a);
+      const front = (1 + Math.sin(a)) / 2;
+      const bump = Math.exp(-((u - BUST_LATERAL_SPREAD) ** 2) / (2 * BUST_LATERAL_SIGMA * BUST_LATERAL_SIGMA))
+                 + Math.exp(-((u + BUST_LATERAL_SPREAD) ** 2) / (2 * BUST_LATERAL_SIGMA * BUST_LATERAL_SIGMA));
+      z += ring.rz * bust * bump * front;
+    }
+    local.set(ring.rx * Math.cos(a) + (ring.xOff ?? 0), ring.y, z);
     pts.push(local.applyMatrix4(bone.matrixWorld).clone());
   }
   return pts;
@@ -418,6 +442,8 @@ export interface RingLoft {
   indices: number[];
   skinIndex: number[];
   skinWeight: number[];
+  /** Per-vertex UVs: U wraps each ring's circumference, V runs 0..1 along the bone. */
+  uv: number[];
 }
 
 /**
@@ -757,6 +783,7 @@ function buildLegFan(
   boneIndex: Map<string, number>,
   ringBases: Map<string, number[]>,
   positions: number[],
+  uvs: number[],
   skinIndex: number[],
   skinWeight: number[],
   indices: number[],
@@ -790,9 +817,15 @@ function buildLegFan(
   const [s0, s1] = split.seams;
   const chordPts = seamEdgePoints(gv[s0], gv[s1], interior);
   const chordNew: number[] = [];
+  // The chord lives in the girdle bottom ring's UV space: U interpolates between
+  // the two seam vertices' U, V is that ring's V.
+  const uA = uvs[(hipsBase + s0) * 2];
+  const uB = uvs[(hipsBase + s1) * 2];
+  const vChord = uvs[(hipsBase + s0) * 2 + 1];
   for (let k = 1; k < chordPts.length - 1; k++) {
     const v = positions.length / 3;
     positions.push(chordPts[k].x, chordPts[k].y, chordPts[k].z);
+    uvs.push(uA + (uB - uA) * (k / (chordPts.length - 1)), vChord);
     skinIndex.push(hipsBi, leftBi, rightBi, 0);
     skinWeight.push(...spec.chordWeights, 0);
     chordNew.push(v);
@@ -1109,6 +1142,7 @@ function buildPorts(
   boneIndex: Map<string, number>,
   ringBases: Map<string, number[]>,
   positions: number[],
+  uvs: number[],
   skinIndex: number[],
   skinWeight: number[],
   indices: number[],
@@ -1122,7 +1156,7 @@ function buildPorts(
       if (children.length === 0) continue;
       if (spec.kind === 'fan') {
         if (spec.fan === 'leg') {
-          buildLegFan(spec, parent, children, boneIndex, ringBases, positions, skinIndex, skinWeight, indices, segments);
+          buildLegFan(spec, parent, children, boneIndex, ringBases, positions, uvs, skinIndex, skinWeight, indices, segments);
         } else {
           buildHandFan(parent, children, ringBases, positions, indices, segments);
         }
@@ -1145,6 +1179,7 @@ function capTerminalEnds(
   ringBases: Map<string, number[]>,
   params: (name: string) => BoneRingParams | null,
   positions: number[],
+  uvs: number[],
   skinIndex: number[],
   skinWeight: number[],
   indices: number[],
@@ -1163,6 +1198,9 @@ function capTerminalEnds(
     const apex = new THREE.Vector3(0, capDistance, 0).applyMatrix4(bone.matrixWorld);
     const apexIdx = positions.length / 3;
     positions.push(apex.x, apex.y, apex.z);
+    // Pin the apex to the centre-top of the cap's UV square: the ring's U fans
+    // around the circumference into a point, so the texture pinches at the tip.
+    uvs.push(0.5, 1);
     skinIndex.push(bi, bi, 0, 0);
     skinWeight.push(1, 0, 0, 0);
 
@@ -1191,6 +1229,7 @@ export function buildRingLoft(
   const indices: number[] = [];
   const skinIndex: number[] = [];
   const skinWeight: number[] = [];
+  const uvs: number[] = [];
 
   const ringBases = new Map<string, number[]>();
 
@@ -1203,10 +1242,25 @@ export function buildRingLoft(
     const childBi = child ? boneIndex.get(child.name) : undefined;
     const parentBi = bone.parent instanceof THREE.Bone ? boneIndex.get(bone.parent.name) : undefined;
 
+    const boneRings = buildBoneRings(bone, bi, bp, params, ringsPerBone);
+    // Per-bone V: normalise the ring y-extent to 0..1 so a tiling texture
+    // repeats once per bone segment (U wraps the ring circumference).
+    let minY = Infinity, maxY = -Infinity;
+    for (const ring of boneRings) {
+      if (ring.y < minY) minY = ring.y;
+      if (ring.y > maxY) maxY = ring.y;
+    }
+    const span = maxY - minY || 1;
+
     const bases: number[] = [];
-    for (const ring of buildBoneRings(bone, bi, bp, params, ringsPerBone)) {
+    for (const ring of boneRings) {
       const base = positions.length / 3;
-      for (const p of ringWorldPoints(ring, bone, segments)) positions.push(p.x, p.y, p.z);
+      const v = (ring.y - minY) / span;
+      const pts = ringWorldPoints(ring, bone, segments);
+      for (let j = 0; j < segments; j++) {
+        positions.push(pts[j].x, pts[j].y, pts[j].z);
+        uvs.push(j / segments, v);
+      }
 
       const useParent = ring.parentWeight !== undefined && parentBi !== undefined;
       const childW: [number, number] = useParent ? [0, 0] : tubeSkinWeights(ring.t, TUBE_WEIGHT_INFLUENCE);
@@ -1283,11 +1337,11 @@ export function buildRingLoft(
 
   // Weld the junction ports (legs, fingers, thumbs, arms) as configured by
   // PORT_SPECS.
-  buildPorts(bones, boneIndex, ringBases, positions, skinIndex, skinWeight, indices, segments, params);
+  buildPorts(bones, boneIndex, ringBases, positions, uvs, skinIndex, skinWeight, indices, segments, params);
 
   // Cap the open finger/toe ends.
-  capTerminalEnds(bones, boneIndex, ringBases, params, positions, skinIndex, skinWeight, indices, segments);
+  capTerminalEnds(bones, boneIndex, ringBases, params, positions, uvs, skinIndex, skinWeight, indices, segments);
 
-  return { positions, indices, skinIndex, skinWeight };
+  return { positions, indices, skinIndex, skinWeight, uv: uvs };
 }
 

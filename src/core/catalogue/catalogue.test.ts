@@ -99,7 +99,7 @@ describe('CATALOGUE_ENTRIES seed data — Phase 9.B set pieces', () => {
 
   it('stage-deck is a plane', () => {
     const p = getById('stage-deck', CATALOGUE_ENTRIES) as SetPieceEntry | undefined;
-    expect(p?.geometry.type).toBe('plane');
+    expect(p?.geometry?.type).toBe('plane');
   });
 });
 

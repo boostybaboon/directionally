@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_BONE_PARAMS } from './ProceduralHumanoid.js';
-import { DEFAULT_RING_PARAMS } from './ringSurface.js';
+import { DEFAULT_RING_PARAMS, BUST_MAX_AMP } from './ringSurface.js';
 import {
   DEFAULT_SEMANTIC,
   semanticToBoneParams,
@@ -90,5 +90,14 @@ describe('semanticToRingParams', () => {
 
   it('omits the head group (it stays an ellipsoid, not a ring)', () => {
     expect(semanticToRingParams(DEFAULT_SEMANTIC).head).toBeUndefined();
+  });
+
+  it('feminine grows chest relief; masculine and neutral stay flat', () => {
+    expect(semanticToRingParams(DEFAULT_SEMANTIC).spine2.bust).toBeUndefined();
+    expect(semanticToRingParams(s({ feminineMasculine: 1 })).spine2.bust).toBeUndefined();
+    const feminine = semanticToRingParams(s({ feminineMasculine: -1 }));
+    expect(feminine.spine2.bust).toBeCloseTo(BUST_MAX_AMP);
+    const half = semanticToRingParams(s({ feminineMasculine: -0.5 }));
+    expect(half.spine2.bust).toBeCloseTo(BUST_MAX_AMP * 0.5);
   });
 });

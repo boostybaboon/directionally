@@ -203,6 +203,59 @@ describe('CartoonSketcher', () => {
     expect(sketcher.currentPhase).toBe('idle');
   });
 
+  // ── Lights & environment (Track SET, N3) ──────────────────────────────────
+
+  it('addLight() adds a THREE light to the scene and records it in getLights()', () => {
+    const before = scene.children.length;
+    sketcher.addLight({ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] });
+    expect(scene.children.length).toBe(before + 1);
+    expect(sketcher.getLights()).toHaveLength(1);
+    expect(sketcher.getLights()[0].id).toBe('sun');
+  });
+
+  it('addLight() builds a hemisphere light without a position', () => {
+    sketcher.addLight({ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 2 });
+    expect(sketcher.getLights()).toHaveLength(1);
+  });
+
+  it('removeLight() removes a light from the scene and getLights()', () => {
+    sketcher.addLight({ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] });
+    const before = scene.children.length;
+    sketcher.removeLight('sun');
+    expect(scene.children.length).toBe(before - 1);
+    expect(sketcher.getLights()).toHaveLength(0);
+  });
+
+  it('removeLight() is a no-op for an unknown id', () => {
+    sketcher.addLight({ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] });
+    sketcher.removeLight('no-such-light');
+    expect(sketcher.getLights()).toHaveLength(1);
+  });
+
+  it('setEnvironmentMap() / environmentMap round-trip', () => {
+    expect(sketcher.environmentMap).toBeUndefined();
+    sketcher.setEnvironmentMap('studio-neutral');
+    expect(sketcher.environmentMap).toBe('studio-neutral');
+    sketcher.setEnvironmentMap(undefined);
+    expect(sketcher.environmentMap).toBeUndefined();
+  });
+
+  it('getSession() includes lights and environmentMap', () => {
+    sketcher.addLight({ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] });
+    sketcher.setEnvironmentMap('studio-neutral');
+    const session = sketcher.getSession();
+    expect(session.lights).toHaveLength(1);
+    expect(session.environmentMap).toBe('studio-neutral');
+  });
+
+  it('clearSession() removes lights and the environment map', () => {
+    sketcher.addLight({ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] });
+    sketcher.setEnvironmentMap('studio-neutral');
+    sketcher.clearSession();
+    expect(sketcher.getLights()).toHaveLength(0);
+    expect(sketcher.environmentMap).toBeUndefined();
+  });
+
   it('part mesh has non-zero vertex count after extrusion', () => {
     sketcher.startNewSketch();
     sketcher.onClick(0, 0);
@@ -497,6 +550,7 @@ describe('exportGLB', () => {
       parts: [{ id: 'part-1', mesh, depth: 1, centroid, name: 'Shape', color: 0x8888cc, shapePoints: null, holes: null, lathePoints: null, lathePhiLength: null, faceColors: [0x8888cc], faceTextures: [null] }],
       joints: [],
       assemblyGroups: [],
+      lights: [],
     };
 
     const { blob, filename } = await exportGLB(session);
@@ -505,7 +559,7 @@ describe('exportGLB', () => {
   });
 
   it('returns a Blob for an empty session', async () => {
-    const session: SketcherSession = { parts: [], joints: [], assemblyGroups: [] };
+    const session: SketcherSession = { parts: [], joints: [], assemblyGroups: [], lights: [] };
     const { blob } = await exportGLB(session);
     expect(blob.size).toBeGreaterThan(0); // GLTF header is always present
   });
@@ -531,6 +585,28 @@ describe('toDraft / loadDraft', () => {
     expect(draft.version).toBe(2);
     expect(draft.parts).toHaveLength(0);
     expect(draft.joints).toHaveLength(0);
+    expect(draft.lights).toBeUndefined();
+    expect(draft.environmentMap).toBeUndefined();
+  });
+
+  it('toDraft() / loadDraft() round-trip preserves lights and environmentMap', () => {
+    sketcher.addLight({ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] });
+    sketcher.setEnvironmentMap('studio-neutral');
+
+    const draft = sketcher.toDraft();
+    expect(draft.lights).toHaveLength(1);
+    expect(draft.environmentMap).toBe('studio-neutral');
+
+    sketcher.loadDraft(draft);
+    expect(sketcher.getLights()).toHaveLength(1);
+    expect(sketcher.getLights()[0].id).toBe('sun');
+    expect(sketcher.environmentMap).toBe('studio-neutral');
+  });
+
+  it('loadDraft() on a legacy draft with no lights/environmentMap fields leaves them empty', () => {
+    sketcher.loadDraft({ version: 2, parts: [], joints: [], groups: [] });
+    expect(sketcher.getLights()).toHaveLength(0);
+    expect(sketcher.environmentMap).toBeUndefined();
   });
 
   it('toDraft() round-trip preserves primitive position and color', () => {

@@ -4,6 +4,7 @@ import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle, buildExtrusionGeometry } from './ExtrusionHandle.js';
 import { AttachManager } from './AttachManager.js';
 import type { FaceGroupInfo, PartSnapshot, JointSnapshot, GroupSnapshot, PartDraft, SessionSnapshot, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
+import type { LightConfig } from '../domain/types.js';
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
@@ -210,6 +211,37 @@ function buildMaterials(geo: THREE.BufferGeometry, color: number, defaultSide: T
   });
 }
 
+/** Build a raw THREE.Light from a LightConfig (Track SET, N3). Point lights have no
+ *  dedicated model-layer asset yet (see SceneBridge.buildLight) but THREE.PointLight
+ *  itself is generic, so the Sketcher supports it directly. */
+function buildThreeLight(config: LightConfig): THREE.Light | null {
+  switch (config.type) {
+    case 'directional': {
+      const light = new THREE.DirectionalLight(config.color, config.intensity);
+      light.position.set(...config.position);
+      return light;
+    }
+    case 'hemisphere': {
+      const light = new THREE.HemisphereLight(config.skyColor, config.groundColor, config.intensity);
+      if (config.position) light.position.set(...config.position);
+      return light;
+    }
+    case 'spot': {
+      const light = new THREE.SpotLight(
+        config.color, config.intensity, 0, config.angle ?? Math.PI / 4, config.penumbra ?? 0, config.decay ?? 2,
+      );
+      light.position.set(...config.position);
+      if (config.target) light.target.position.set(...config.target);
+      return light;
+    }
+    case 'point': {
+      const light = new THREE.PointLight(config.color, config.intensity, config.distance ?? 0, config.decay ?? 2);
+      light.position.set(...config.position);
+      return light;
+    }
+  }
+}
+
 type Phase = 'idle' | 'drawing' | 'pending-holes' | 'hole-drawing' | 'extruding' | 'revolve-drawing' | 'pending-revolve';
 
 /**
@@ -244,6 +276,11 @@ export class CartoonSketcher {
   private pendingCentroid: THREE.Vector3 | null = null;
   private nextId = 1;
   private readonly attach: AttachManager;
+  /** Lights placed via the catalogue panel (Track SET, N3). */
+  private readonly lights: LightConfig[] = [];
+  private _environmentMap: string | undefined;
+  /** THREE light objects added to the scene, keyed by LightConfig.id, for removeLight/dispose. */
+  private readonly lightObjects = new Map<string, THREE.Light>();
 
   /** Called whenever the extrusion depth changes during a drag (phase === 'extruding'). */
   onExtrusionDepthChanged?: (depth: number) => void;
@@ -451,7 +488,7 @@ export class CartoonSketcher {
     this.phase = 'idle';
   }
 
-  /** Remove all parts, joints, and groups, then reset to idle. */
+  /** Remove all parts, joints, groups, and lights, then reset to idle. */
   clearSession(): void {
     this.attach.dispose();
     for (const part of this.parts) {
@@ -464,6 +501,12 @@ export class CartoonSketcher {
       (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m) => { m.map?.dispose(); m.dispose(); });
     }
     this.allParts.clear();
+    for (const light of this.lightObjects.values()) {
+      this.scene.remove(light);
+    }
+    this.lightObjects.clear();
+    this.lights.length = 0;
+    this._environmentMap = undefined;
     this._endCurrentSketch();
     this.phase = 'idle';
   }
@@ -504,6 +547,50 @@ export class CartoonSketcher {
   /** All available preset names, in display order. */
   static get presetNames(): string[] {
     return PRIMITIVE_PRESETS.map((p) => p.name);
+  }
+
+  /**
+   * Add a light to the scene (Track SET, N3 — catalogue panel "Add" action).
+   * Builds the THREE light directly from the config (mirrors SceneBridge's
+   * buildLight, kept local so the Sketcher has no dependency on the domain
+   * SceneBridge module) and tracks it in `lights` for save-as-setting.
+   */
+  addLight(config: LightConfig): void {
+    const light = buildThreeLight(config);
+    if (!light) return;
+    this.scene.add(light);
+    this.lightObjects.set(config.id, light);
+    this.lights.push(config);
+  }
+
+  /** Remove a previously added light by its LightConfig.id. No-op if not found. */
+  removeLight(id: string): void {
+    const light = this.lightObjects.get(id);
+    if (!light) return;
+    this.scene.remove(light);
+    this.lightObjects.delete(id);
+    const idx = this.lights.findIndex((l) => l.id === id);
+    if (idx !== -1) this.lights.splice(idx, 1);
+  }
+
+  /** Currently placed lights, in insertion order. */
+  getLights(): readonly LightConfig[] {
+    return this.lights;
+  }
+
+  /**
+   * Record the applied HDRI environment (catalogue EnvironmentEntry id).
+   * The Sketcher itself has no renderer instance, so it does not load the HDRI
+   * texture — the page's onMount effect does that (mirroring Presenter.svelte's
+   * RGBELoader + PMREMGenerator pattern) and calls this only to persist the
+   * choice for save-as-setting / toDraft.
+   */
+  setEnvironmentMap(id: string | undefined): void {
+    this._environmentMap = id;
+  }
+
+  get environmentMap(): string | undefined {
+    return this._environmentMap;
   }
 
   /** Update a part's colour, resetting all face colours to a uniform value. */
@@ -680,6 +767,8 @@ export class CartoonSketcher {
       parts: [...this.parts],
       joints: [...this.attach.getJoints()],
       assemblyGroups: [...this.attach.getAssemblyGroups()],
+      lights: [...this.lights],
+      environmentMap: this._environmentMap,
     };
   }
 
@@ -935,7 +1024,14 @@ export class CartoonSketcher {
       partIds: [...ag.partIds],
       isGroup: this.attach.isGroup(ag.partIds[0]),
     }));
-    return { version: 2, parts, joints, groups };
+    return {
+      version: 2,
+      parts,
+      joints,
+      groups,
+      ...(this.lights.length > 0 ? { lights: [...this.lights] } : {}),
+      ...(this._environmentMap ? { environmentMap: this._environmentMap } : {}),
+    };
   }
 
   /**
@@ -1019,6 +1115,11 @@ export class CartoonSketcher {
     }
 
     this.attach.rebuildGroupsFromSnapshot(draft.groups ?? [], this.parts);
+
+    for (const config of draft.lights ?? []) {
+      this.addLight(config);
+    }
+    this._environmentMap = draft.environmentMap;
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────
