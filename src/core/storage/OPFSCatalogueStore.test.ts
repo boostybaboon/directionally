@@ -109,6 +109,28 @@ describe('OPFSCatalogueStore – add + list', () => {
     expect((listed[0] as Extract<typeof listed[0], { kind: 'set-piece' }>).geometry).toBeDefined();
   });
 
+  it('add() a GLB set-piece as a setting → round-trips environmentId and lights', async () => {
+    const entry = await add(new Blob(['data']), {
+      kind: 'set-piece',
+      label: 'Classroom',
+      environmentId: 'env-night-sky',
+      lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
+    });
+
+    expect(entry.kind).toBe('set-piece');
+    const piece = entry as Extract<typeof entry, { kind: 'set-piece' }>;
+    expect(piece.environmentId).toBe('env-night-sky');
+    expect(piece.lights).toEqual([
+      { id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] },
+    ]);
+
+    const listed = await list();
+    expect(listed).toHaveLength(1);
+    const listedPiece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
+    expect(listedPiece.environmentId).toBe('env-night-sky');
+    expect(listedPiece.lights).toEqual(piece.lights);
+  });
+
   it('add() preserves optional character fields', async () => {
     const entry = await add(new Blob(['data']), {
       kind: 'character',

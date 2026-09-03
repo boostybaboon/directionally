@@ -1656,7 +1656,30 @@
     // First export: create a new catalogue entry linked to this assembly.
     await OPFSCatalogueStore.add(blob, { kind: 'set-piece', label }, currentAssemblyId ?? undefined);
     new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
-    statusMessage = `Exported "${label}" to catalogue.`;
+    statusMessage = `Saved "${label}" to catalogue.`;
+  }
+
+  async function saveAsSetting() {
+    const session = sketcher?.getSession();
+    if (!session || session.parts.length === 0) {
+      statusMessage = 'No parts to save. Add geometry or a sketch first.';
+      return;
+    }
+    statusMessage = 'Saving setting…';
+    selection?.deselect();
+    const { blob } = await exportGLB(session);
+    const label = assemblyName.trim() || 'Untitled';
+
+    // Whole-scene save: capture the baseline lighting + environment alongside
+    // the baked geometry so the entry resolves as a fully-lit setting.
+    await OPFSCatalogueStore.add(blob, {
+      kind: 'set-piece',
+      label,
+      ...(session.environmentMap ? { environmentId: session.environmentMap } : {}),
+      ...(session.lights.length > 0 ? { lights: [...session.lights] } : {}),
+    });
+    new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
+    statusMessage = `Saved setting "${label}" to catalogue.`;
   }
 </script>
 
@@ -1706,7 +1729,8 @@
       <button class:active={transformMode === 'rotate'} onclick={() => setTransformMode('rotate')} title="E">Rotate</button>
       <button class:active={transformMode === 'scale'} onclick={() => setTransformMode('scale')} title="R">Scale</button>
       <span class="separator"></span>
-      <button class="primary" onclick={exportToCatalogue}>Export to Catalogue</button>
+      <button class="primary" onclick={exportToCatalogue} title="Save the whole scene as a reusable geometry item">Save as Item</button>
+      <button class="primary" onclick={saveAsSetting} title="Save the whole scene, including its lighting and environment, as a reusable setting">Save as Setting</button>
       <span class="separator"></span>
       <button class:active={showCataloguePanel} onclick={() => { showCataloguePanel = !showCataloguePanel; }} title="Toggle catalogue">Catalogue</button>
     </div>

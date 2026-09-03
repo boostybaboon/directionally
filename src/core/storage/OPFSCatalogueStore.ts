@@ -139,6 +139,8 @@ function toUserEntry(s: StoredEntry, gltfPath?: string): UserCatalogueEntry {
     geometry: s.geometry ?? PLACEHOLDER_GEOMETRY,
     material: s.material ?? PLACEHOLDER_MATERIAL,
     defaultRotation: s.defaultRotation,
+    ...(s.environmentId ? { environmentId: s.environmentId } : {}),
+    ...(s.lights ? { lights: s.lights } : {}),
     userAdded: true,
     addedAt: s.addedAt,
     sourceAssemblyId: s.sourceAssemblyId,
@@ -211,6 +213,12 @@ export async function add(
       : {
           geometry: (meta as NewSetPieceMeta).geometry,
           material: (meta as NewSetPieceMeta).material,
+          ...((meta as NewSetPieceMeta).environmentId
+            ? { environmentId: (meta as NewSetPieceMeta).environmentId }
+            : {}),
+          ...((meta as NewSetPieceMeta).lights
+            ? { lights: (meta as NewSetPieceMeta).lights }
+            : {}),
         }),
     ...(sourceAssemblyId ? { sourceAssemblyId } : {}),
   };

@@ -16,7 +16,7 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 | Decision | Choice | Rationale |
 |---|---|---|
 | Package location | `src/core/sketcher/` inside existing app | Extractable later if needed; zero tooling cost now |
-| Navigation | Single SvelteKit route `/sketch` | One editor for modelling and assembly (Track SET); `/studio` (Set Studio) is retired once Track SET's routing lands |
+| Navigation | Single SvelteKit route `/sketch` | One editor for modelling and assembly (Track SET); `/studio` (Set Studio) retired in N10 |
 | Geometry kernel | `THREE.Shape` + `ExtrudeGeometry` | Cartoon aesthetic; trivial GLB export |
 | Monorepo | Ruled out | Premature for a single-developer project |
 
@@ -88,9 +88,16 @@ Added so an LLM/agent can drive asset creation without the Three.js runtime — 
 
 Together with the pre-existing `resolveSettingSpec`/`validateSettingSpec` + `/api/setting` (resolve-only, over HTTP) and `addSetPiece`, this is the complete "something the AI talks to" for scenery: **schema → validated create → broadcast → script auto-resolves**. No `N4`/`N10` UI work is a prerequisite for it.
 
-### N4 — Promote / "Save as Catalogue Item" — deferred to next slice
+### N4 — Save as Item / Save as Setting ✅ COMPLETE (whole-scene)
 
-Generalises today's `exportToCatalogue` (GLB-only) and Set Studio's `saveAsSetting`/`saveAsSetPiece` (whole-scene-only) into one operation: select any subtree (however it was authored — sketched from scratch, or dropped in from the catalogue and never touched again) → name it → it becomes a catalogue Definition, and the selection is replaced in-scene by a `ref` Instance pointing at it. "Save as Setting" is the same operation applied to the whole scene, additionally capturing `lights`/`environmentId` (which `OPFSCatalogueStore.addSetPiece` already accepts). Needs: a "selected subtree → `compose` with fresh `localId`s" flattener (distinct from the existing whole-scene `setPiecesToCompose`, which has no concept of "selection"), and post-save re-parenting of the selection to a `ref` node.
+Generalises the old `exportToCatalogue` (GLB-only) and Set Studio's `saveAsSetting` (whole-scene-only) into two whole-scene saves in the Set tool:
+
+- **Save as Item** (was "Export to Catalogue") — GLB-bakes the whole session as a reusable geometry item, keeping the `sourceAssemblyId` round-trip (re-export updates in place; "Edit in Sketcher" links back).
+- **Save as Setting** — same GLB bake **plus** the session's `lights` + `environmentMap`, so the entry resolves in a script as a fully-lit setting (`INT <label>` applies geometry + environment + lights).
+- `OPFSCatalogueStore.add()` now persists `environmentId`/`lights` on GLB-backed set-piece entries (previously dropped — only the procedural `addSetPiece` path kept them); `toUserEntry` emits them too.
+- **Tests:** `core/storage/OPFSCatalogueStore.test.ts` — a GLB set-piece saved as a setting round-trips `environmentId` + `lights`.
+
+**Still deferred (the "promote a selection" half):** selecting a *subtree* and promoting it to a procedural `compose` Definition (with fresh `localId`s) that replaces the selection in-scene with a `ref` instance. That needs a "selection → `compose`" flattener plus `ref`-provenance tracking; it folds into N5/N6 (Edit Source / Overrides), which introduce instance-provenance anyway. Whole-scene saves are the level-0 loop; selection-promote isn't required to "put premade items into a room".
 
 ### Deferred beyond level 0
 
@@ -103,7 +110,7 @@ These are real, named requirements from the design docs — not gaps discovered 
 | N7 | **Per-scene setting overrides ("dressing" layer)** — extends `settingBindings` with an overrides list per scene, giving "same classroom, minus one chair, for this scene only" without forking the Definition. Layers 1 (Venue/Definition) and 3 (Shot — `Block[]` camera/light timeline) already exist; this is the only new layer. |
 | N8 | **Stable animation addressing** — formalise `SetPieceBlock.targetId` as keying off a stable `SetPiece` id rather than the mutable `name`, closing the fragile name-key gap once instances are common. |
 | N9 | **Outliner panel** — a simple indented tree view of the scene's nodes/groups/instances, reusing `SelectionManager`. |
-| N10 | **Route consolidation** — retire `/studio` from nav entirely (superseded by N3's catalogue-in-Sketcher); `Create →` for an unresolved setting (Track CAT, CAT-4) points at `/sketch?prefillName=…`. |
+| N10 | **Route consolidation** — ✅ DONE: `/studio` route deleted (superseded by N3's catalogue-in-Sketcher); nav shows a single "Set" link at `/sketch`; `Create →` for an unresolved setting already points at `/sketch?prefillName=…`. Orphaned `PropertiesPanel.svelte` + `SelectedEntity` (the old `/studio` inspector) removed. |
 | — | Nested groups-of-groups in the *session* model (a group containing another group, not just parts) — the catalogue already supports Definition-of-Definitions via nested `compose`/`ref`; a session-level group-of-groups is a separate, lower-priority ask. |
 | — | Full USD-style LIVRPS composition-arc generality, payload lazy-loading — level 0's fixed 2–3 layer resolution (N7) captures the practical benefit without the generality. |
 
