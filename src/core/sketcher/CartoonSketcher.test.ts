@@ -5,6 +5,7 @@ import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { exportGLB } from './exportGLB.js';
 import type { SketcherSession } from './types.js';
+import type { SetPieceEntry } from '../catalogue/types.js';
 
 // GLTFExporter uses FileReader internally which is not available in the Node
 // test environment. Mock the module so exportGLB tests are self-contained.
@@ -254,6 +255,72 @@ describe('CartoonSketcher', () => {
     sketcher.clearSession();
     expect(sketcher.getLights()).toHaveLength(0);
     expect(sketcher.environmentMap).toBeUndefined();
+  });
+
+  // ── Catalogue insertion (Track SET, N3) ───────────────────────────────────
+
+  it('insertCatalogueEntry() on a leaf entry inserts a single ungrouped part', () => {
+    const leaf: SetPieceEntry = {
+      kind: 'set-piece',
+      id: 'box',
+      label: 'Box',
+      geometry: { type: 'box', width: 2, height: 3, depth: 4 },
+      material: { color: 0x8844aa },
+    };
+    const { parts, group } = sketcher.insertCatalogueEntry(leaf, [leaf]);
+    expect(parts).toHaveLength(1);
+    expect(group).toBeNull();
+    expect(parts[0].name).toBe('box');
+    expect(parts[0].shapePoints).toBeNull();
+    expect(sketcher.getSession().parts).toHaveLength(1);
+  });
+
+  it('insertCatalogueEntry() on a composite entry groups the expanded parts into one assembly', () => {
+    const composite: SetPieceEntry = {
+      kind: 'set-piece',
+      id: 'chair-test',
+      label: 'Chair Test',
+      compose: [
+        { name: 'seat', geometry: { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, material: { color: 0x663311 }, position: [0, 0.45, 0] },
+        { name: 'back', geometry: { type: 'box', width: 0.5, height: 0.5, depth: 0.1 }, material: { color: 0x663311 }, position: [0, 0.7, -0.2] },
+      ],
+    };
+    const { parts, group } = sketcher.insertCatalogueEntry(composite, [composite]);
+    expect(parts).toHaveLength(2);
+    expect(group).not.toBeNull();
+    expect(group!.partIds).toHaveLength(2);
+    // Both parts report the same assembly group → move as one unit.
+    for (const p of parts) {
+      expect(sketcher.attachManager.groupForPart(p.id)?.id).toBe(group!.id);
+    }
+  });
+
+  it('insertCatalogueEntry() skips GLB-backed pieces (no editable geometry)', () => {
+    const glbLeaf: SetPieceEntry = {
+      kind: 'set-piece',
+      id: 'exported-chair',
+      label: 'Exported Chair',
+      gltfPath: 'blob:http://localhost/chair.glb',
+    };
+    const { parts, group } = sketcher.insertCatalogueEntry(glbLeaf, [glbLeaf]);
+    expect(parts).toHaveLength(0);
+    expect(group).toBeNull();
+  });
+
+  it('insertCataloguePiece() applies position/rotation/scale and a single face group', () => {
+    const part = sketcher.insertCataloguePiece(
+      'plank',
+      { type: 'box', width: 1, height: 1, depth: 1 },
+      { color: 0x224466 },
+      [3, 1, 2],
+      [0, Math.PI / 2, 0],
+      [2, 2, 2],
+    );
+    expect(part.mesh.position).toMatchObject({ x: 3, y: 1, z: 2 });
+    expect(part.mesh.scale).toMatchObject({ x: 2, y: 2, z: 2 });
+    expect(part.faceColors).toHaveLength(1);
+    expect(part.faceTextures).toEqual([null]);
+    expect(sketcher.getSession().parts).toContain(part);
   });
 
   it('part mesh has non-zero vertex count after extrusion', () => {

@@ -7,6 +7,12 @@
   import { SelectionManager } from '../../core/sketcher/SelectionManager.js';
   import { faceGroupFromNormal, faceGroupLabel } from '../../core/sketcher/AttachManager.js';
   import { SketcherDocument } from '../../core/sketcher/SketcherDocument.js';
+  import CataloguePanel from '../../lib/CataloguePanel.svelte';
+  import { getById } from '../../core/catalogue/catalogue.js';
+  import { CATALOGUE_ENTRIES } from '../../core/catalogue/entries.js';
+  import type { CatalogueEntry } from '../../core/catalogue/types.js';
+  import type { LightConfig } from '../../core/domain/types.js';
+  import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
   import {
     InsertPartCommand,
     DuplicatePartCommand,
@@ -60,6 +66,10 @@
   let currentAssemblyId = $state<string | null>(null);
   let savedAssemblies = $state<AssemblyMeta[]>([]);
   let showOpenPanel = $state(false);
+  // Catalogue panel (Track SET, N3) — user-added entries + active environment.
+  let userCatalogueEntries = $state<CatalogueEntry[]>([]);
+  let showCataloguePanel = $state(false);
+  let activeEnvironmentId = $state<string | undefined>(undefined);
   // Attach interaction state
   let attachPhase = $state<'src' | 'target' | null>(null);
   // The anchor blob placed in phase 'src'.
@@ -82,6 +92,7 @@
   let selection: SelectionManager;
   let animId: number;
   let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let catalogueChannel: BroadcastChannel;
 
   // Yellow hover highlight shown over the hovered face during attach-pick.
   let faceHighlight: THREE.Mesh | null = null;
@@ -335,7 +346,21 @@
     if (prefill) {
       assemblyName = prefill.trim() || 'Untitled';
     }
+
+    // Restore the applied HDRI environment (loadDraft only records the id).
+    if (sketcher.environmentMap) {
+      activeEnvironmentId = sketcher.environmentMap;
+      void handleApplyEnvironment(sketcher.environmentMap);
+    }
     })();
+
+    // Catalogue panel: load user-added entries once, then stay in sync with
+    // the catalogue-updated broadcast (e.g. a Sketcher export).
+    void OPFSCatalogueStore.list().then((entries) => { userCatalogueEntries = entries; });
+    catalogueChannel = new BroadcastChannel('directionally-catalogue');
+    catalogueChannel.onmessage = () => {
+      void OPFSCatalogueStore.list().then((entries) => { userCatalogueEntries = entries; });
+    };
 
     // ── Keyboard shortcuts ───────────────────────────────────────────────────
     const onKey = (e: KeyboardEvent) => {
@@ -408,6 +433,7 @@
     sketcher?.dispose();
     orbit?.dispose();
     renderer?.dispose();
+    catalogueChannel?.close();
   });
 
   // ── NDC helpers ──────────────────────────────────────────────────────────────
@@ -1216,6 +1242,65 @@
 
   // ── Toolbar actions ─────────────────────────────────────────────────────────
 
+  const mergedCatalogueEntries = $derived<CatalogueEntry[]>([...CATALOGUE_ENTRIES, ...userCatalogueEntries]);
+
+  function handleCatalogueAdd(kind: 'character' | 'setpiece' | 'light', id: string) {
+    if (kind === 'character') {
+      statusMessage = 'Characters are staged in the script view.';
+      return;
+    }
+    if (kind === 'light') {
+      const entry = getById(id, mergedCatalogueEntries);
+      if (entry?.kind !== 'light') return;
+      const config: LightConfig = { ...entry.config, id: `${entry.id}-${crypto.randomUUID().slice(0, 6)}` };
+      sketcher.addLight(config);
+      statusMessage = `Added ${entry.label}.`;
+      return;
+    }
+    const entry = getById(id, mergedCatalogueEntries);
+    if (entry?.kind !== 'set-piece') return;
+    const { parts, group } = sketcher.insertCatalogueEntry(entry, mergedCatalogueEntries);
+    if (parts.length === 0) {
+      statusMessage = `"${entry.label}" has no editable geometry (GLB-backed).`;
+      return;
+    }
+    const first = parts[0];
+    if (group) {
+      selection.selectGroup(first.mesh, group.group);
+      tc.attach(group.group);
+    } else {
+      selection.select(first.mesh);
+    }
+    statusMessage = `Added ${entry.label}.`;
+  }
+
+  async function handleApplyEnvironment(environmentId: string | undefined) {
+    if (!renderer || !scene) return;
+    if (!environmentId) {
+      scene.environment = null;
+      scene.background = new THREE.Color(0x1a1a2e);
+      sketcher.setEnvironmentMap(undefined);
+      activeEnvironmentId = undefined;
+      statusMessage = 'Environment cleared.';
+      return;
+    }
+    const env = getById(environmentId, mergedCatalogueEntries);
+    if (env?.kind !== 'environment') return;
+    try {
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      const texture = await new RGBELoader().loadAsync(env.hdriPath);
+      const envMap = pmrem.fromEquirectangular(texture).texture;
+      scene.environment = envMap;
+      scene.background = envMap;
+      pmrem.dispose();
+      sketcher.setEnvironmentMap(environmentId);
+      activeEnvironmentId = environmentId;
+      statusMessage = `Environment: ${env.label}.`;
+    } catch {
+      statusMessage = 'Failed to load environment.';
+    }
+  }
+
   function insertPrimitive(kind: string) {
     selection.deselect();
     const cmd = new InsertPartCommand(kind, sketcher);
@@ -1622,6 +1707,8 @@
       <button class:active={transformMode === 'scale'} onclick={() => setTransformMode('scale')} title="R">Scale</button>
       <span class="separator"></span>
       <button class="primary" onclick={exportToCatalogue}>Export to Catalogue</button>
+      <span class="separator"></span>
+      <button class:active={showCataloguePanel} onclick={() => { showCataloguePanel = !showCataloguePanel; }} title="Toggle catalogue">Catalogue</button>
     </div>
   </header>
 
@@ -1648,6 +1735,22 @@
       {/if}
     </div>
   {/if}
+
+  {#if showCataloguePanel}
+    <aside class="catalogue-drawer">
+      <div class="open-panel-header">
+        <span>Catalogue</span>
+        <button class="panel-close" onclick={() => { showCataloguePanel = false; }}>✕</button>
+      </div>
+      <CataloguePanel
+        userEntries={userCatalogueEntries}
+        onadd={handleCatalogueAdd}
+        onapplyenvironment={handleApplyEnvironment}
+        activeEnvironmentId={activeEnvironmentId}
+      />
+    </aside>
+  {/if}
+
   <div class="primitives-bar">
     <span class="bar-label">Insert:</span>
     <button onclick={() => insertPrimitive('box')}>Cube</button>
@@ -1994,6 +2097,19 @@
     padding: 0 4px;
   }
   .panel-close:hover { color: #e0e0ff; }
+
+  .catalogue-drawer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 90;
+    width: 280px;
+    background: #16162c;
+    border-right: 1px solid #2a2a4a;
+    display: flex;
+    flex-direction: column;
+  }
 
   .open-panel-empty {
     padding: 16px 12px;

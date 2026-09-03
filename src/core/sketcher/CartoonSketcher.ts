@@ -4,7 +4,10 @@ import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle, buildExtrusionGeometry } from './ExtrusionHandle.js';
 import { AttachManager } from './AttachManager.js';
 import type { FaceGroupInfo, PartSnapshot, JointSnapshot, GroupSnapshot, PartDraft, SessionSnapshot, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
-import type { LightConfig } from '../domain/types.js';
+import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
+import { expandEntry } from '../setting/settingSpec.js';
+import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
+import type { CatalogueEntry, SetPieceEntry } from '../catalogue/types.js';
 
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
@@ -240,6 +243,50 @@ function buildThreeLight(config: LightConfig): THREE.Light | null {
       return light;
     }
   }
+}
+
+/** Build a raw THREE.BufferGeometry from a catalogue GeometryConfig (Track SET, N3). */
+function buildCatalogueGeometry(config: GeometryConfig): THREE.BufferGeometry {
+  switch (config.type) {
+    case 'box':
+      return new THREE.BoxGeometry(config.width, config.height, config.depth);
+    case 'plane':
+      return new THREE.PlaneGeometry(config.width, config.height);
+    case 'sphere':
+      return new THREE.SphereGeometry(config.radius, config.widthSegments ?? 16, config.heightSegments ?? 12);
+    case 'cylinder':
+      return new THREE.CylinderGeometry(config.radiusTop, config.radiusBottom, config.height, config.radialSegments ?? 16);
+  }
+}
+
+/**
+ * Collapse any existing draw groups into a single group so an imported catalogue
+ * part always has exactly one material slot — catalogue geometry has no authored
+ * per-face semantics, and the face-paint path assumes one FaceGroupInfo per slot.
+ */
+function withSingleFaceGroup(geo: THREE.BufferGeometry): THREE.BufferGeometry {
+  geo.clearGroups();
+  const indexCount = geo.index ? geo.index.count : geo.attributes.position.count;
+  geo.addGroup(0, indexCount, 0);
+  geo.userData.faceGroups = [{ normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 }];
+  return geo;
+}
+
+/** Build a THREE.MeshStandardMaterial from a catalogue MaterialConfig. */
+function buildCatalogueMaterial(config: MaterialConfig): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({
+    color: config.color,
+    roughness: config.roughness ?? 0.5,
+    metalness: config.metalness ?? 0.1,
+  });
+  if (config.emissive !== undefined) mat.emissive.setHex(config.emissive);
+  if (config.textureUrl) {
+    const tex = new THREE.TextureLoader().load(config.textureUrl);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(config.repeatU ?? 1, config.repeatV ?? 1);
+    mat.map = tex;
+  }
+  return mat;
 }
 
 type Phase = 'idle' | 'drawing' | 'pending-holes' | 'hole-drawing' | 'extruding' | 'revolve-drawing' | 'pending-revolve';
@@ -591,6 +638,68 @@ export class CartoonSketcher {
 
   get environmentMap(): string | undefined {
     return this._environmentMap;
+  }
+
+  /**
+   * Insert one leaf piece of catalogue geometry as a SketcherPart (Track SET, N3).
+   * The part is a single-material mesh with a single face group so it stays
+   * editable through the same colour/texture/transform paths as a sketched part.
+   */
+  insertCataloguePiece(
+    name: string,
+    geometry: GeometryConfig,
+    material: MaterialConfig,
+    position?: Vec3,
+    rotation?: Vec3,
+    scale?: Vec3,
+  ): SketcherPart {
+    const geo = withSingleFaceGroup(buildCatalogueGeometry(geometry));
+    const mat = buildCatalogueMaterial(material);
+    const mesh = new THREE.Mesh(geo, [mat]);
+    if (position) mesh.position.set(...position);
+    if (rotation) mesh.rotation.set(...rotation);
+    if (scale) mesh.scale.set(...scale);
+
+    const color = material.color;
+    const part: SketcherPart = {
+      id: `part-${this.nextId++}`,
+      mesh,
+      depth: 0,
+      centroid: new THREE.Vector3(),
+      name,
+      color,
+      shapePoints: null,
+      holes: null,
+      lathePoints: null,
+      lathePhiLength: null,
+      faceColors: [color],
+      faceTextures: [material.textureUrl ?? null],
+    };
+    this.scene.add(mesh);
+    this.parts.push(part);
+    this.allParts.set(part.id, part);
+    return part;
+  }
+
+  /**
+   * Insert a catalogue set-piece entry (Track SET, N3). A leaf entry becomes a
+   * single part; a composite (or nested composite) expands into multiple parts
+   * grouped into one movable AssemblyGroup. GLB-backed pieces are skipped — they
+   * have no editable procedural geometry. `entries` is only needed to resolve
+   * `ref`s inside a composite's `compose`.
+   */
+  insertCatalogueEntry(
+    entry: SetPieceEntry,
+    entries: CatalogueEntry[] = CATALOGUE_ENTRIES,
+  ): { parts: SketcherPart[]; group: AssemblyGroup | null } {
+    const pieces = expandEntry(entry, undefined, entries);
+    const parts: SketcherPart[] = [];
+    for (const piece of pieces) {
+      if (piece.gltfPath) continue;
+      parts.push(this.insertCataloguePiece(piece.name, piece.geometry, piece.material, piece.position, piece.rotation, piece.scale));
+    }
+    const group = parts.length >= 2 ? this.attach.createGroup(parts) : null;
+    return { parts, group };
   }
 
   /** Update a part's colour, resetting all face colours to a uniform value. */

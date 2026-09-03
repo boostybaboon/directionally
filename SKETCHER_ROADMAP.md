@@ -55,21 +55,38 @@ A placed `SetPiece` can now be an **Instance** of a catalogue Definition instead
 - Wired into `storedSceneToModel()` — every stored scene's `set` list is resolved through `resolveInstances` immediately before scene assembly, so `ref` pieces work in every existing scene without any caller changes.
 - **Tests:** `core/setting/settingSpec.test.ts` (`resolveInstance`/`resolveInstances` — leaf, composite, multi-instance naming, unresolved fallback), `core/storage/storedSceneToModel.test.ts` (`ref` expansion reaches the render pipeline; plain pieces unaffected).
 
-### N3 — Sketcher gains lights, environment, and catalogue placement ⏳ IN PROGRESS
+### N3 — Sketcher gains lights, environment, and catalogue placement ✅ COMPLETE
 
 Folds Set Studio's dressing capability into the Sketcher so one tool builds both individual items and whole settings.
 
-**Delivered (core layer):**
+**Session model (core layer):**
 - `SketcherSession.lights: LightConfig[]` / `SketcherSession.environmentMap?: string` (`core/sketcher/types.ts`).
 - `SketcherDraft.lights?` / `SketcherDraft.environmentMap?` — optional so legacy drafts (no lights/environment) load unchanged.
 - `CartoonSketcher.addLight()` / `.removeLight()` / `.getLights()` / `.setEnvironmentMap()` / `.environmentMap` — builds/removes the raw `THREE.Light` directly (mirrors `SceneBridge.buildLight`'s config→light mapping so the Sketcher stays independent of the domain `SceneBridge` module) and tracks placed lights alongside parts/joints/groups.
 - `getSession()`, `toDraft()`/`loadDraft()`, and `clearSession()` all carry lights/environmentMap through save, reload, and reset.
 - **Tests:** `core/sketcher/CartoonSketcher.test.ts` — add/remove light, hemisphere light without position, environment map get/set, session/draft round-trip, legacy-draft compatibility, `clearSession()` cleanup.
 
-**Not yet delivered (page/UI layer — the remaining N3 work):**
-- `/sketch`'s `<script>` does not yet import `CataloguePanel.svelte` or call the new `addLight`/`setEnvironmentMap` methods — the HUD has no way to drop a catalogue item, add a light, or apply an HDRI yet.
-- Dropping a catalogue **set-piece** entry should create a `ref`-based `AssemblyGroup` (one movable node) rather than eagerly expanding it into loose parts — this needs a new `insertCatalogueEntry(entry, placement)` on `CartoonSketcher` (analogous to `insertPrimitive`, but sourcing geometry from `expandEntry`'s output and wrapping the result in `attach.createGroup(...)`) plus the corresponding `InsertCatalogueEntryCommand`.
-- Environment texture loading (`RGBELoader` + `PMREMGenerator`) needs wiring in the page's `onMount`, mirroring `Presenter.svelte`'s existing pattern — the Sketcher has no renderer-owning code today (`CartoonSketcher.setEnvironmentMap()` only records the choice; loading the texture and setting `scene.environment`/`scene.background` is a page-level concern, same division as `Presenter.svelte`).
+**Catalogue placement (core layer):**
+- `CartoonSketcher.insertCataloguePiece(name, geometry, material, position?, rotation?, scale?)` — builds a single `SketcherPart` from a `GeometryConfig`/`MaterialConfig`; a single material slot + single face group keep it editable through the existing colour/texture/transform paths.
+- `CartoonSketcher.insertCatalogueEntry(entry, entries)` — expands a `SetPieceEntry` via `expandEntry` (so leaf and composite — including nested `compose`-of-`compose` — both work), then groups multi-part results into one movable `AssemblyGroup`. GLB-backed pieces are skipped (no editable procedural geometry).
+- **Tests:** `core/sketcher/CartoonSketcher.test.ts` — leaf → single ungrouped part; composite → grouped assembly; GLB-backed skipped; `insertCataloguePiece` position/rotation/scale + single face group.
+
+**Page/UI layer:**
+- `/sketch` now imports `CataloguePanel.svelte` with a toolbar **Catalogue** toggle and a left drawer.
+- `handleCatalogueAdd(kind, id)` — set-piece → `insertCatalogueEntry` + select (whole group or single part); light → `addLight` with a fresh per-instance id; character → staged-in-script-view status.
+- `handleApplyEnvironment(id)` — `RGBELoader` + `PMREMGenerator` against the Sketcher's own renderer (same pattern as `Presenter.svelte`), sets `scene.environment`/`scene.background`, and records the choice via `setEnvironmentMap`; clearing restores the flat background.
+- User catalogue entries load on mount and re-sync on the `catalogue-updated` broadcast; the HDRI environment is re-applied on draft restore.
+
+### AI-API — Scenery authoring surface for AI ✅ COMPLETE
+
+Added so an LLM/agent can drive asset creation without the Three.js runtime — it emits JSON against a contract and gets a validated, persisted catalogue entry back. The provider/LLM side stays in `ROADMAP_AI.md` (`/api/generate/*`); this is the *data* contract + apply path those routes will hand JSON to.
+
+- `SET_PIECE_JSON_SCHEMA` (`core/setting/authoringApi.ts`) — a JSON Schema (draft 2020-12) for `NewProceduralSetPiece`: a leaf primitive, an assembly (`compose` of `ref`s and inline primitives), or a whole setting (`compose` + `lights` + `environmentId`). Embeddable directly in a system prompt or a `response_format`/`tool_choice` `input_schema`. Mirrors `NewProceduralSetPiece`/`PlacedProp` — keep in sync.
+- `normalizeSetPieceInput(input)` — strict validation + clamping of untrusted JSON into a `NewProceduralSetPiece`; assigns stable `localId`s to `compose` children via `assignLocalIds`. Throws a descriptive error on the first invalid field (unknown geometry/light type, bad label, leaf-vs-composite violation, non-finite vec3, …).
+- `createSetPiece(input)` — the single apply call: `normalizeSetPieceInput` → `OPFSCatalogueStore.addSetPiece` → returns the created entry. Caller posts `{ type: 'catalogue-updated' }` on `BroadcastChannel('directionally-catalogue')` so open script views re-resolve via the existing CAT-4 loop.
+- **Tests:** `core/setting/authoringApi.test.ts` — schema is JSON-serialisable; leaf/composite/ref/setting normalisation; `localId` assignment; rejection of bad label/geometry/light/leaf-compose violations/non-object input; `createSetPiece` persists and returns the entry.
+
+Together with the pre-existing `resolveSettingSpec`/`validateSettingSpec` + `/api/setting` (resolve-only, over HTTP) and `addSetPiece`, this is the complete "something the AI talks to" for scenery: **schema → validated create → broadcast → script auto-resolves**. No `N4`/`N10` UI work is a prerequisite for it.
 
 ### N4 — Promote / "Save as Catalogue Item" — deferred to next slice
 
