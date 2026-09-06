@@ -15,9 +15,16 @@
     activeEnvironmentId?: string;
     /** User-added entries from OPFSCatalogueStore, merged with bundled entries. */
     userEntries?: (CatalogueEntry | UserCatalogueEntry)[];
+    /** Called when the user deletes a user-added entry. Only offered for user-added entries. */
+    ondelete?: (id: string) => void;
   }
 
-  let { onadd, onapplyenvironment, activeEnvironmentId, userEntries = [] }: Props = $props();
+  let { onadd, onapplyenvironment, activeEnvironmentId, userEntries = [], ondelete }: Props = $props();
+
+  /** True when an entry was user-added (vs. bundled) — such entries are deletable. */
+  function isUserEntry(entry: CatalogueEntry): boolean {
+    return 'userAdded' in entry && entry.userAdded === true;
+  }
 
   const allEntries = $derived([...CATALOGUE_ENTRIES, ...userEntries]);
   const characters = $derived(getCharacters(allEntries));
@@ -49,23 +56,34 @@
         {#each characters as entry (entry.id)}
           {@const expanded = selectedCharacterId === entry.id}
           <li class="character-item" class:expanded>
-            <button
-              class="catalogue-item catalogue-item--character"
-              class:active={expanded}
-              draggable="true"
-              ondragstart={(e) => {
-                e.dataTransfer?.setData(
-                  'application/directionally-catalogue',
-                  JSON.stringify({ kind: 'character', id: entry.id }),
-                );
-              }}
-              onclick={() => toggleCharacter(entry.id)}
-              aria-expanded={expanded}
-            >
-              <span class="item-icon" aria-hidden="true">🤖</span>
-              <span class="item-label">{entry.label}</span>
-              <span class="expand-arrow" aria-hidden="true">{expanded ? '▲' : '▼'}</span>
-            </button>
+            <div class="character-row">
+              <button
+                class="catalogue-item catalogue-item--character"
+                class:active={expanded}
+                draggable="true"
+                ondragstart={(e) => {
+                  e.dataTransfer?.setData(
+                    'application/directionally-catalogue',
+                    JSON.stringify({ kind: 'character', id: entry.id }),
+                  );
+                }}
+                onclick={() => toggleCharacter(entry.id)}
+                aria-expanded={expanded}
+              >
+                <span class="item-icon" aria-hidden="true">🤖</span>
+                <span class="item-label">{entry.label}</span>
+                <span class="expand-arrow" aria-hidden="true">{expanded ? '▲' : '▼'}</span>
+              </button>
+              {#if ondelete && isUserEntry(entry)}
+                <button
+                  type="button"
+                  class="delete-item-btn"
+                  title={`Delete ${entry.label}`}
+                  aria-label={`Delete ${entry.label}`}
+                  onclick={(e) => { e.stopPropagation(); ondelete(entry.id); }}
+                >✕</button>
+              {/if}
+            </div>
             {#if expanded}
               <div class="character-preview">
                 <PreviewRenderer gltfPath={entry.gltfPath} />
@@ -118,6 +136,9 @@
               {/if}
               {#if onadd}
                 <button class="add-inline-btn" onclick={() => onadd('setpiece', entry.id)} title="Add {entry.label} to scene" aria-label="Add {entry.label} to scene">+</button>
+              {/if}
+              {#if ondelete && isUserEntry(entry)}
+                <button class="delete-item-btn" onclick={() => ondelete(entry.id)} title="Delete {entry.label}" aria-label="Delete {entry.label}">✕</button>
               {/if}
             </div>
           </li>
@@ -241,6 +262,15 @@
     border-left: 2px solid transparent;
     cursor: pointer;
     transition: background 0.1s, color 0.1s, border-color 0.1s;
+  }
+
+  .character-row {
+    display: flex;
+    align-items: center;
+  }
+  .character-row .catalogue-item--character {
+    flex: 1;
+    min-width: 0;
   }
 
   .catalogue-item--character:hover {
@@ -400,6 +430,24 @@
   }
   .add-inline-btn:hover { background: #1e3248; }
   .add-inline-btn:active { background: #22395a; }
+
+  .delete-item-btn {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    margin-right: 4px;
+    background: none;
+    color: #8899aa;
+    border: none;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .delete-item-btn:hover { color: #e06c75; background: #2a1a1a; }
 
   .catalogue-item--environment {
     border-left: 2px solid transparent;

@@ -254,6 +254,36 @@ describe('OPFSCatalogueStore – update', () => {
     expect(result).toBeNull();
     expect(await list()).toHaveLength(1);
   });
+
+  it('update() persists environmentId and lights for a re-saved setting', async () => {
+    const entry = await add(new Blob(['v1']), { kind: 'set-piece', label: 'Garden' }, 'asm-006');
+    await update(entry.id, new Blob(['v2']), 'Garden', {
+      environmentId: 'env-exterior',
+      lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
+    });
+
+    const listed = await list();
+    const piece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
+    expect(piece.environmentId).toBe('env-exterior');
+    expect(piece.lights).toEqual([
+      { id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] },
+    ]);
+  });
+
+  it('update() clears environmentId and lights when meta omits them', async () => {
+    const entry = await add(new Blob(['v1']), {
+      kind: 'set-piece',
+      label: 'Garden',
+      environmentId: 'env-exterior',
+      lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
+    }, 'asm-007');
+
+    await update(entry.id, new Blob(['v2']), 'Garden', { environmentId: undefined, lights: undefined });
+    const listed = await list();
+    const piece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
+    expect(piece.environmentId).toBeUndefined();
+    expect(piece.lights).toBeUndefined();
+  });
 });
 
 describe('OPFSCatalogueStore – addSetPiece (procedural / composite)', () => {

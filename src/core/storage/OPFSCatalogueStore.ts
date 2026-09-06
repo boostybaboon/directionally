@@ -238,6 +238,7 @@ export async function update(
   id: string,
   blob: Blob,
   label?: string,
+  meta?: { environmentId?: string; lights?: LightConfig[] },
 ): Promise<UserCatalogueEntry | null> {
   const dir = await _getDir();
   const stored = await readMeta(dir);
@@ -249,7 +250,14 @@ export async function update(
   await writable.write(blob);
   await writable.close();
 
-  if (label !== undefined) stored[idx] = { ...stored[idx], label };
+  if (label !== undefined || meta) {
+    stored[idx] = {
+      ...stored[idx],
+      ...(label !== undefined ? { label } : {}),
+      ...(meta && 'environmentId' in meta ? { environmentId: meta.environmentId } : {}),
+      ...(meta && 'lights' in meta ? { lights: meta.lights } : {}),
+    };
+  }
   await writeMeta(dir, stored);
 
   return toUserEntry(stored[idx], URL.createObjectURL(blob));

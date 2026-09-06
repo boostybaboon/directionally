@@ -310,9 +310,15 @@
       savedAssemblies = await SketcherAssemblyStore.list();
       // Allow deep-linking to a specific assembly via ?assemblyId=<id> (e.g. "Edit in Sketcher").
       // CAT-4: ?prefillName starts a fresh, pre-named assembly instead of restoring.
+      // N11: if a same-named assembly already exists, resume it instead of minting
+      // a duplicate every time the script view's "Create →" is clicked.
       const prefill = new URLSearchParams(window.location.search).get('prefillName');
       const urlAssemblyId = new URLSearchParams(window.location.search).get('assemblyId');
-      const lastId = prefill ? null : (urlAssemblyId ?? localStorage.getItem('sketcher-assembly-id'));
+      const prefillTrimmed = (prefill ?? '').trim().toLowerCase();
+      const nameMatch = prefillTrimmed
+        ? savedAssemblies.find((a) => a.name.trim().toLowerCase() === prefillTrimmed)
+        : undefined;
+      const lastId = urlAssemblyId ?? nameMatch?.id ?? (prefill ? null : localStorage.getItem('sketcher-assembly-id'));
     if (lastId) {
       const draft = await SketcherAssemblyStore.get(lastId);
       const meta = savedAssemblies.find((a) => a.id === lastId);
@@ -1274,6 +1280,12 @@
     statusMessage = `Added ${entry.label}.`;
   }
 
+  async function handleCatalogueDelete(id: string) {
+    await OPFSCatalogueStore.remove(id);
+    userCatalogueEntries = await OPFSCatalogueStore.list();
+    new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
+  }
+
   async function handleApplyEnvironment(environmentId: string | undefined) {
     if (!renderer || !scene) return;
     if (!environmentId) {
@@ -1509,6 +1521,22 @@
     savedAssemblies = await SketcherAssemblyStore.list();
   }
 
+  async function saveAssemblyAs() {
+    const newName = window.prompt('Save a copy of this assembly as:', `${assemblyName} copy`);
+    if (newName === null) return;
+    const trimmed = newName.trim() || 'Untitled copy';
+    // Snapshot the current draft and write it to a NEW assembly entry, so the
+    // copy can be edited independently without touching the original. The
+    // current session stays as-is; only the id/name switch to the copy.
+    const draft = sketcher.toDraft();
+    const meta = await SketcherAssemblyStore.create(trimmed, draft);
+    currentAssemblyId = meta.id;
+    assemblyName = meta.name;
+    localStorage.setItem('sketcher-assembly-id', meta.id);
+    savedAssemblies = await SketcherAssemblyStore.list();
+    statusMessage = `Saved copy as "${meta.name}".`;
+  }
+
   // ── Group edit mode ──────────────────────────────────────────────────────────
 
   function applyGroupDimming(ag: import('../../core/sketcher/types.js').AssemblyGroup, activeMesh: THREE.Mesh) {
@@ -1669,15 +1697,30 @@
     selection?.deselect();
     const { blob } = await exportGLB(session);
     const label = assemblyName.trim() || 'Untitled';
-
     // Whole-scene save: capture the baseline lighting + environment alongside
     // the baked geometry so the entry resolves as a fully-lit setting.
-    await OPFSCatalogueStore.add(blob, {
-      kind: 'set-piece',
-      label,
-      ...(session.environmentMap ? { environmentId: session.environmentMap } : {}),
-      ...(session.lights.length > 0 ? { lights: [...session.lights] } : {}),
-    });
+    const meta = {
+      environmentId: session.environmentMap,
+      lights: session.lights.length > 0 ? [...session.lights] : undefined,
+    };
+
+    // Re-save path: update the existing catalogue entry in place (mirrors
+    // exportToCatalogue) so repeated "Save as Setting" never duplicates.
+    if (currentAssemblyId) {
+      const existing = await OPFSCatalogueStore.findByAssemblyId(currentAssemblyId);
+      if (existing) {
+        await OPFSCatalogueStore.update(existing.id, blob, label, meta);
+        new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
+        statusMessage = `Updated setting "${label}" in catalogue.`;
+        return;
+      }
+    }
+
+    await OPFSCatalogueStore.add(
+      blob,
+      { kind: 'set-piece', label, ...(meta.environmentId ? { environmentId: meta.environmentId } : {}), ...(meta.lights ? { lights: meta.lights } : {}) },
+      currentAssemblyId ?? undefined,
+    );
     new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
     statusMessage = `Saved setting "${label}" to catalogue.`;
   }
@@ -1697,6 +1740,7 @@
         placeholder="Untitled"
       />
       <button onclick={newAssembly} title="New assembly">New</button>
+      <button onclick={saveAssemblyAs} title="Save a copy of this assembly under a new name">Save As…</button>
       <button class:active={showOpenPanel} onclick={() => { showOpenPanel = !showOpenPanel; }} title="Open saved assembly">Open…</button>
     </div>
     <div class="actions">
@@ -1770,6 +1814,7 @@
         userEntries={userCatalogueEntries}
         onadd={handleCatalogueAdd}
         onapplyenvironment={handleApplyEnvironment}
+        ondelete={handleCatalogueDelete}
         activeEnvironmentId={activeEnvironmentId}
       />
     </aside>

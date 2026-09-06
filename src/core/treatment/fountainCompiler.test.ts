@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { renderFountain, createDefaultScriptDocument } from './fountain';
-import { compileScriptDocument } from './fountainCompiler';
+import { compileScriptDocument, resolveSetting } from './fountainCompiler';
 import type { ScriptDocument, Beat, ActionBeat, StageSide, StageMark } from './fountain';
 import type { CatalogueEntry } from '../catalogue/types.js';
 
@@ -403,6 +403,34 @@ describe('compileScriptDocument', () => {
     const settingDiag = result.diagnostics.find((d) => d.kind === 'unresolved-setting');
     expect(settingDiag).toBeDefined();
     expect(settingDiag?.name).toBe('CLASSROOM');
+  });
+});
+
+describe('resolveSetting (last-export-wins)', () => {
+  const userGarden = (id: string, addedAt: number): CatalogueEntry & { userAdded: true; addedAt: number } => ({
+    kind: 'set-piece',
+    id,
+    label: 'GARDEN',
+    geometry: { type: 'box', width: 1, height: 1, depth: 1 },
+    material: { color: 0x11aa22 },
+    userAdded: true as const,
+    addedAt,
+  });
+
+  it('picks the most recently added user entry when labels collide', () => {
+    const older = userGarden('garden-old', 1000);
+    const newer = userGarden('garden-new', 2000);
+    const resolved = resolveSetting('GARDEN', [older, newer]);
+    expect(resolved.kind).toBe('set-piece');
+    if (resolved.kind === 'set-piece') expect(resolved.entry.id).toBe('garden-new');
+  });
+
+  it('an explicit binding still overrides last-export-wins', () => {
+    const older = userGarden('garden-old', 1000);
+    const newer = userGarden('garden-new', 2000);
+    const resolved = resolveSetting('GARDEN', [older, newer], { GARDEN: 'garden-old' });
+    expect(resolved.kind).toBe('set-piece');
+    if (resolved.kind === 'set-piece') expect(resolved.entry.id).toBe('garden-old');
   });
 });
 

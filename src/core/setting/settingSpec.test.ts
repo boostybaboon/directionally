@@ -170,6 +170,17 @@ describe('resolveProp / resolveEnvironment', () => {
     expect(resolveEnvironment('studio-neutral', fixture)?.id).toBe('studio-neutral');
     expect(resolveProp('missing', fixture)).toBeUndefined();
   });
+
+  it('prefers the most-recently-added user entry when labels collide', () => {
+    const older = { ...box, id: 'garden-old', label: 'Garden', userAdded: true as const, addedAt: 1000 } as CatalogueEntry;
+    const newer = { ...box, id: 'garden-new', label: 'Garden', userAdded: true as const, addedAt: 2000 } as CatalogueEntry;
+    expect(resolveProp('Garden', [older, newer])?.id).toBe('garden-new');
+    expect(resolveProp('Garden', [newer, older])?.id).toBe('garden-new');
+  });
+
+  it('falls back to the bundled entry when no user entry matches the label', () => {
+    expect(resolveProp('box', fixture)?.id).toBe('box');
+  });
 });
 
 describe('CATALOGUE_ENTRIES composite seeds', () => {

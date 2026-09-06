@@ -8,7 +8,7 @@
 
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
 import { getCharacters, getEnvironments, getSetPieces } from '../catalogue/catalogue.js';
-import { expandEntry } from '../setting/settingSpec.js';
+import { expandEntry, mostRecentByLabel } from '../setting/settingSpec.js';
 import { estimateDuration, starterSceneShell } from '../storage/sceneBuilder.js';
 import type { StoredActor, NamedScene } from '../storage/types.js';
 import type { CatalogueEntry, EnvironmentEntry, SetPieceEntry } from '../catalogue/types.js';
@@ -56,7 +56,7 @@ function homeSide(i: number): StageSide {
 
 // ── Setting resolution ───────────────────────────────────────────────────────
 
-type SettingResolution =
+export type SettingResolution =
   | { kind: 'set-piece'; entry: SetPieceEntry }
   | { kind: 'environment'; entry: EnvironmentEntry }
   | { kind: 'placeholder'; label?: string };
@@ -67,7 +67,7 @@ type SettingResolution =
  * Case-insensitive label match, mirroring resolveCastName. Falls back to a
  * labelled placeholder room; never throws, never blocks.
  */
-function resolveSetting(
+export function resolveSetting(
   setting: string | undefined,
   userEntries: CatalogueEntry[],
   settingBindings?: Record<string, string>,
@@ -82,11 +82,10 @@ function resolveSetting(
     if (entry?.kind === 'environment') return { kind: 'environment', entry };
   }
 
-  const normalised = label.toLowerCase();
   const merged = [...CATALOGUE_ENTRIES, ...userEntries];
-  const setPiece = getSetPieces(merged).find((e) => e.label.trim().toLowerCase() === normalised);
+  const setPiece = mostRecentByLabel(getSetPieces(merged), label);
   if (setPiece) return { kind: 'set-piece', entry: setPiece };
-  const environment = getEnvironments(merged).find((e) => e.label.trim().toLowerCase() === normalised);
+  const environment = mostRecentByLabel(getEnvironments(merged), label);
   if (environment) return { kind: 'environment', entry: environment };
   return { kind: 'placeholder', label };
 }
@@ -146,8 +145,7 @@ function resolveCastName(
     }
   }
   const allCharacters = getCharacters([...CATALOGUE_ENTRIES, ...userEntries]);
-  const normalised = name.trim().toLowerCase();
-  const match = allCharacters.find((c) => c.label.trim().toLowerCase() === normalised);
+  const match = mostRecentByLabel(allCharacters, name);
   if (match) return { catalogueId: match.id };
   return { catalogueId: PLACEHOLDER_CATALOGUE_ID, placeholder: true };
 }

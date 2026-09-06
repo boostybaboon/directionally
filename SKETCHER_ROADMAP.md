@@ -116,6 +116,30 @@ These are real, named requirements from the design docs — not gaps discovered 
 
 ---
 
+## N11 — Catalogue hygiene / duplicate-setting UI snags
+
+Surfaced from a real authoring session: typing `#EXT GARDEN DAY`, using "Create →" to jump to the Sketcher, building a tree, exporting, and finding (a) the production still showed an older placeholder tree, (b) four duplicate GARDEN entries had accumulated in the catalogue with no way to remove them, and (c) a GARDEN catalogue item couldn't be inserted into a new GARDEN2 session. Root causes traced to specific code, not flakiness — see below.
+
+**Root causes:**
+- Label-match resolution (`resolveSetting` in `fountainCompiler.ts`) does `.find()` over `[...CATALOGUE_ENTRIES, ...userEntries]`, so with duplicate labels it silently binds to the **oldest** matching entry, not the most recent export. `settingBindings` can override this but nothing surfaces that duplicates exist or which entry won.
+- `CataloguePanel.svelte` set-piece/character rows have no delete affordance — `OPFSCatalogueStore.remove()` exists but nothing in the UI calls it, so duplicates can never be cleaned up.
+- `handleCreateAsset` (`+page.svelte`) always does `window.open('/sketch?prefillName=…')` with no `assemblyId` — not idempotent. Every "Create →" click (or retry) mints a brand-new blank assembly, which becomes a brand-new catalogue entry on export — the actual source of the duplicate GARDENs.
+- The N4 `saveAsSetting()` always calls `OPFSCatalogueStore.add()` unconditionally, unlike `exportToCatalogue()`, which checks `findByAssemblyId` first and updates in place on re-save — a fresh duplicate-source introduced by N4 itself.
+- `CartoonSketcher.insertCatalogueEntry()` skips GLB-backed pieces (`if (piece.gltfPath) continue`), so a GLB-baked GARDEN can't be inserted into a GARDEN2 session. **Decided out of scope for N11**: this is legitimately N4 (promote-selection)/N5 (Edit Source)/N7 (per-scene dressing overrides)'s job, not a bug to patch around — introducing a schema workaround now (e.g. a `custom` GeometryConfig kind to shoehorn arbitrary Sketcher meshes into `compose`) would fork the design ahead of that already-planned work. The interim workaround is manual: "Save As" a copy and customize independently (see below), or wait for N4/N5/N7.
+
+**Planned fix:**
+1. Fix `saveAsSetting()` to update-in-place via `findByAssemblyId`, matching `exportToCatalogue()` — stop the newest duplicate-source.
+2. Change label-match resolution (`fountainCompiler.ts` `resolveSetting`, and the analogous cast-name path) to prefer the most-recently-added matching entry (sort by `addedAt` descending) instead of the first/oldest.
+3. Add a delete ("✕") action to `CataloguePanel.svelte`'s set-piece and character rows, wired to `OPFSCatalogueStore.remove()` + the `catalogue-updated` broadcast.
+4. Make "Create →" (`handleCreateAsset`) idempotent: check `SketcherAssemblyStore.list()` for an existing name match before opening a blank `/sketch?prefillName=`; deep-link to the existing one via `?assemblyId=` instead.
+5. Add a "resolved via" indicator near the diagnostics/scene heading showing which catalogue entry id a scene's setting resolved to (and how many other same-label entries exist), making duplicates visible and `settingBindings` discoverable instead of invisible.
+6. Add a Sketcher **"Save As…"** toolbar action: duplicate the current draft (parts/joints/groups/lights/environment) into a *new* `SketcherAssemblyStore` entry under a new name, switching `currentAssemblyId` to the copy. This is the sanctioned "base scene → customized copy" workaround until N4/N5/N7 land — not a substitute for them.
+7. Tests: `OPFSCatalogueStore` (remove + any extracted resolution-order helper), `fountainCompiler`/`settingSpec` last-export-wins resolution, `SketcherAssemblyStore`/`+page.svelte` Save As behavior, `CataloguePanel` delete action.
+
+Explicitly **not** in scope for N11: `GeometryConfig` schema changes, GLB-into-Sketcher reuse, or anything that pre-empts N4 (promote selection)/N5 (Edit Source)/N6 (overrides)/N7 (per-scene dressing) — those remain the correct home for "reuse a set inside another set".
+
+---
+
 ## Phase SA14a — Multi-select and Group/Ungroup ✅ COMPLETE
 
 Users frequently position several parts visually then want to treat them as one rigid unit for transport, scaling, and export. Group achieves this without face-snap math — it captures current world transforms only.

@@ -93,28 +93,43 @@ function normalize(s: string): string {
   return s.trim().toLowerCase();
 }
 
+/**
+ * Pick the most-recently-added user-authored entry whose label matches `label`,
+ * falling back to the first bundled entry only when no user entry matches.
+ * Without this, duplicate user labels (e.g. re-exported "GARDEN") resolve to the
+ * oldest entry, silently binding a scene to stale geometry.
+ */
+export function mostRecentByLabel<T extends CatalogueEntry>(
+  matches: T[],
+  label: string,
+): T | undefined {
+  const target = normalize(label);
+  const userMatches = matches.filter((e) => 'addedAt' in e && normalize(e.label) === target) as Array<T & { addedAt: number }>;
+  if (userMatches.length > 0) {
+    return userMatches.sort((a, b) => b.addedAt - a.addedAt)[0] as T;
+  }
+  return matches.find((e) => normalize(e.label) === target);
+}
+
 /** Resolve a prop ref to a catalogue SetPieceEntry (id, then case-insensitive label). */
 export function resolveProp(ref: string, entries: CatalogueEntry[] = CATALOGUE_ENTRIES): SetPieceEntry | undefined {
   const byId = getById(ref, entries);
   if (byId?.kind === 'set-piece') return byId;
-  const target = normalize(ref);
-  return getSetPieces(entries).find((e) => normalize(e.label) === target);
+  return mostRecentByLabel(getSetPieces(entries), ref);
 }
 
 /** Resolve an environment label to a catalogue EnvironmentEntry. */
 export function resolveEnvironment(label: string, entries: CatalogueEntry[] = CATALOGUE_ENTRIES): EnvironmentEntry | undefined {
   const byId = getById(label, entries);
   if (byId?.kind === 'environment') return byId;
-  const target = normalize(label);
-  return getEnvironments(entries).find((e) => normalize(e.label) === target);
+  return mostRecentByLabel(getEnvironments(entries), label);
 }
 
 /** Resolve a light ref to a catalogue LightEntry. */
 export function resolveLight(ref: string, entries: CatalogueEntry[] = CATALOGUE_ENTRIES): LightEntry | undefined {
   const byId = getById(ref, entries);
   if (byId?.kind === 'light') return byId;
-  const target = normalize(ref);
-  return getLights(entries).find((e) => normalize(e.label) === target);
+  return mostRecentByLabel(getLights(entries), ref);
 }
 
 /** Normalise a spec to concrete values with defaults for every missing field. */

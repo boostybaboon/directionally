@@ -8,6 +8,7 @@
   import { storedSceneToModel } from '../core/storage/storedSceneToModel.js';
   import { starterSceneShell } from '../core/storage/sceneBuilder.js';
   import * as OPFSCatalogueStore from '../core/storage/OPFSCatalogueStore.js';
+  import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
 
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import { getScenes } from '../core/storage/types.js';
@@ -15,7 +16,7 @@
   import type { ActorBlock } from '../core/domain/types.js';
   import { renderFountain, createDefaultScriptDocument } from '../core/treatment/fountain.js';
   import type { Diagnostic, ScriptDocument } from '../core/treatment/fountain.js';
-  import { compileScriptDocument } from '../core/treatment/fountainCompiler.js';
+  import { compileScriptDocument, resolveSetting } from '../core/treatment/fountainCompiler.js';
   import { tokenizeScript, renderScript, sceneIndexForLine } from '../core/treatment/sigilScript.js';
   import SigilTextarea from '$lib/script/SigilTextarea.svelte';
 
@@ -84,6 +85,20 @@
 
   // The scene the caret is currently in — derived from its 1-based line.
   const focusedSceneIndex = $derived(sceneIndexForLine(sceneStartLines, caretLine));
+
+  // Which catalogue entry the focused scene's setting resolves to, plus how many
+  // other user entries share its label — surfaces ambiguity when duplicates exist.
+  const focusedSettingResolution = $derived<{ id: string; label: string; kind: 'set-piece' | 'environment'; sameLabel: number } | null>(
+    (() => {
+      const setting = scriptDoc.scenes[focusedSceneIndex]?.setting;
+      const merged = [...CATALOGUE_ENTRIES, ...userCatalogueEntries];
+      const resolved = resolveSetting(setting, userCatalogueEntries, settingBindings);
+      if (resolved.kind === 'placeholder') return null;
+      const label = resolved.entry.label.trim().toLowerCase();
+      const sameLabel = merged.filter((e) => e.kind !== 'character' && e.label.trim().toLowerCase() === label).length;
+      return { id: resolved.entry.id, label: resolved.entry.label, kind: resolved.kind, sameLabel };
+    })(),
+  );
   const compiledActorBlocks = $derived<{ block: ActorBlock; index: number }[]>(
     (compiledScene?.blocks ?? [])
       .map((b, i) => ({ block: b, index: i }))
@@ -261,6 +276,13 @@
     scheduleCompile();
   }
 
+  async function handleCatalogueDelete(id: string) {
+    await OPFSCatalogueStore.remove(id);
+    userCatalogueEntries = await OPFSCatalogueStore.list();
+    new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
+    scheduleCompile();
+  }
+
   function handleApplyEnvironment(environmentId: string | undefined) {
     if (!currentProduction) return;
     const settingName = scriptDoc.scenes[focusedSceneIndex]?.setting;
@@ -415,6 +437,16 @@
           <pre class="fountain-pre">{fountainSource}</pre>
         </details>
 
+        {#if focusedSettingResolution}
+          <div class="setting-resolution" class:setting-resolution-ambiguous={focusedSettingResolution.sameLabel > 1}>
+            {focusedSettingResolution.kind === 'environment' ? 'Environment' : 'Set'} →
+            “{focusedSettingResolution.label}”
+            {#if focusedSettingResolution.sameLabel > 1}
+              <span class="setting-resolution-warn">({focusedSettingResolution.sameLabel} catalogue entries share this name — picking the most recent)</span>
+            {/if}
+          </div>
+        {/if}
+
         {#if diagnostics.length > 0}
           <ul class="diagnostics">
             {#each diagnostics as d}
@@ -433,6 +465,7 @@
             userEntries={userCatalogueEntries}
             onadd={handleCatalogueAdd}
             onapplyenvironment={handleApplyEnvironment}
+            ondelete={handleCatalogueDelete}
             activeEnvironmentId={compiledScene?.environmentMap}
           />
         </div>
@@ -828,6 +861,26 @@
     color: #bbb;
     border-top: 1px solid #2a2a2a;
     background: #111;
+  }
+
+  .setting-resolution {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 6px 12px;
+    font-size: 11px;
+    color: #77a9ff;
+    border-top: 1px solid #2a2a2a;
+    background: #101820;
+  }
+
+  .setting-resolution-ambiguous {
+    color: #ffd27a;
+    background: #1c1810;
+  }
+
+  .setting-resolution-warn {
+    margin-left: 6px;
+    font-style: italic;
   }
 
   .diagnostics .err {
