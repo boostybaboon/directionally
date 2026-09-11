@@ -1,4 +1,5 @@
 import type { GeometryConfig, LightConfig, MaterialConfig, PlacedProp, Vec3 } from '../domain/types.js';
+import type { CharacterSpec } from '../character/characterSpec.js';
 
 export type CatalogueKind = 'character' | 'set-piece' | 'light' | 'environment';
 
@@ -6,8 +7,17 @@ export interface CharacterEntry {
   kind: 'character';
   id: string;
   label: string;
-  /** URL passed to the GLTF loader, e.g. '/models/gltf/RobotExpressive.glb' */
-  gltfPath: string;
+  /**
+   * URL passed to the GLTF loader, e.g. '/models/gltf/RobotExpressive.glb'.
+   * Absent for spec-backed characters, which carry `spec` and are rebuilt
+   * procedurally at scene load (ROADMAP_API.md API-2).
+   */
+  gltfPath?: string;
+  /**
+   * High-level character description (`CharacterSpec`). When present, the
+   * character is built from this spec at scene load rather than from a GLB.
+   */
+  spec?: CharacterSpec;
   /** Clip name to use for the idle/standing pose in scene authoring. */
   defaultAnimation?: string;
   /**
@@ -41,6 +51,12 @@ export interface SetPieceEntry {
   environmentId?: string;
   /** Optional lights applied when this entry is used as a setting. */
   lights?: LightConfig[];
+  /**
+   * Marks this set-piece as a top-level setting (a venue, e.g. "classroom")
+   * rather than a component (a prop, e.g. "chair"). When absent, `isSettingEntry`
+   * infers top-level status from `environmentId`/`lights` (captured on "save as setting").
+   */
+  isSetting?: boolean;
   /**
    * Euler XYZ rotation (radians) applied to the SetPiece on first placement.
    * Use this to correct geometry whose default orientation differs from the scene

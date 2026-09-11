@@ -94,6 +94,24 @@ function normalize(s: string): string {
 }
 
 /**
+ * All entries whose label matches `label`, ordered by resolution preference:
+ * user-authored entries (most recently added first), then bundled entries in
+ * catalogue order. `mostRecentByLabel` is the first element of this list.
+ */
+export function matchesByLabel<T extends CatalogueEntry>(
+  matches: T[],
+  label: string,
+): T[] {
+  const target = normalize(label);
+  const userMatches = matches.filter((e) => 'addedAt' in e && normalize(e.label) === target) as Array<T & { addedAt: number }>;
+  const bundledMatches = matches.filter((e) => !('addedAt' in e) && normalize(e.label) === target);
+  return [
+    ...userMatches.sort((a, b) => b.addedAt - a.addedAt),
+    ...bundledMatches,
+  ];
+}
+
+/**
  * Pick the most-recently-added user-authored entry whose label matches `label`,
  * falling back to the first bundled entry only when no user entry matches.
  * Without this, duplicate user labels (e.g. re-exported "GARDEN") resolve to the
@@ -103,12 +121,7 @@ export function mostRecentByLabel<T extends CatalogueEntry>(
   matches: T[],
   label: string,
 ): T | undefined {
-  const target = normalize(label);
-  const userMatches = matches.filter((e) => 'addedAt' in e && normalize(e.label) === target) as Array<T & { addedAt: number }>;
-  if (userMatches.length > 0) {
-    return userMatches.sort((a, b) => b.addedAt - a.addedAt)[0] as T;
-  }
-  return matches.find((e) => normalize(e.label) === target);
+  return matchesByLabel(matches, label)[0];
 }
 
 /** Resolve a prop ref to a catalogue SetPieceEntry (id, then case-insensitive label). */

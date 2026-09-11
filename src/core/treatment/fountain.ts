@@ -15,7 +15,7 @@ export type Diagnostic = {
   level: 'error' | 'warning' | 'info';
   message: string;
   /** Structured hint for actionable diagnostics (Track CAT, CAT-4 "Create →"). */
-  kind?: 'unresolved-cast' | 'unresolved-setting';
+  kind?: 'unresolved-cast' | 'unresolved-setting' | 'ambiguous-cast' | 'ambiguous-setting';
   /** The typed name this diagnostic refers to. */
   name?: string;
 };

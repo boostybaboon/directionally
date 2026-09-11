@@ -1702,6 +1702,7 @@
     const meta = {
       environmentId: session.environmentMap,
       lights: session.lights.length > 0 ? [...session.lights] : undefined,
+      isSetting: true,
     };
 
     // Re-save path: update the existing catalogue entry in place (mirrors
@@ -1718,7 +1719,7 @@
 
     await OPFSCatalogueStore.add(
       blob,
-      { kind: 'set-piece', label, ...(meta.environmentId ? { environmentId: meta.environmentId } : {}), ...(meta.lights ? { lights: meta.lights } : {}) },
+      { kind: 'set-piece', label, isSetting: true, ...(meta.environmentId ? { environmentId: meta.environmentId } : {}), ...(meta.lights ? { lights: meta.lights } : {}) },
       currentAssemblyId ?? undefined,
     );
     new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });

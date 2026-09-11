@@ -5,7 +5,7 @@
   import TimelinePanel from '$lib/TimelinePanel.svelte';
   import CataloguePanel from '$lib/CataloguePanel.svelte';
   import type { VoiceBackend } from '$lib/types.js';
-  import { storedSceneToModel } from '../core/storage/storedSceneToModel.js';
+  import { storedSceneToModelAsync } from '../core/storage/storedSceneToModel.js';
   import { starterSceneShell } from '../core/storage/sceneBuilder.js';
   import * as OPFSCatalogueStore from '../core/storage/OPFSCatalogueStore.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
@@ -17,8 +17,10 @@
   import { renderFountain, createDefaultScriptDocument } from '../core/treatment/fountain.js';
   import type { Diagnostic, ScriptDocument } from '../core/treatment/fountain.js';
   import { compileScriptDocument, resolveSetting } from '../core/treatment/fountainCompiler.js';
-  import { tokenizeScript, renderScript, sceneIndexForLine } from '../core/treatment/sigilScript.js';
+  import { tokenizeScript, renderScript, sceneIndexForLine, retypeAlias } from '../core/treatment/sigilScript.js';
   import SigilTextarea from '$lib/script/SigilTextarea.svelte';
+  import RosterPanel from '$lib/script/RosterPanel.svelte';
+  import { generateAsset } from '$lib/agentClient.js';
 
 
   /**
@@ -53,10 +55,11 @@
   let castBindings = $state<Record<string, string>>({});
   let settingBindings = $state<Record<string, string>>({});
   let selectedCastName = $state<string | null>(null);
-  let leftTab = $state<'script' | 'catalogue'>('script');
+  let leftTab = $state<'script' | 'catalogue' | 'roster'>('script');
   let fountainSource = $derived(renderFountain(scriptDoc));
   let diagnostics = $state<Diagnostic[]>([]);
   let statusMessage = $state('');
+  let generating = $state(false);
   let compileTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Transport state — bound to Presenter and TransportBar
@@ -85,6 +88,19 @@
 
   // The scene the caret is currently in — derived from its 1-based line.
   const focusedSceneIndex = $derived(sceneIndexForLine(sceneStartLines, caretLine));
+
+  // Unique settings across all scenes, in first-appearance order, for the Roster.
+  const rosterSettings = $derived<string[]>(
+    (() => {
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const scene of scriptDoc.scenes) {
+        const s = (scene.setting ?? '').trim().toUpperCase();
+        if (s && !seen.has(s)) { seen.add(s); out.push(s); }
+      }
+      return out;
+    })(),
+  );
 
   // Which catalogue entry the focused scene's setting resolves to, plus how many
   // other user entries share its label — surfaces ambiguity when duplicates exist.
@@ -192,6 +208,15 @@
 
     diagnostics = compiled.diagnostics;
 
+    // Snapshot unique auto-matches into durable bindings (discovery → commitment)
+    // so a later same-label catalogue addition can't silently re-route the name.
+    if (Object.keys(compiled.resolvedBindings.cast).length > 0) {
+      castBindings = { ...castBindings, ...compiled.resolvedBindings.cast };
+    }
+    if (Object.keys(compiled.resolvedBindings.setting).length > 0) {
+      settingBindings = { ...settingBindings, ...compiled.resolvedBindings.setting };
+    }
+
     if (compiled.scenes.length === 0) {
       statusMessage = 'No scenes found in script.';
       return;
@@ -224,7 +249,7 @@
    * caret hasn't changed scene (used after a compile); otherwise a same-scene
    * caret move is a no-op.
    */
-  function renderFocusedScene(opts: { seek: boolean; force: boolean }) {
+  async function renderFocusedScene(opts: { seek: boolean; force: boolean }) {
     if (!currentProduction) return;
     const scenes = getScenes(currentProduction.tree ?? []);
     if (scenes.length === 0) return;
@@ -232,10 +257,8 @@
     const scene = scenes[idx];
     if (!opts.force && scene.id === currentSceneId) return;
     currentSceneId = scene.id;
-    presenter?.loadModel(
-      storedSceneToModel(scene.scene, currentProduction.actors ?? [], userCatalogueEntries),
-      opts.seek ? 0 : undefined,
-    );
+    const model = await storedSceneToModelAsync(scene.scene, currentProduction.actors ?? [], userCatalogueEntries);
+    presenter?.loadModel(model, opts.seek ? 0 : undefined);
   }
 
   function handleCaretMove(line: number) {
@@ -311,6 +334,79 @@
     }
   }
 
+  // Roster actions: bind a name to a catalogue entry (or clear the binding), and
+  // open the authoring tool pre-seeded with a name that has no catalogue match.
+  function handleRosterRebind(kind: 'cast' | 'setting', name: string, catalogueId: string | null) {
+    const key = name.toUpperCase();
+    if (kind === 'cast') {
+      const next = { ...castBindings };
+      if (catalogueId) next[key] = catalogueId; else delete next[key];
+      castBindings = next;
+    } else {
+      const next = { ...settingBindings };
+      if (catalogueId) next[key] = catalogueId; else delete next[key];
+      settingBindings = next;
+    }
+    scheduleCompile();
+  }
+
+  function handleRosterRename(kind: 'cast' | 'setting', oldName: string, newName: string) {
+    const oldKey = oldName.toUpperCase();
+    const newKey = newName.trim().toUpperCase();
+    if (!newKey || newKey === oldKey) return;
+
+    // Retype the alias in the buffer (sigil tokens only, prose untouched).
+    loadSigilText(retypeAlias(sigilText, oldKey, newKey, kind));
+
+    // Rekey the binding so the same catalogue asset stays attached.
+    if (kind === 'cast') {
+      const next = { ...castBindings };
+      if (next[oldKey]) { next[newKey] = next[oldKey]; delete next[oldKey]; }
+      castBindings = next;
+    } else {
+      const next = { ...settingBindings };
+      if (next[oldKey]) { next[newKey] = next[oldKey]; delete next[oldKey]; }
+      settingBindings = next;
+    }
+    scheduleCompile();
+  }
+
+  function handleRosterCreate(kind: 'cast' | 'setting', name: string) {
+    if (kind === 'cast') {
+      window.open(`/character?prefillName=${encodeURIComponent(name)}`, '_blank');
+    } else {
+      window.open(`/sketch?prefillName=${encodeURIComponent(name)}`, '_blank');
+    }
+  }
+
+  // AI-assisted creation: run the server LLM step, then persist + bind the
+  // document via the core `make` verb (same create-or-resume + bind path).
+  async function handleRosterGenerate(kind: 'cast' | 'setting', name: string) {
+    if (!currentProduction || generating) return;
+    generating = true;
+    statusMessage = `Generating ${name}…`;
+    try {
+      const assetKind = kind === 'cast' ? 'character' : 'setting';
+      const result = await generateAsset(assetKind, name, name, {
+        userEntries: userCatalogueEntries,
+        castBindings,
+        settingBindings,
+      });
+      castBindings = result.castBindings;
+      settingBindings = result.settingBindings;
+      userCatalogueEntries = await OPFSCatalogueStore.list();
+      new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
+      scheduleCompile();
+      statusMessage = result.created
+        ? `Generated & bound "${result.entry.label}".`
+        : `Reused "${result.entry.label}".`;
+    } catch (err) {
+      statusMessage = `Generation failed: ${err instanceof Error ? err.message : String(err)}`;
+    } finally {
+      generating = false;
+    }
+  }
+
   function scheduleCompile() {
     if (compileTimer !== null) clearTimeout(compileTimer);
     compileTimer = setTimeout(() => {
@@ -343,7 +439,7 @@
       currentProduction = null;
       currentSceneId = '';
       loadSigilText('');
-      presenter?.loadModel(storedSceneToModel(starterSceneShell(), []), 0);
+      presenter?.loadModel(await storedSceneToModelAsync(starterSceneShell(), []), 0);
     }
   }
 </script>
@@ -401,6 +497,7 @@
     <div class="script-pane">
       <div class="script-tabs">
         <button class:active={leftTab === 'script'} onclick={() => (leftTab = 'script')}>Script</button>
+        <button class:active={leftTab === 'roster'} onclick={() => (leftTab = 'roster')}>Roster</button>
         <button class:active={leftTab === 'catalogue'} onclick={() => (leftTab = 'catalogue')}>Catalogue</button>
       </div>
 
@@ -459,7 +556,7 @@
             {/each}
           </ul>
         {/if}
-      {:else}
+      {:else if leftTab === 'catalogue'}
         <div class="catalogue-wrap">
           <CataloguePanel
             userEntries={userCatalogueEntries}
@@ -469,6 +566,19 @@
             activeEnvironmentId={compiledScene?.environmentMap}
           />
         </div>
+      {:else}
+        <RosterPanel
+          cast={scriptDoc.cast}
+          settings={rosterSettings}
+          castBindings={castBindings}
+          settingBindings={settingBindings}
+          userEntries={userCatalogueEntries}
+          onrebind={handleRosterRebind}
+          onrename={handleRosterRename}
+          oncreate={handleRosterCreate}
+          ongenerate={handleRosterGenerate}
+          generating={generating}
+        />
       {/if}
     </div>
 

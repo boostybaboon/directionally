@@ -8,7 +8,7 @@
 
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
 import { getCharacters, getEnvironments, getSetPieces } from '../catalogue/catalogue.js';
-import { expandEntry, mostRecentByLabel } from '../setting/settingSpec.js';
+import { expandEntry, matchesByLabel } from '../setting/settingSpec.js';
 import { estimateDuration, starterSceneShell } from '../storage/sceneBuilder.js';
 import type { StoredActor, NamedScene } from '../storage/types.js';
 import type { CatalogueEntry, EnvironmentEntry, SetPieceEntry } from '../catalogue/types.js';
@@ -57,15 +57,16 @@ function homeSide(i: number): StageSide {
 // ── Setting resolution ───────────────────────────────────────────────────────
 
 export type SettingResolution =
-  | { kind: 'set-piece'; entry: SetPieceEntry }
-  | { kind: 'environment'; entry: EnvironmentEntry }
-  | { kind: 'placeholder'; label?: string };
+  | { kind: 'set-piece'; entry: SetPieceEntry; bound?: boolean; sameLabel?: number }
+  | { kind: 'environment'; entry: EnvironmentEntry; bound?: boolean; sameLabel?: number }
+  | { kind: 'placeholder'; label?: string; sameLabel?: number };
 
 /**
  * Resolves a scene heading's `setting` against the merged catalogue (bundled +
- * user-authored OPFS entries) — SetPieceEntry first, then EnvironmentEntry.
- * Case-insensitive label match, mirroring resolveCastName. Falls back to a
- * labelled placeholder room; never throws, never blocks.
+ * user-authored OPFS entries). Case-insensitive label match, mirroring
+ * resolveCastName. A unique match resolves to that set-piece or environment; an
+ * ambiguous name (≥2 matches) or no match falls back to a labelled placeholder
+ * room and reports the match count via `sameLabel`. Never throws, never blocks.
  */
 export function resolveSetting(
   setting: string | undefined,
@@ -75,19 +76,22 @@ export function resolveSetting(
   const label = (setting ?? '').trim();
   if (!label) return { kind: 'placeholder' };
 
+  const merged = [...CATALOGUE_ENTRIES, ...userEntries];
   const bound = settingBindings?.[label.toUpperCase()];
   if (bound) {
-    const entry = [...CATALOGUE_ENTRIES, ...userEntries].find((e) => e.id === bound);
-    if (entry?.kind === 'set-piece') return { kind: 'set-piece', entry };
-    if (entry?.kind === 'environment') return { kind: 'environment', entry };
+    const entry = merged.find((e) => e.id === bound);
+    if (entry?.kind === 'set-piece') return { kind: 'set-piece', entry, bound: true };
+    if (entry?.kind === 'environment') return { kind: 'environment', entry, bound: true };
   }
 
-  const merged = [...CATALOGUE_ENTRIES, ...userEntries];
-  const setPiece = mostRecentByLabel(getSetPieces(merged), label);
-  if (setPiece) return { kind: 'set-piece', entry: setPiece };
-  const environment = mostRecentByLabel(getEnvironments(merged), label);
-  if (environment) return { kind: 'environment', entry: environment };
-  return { kind: 'placeholder', label };
+  const candidates = matchesByLabel([...getSetPieces(merged), ...getEnvironments(merged)], label);
+  if (candidates.length === 1) {
+    const entry = candidates[0];
+    return entry.kind === 'set-piece'
+      ? { kind: 'set-piece', entry, sameLabel: 1 }
+      : { kind: 'environment', entry, sameLabel: 1 };
+  }
+  return { kind: 'placeholder', label, sameLabel: candidates.length };
 }
 
 /**
@@ -112,6 +116,14 @@ export type FountainCompileResult = {
   scenes: NamedScene[];
   actors: StoredActor[];
   diagnostics: Diagnostic[];
+  /**
+   * Bindings to snapshot so a unique name→asset auto-match becomes durable.
+   * Ambiguous names are deliberately absent — they must be chosen in the Roster.
+   */
+  resolvedBindings: {
+    cast: Record<string, string>;
+    setting: Record<string, string>;
+  };
 };
 
 /**
@@ -125,29 +137,39 @@ export type ResolveBindings = {
   setting?: Record<string, string>;
 };
 
+export type CastResolution = {
+  catalogueId: string;
+  placeholder?: boolean;
+  /** True when resolved via an explicit cast binding (not label match). */
+  bound?: boolean;
+  /** Number of catalogue characters whose label matches (0 when no match). */
+  sameLabel?: number;
+};
+
 /**
  * Resolves a typed cast name against the merged catalogue (bundled + user-authored
  * OPFS entries). An explicit catalogueId binding (Track CAT, CAT-3) takes priority
- * ahead of case-insensitive label match. Returns the placeholder id when nothing
- * matches; never throws, never blocks — this is what keeps sigil typing (Track SCR)
- * safe to accept any name.
+ * ahead of case-insensitive label match. A unique label match resolves to that
+ * character; an ambiguous name (≥2 matches) or no match falls back to the
+ * placeholder id and reports the match count via `sameLabel`. Never throws, never
+ * blocks — this is what keeps sigil typing (Track SCR) safe to accept any name.
  */
-function resolveCastName(
+export function resolveCastName(
   name: string,
   userEntries: CatalogueEntry[],
   castBindings?: Record<string, string>,
-): { catalogueId: string; placeholder?: boolean } {
+): CastResolution {
   const bound = castBindings?.[name.toUpperCase()];
   if (bound) {
     const allCharacters = getCharacters([...CATALOGUE_ENTRIES, ...userEntries]);
     if (allCharacters.some((c) => c.id === bound)) {
-      return { catalogueId: bound };
+      return { catalogueId: bound, bound: true };
     }
   }
   const allCharacters = getCharacters([...CATALOGUE_ENTRIES, ...userEntries]);
-  const match = mostRecentByLabel(allCharacters, name);
-  if (match) return { catalogueId: match.id };
-  return { catalogueId: PLACEHOLDER_CATALOGUE_ID, placeholder: true };
+  const candidates = matchesByLabel(allCharacters, name);
+  if (candidates.length === 1) return { catalogueId: candidates[0].id, sameLabel: 1 };
+  return { catalogueId: PLACEHOLDER_CATALOGUE_ID, placeholder: true, sameLabel: candidates.length };
 }
 
 /**
@@ -169,26 +191,41 @@ export function compileScriptDocument(
   bindings: ResolveBindings = {},
 ): FountainCompileResult {
   const diagnostics: Diagnostic[] = [...doc.diagnostics];
+  const resolvedCast: Record<string, string> = {};
+  const resolvedSetting: Record<string, string> = {};
 
   // Build actor list from the cast (already normalised), resolving each name
-  // against the merged catalogue. Unresolved names fall back to the generic-human
-  // placeholder body with an info diagnostic — never a silent wrong-asset swap.
+  // against the merged catalogue. Unresolved/ambiguous names fall back to the
+  // generic-human placeholder body with a diagnostic — never a silent wrong-asset
+  // swap, and never a silent first-match on an ambiguous name.
   const actors: StoredActor[] = doc.cast.map((name) => {
-    const { catalogueId, placeholder } = resolveCastName(name, userEntries, bindings.cast);
-    if (placeholder) {
-      diagnostics.push({
-        line: 0,
-        level: 'info',
-        message: `${name} has no catalogue match — using the generic placeholder.`,
-        kind: 'unresolved-cast',
-        name,
-      });
+    const resolution = resolveCastName(name, userEntries, bindings.cast);
+    if (resolution.placeholder) {
+      if (resolution.sameLabel && resolution.sameLabel > 1) {
+        diagnostics.push({
+          line: 0,
+          level: 'warning',
+          message: `${name} matches ${resolution.sameLabel} catalogue characters — pick one in the Roster.`,
+          kind: 'ambiguous-cast',
+          name,
+        });
+      } else {
+        diagnostics.push({
+          line: 0,
+          level: 'info',
+          message: `${name} has no catalogue match — using the generic placeholder.`,
+          kind: 'unresolved-cast',
+          name,
+        });
+      }
+    } else if (!resolution.bound && resolution.sameLabel === 1) {
+      resolvedCast[name.toUpperCase()] = resolution.catalogueId;
     }
     return {
       id: crypto.randomUUID(),
       role: name,
-      catalogueId,
-      placeholder,
+      catalogueId: resolution.catalogueId,
+      placeholder: resolution.placeholder,
     };
   });
 
@@ -198,20 +235,46 @@ export function compileScriptDocument(
     compileSceneBlock(sceneBlock, actors, actorIdByName, i, userEntries, bindings),
   );
 
-  // Track CAT, CAT-2: report each unresolved setting once per scene.
-  for (const ns of scenes) {
-    if (ns.scene.placeholderSetting) {
-      diagnostics.push({
-        line: 0,
-        level: 'info',
-        message: `${ns.scene.placeholderSetting} has no catalogue match — using a placeholder room.`,
-        kind: 'unresolved-setting',
-        name: ns.scene.placeholderSetting,
-      });
+  // Track CAT, CAT-2: report each unresolved/ambiguous setting once per unique
+  // name, and snapshot any unique auto-match into a durable binding.
+  const seenSettings = new Set<string>();
+  for (const block of doc.scenes) {
+    const name = (block.setting ?? '').trim();
+    if (!name) continue;
+    const key = name.toUpperCase();
+    if (seenSettings.has(key)) continue;
+    seenSettings.add(key);
+
+    const resolution = resolveSetting(name, userEntries, bindings.setting);
+    if (resolution.kind === 'placeholder') {
+      if (resolution.sameLabel && resolution.sameLabel > 1) {
+        diagnostics.push({
+          line: 0,
+          level: 'warning',
+          message: `${name} matches ${resolution.sameLabel} catalogue entries — pick one in the Roster.`,
+          kind: 'ambiguous-setting',
+          name,
+        });
+      } else {
+        diagnostics.push({
+          line: 0,
+          level: 'info',
+          message: `${name} has no catalogue match — using a placeholder room.`,
+          kind: 'unresolved-setting',
+          name,
+        });
+      }
+    } else if (!resolution.bound && resolution.sameLabel === 1) {
+      resolvedSetting[key] = resolution.entry.id;
     }
   }
 
-  return { scenes, actors, diagnostics };
+  return {
+    scenes,
+    actors,
+    diagnostics,
+    resolvedBindings: { cast: resolvedCast, setting: resolvedSetting },
+  };
 }
 
 

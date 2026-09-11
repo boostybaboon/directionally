@@ -79,14 +79,14 @@ Folds Set Studio's dressing capability into the Sketcher so one tool builds both
 
 ### AI-API — Scenery authoring surface for AI ✅ COMPLETE
 
-Added so an LLM/agent can drive asset creation without the Three.js runtime — it emits JSON against a contract and gets a validated, persisted catalogue entry back. The provider/LLM side stays in `ROADMAP_AI.md` (`/api/generate/*`); this is the *data* contract + apply path those routes will hand JSON to.
+Added so an LLM/agent can drive asset creation without the Three.js runtime — it emits JSON against a contract and gets a validated, persisted catalogue entry back. The provider/LLM side stays in `ROADMAP_AI.md` (`/agent/generate/*`); this is the *data* contract + apply path those routes will hand JSON to.
 
 - `SET_PIECE_JSON_SCHEMA` (`core/setting/authoringApi.ts`) — a JSON Schema (draft 2020-12) for `NewProceduralSetPiece`: a leaf primitive, an assembly (`compose` of `ref`s and inline primitives), or a whole setting (`compose` + `lights` + `environmentId`). Embeddable directly in a system prompt or a `response_format`/`tool_choice` `input_schema`. Mirrors `NewProceduralSetPiece`/`PlacedProp` — keep in sync.
 - `normalizeSetPieceInput(input)` — strict validation + clamping of untrusted JSON into a `NewProceduralSetPiece`; assigns stable `localId`s to `compose` children via `assignLocalIds`. Throws a descriptive error on the first invalid field (unknown geometry/light type, bad label, leaf-vs-composite violation, non-finite vec3, …).
 - `createSetPiece(input)` — the single apply call: `normalizeSetPieceInput` → `OPFSCatalogueStore.addSetPiece` → returns the created entry. Caller posts `{ type: 'catalogue-updated' }` on `BroadcastChannel('directionally-catalogue')` so open script views re-resolve via the existing CAT-4 loop.
 - **Tests:** `core/setting/authoringApi.test.ts` — schema is JSON-serialisable; leaf/composite/ref/setting normalisation; `localId` assignment; rejection of bad label/geometry/light/leaf-compose violations/non-object input; `createSetPiece` persists and returns the entry.
 
-Together with the pre-existing `resolveSettingSpec`/`validateSettingSpec` + `/api/setting` (resolve-only, over HTTP) and `addSetPiece`, this is the complete "something the AI talks to" for scenery: **schema → validated create → broadcast → script auto-resolves**. No `N4`/`N10` UI work is a prerequisite for it.
+Together with the pre-existing `resolveSettingSpec`/`validateSettingSpec` + `/agent/setting` (resolve-only, over HTTP) and `addSetPiece`, this is the complete "something the AI talks to" for scenery: **schema → validated create → broadcast → script auto-resolves**. No `N4`/`N10` UI work is a prerequisite for it.
 
 ### N4 — Save as Item / Save as Setting ✅ COMPLETE (whole-scene)
 

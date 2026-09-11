@@ -268,3 +268,52 @@ export function renderScript(doc: ScriptDocument): string {
   while (parts.length > 0 && parts[parts.length - 1] === '') parts.pop();
   return parts.join('\n');
 }
+
+// ── Alias retyping ──────────────────────────────────────────────────────────
+
+/**
+ * Retypes an alias across raw sigil text: every sigil-token occurrence of
+ * `oldName` is replaced with `newName`, while dialogue prose is left untouched.
+ * `kind` scopes which sigil lines are edited — 'cast' touches `@`/`>` lines,
+ * 'setting' touches `#` heading lines. Matching is case-insensitive. The binding
+ * rekey (moving castBindings/settingBindings to the new name) is the caller's
+ * responsibility, so a rename keeps the same catalogue asset attached.
+ */
+export function retypeAlias(
+  text: string,
+  oldName: string,
+  newName: string,
+  kind: 'cast' | 'setting',
+): string {
+  const oldUpper = oldName.trim().toUpperCase();
+  const replacement = newName.trim();
+  if (!oldUpper || !replacement || replacement.toUpperCase() === oldUpper) return text;
+
+  return text.split('\n').map((line) => {
+    const ws = line.match(/^\s*/)?.[0] ?? '';
+    const body = line.slice(ws.length);
+    const sigil = body[0];
+
+    if (kind === 'cast') {
+      if (sigil === '@') {
+        return body.slice(1).trim().toUpperCase() === oldUpper ? `${ws}@${replacement}` : line;
+      }
+      if (sigil === '>') {
+        const m = /^>(\s*)(\S+)/.exec(body);
+        if (m && m[2].toUpperCase() === oldUpper) {
+          return `${ws}>${m[1]}${replacement}${body.slice(m[0].length)}`;
+        }
+      }
+      return line;
+    }
+
+    // Setting: replace the tokens between INT/EXT and the trailing time-of-day.
+    if (sigil === '#') {
+      const tokens = body.slice(1).trim().split(/\s+/).filter(Boolean);
+      if (tokens.length >= 2 && tokens.slice(1, -1).join(' ').toUpperCase() === oldUpper) {
+        return `${ws}#${[tokens[0], ...replacement.split(/\s+/), tokens[tokens.length - 1]].join(' ')}`;
+      }
+    }
+    return line;
+  }).join('\n');
+}

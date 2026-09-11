@@ -406,7 +406,7 @@ describe('compileScriptDocument', () => {
   });
 });
 
-describe('resolveSetting (last-export-wins)', () => {
+describe('resolveSetting (ambiguity + binding)', () => {
   const userGarden = (id: string, addedAt: number): CatalogueEntry & { userAdded: true; addedAt: number } => ({
     kind: 'set-piece',
     id,
@@ -417,20 +417,78 @@ describe('resolveSetting (last-export-wins)', () => {
     addedAt,
   });
 
-  it('picks the most recently added user entry when labels collide', () => {
+  it('surfaces ambiguity instead of silently picking the most recent duplicate', () => {
     const older = userGarden('garden-old', 1000);
     const newer = userGarden('garden-new', 2000);
     const resolved = resolveSetting('GARDEN', [older, newer]);
-    expect(resolved.kind).toBe('set-piece');
-    if (resolved.kind === 'set-piece') expect(resolved.entry.id).toBe('garden-new');
+    expect(resolved.kind).toBe('placeholder');
+    if (resolved.kind === 'placeholder') expect(resolved.sameLabel).toBe(2);
   });
 
-  it('an explicit binding still overrides last-export-wins', () => {
+  it('a unique match resolves and reports a single label match', () => {
+    const resolved = resolveSetting('GARDEN', [userGarden('garden-only', 1000)]);
+    expect(resolved.kind).toBe('set-piece');
+    if (resolved.kind === 'set-piece') {
+      expect(resolved.entry.id).toBe('garden-only');
+      expect(resolved.sameLabel).toBe(1);
+    }
+  });
+
+  it('an explicit binding still overrides ambiguity', () => {
     const older = userGarden('garden-old', 1000);
     const newer = userGarden('garden-new', 2000);
     const resolved = resolveSetting('GARDEN', [older, newer], { GARDEN: 'garden-old' });
     expect(resolved.kind).toBe('set-piece');
-    if (resolved.kind === 'set-piece') expect(resolved.entry.id).toBe('garden-old');
+    if (resolved.kind === 'set-piece') {
+      expect(resolved.entry.id).toBe('garden-old');
+      expect(resolved.bound).toBe(true);
+    }
+  });
+});
+
+describe('compileScriptDocument (ambiguity + auto-bind)', () => {
+  const character = (id: string, label: string): CatalogueEntry => ({
+    kind: 'character',
+    id,
+    label,
+    gltfPath: `/models/gltf/${id}.glb`,
+  });
+  const setPiece = (id: string, label: string): CatalogueEntry => ({
+    kind: 'set-piece',
+    id,
+    label,
+    geometry: { type: 'box', width: 1, height: 1, depth: 1 },
+    material: { color: 0x11aa22 },
+  });
+
+  it('ambiguous cast name yields an ambiguous-cast diagnostic and no auto-bind', () => {
+    const doc = buildDoc([scene('INT. STAGE - DAY', [say('BOB', 'Hi.')])], ['BOB']);
+    const result = compileScriptDocument(doc, [character('bob-a', 'BOB'), character('bob-b', 'BOB')]);
+    expect(result.diagnostics.some((d) => d.kind === 'ambiguous-cast' && d.name === 'BOB')).toBe(true);
+    expect(result.resolvedBindings.cast.BOB).toBeUndefined();
+  });
+
+  it('unique cast label match auto-binds and produces no ambiguity diagnostic', () => {
+    const doc = buildDoc([scene('INT. STAGE - DAY', [say('BOB', 'Hi.')])], ['BOB']);
+    const result = compileScriptDocument(doc, [character('bob-id', 'BOB')]);
+    expect(result.actors[0].catalogueId).toBe('bob-id');
+    expect(result.actors[0].placeholder).toBeUndefined();
+    expect(result.resolvedBindings.cast.BOB).toBe('bob-id');
+    expect(result.diagnostics.some((d) => d.kind === 'ambiguous-cast')).toBe(false);
+  });
+
+  it('ambiguous setting name yields an ambiguous-setting diagnostic and no auto-bind', () => {
+    const doc = buildDoc([sceneWithSetting('GARDEN', [say('Robot', 'Hi.')])], ['Robot']);
+    const result = compileScriptDocument(doc, [setPiece('garden-a', 'GARDEN'), setPiece('garden-b', 'GARDEN')]);
+    expect(result.diagnostics.some((d) => d.kind === 'ambiguous-setting' && d.name === 'GARDEN')).toBe(true);
+    expect(result.resolvedBindings.setting.GARDEN).toBeUndefined();
+  });
+
+  it('unique setting label match auto-binds', () => {
+    const doc = buildDoc([sceneWithSetting('GARDEN', [say('Robot', 'Hi.')])], ['Robot']);
+    const result = compileScriptDocument(doc, [setPiece('garden-id', 'GARDEN')]);
+    expect(result.scenes[0].scene.set[0].name).toBe('garden-id');
+    expect(result.resolvedBindings.setting.GARDEN).toBe('garden-id');
   });
 });
 

@@ -1,4 +1,5 @@
 import type { CharacterEntry, SetPieceEntry } from '../catalogue/types.js';
+import type { CharacterSpec } from '../character/characterSpec.js';
 import type { GeometryConfig, LightConfig, MaterialConfig, PlacedProp, Vec3 } from '../domain/types.js';
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -29,6 +30,14 @@ export type NewProceduralSetPiece = {
   defaultRotation?: Vec3;
   environmentId?: string;
   lights?: LightConfig[];
+  isSetting?: boolean;
+};
+
+/** Metadata for a spec-backed character (no GLB) — the API-2 create path. */
+export type NewSpecCharacter = {
+  label: string;
+  spec: CharacterSpec;
+  defaultAnimation?: string;
 };
 
 // ── Serialised form ───────────────────────────────────────────────────────────
@@ -44,6 +53,8 @@ type StoredEntry = {
   defaultRotation?: Vec3;
   defaultScale?: number;
   defaultAnimation?: string;
+  /** Procedural character description for spec-backed characters (no GLB). */
+  spec?: CharacterSpec;
   geometry?: GeometryConfig;
   material?: MaterialConfig;
   /** Composite of placed sub-items for metadata-only composite set-pieces. */
@@ -52,6 +63,8 @@ type StoredEntry = {
   environmentId?: string;
   /** Lights captured when this entry was saved as a setting. */
   lights?: LightConfig[];
+  /** Marks a set-piece as a top-level setting rather than a component prop. */
+  isSetting?: boolean;
   /** ID of the SketcherAssemblyStore entry that produced this asset. */
   sourceAssemblyId?: string;
 };
@@ -104,6 +117,20 @@ async function writeMeta(dir: FileSystemDirectoryHandle, entries: StoredEntry[])
 
 function toUserEntry(s: StoredEntry, gltfPath?: string): UserCatalogueEntry {
   if (s.kind === 'character') {
+    if (s.spec) {
+      return {
+        kind: 'character',
+        id: s.id,
+        label: s.label,
+        spec: s.spec,
+        defaultAnimation: s.defaultAnimation,
+        defaultScale: s.defaultScale,
+        defaultRotation: s.defaultRotation,
+        userAdded: true,
+        addedAt: s.addedAt,
+        sourceAssemblyId: s.sourceAssemblyId,
+      };
+    }
     return {
       kind: 'character',
       id: s.id,
@@ -126,6 +153,7 @@ function toUserEntry(s: StoredEntry, gltfPath?: string): UserCatalogueEntry {
       defaultRotation: s.defaultRotation,
       ...(s.environmentId ? { environmentId: s.environmentId } : {}),
       ...(s.lights ? { lights: s.lights } : {}),
+      ...(s.isSetting ? { isSetting: true } : {}),
       userAdded: true,
       addedAt: s.addedAt,
       sourceAssemblyId: s.sourceAssemblyId,
@@ -141,6 +169,7 @@ function toUserEntry(s: StoredEntry, gltfPath?: string): UserCatalogueEntry {
     defaultRotation: s.defaultRotation,
     ...(s.environmentId ? { environmentId: s.environmentId } : {}),
     ...(s.lights ? { lights: s.lights } : {}),
+    ...(s.isSetting ? { isSetting: true } : {}),
     userAdded: true,
     addedAt: s.addedAt,
     sourceAssemblyId: s.sourceAssemblyId,
@@ -219,6 +248,9 @@ export async function add(
           ...((meta as NewSetPieceMeta).lights
             ? { lights: (meta as NewSetPieceMeta).lights }
             : {}),
+          ...((meta as NewSetPieceMeta).isSetting
+            ? { isSetting: true }
+            : {}),
         }),
     ...(sourceAssemblyId ? { sourceAssemblyId } : {}),
   };
@@ -238,7 +270,7 @@ export async function update(
   id: string,
   blob: Blob,
   label?: string,
-  meta?: { environmentId?: string; lights?: LightConfig[] },
+  meta?: { environmentId?: string; lights?: LightConfig[]; isSetting?: boolean },
 ): Promise<UserCatalogueEntry | null> {
   const dir = await _getDir();
   const stored = await readMeta(dir);
@@ -256,6 +288,7 @@ export async function update(
       ...(label !== undefined ? { label } : {}),
       ...(meta && 'environmentId' in meta ? { environmentId: meta.environmentId } : {}),
       ...(meta && 'lights' in meta ? { lights: meta.lights } : {}),
+      ...(meta && 'isSetting' in meta ? { isSetting: meta.isSetting } : {}),
     };
   }
   await writeMeta(dir, stored);
@@ -352,6 +385,33 @@ export async function addSetPiece(meta: NewProceduralSetPiece): Promise<UserCata
       : { geometry: meta.geometry, material: meta.material }),
     ...(meta.environmentId ? { environmentId: meta.environmentId } : {}),
     ...(meta.lights && meta.lights.length > 0 ? { lights: meta.lights } : {}),
+    ...(meta.isSetting ? { isSetting: true } : {}),
+  };
+
+  const stored = await readMeta(dir);
+  stored.push(entry);
+  await writeMeta(dir, stored);
+
+  return toUserEntry(entry);
+}
+
+/**
+ * Persist a spec-backed character (no GLB) — ROADMAP_API.md API-2. The entry
+ * carries a `CharacterSpec` and is rebuilt procedurally at scene load.
+ */
+export async function addCharacter(meta: NewSpecCharacter): Promise<UserCatalogueEntry> {
+  const id = crypto.randomUUID();
+  const addedAt = Date.now();
+  const dir = await _getDir();
+
+  const entry: StoredEntry = {
+    id,
+    filename: '',
+    addedAt,
+    kind: 'character',
+    label: meta.label.trim(),
+    spec: meta.spec,
+    defaultAnimation: meta.defaultAnimation,
   };
 
   const stored = await readMeta(dir);

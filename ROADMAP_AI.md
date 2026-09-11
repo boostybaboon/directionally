@@ -1,25 +1,84 @@
 # Directionally — AI-Assisted Asset Generation Roadmap
 
-Not scheduled work. Parked here so the design isn't lost, to be picked up once
-[ROADMAP.md](ROADMAP.md)'s Track CAT / Track SCR reach completion — specifically after
-**CAT-4** (the "Create real asset" bootstrapping bridge from a placeholder) exists, since
-every phase below extends that flow rather than replacing it.
+Not scheduled work. Parked here so the design isn't lost. This document covers the
+**provider side** only: how an LLM turns a free-text descriptor into the schema-validated JSON
+the [Authoring API](ROADMAP_API.md) consumes. The authoring surface itself — the verbs
+(`describe`/`preview`/`create`/`bind`/`make`), the schemas, and the headless apply path — lives
+in [ROADMAP_API.md](ROADMAP_API.md); this document is deliberately subordinate to it and must
+not drift from it.
+
+**Scope — asset design only, never script content.** AI here helps a script writer *visualise*
+their production by designing **characters and sets**. It does not, and deliberately will not,
+generate the creative content of the production itself — there is **no script API** by design,
+and none is planned in this roadmap.
+
+**Current state.** The authoring surface the AI feeds — the verbs, the two JSON schemas, their
+normalisers, and `make`'s create-or-resume + bind — is already implemented in `src/core/agent/`
+(see ROADMAP_API.md). Everything below is `make`'s one missing step: the free-text → document
+(LLM) step, which is this document's territory.
+
+**Early-skeleton goal.** Before any identity/billing work, prove the AI is a useful accelerator:
+e.g. DeepSeek reliably turns "a middle-aged woman" and "a classroom" into valid documents. This
+is exercised by `yarn agent:experiment` (scripts/agentExperiment.ts) against a dev
+`DEEPSEEK_API_KEY`. Identity, auth, and billing for the deployed tool are deliberately deferred —
+success here is the *motivation* to solve them, not a prerequisite.
+
+**Finding (DeepSeek).** Both kinds generate and validate: a character descriptor yields a valid
+`CharacterSpec`, and a setting descriptor yields a valid, coherent `compose` scene (floor, walls,
+furniture, lights). Rough edges to resolve when generation is wired into the app:
+- Colour fields sometimes invent a plausible-but-unlisted hex rather than a listed swatch — if
+  fidelity matters, tighten `hairColor`/`eyeColor` to label-or-hex (`oneOf`, like `skinTone`).
+- The setting prompt has no catalogue context, so `environmentId`/`ref` values can be
+  hallucinated — inject `describe_catalogue` output into the prompt during orchestration.
+
+## Implementation checklist — the walking skeleton
+
+The phases below are ordered as a **walking skeleton**: get the smallest end-to-end slice
+working (one provider → one asset kind → one `make` call that turns a text descriptor into a
+bound, renderable asset), then broaden to the second asset kind, then harden, then let users
+plug in their own model. Each tick maps to the phase section of the same name further down; it
+is a visible checkpoint, with no hidden work behind it.
+
+### Walking skeleton — minimal end-to-end (character)
+
+- [x] **AI-0 · Provider interface** — define `AIProvider.generate(systemPrompt, userPrompt, jsonSchema)` and a first adapter (`DeepSeekProvider`, OpenAI-wire-compatible, zero Azure spend). A `make` call returns *some* JSON from the model.
+- [ ] **AI-0 · Default backend** — provision Azure OpenAI + `AzureOpenAIProvider` as the shipped default; swapping providers is a config value, not a route/schema change.
+- [ ] **AI-1 · Character generation** — system prompt embeds `CHARACTER_JSON_SCHEMA`; the model emits a `CharacterSpec`; the server clamps it via `validateCharacterSpec`. `make("character", "BERNARD", "middle-aged portly gentleman…")` returns a bound, rebuildable character.
+- [ ] **AI-3 · Wire the LLM into `make`** — the free-text → document step joins the existing `make` (describe → create → bind), idempotent by name. The name flips `UNRESOLVED`/`AMBIGUOUS` → `BOUND` in the Roster with no page reload.
+
+### Broaden — scenery parity
+
+- [ ] **AI-2 · Scenery generation** — same path for `SET_PIECE_JSON_SCHEMA` (`SettingSpec`) → `normalizeSetPieceInput`. `make("setting", "PUB", "traditional English pub…")` returns a bound, resolvable setting.
+
+### Harden
+
+- [ ] **AI-4 · Validation & cost** — schema validation (Zod or equivalent), retry-once-on-invalid-JSON, per-session/per-IP rate limit. Malformed output never reaches the renderer; rapid "regenerate" clicks are throttled with a visible message.
+
+### Production posture *(only if this graduates past POC)*
+
+- [ ] **AI-5 · Production** — split the AI proxy into its own Azure Function App (Flex Consumption); Azure OpenAI key → Key Vault via Managed Identity; Application Insights on latency / error / validation-failure rate.
+
+### Provider flexibility
+
+- [ ] **AI-6 · BYOK** — `ClaudeProvider` (native Messages API + `tool_choice`), an "AI Settings" panel, per-request key header, and a cost/latency disclaimer. The zero-config default stays unchanged.
+- [ ] **AI-7 · Local models** — `OllamaProvider`, an "Ollama (local)" option, server-proxied + client-direct (`OLLAMA_ORIGINS`) paths, and the validation module shared client-side.
 
 ---
 
 ## Why this is possible cheaply
 
 Both asset creators in this app are **parametric, not freeform mesh editors** — a fact that
-changes what "AI generates a 3D asset" needs to mean here:
+changes what "AI generates a 3D asset" needs to mean here. Crucially, the AI targets the
+**high-level semantic schemas**, never the low-level engine parameters:
 
-- **Character** (`src/core/character/ProceduralHumanoid.ts`): a character is a typed JSON
-  object — `BoneParamMap` (per-bone tube/joint radii in cm, ±40% documented safe range),
-  `BodyColors`, `FaceParams` (eye/nose/mouth/hair sliders), a height scale, and a fixed
-  library of ~15 bundled Mixamo clips (`idle`, `walk`, `run`, `talk`, `wave`, …). The geometry
-  is *computed* from these parameters by existing code — there is no mesh to generate.
-- **Scenery** (`src/core/sketcher/CartoonSketcher.ts` + `AttachManager.ts`): a set is a list
-  of primitives (box/sphere/cylinder/capsule/cone) with transform + colour/face-colour/texture,
-  optionally grouped or attached via `AttachJoint`s. Again, structured data, not a mesh.
+- **Character** (`CharacterSpec`): a small, all-optional, natural-language-friendly JSON —
+  `height`, `build`, `muscularity`, `age`, `feminineMasculine`, `skinTone`, `hairColor`,
+  `hairGreying`, `eyeColor`, `outfit`. The app maps this down to bone/ring params
+  (`semanticToBoneParams`/`semanticToRingParams`) at build time — the LLM never emits a
+  per-bone radius.
+- **Scenery** (`SettingSpec` / `NewProceduralSetPiece`): a compositional document — `floor`,
+  `backdrops`, `props` (catalogue `ref`s or inline primitives), `lights`, `environment`. The
+  app resolves it to geometry at render time — the LLM never hand-places a primitive.
 
 So "AI generates a starting asset" reduces to **an LLM producing JSON that validates against
 a schema Directionally already has code to render** — a schema-constrained text-to-JSON task,
@@ -27,8 +86,8 @@ not text-to-3D. This avoids needing a hosted generative-mesh/diffusion model, GP
 infrastructure, or an unvalidatable binary blob landing in the catalogue. It is also the only
 approach consistent with the Roadmap Principle in `ROADMAP.md`: *"Nothing is ever guessed... No
 heuristic parsing... every mutation is validated before it reaches the domain model."* An LLM
-response that must pass schema validation before touching `ProceduralHumanoid`/`SketcherPart`
-honours that; a generated mesh that can't be validated does not.
+response that must pass schema validation before touching the renderer honours that; a
+generated mesh that can't be validated does not.
 
 A full text-to-mesh path is explicitly **out of scope** for this roadmap — a diffusion-generated
 GLB can't be schema-validated and wouldn't match the Mixamo bone-naming convention the bundled
@@ -37,65 +96,55 @@ for the analogous reason).
 
 ---
 
-## Where this attaches to Track CAT
+## Where this attaches
 
-`ROADMAP.md`'s CAT-4 already specifies the bootstrapping bridge this depends on: each
-unresolved-cast/unresolved-setting diagnostic (CAT-1/CAT-2) gains a "Create →" action that opens
-`/character?prefillName=Sanders` or `/sketch?prefillName=...`, and the script view listens for
-`BroadcastChannel('directionally-catalogue')`'s `catalogue-updated` message to auto-resolve the
-placeholder once a matching-label asset is exported — with zero script edits. Everything below
-pre-fills that flow with an AI first draft instead of opening it blank.
+The AI draft no longer lands in a blank editor. It lands through the
+[Authoring API](ROADMAP_API.md)'s `make` verb: `describe_script` tells the model which cast names
+and settings are `UNRESOLVED`/`AMBIGUOUS`, the model emits a `CharacterSpec`/`SettingSpec`
+document, and `create` + `bind` persist it and wire it to the script name — the same
+`castBindings`/`settingBindings` the Roster tab edits. Unique matches auto-snapshot into a
+binding; ambiguous names surface a diagnostic the user resolves once.
+
+The interactive `/character` and `/sketch` editors remain as an optional *refinement* surface —
+`make` can return a preview instead of committing — but they are no longer a mandatory gate the
+draft must pass through.
 
 ---
 
 ## Architecture
 
 ```
-Browser (Azure Static Web Apps SPA)
+Client (browser, agent, CLI, or test harness)
   │
-  │  1. CAT-1/CAT-2 diagnostic → "Create →" opens /character or /sketch,
-  │     pre-seeded with ?prefillName=Sanders (existing CAT-4 plan)
-  │  2. User adds a free-text descriptor in a "Generate with AI" box, e.g.
-  │     "24yo rookie LA cop, athletic, dark hair in a bun, navy LAPD uniform"
-  │     or "aircraft cabin, narrow aisle, rows of seats either side"
-  │  3. POST { name, descriptor } to /api/generate/character or /api/generate/scenery
+  │  POST /agent/make { kind, name, description }   (see ROADMAP_API.md)
   ▼
 SvelteKit +server.ts route (bundled into the existing Azure Function via
 svelte-adapter-azure-swa — no new Azure resource required for a v1)
   │
-  │  4. Server builds a system prompt embedding the *actual* schema:
-  │     BONE_GROUPS keys + documented safe ranges, BodyColors fields,
-  │     FaceParams fields, bundled clip names (character) — or the primitive
-  │     kinds CartoonSketcher.insertPrimitive() accepts + transform/colour
-  │     shape (scenery) — so the model only ever proposes values the app
-  │     already knows how to render.
-  │  5. Calls the configured AIProvider adapter with JSON-schema-constrained
+  │  1. describe_script → which cast names/settings are UNRESOLVED/AMBIGUOUS.
+  │  2. Build a system prompt embedding the *actual* schema —
+  │     CHARACTER_JSON_SCHEMA (CharacterSpec) or SET_PIECE_JSON_SCHEMA
+  │     (SettingSpec) — so the model only proposes values the app can
+  │     validate and render.
+  │  3. Call the configured AIProvider adapter with JSON-schema-constrained
   │     ("structured outputs" / tool-forcing) response mode — see "Provider
   │     flexibility" below for what backs this by default vs. by choice.
   ▼
 AIProvider adapter (pluggable — Azure OpenAI by default; DeepSeek, Claude, or
 a local Ollama model when configured; see "Provider flexibility" below)
   │
-  │  6. Returns JSON matching the requested schema.
+  │  4. Returns JSON matching the requested schema.
   ▼
 Server route (same +server.ts)
   │
-  │  7. Validates the JSON (Zod or manual guards) — clamps any numeric value
-  │     to the documented safe bounds (e.g. bone scale ±40%), rejects/retries
-  │     once on schema violation or unknown enum values.
-  │  8. Returns the *validated* typed object to the client.
+  │  5. Validate + clamp (normalizeSetPieceInput / validateCharacterSpec);
+  │     retry once on schema violation or unknown enum values.
+  │  6. create → persist the spec as a catalogue entry (not a baked GLB);
+  │     bind → write castBindings/settingBindings; return
+  │     { entry, boundTo, warnings }.
   ▼
-Browser
-  │
-  │  9. Applies the result through the *same Command pipeline* a human uses —
-  │     e.g. a batch of InsertPartCommand/ChangeColorCommand run through
-  │     SketcherDocument.execute() for scenery, or a direct ProceduralHumanoid
-  │     parameter set for the character page — so it's undoable (one Ctrl+Z
-  │     removes the whole AI draft) and indistinguishable from manual
-  │     authoring to the rest of the app.
-  │  10. User tunes sliders/gizmos as normal, clicks "Export to Catalogue"
-  │      (existing, unchanged flow) → OPFSCatalogueStore.add() →
-  │      BroadcastChannel → script placeholder resolves automatically.
+Client — the script placeholder resolves via the existing CAT-4 recompile loop;
+the Roster tab now shows the name as BOUND, with Edit/Rebind/Rename available.
 ```
 
 **No direct browser-to-your-Azure-key link, ever.** The client never holds *your* API key; it
@@ -139,7 +188,7 @@ its OpenAI-compat shim, since that shim doesn't support structured output.
 ### Architecture: a pluggable `AIProvider` adapter
 
 ```
-/api/generate/character, /api/generate/scenery  (unchanged endpoints)
+/agent/make  (the AI step inside it — see ROADMAP_API.md)
               │
               ▼
    AIProvider interface: generate(systemPrompt, userPrompt, jsonSchema) → Promise<unknown>
@@ -162,7 +211,7 @@ the same way whether it came from Azure, DeepSeek, Claude, or a small local mode
 ### Two request paths — server-proxied vs. client-direct
 
 - **Server-proxied (default and recommended for Azure/DeepSeek/Claude/BYOK-remote):** the
-  browser calls `/api/generate/*` as today; the server route forwards to whichever provider is
+  browser calls `/agent/make` as today; the server route forwards to whichever provider is
   configured. Keeps validation/clamping in one place; avoids CORS entirely; works for any
   provider reachable from the server, including an Ollama instance running on the *same host* as
   the server itself.
@@ -197,83 +246,76 @@ server-side storage or logs.
 | AI backend (default) | Azure OpenAI Service (chat model, structured outputs) | Already deployed to Azure; no new infra category; cheap enough for parameter-guessing use |
 | AI backend (pluggable) | `AIProvider` adapter interface — Azure OpenAI, DeepSeek, Claude, or Ollama behind one `generate(prompt, schema)` method | Lets development/testing avoid Azure spend (DeepSeek/Ollama), lets advanced users BYOK or run fully local, with zero change to the rest of the pipeline |
 | Client/AI boundary | Server-side proxy route by default, key never reaches the browser unless the user explicitly supplies their own | Standard secret-handling; consistent with "nothing guessed client-side" principle; BYOK keys are forwarded per-request only, never persisted server-side |
-| Integration point | Extends CAT-4's "Create real asset" bridge | Reuses an already-planned flow instead of a parallel AI-only pathway |
-| Applied via | Same Command/export pipeline as manual authoring (`SketcherDocument.execute()`, `OPFSCatalogueStore`) | Undoable; AI draft is indistinguishable from manual work to the rest of the app |
+| Integration point | `make` → `create` + `bind` on the Authoring API, surfacing in the Roster tab | Same flow as the human-facing Roster (Edit/Rebind/Rename); no parallel AI-only pathway |
+| Applied via | `create` persists the validated spec to the catalogue (no GLB) and `bind` writes the script name→id binding | Headless by default; the interactive editor is optional refinement |
 
 ---
 
-## Phase AI-0 — Provider adapter interface + proxy route scaffold
+## Phase AI-0 — Provider adapter interface
 
 - Define the `AIProvider` interface (`generate(systemPrompt, userPrompt, jsonSchema):
   Promise<unknown>`) up front, before wiring any single backend — this is what keeps every later
   phase (BYOK, local models) a small additive adapter rather than a rework.
 - Implement a `DeepSeekProvider` first for development: fully OpenAI-wire-compatible, near-zero
   cost, no Azure resource required to start iterating. Use an existing DeepSeek key for local dev.
-- Add `src/routes/api/generate/character/+server.ts` and `.../scenery/+server.ts` as proxy
-  routes: accept `{ name, descriptor }`, call the configured `AIProvider`, return raw JSON. No
-  schema validation yet — proves the wiring end-to-end before hardening.
+- Wire it into the Authoring API's `make` verb as an optional step (build the
+  `CharacterSpec`/`SettingSpec` document from the free-text descriptor); no schema validation yet
+  — proves the wiring end-to-end before hardening.
 - Provision the Azure OpenAI Service resource + `AzureOpenAIProvider` adapter once the DeepSeek
   path is proven — same interface, swapped in as the shipped default (see Decisions: "AI backend
   (default)"). Store the key as an Azure Static Web Apps application setting.
 
-Exit criteria: a POST with a text descriptor returns *some* JSON from the model against the
-DeepSeek adapter using an existing key at zero incremental Azure cost; swapping the configured
+Exit criteria: a `make` call with a text descriptor returns *some* JSON from the model against
+the DeepSeek adapter using an existing key at zero incremental Azure cost; swapping the configured
 provider to `AzureOpenAIProvider` requires no route or schema changes, only a config value.
 
-## Phase AI-1 — Character parameter generation
+## Phase AI-1 — Character document generation
 
-- Define the JSON schema for the character-generation response: a subset of `BoneParamMap`
-  keys (from `BONE_GROUPS`), `BodyColors`, `FaceParams`, plus a `defaultAnimation` chosen from
-  the bundled clip list.
-- System prompt embeds the real field names, units (cm), and the ±40% safe bone-scale range
-  documented in `SKETCHER_ROADMAP.md`'s CB1.
-- Server route validates/clamps the response before returning it.
-- `/character` page gains a "Generate with AI" input; submitting applies the returned
-  parameter set to the current `ProceduralHumanoid` instance (same code path the sliders use),
-  then leaves the user in the normal tuning UI.
+- The generation target is `CHARACTER_JSON_SCHEMA` (`CharacterSpec`) from ROADMAP_API.md, not
+  raw `BoneParamMap`/`FaceParams` — the LLM fills the high-level semantic surface, and the app
+  maps it down to bone/ring params at build time.
+- System prompt embeds the schema's field names, enums, and safe ranges (e.g. `build` ±1,
+  `feminineMasculine` ±1, and the `SKIN_TONES`/`HAIR_COLORS`/outfit choices).
+- Server validates/clamps via `validateCharacterSpec` before persisting.
+- `create_character` stores the resolved spec as a catalogue entry (no GLB); `bind` wires it to a
+  script name.
 
-Exit criteria: typing `"24yo rookie LA cop"` and generating produces a humanoid with
-plausible build/colour/hair choices, fully editable afterward via existing sliders, and
-undoable as a single step.
+Exit criteria: `make("character", "BERNARD", "middle-aged portly gentleman…")` returns a bound
+catalogue character whose spec is valid and rebuildable at scene load.
 
-## Phase AI-2 — Scenery parameter generation
+## Phase AI-2 — Scenery document generation
 
-- Define the JSON schema for the scenery-generation response: an array of primitive
-  descriptors (kind, transform, colour, optional face colours/textures) matching what
-  `CartoonSketcher.insertPrimitive()` + `ChangeColorCommand`/`ChangeFaceColorCommand` accept,
-  optionally with `AttachJoint` pairs for assemblies.
-- Server route validates each primitive's kind against the known enum and clamps transform
-  values to sane bounds (e.g. no zero/negative scale).
-- `/sketch` page gains the same "Generate with AI" input; submitting runs a batch of
-  `InsertPartCommand`/`ChangeColorCommand`/etc. through `SketcherDocument.execute()` so the
-  whole draft is one undo step.
+- The generation target is `SET_PIECE_JSON_SCHEMA` (`SettingSpec`/`NewProceduralSetPiece`) from
+  ROADMAP_API.md, not a batch of `CartoonSketcher` primitive commands — the LLM composes a
+  declarative document (`floor`/`props`/`lights`/`environment`), and the app resolves it at
+  render time.
+- Server validates/clamps via `normalizeSetPieceInput` before persisting.
+- `create_setting` persists the document (reusing `createSetPiece`); `bind` wires it to a
+  `#setting` name.
 
-Exit criteria: typing `"aircraft cabin"` and generating produces a rough primitive layout
-(seat blocks, aisle, wall panels) in the sketcher, undoable as one step, further editable with
-existing gizmo/colour/group tools.
+Exit criteria: `make("setting", "PUB", "traditional English pub…")` returns a bound, resolvable
+setting whose document validates.
 
-## Phase AI-3 — CAT-4 integration
+## Phase AI-3 — `make` orchestration
 
-- Wire AI-1/AI-2 into the actual CAT-4 "Create →" flow: the pre-filled name from
-  `?prefillName=` also pre-fills the AI descriptor box (or auto-generates a first draft
-  immediately on page load, no extra click).
-- Confirm the `BroadcastChannel('directionally-catalogue')` auto-resolve behaviour works
-  identically whether the exported asset originated from manual authoring or an AI draft —
-  no special-casing needed downstream.
+- `make` (describe → create → bind, idempotent by name) already exists in `src/core/agent/api.ts`;
+  this phase wires the LLM step in front of it — build/resolve the document from the free-text
+  descriptor — without touching the existing create-or-resume + bind path.
+- Confirm the Roster tab reflects the result immediately: the name flips from `UNRESOLVED`/
+  `AMBIGUOUS` to `BOUND`, with Edit/Rebind/Rename available — no special-casing needed downstream.
 
-Exit criteria: type `Sanders` in the script, click Create →, land on `/character` with an
-AI-generated rookie-cop draft already applied and ready to tune/export — zero blank-page start.
+Exit criteria: an `UNRESOLVED` name like `Sanders` in the script can be turned into a bound,
+resolvable character with a single `make` call, visible in the Roster without a page reload.
 
 ## Phase AI-4 — Validation & cost hardening
 
 - Add Zod (or equivalent) schema validation in place of manual guards from AI-0/AI-1/AI-2.
 - Add a retry-once-on-invalid-JSON policy.
-- Add a per-session/per-IP rate limit on `/api/generate/*` so repeated "regenerate" clicks
+- Add a per-session/per-IP rate limit on the AI step inside `make` so repeated "regenerate" clicks
   don't run away Azure OpenAI spend.
 
-Exit criteria: malformed model output never reaches `ProceduralHumanoid`/`SketcherDocument`
-un-clamped; a burst of rapid regenerate clicks is throttled with a visible message, not a
-silent cost spike.
+Exit criteria: malformed model output never reaches the renderer/catalogue un-clamped; a burst
+of rapid regenerate clicks is throttled with a visible message, not a silent cost spike.
 
 ## Phase AI-5 — Production posture *(only if this graduates past POC)*
 
@@ -295,7 +337,7 @@ key is not present in any application setting, only in Key Vault.
 - Add an "AI Settings" panel (any page using generation) where a user can select a provider
   (Azure default / DeepSeek / OpenAI / Claude) and paste their own API key. Stored in
   `localStorage`, mirroring `CharacterDesignStore`'s persistence pattern — never sent anywhere
-  except as a per-request header to the app's own `/api/generate/*` proxy.
+  except as a per-request header to the app's own `/agent/make` proxy.
 - Proxy route reads the user-supplied provider/key header when present and uses it instead of
   the app owner's Azure default for that request only; falls back to the Azure default when
   absent so the vanilla zero-config path is completely unaffected.
@@ -329,13 +371,16 @@ their machine beyond the local Ollama server.
 
 ## Explicitly out of scope
 
+- **Script/content generation** — there is deliberately no script API. AI proposes only the
+  *asset* layer (characters and sets); the script's dialogue, action, and story are authored by
+  the writer and never generated here.
 - Text-to-mesh / diffusion-generated GLBs — unvalidatable output, breaks the Mixamo
   bone-naming convention the animation library depends on.
 - A direct browser → Azure OpenAI network call using the app owner's key — the server proxy
   boundary is not optional for the default/BYOK-remote path (see AI-7 for the one narrow
   exception: a user's own fully-local model, which the server genuinely cannot reach).
-- Auto-applying an AI draft straight to the catalogue without a human tuning/export step —
-  every generated asset still goes through the existing Export to Catalogue action.
+- Unvalidated AI output reaching the catalogue — every `create` passes the schema normaliser
+  (`normalizeSetPieceInput`/`validateCharacterSpec`) before it can touch the renderer.
 - Server-side storage of user-supplied BYOK keys — forwarded per-request only, never persisted.
 
 ---

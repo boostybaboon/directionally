@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getCharacters, getSetPieces, getById } from './catalogue';
+import { getCharacters, getSetPieces, getById, isSettingEntry } from './catalogue';
 import { CATALOGUE_ENTRIES } from './entries';
 import type { CatalogueEntry, CharacterEntry, SetPieceEntry } from './types';
 
@@ -80,6 +80,34 @@ describe('getById', () => {
 
   it('is case-sensitive', () => {
     expect(getById('Robot-A', fixture)).toBeUndefined();
+  });
+});
+
+describe('isSettingEntry', () => {
+  const environment: CatalogueEntry = { kind: 'environment', id: 'studio', label: 'Studio', hdriPath: '/env/studio.hdr' };
+  const light: CatalogueEntry = { kind: 'light', id: 'sun', label: 'Sun', config: { type: 'directional', color: 0xffffff, intensity: 1, position: [0, 10, 5] } };
+
+  it('treats environments as settings', () => {
+    expect(isSettingEntry(environment)).toBe(true);
+  });
+
+  it('treats a bare set-piece as a component by default', () => {
+    expect(isSettingEntry(box)).toBe(false);
+  });
+
+  it('infers a set-piece is a setting when it captured environment/lights', () => {
+    expect(isSettingEntry({ ...box, id: 'venue', environmentId: 'studio' })).toBe(true);
+    expect(isSettingEntry({ ...box, id: 'lit-venue', lights: [{ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 1 }] })).toBe(true);
+  });
+
+  it('honours an explicit isSetting flag over the default', () => {
+    expect(isSettingEntry({ ...box, id: 'explicit-venue', isSetting: true })).toBe(true);
+    expect(isSettingEntry({ ...box, id: 'explicit-prop', isSetting: false })).toBe(false);
+  });
+
+  it('returns false for characters and lights', () => {
+    expect(isSettingEntry(robot)).toBe(false);
+    expect(isSettingEntry(light)).toBe(false);
   });
 });
 

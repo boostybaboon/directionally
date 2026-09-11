@@ -10,6 +10,7 @@ import {
   sceneToSettingSpec,
   resolveInstance,
   resolveInstances,
+  matchesByLabel,
 } from './settingSpec.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
 import type { StoredScene } from '../storage/types.js';
@@ -227,5 +228,29 @@ describe('settingSpecToScene / sceneToSettingSpec', () => {
     const r = resolveSettingSpec({ lights: [{ type: 'directional', id: 'my-sun', color: 0xffffff, intensity: 1, position: [0, 10, 5] }] }, []);
     expect(r.lights).toHaveLength(1);
     expect(r.lights[0].id).toBe('my-sun');
+  });
+});
+
+describe('matchesByLabel', () => {
+  const userGarden = (id: string, addedAt: number): CatalogueEntry & { userAdded: true; addedAt: number } => ({
+    kind: 'set-piece',
+    id,
+    label: 'GARDEN',
+    geometry: { type: 'box', width: 1, height: 1, depth: 1 },
+    material: { color: 0x11aa22 },
+    userAdded: true as const,
+    addedAt,
+  });
+
+  it('returns all case-insensitive matches, most-recent user entry first', () => {
+    const older = userGarden('garden-old', 1000);
+    const newer = userGarden('garden-new', 2000);
+    const bundled: CatalogueEntry = { kind: 'set-piece', id: 'garden-bundled', label: 'garden', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0 } };
+    const result = matchesByLabel([bundled, older, newer], 'GARDEN');
+    expect(result.map((e) => e.id)).toEqual(['garden-new', 'garden-old', 'garden-bundled']);
+  });
+
+  it('returns an empty array when nothing matches', () => {
+    expect(matchesByLabel([userGarden('garden-only', 1000)], 'CLASSROOM')).toEqual([]);
   });
 });

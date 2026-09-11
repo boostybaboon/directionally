@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tokenizeScript, renderScript, sceneIndexForLine } from './sigilScript';
+import { tokenizeScript, renderScript, sceneIndexForLine, retypeAlias } from './sigilScript';
 import type { ScriptDocument, Beat, ActionBeat, SceneBlock } from './fountain';
 
 // ── Programmatic fixture builders (mirrors fountainCompiler.test.ts) ────────
@@ -327,5 +327,44 @@ describe('sceneStartLines / sceneIndexForLine', () => {
 
   it('returns 0 when there are no scenes', () => {
     expect(sceneIndexForLine([], 5)).toBe(0);
+  });
+});
+
+describe('retypeAlias', () => {
+  it('retypes a cast name across @ and > lines but leaves dialogue prose untouched', () => {
+    const text = [
+      '#INT STAGE DAY',
+      '',
+      '@BOB',
+      'Hello, I am Bob the builder.',
+      '>BOB enters left',
+      '> BOB moves center',
+    ].join('\n');
+    const result = retypeAlias(text, 'BOB', 'ROBERT', 'cast');
+    expect(result).toBe([
+      '#INT STAGE DAY',
+      '',
+      '@ROBERT',
+      'Hello, I am Bob the builder.',
+      '>ROBERT enters left',
+      '> ROBERT moves center',
+    ].join('\n'));
+  });
+
+  it('retypes a scene setting within the # heading', () => {
+    const text = '#INT CLASSROOM DAY\n\n@ALICE\nHi.\n\n#EXT CLASSROOM NIGHT';
+    const result = retypeAlias(text, 'CLASSROOM', 'SCHOOLROOM', 'setting');
+    expect(result).toBe('#INT SCHOOLROOM DAY\n\n@ALICE\nHi.\n\n#EXT SCHOOLROOM NIGHT');
+  });
+
+  it('does not touch prose or other sigil kinds when scoped', () => {
+    const text = '@BOB\n#INT CLASSROOM DAY\n>BOB enters';
+    expect(retypeAlias(text, 'BOB', 'ROBERT', 'setting')).toBe(text);
+    expect(retypeAlias(text, 'CLASSROOM', 'ROOM', 'cast')).toBe(text);
+  });
+
+  it('is a no-op for an unchanged name', () => {
+    const text = '@BOB\n>BOB enters';
+    expect(retypeAlias(text, 'BOB', 'BOB', 'cast')).toBe(text);
   });
 });

@@ -14,7 +14,7 @@ import type { NewProceduralSetPiece, UserCatalogueEntry } from '../storage/OPFSC
  * `localId`s, persists via `addSetPiece`, and returns the created entry.
  *
  * Kept deliberately free of any provider/LLM dependency — that lives in
- * ROADMAP_AI.md's `/api/generate/*` server routes, which produce JSON this
+ * ROADMAP_AI.md's `/agent/generate/*` server routes, which produce JSON this
  * module consumes. The schema mirrors `NewProceduralSetPiece` + `PlacedProp`
  * (the source of truth); keep them in sync when either type changes.
  */
@@ -112,6 +112,7 @@ export const SET_PIECE_JSON_SCHEMA: Record<string, unknown> = {
     defaultRotation: VEC3_SCHEMA,
     environmentId: { type: 'string' },
     lights: { type: 'array', items: LIGHT_SCHEMA },
+    isSetting: { type: 'boolean' },
   },
   oneOf: [
     { required: ['geometry', 'material'] },
@@ -280,6 +281,10 @@ export function normalizeSetPieceInput(input: unknown): NewProceduralSetPiece {
   if (input.defaultRotation !== undefined) out.defaultRotation = vec3(input.defaultRotation, 'defaultRotation');
   if (input.environmentId !== undefined) out.environmentId = str(input.environmentId, 'environmentId');
   if (input.lights !== undefined) out.lights = normalizeLights(input.lights);
+  if (input.isSetting !== undefined) {
+    if (typeof input.isSetting !== 'boolean') throw new Error('isSetting must be a boolean');
+    out.isSetting = input.isSetting;
+  }
 
   return out;
 }

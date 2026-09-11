@@ -118,3 +118,22 @@ describe('createSetPiece', () => {
     _resetDirectoryProvider();
   });
 });
+
+describe('normalizeSetPieceInput (isSetting)', () => {
+  const leaf = { label: 'Box', geometry: { type: 'box' as const, width: 1, height: 1, depth: 1 }, material: { color: 0x8844aa } };
+
+  it('accepts and preserves an explicit isSetting flag', () => {
+    const out = normalizeSetPieceInput({ ...leaf, isSetting: true });
+    expect(out.isSetting).toBe(true);
+  });
+
+  it('rejects a non-boolean isSetting', () => {
+    expect(() => normalizeSetPieceInput({ ...leaf, isSetting: 'yes' })).toThrow('isSetting must be a boolean');
+  });
+
+  it('defaults to undefined when isSetting is omitted', () => {
+    const out = normalizeSetPieceInput(leaf);
+    expect(out.isSetting).toBeUndefined();
+  });
+});
+

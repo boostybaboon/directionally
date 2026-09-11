@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getCharacters, getLights, getSetPieces, getEnvironments } from '../core/catalogue/catalogue.js';
+  import { getCharacters, getLights, getSetPieces, getEnvironments, isSettingEntry } from '../core/catalogue/catalogue.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
   import type { CatalogueEntry } from '../core/catalogue/types.js';
   import type { UserCatalogueEntry } from '../core/storage/OPFSCatalogueStore.js';
@@ -86,7 +86,11 @@
             </div>
             {#if expanded}
               <div class="character-preview">
-                <PreviewRenderer gltfPath={entry.gltfPath} />
+                {#if entry.gltfPath}
+                  <PreviewRenderer gltfPath={entry.gltfPath} />
+                {:else}
+                  <p class="empty-hint">Spec-backed character — built at scene load.</p>
+                {/if}
               </div>
               {#if onadd}
                 <button class="add-to-scene-btn" onclick={() => { onadd('character', entry.id); toggleCharacter(entry.id); }}>
@@ -123,6 +127,11 @@
             >
               <span class="item-icon" aria-hidden="true">◻</span>
               <span class="item-label">{entry.label}</span>
+              {#if isSettingEntry(entry)}
+                <span class="item-tag">scenery</span>
+              {:else}
+                <span class="item-tag item-tag--prop">prop</span>
+              {/if}
               <span class="item-meta">{entry.compose ? `${entry.compose.length} parts` : entry.geometry ? (GEOMETRY_LABELS[entry.geometry.type] ?? entry.geometry.type) : '—'}</span>
             </button>
             <div class="setpiece-actions">
@@ -332,6 +341,26 @@
     color: #555;
     white-space: nowrap;
     flex-shrink: 0;
+  }
+
+  .item-tag {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #7abfaa;
+    background: #1a2e28;
+    border: 1px solid #2a4a3a;
+    border-radius: 3px;
+    padding: 0 5px;
+    line-height: 1.5;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .item-tag--prop {
+    color: #888;
+    background: #1e1e1e;
+    border-color: #333;
   }
 
   .expand-arrow {

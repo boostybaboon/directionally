@@ -4,6 +4,8 @@ import { getById } from '../catalogue/catalogue.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
 import { resolveInstances } from '../setting/settingSpec.js';
 import type { CatalogueEntry } from '../catalogue/types.js';
+import type { CharacterSpec } from '../character/characterSpec.js';
+import { specCharacterToGlbUrl } from '../character/specCharacter.js';
 import { actorBlockToTracks, lightBlockToTracks, setPieceBlockToTracks, cameraBlockToTracks } from '../domain/blockCompiler.js';
 import type { Actor } from '../domain/Production.js';
 import type { ActorVoice, ActorBlock, LightBlock, SetPieceBlock, CameraBlock, Vec3, SceneAction, SetPiece } from '../domain/types.js';
@@ -64,10 +66,20 @@ function resolveOpfsGltfPath(
  * pieces to the current session blob URLs produced by OPFSCatalogueStore,
  * and to look up user-added characters by catalogueId.
  */
+/** Loose user-entry shape sufficient for actor/character resolution. */
+type UserEntryLike = {
+  id: string;
+  gltfPath?: string;
+  kind?: string;
+  defaultAnimation?: string;
+  defaultRotation?: [number, number, number];
+  spec?: CharacterSpec;
+};
+
 export function storedSceneToModel(
   storedScene: StoredScene,
   storedActors: StoredActor[],
-  userEntries: Array<{ id: string; gltfPath?: string; kind?: string; defaultAnimation?: string; defaultRotation?: [number, number, number] }> = [],
+  userEntries: UserEntryLike[] = [],
 ): Model {
   // Resolve stored actors into domain Actor objects.
   // The domain Actor's id must equal StoredActor.id so that all scene
@@ -248,4 +260,31 @@ export function storedSceneToModel(
   }
 
   return sceneToModel(scene, actors);
+}
+
+/**
+ * Async variant of `storedSceneToModel` that first materialises any spec-backed
+ * character (ROADMAP_API.md API-2) into a GLB blob URL, then delegates to the
+ * synchronous deserialiser unchanged. Spec-backed characters carry a
+ * `CharacterSpec` instead of a `gltfPath`; the GLB is derived at load time.
+ */
+export async function storedSceneToModelAsync(
+  storedScene: StoredScene,
+  storedActors: StoredActor[],
+  userEntries: UserEntryLike[] = [],
+): Promise<Model> {
+  const materialised = await Promise.all(
+    userEntries.map(async (e) => {
+      if (e.kind === 'character' && e.spec && !e.gltfPath) {
+        try {
+          return { ...e, gltfPath: await specCharacterToGlbUrl(e.spec), spec: undefined };
+        } catch (err) {
+          console.error('Failed to build spec-backed character', e.id, err);
+          return e; // fall through to the placeholder GLB
+        }
+      }
+      return e;
+    }),
+  );
+  return storedSceneToModel(storedScene, storedActors, materialised);
 }

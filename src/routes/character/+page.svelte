@@ -6,6 +6,7 @@
   import { ProceduralHumanoid, C3PO_COLORS, SONNY_COLORS, DEFAULT_COLORS, DEFAULT_BONE_PARAMS, BONE_GROUPS, DEFAULT_FACE_PARAMS } from '../../core/character/ProceduralHumanoid.js';
   import type { RobotStyle, BoneParamMap, FaceParams } from '../../core/character/ProceduralHumanoid.js';
   import { semanticToBoneParams, semanticToRingParams, semanticHeightScale, DEFAULT_SEMANTIC } from '../../core/character/semanticParams.js';
+  import { RIG_GLB_PATH, ANIM_GLB_PATHS } from '../../core/character/animationClips.js';
   import type { SemanticCharacter } from '../../core/character/semanticParams.js';
   import { OUTFIT_PRESETS, SKIN_TONES, HAIR_COLORS, EYE_COLORS } from '../../core/character/clothing.js';
   import type { Outfit } from '../../core/character/clothing.js';
@@ -16,22 +17,7 @@
 
   let canvas: HTMLCanvasElement;
 
-  // Animation GLBs to load. Each filename becomes the clip label.
-  const ANIM_GLBS = [
-    '/models/gltf/anim-tpose.glb',
-    '/models/gltf/anim-idle.glb',
-    '/models/gltf/anim-walk.glb',
-    '/models/gltf/anim-run.glb',
-    '/models/gltf/anim-jump.glb',
-    '/models/gltf/anim-turn-left.glb',
-    '/models/gltf/anim-turn-right.glb',
-    '/models/gltf/anim-turn-left-90.glb',
-    '/models/gltf/anim-turn-right-90.glb',
-    '/models/gltf/anim-strafe-left.glb',
-    '/models/gltf/anim-strafe-right.glb',
-    '/models/gltf/anim-strafe-left-walk.glb',
-    '/models/gltf/anim-strafe-right-walk.glb',
-  ];
+  // Animation GLBs to load. Each filename becomes the clip label (shared list).
 
   // Clip display name: capitalise each hyphen-separated word.
   function clipLabel(name: string): string {
@@ -252,7 +238,7 @@
 
     // Load xbot-rig (skeleton only, no mesh), then load all animation GLBs in parallel.
     const loader = new GLTFLoader();
-    loader.loadAsync('/models/gltf/xbot-rig.glb').then(async (rigGltf) => {
+    loader.loadAsync(RIG_GLB_PATH).then(async (rigGltf) => {
       rigGltfScene = rigGltf.scene;
       humanoid = new ProceduralHumanoid(rigGltfScene, []);
       scene.add(humanoid.root);
@@ -261,7 +247,7 @@
       // Derive the clip name from the filename ("anim-walk.glb" → "walk") —
       // immune to whatever Blender puts in the animation.name field.
       const animResults = await Promise.allSettled(
-        ANIM_GLBS.map(async (path) => {
+        ANIM_GLB_PATHS.map(async (path) => {
           const gltf = await loader.loadAsync(path);
           const label = path.split('/').pop()!.replace(/^anim-/, '').replace(/\.glb$/, '');
           for (const clip of gltf.animations) clip.name = label;
