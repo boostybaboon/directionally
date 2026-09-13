@@ -63,6 +63,10 @@ export type AIGroup = {
   name?: string;
   /** Handles of member parts. */
   children: string[];
+  /** Optional world-space transform (position/quaternion/scale) — carried for a lossless round-trip. */
+  position?: [number, number, number];
+  quaternion?: [number, number, number, number];
+  scale?: [number, number, number];
 };
 
 export type AIDraft = {
@@ -84,7 +88,7 @@ export type AIDraftProjection = {
 const DEG = 180 / Math.PI;
 const RAD = Math.PI / 180;
 
-function slug(name: string): string {
+export function slug(name: string): string {
   const s = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return s || 'part';
 }
@@ -144,6 +148,11 @@ function sizeToScale(shape: string, size: number[]): [number, number, number] {
   return out;
 }
 
+// The draft stores LOCAL transforms; the AI Draft exposes WORLD transforms. Groups carry
+// their own world transform so the conversion is lossless in both directions.
+import type { Transform } from './transform.js';
+import { IDENTITY_TRANSFORM, localToWorld, worldToLocal } from './transform.js';
+
 /** Project the canonical draft into its AI-facing form. */
 export function toAIDraft(draft: SketcherDraft): AIDraftProjection {
   const taken = new Set<string>();
@@ -158,8 +167,17 @@ export function toAIDraft(draft: SketcherDraft): AIDraftProjection {
   });
 
   const groupHandleOfGuid = new Map<string, string>();
+  const groupTransformOfGuid = new Map<string, Transform>();
   (draft.groups ?? []).forEach((g, i) => {
-    for (const pid of g.partIds) groupHandleOfGuid.set(pid, groupHandles[i]);
+    const transform: Transform = {
+      position: g.position ?? [0, 0, 0],
+      quaternion: g.quaternion ?? [0, 0, 0, 1],
+      scale: g.scale ?? [1, 1, 1],
+    };
+    for (const pid of g.partIds) {
+      groupHandleOfGuid.set(pid, groupHandles[i]);
+      groupTransformOfGuid.set(pid, transform);
+    }
   });
 
   const parts: AIPart[] = draft.parts.map((p) => {
@@ -169,15 +187,19 @@ export function toAIDraft(draft: SketcherDraft): AIDraftProjection {
     handleOfGuid.set(p.id, handle);
     const groupHandle = groupHandleOfGuid.get(p.id);
     const isPrimitive = p.kind === 'primitive';
+    const world = localToWorld(
+      { position: p.position, quaternion: p.quaternion, scale: p.scale },
+      groupTransformOfGuid.get(p.id) ?? IDENTITY_TRANSFORM,
+    );
     return {
       id: handle,
       name: p.label ?? p.name,
       kind: p.kind,
       ...(isPrimitive
-        ? { shape: p.name.toLowerCase(), size: scaleToSize(p.name.toLowerCase(), p.scale) }
-        : { scale: p.scale }),
-      position: p.position,
-      rotation: toEulerDeg(p.quaternion),
+        ? { shape: p.name.toLowerCase(), size: scaleToSize(p.name.toLowerCase(), world.scale) }
+        : { scale: world.scale }),
+      position: world.position,
+      rotation: toEulerDeg(world.quaternion),
       color: p.color,
       ...(p.faceColors !== undefined ? { faceColors: p.faceColors } : {}),
       ...(p.faceTextures !== undefined ? { faceTextures: p.faceTextures } : {}),
@@ -193,6 +215,9 @@ export function toAIDraft(draft: SketcherDraft): AIDraftProjection {
   const groups: AIGroup[] = (draft.groups ?? []).map((g, i) => ({
     id: groupHandles[i],
     ...(g.name !== undefined ? { name: g.name } : {}),
+    ...(g.position !== undefined ? { position: g.position } : {}),
+    ...(g.quaternion !== undefined ? { quaternion: g.quaternion } : {}),
+    ...(g.scale !== undefined ? { scale: g.scale } : {}),
     children: g.partIds
       .map((pid) => handleOfGuid.get(pid))
       .filter((h): h is string => h !== undefined),
@@ -246,13 +271,42 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
     };
   });
 
+  const partsById = new Map(parts.map((pd) => [pd.id, pd]));
+
   const groups = aiDraft.groups.length > 0
-    ? aiDraft.groups.map((g) => ({
-        partIds: g.children
+    ? aiDraft.groups.map((g) => {
+        const partIds = g.children
           .map((h) => guidOfHandle.get(h))
-          .filter((x): x is string => x !== undefined),
-        ...(g.name !== undefined ? { name: g.name } : {}),
-      }))
+          .filter((x): x is string => x !== undefined);
+        const hasTransform = g.position !== undefined || g.quaternion !== undefined || g.scale !== undefined;
+        if (hasTransform) {
+          // The AI returned an explicit group transform: localise members relative to it.
+          const groupTransform: Transform = {
+            position: g.position ?? [0, 0, 0],
+            quaternion: g.quaternion ?? [0, 0, 0, 1],
+            scale: g.scale ?? [1, 1, 1],
+          };
+          for (const pid of partIds) {
+            const pd = partsById.get(pid);
+            if (!pd) continue;
+            const local = worldToLocal({ position: pd.position, quaternion: pd.quaternion, scale: pd.scale }, groupTransform);
+            pd.position = local.position;
+            pd.quaternion = local.quaternion;
+            pd.scale = local.scale;
+          }
+          return {
+            partIds,
+            ...(g.name !== undefined ? { name: g.name } : {}),
+            ...(g.position !== undefined ? { position: g.position } : {}),
+            ...(g.quaternion !== undefined ? { quaternion: g.quaternion } : {}),
+            ...(g.scale !== undefined ? { scale: g.scale } : {}),
+          };
+        }
+        return {
+          partIds,
+          ...(g.name !== undefined ? { name: g.name } : {}),
+        };
+      })
     : undefined;
 
   return {

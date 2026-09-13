@@ -109,10 +109,10 @@ export type FaceGroupInfo = {
 export type PartSnapshot = {
   id: string;
   label?: string;
-  /** World-space position — correct regardless of group parentage. */
-  worldPosition: [number, number, number];
-  worldQuaternionXYZW: [number, number, number, number];
-  worldScale: [number, number, number];
+  /** Local-space transform — relative to the parent group, or world when ungrouped. */
+  position: [number, number, number];
+  quaternion: [number, number, number, number];
+  scale: [number, number, number];
   color: number;
   faceColors: number[];
   /** Per-draw-group texture data URLs matching faceColors. */
@@ -141,6 +141,10 @@ export type GroupSnapshot = {
   partIds: string[];
   /** Optional semantic name (e.g. "table"); absent until named. */
   name?: string;
+  /** World-space transform of the group container. Absent in legacy drafts. */
+  position?: [number, number, number];
+  quaternion?: [number, number, number, number];
+  scale?: [number, number, number];
   /**
    * True when the group was created by a Group command (pure rigid container,
    * no attach joints between members). False (or absent in legacy snapshots) means
@@ -149,27 +153,13 @@ export type GroupSnapshot = {
   isGroup?: boolean;
 };
 
-export type SessionSnapshot = {
-  parts: PartSnapshot[];
-  joints: JointSnapshot[];
-  /** Groups present at snapshot time. Absent means no groups. */
-  groups?: GroupSnapshot[];
-  /**
-   * Durable group bond components: each entry is the set of part IDs that form
-   * one group unit. Unlike groups, these survive attach merges — when an attach
-   * op collapses a group into a larger assembly, the bond topology is
-   * preserved here so that detaching restores the group correctly.
-   */
-  groupComponents?: string[][];
-};
-
 // ── Draft types (used by CartoonSketcher.toDraft / loadDraft for persistence) ─
 
 /**
  * JSON-serializable description of a single part. Geometry is stored as either
  * a primitive name ('Box', 'Cylinder', …) or the XZ shape points + depth for
- * sketch-extruded parts. World-space transforms allow correct restoration
- * regardless of prior group membership.
+ * sketch-extruded parts. Transforms are local to the parent group (world when
+ * the part is ungrouped).
  */
 export type PartDraft = {
   id: string;

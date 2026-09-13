@@ -1,10 +1,14 @@
-# Directionally — Catalogue Identity & Resolution Roadmap
+# Directionally — Catalogue Roadmap
 
-Not scheduled work. A forward-looking sighter, parked here to steer the catalogue/resolution
-design as the app moves from single-user development toward shared, multi-user deployments.
-Complements the Track CAT milestones in [ROADMAP.md](ROADMAP.md) — those describe *what to build
-now*; this describes *how the resolution model should evolve* so the current name-based behaviour
-doesn't become a scaling liability.
+Two halves of one catalogue:
+
+- **Part 1 — Identity & resolution** (below): how assets are *named and resolved* as the app
+  moves toward shared, multi-user deployments. Complements Track CAT in [ROADMAP.md](ROADMAP.md).
+- **Part 2 — Storage & rendering**: how a set is *stored, rendered, and edited* — one Document,
+  one Realiser, one Catalogue. The active refactor target, with a step-by-step plan at the end.
+
+Part 1 is the forward-looking resolution sighter below; Part 2 is the implementation target being
+executed now.
 
 ---
 
@@ -134,6 +138,152 @@ needed.
 
 ---
 
+## Part 2 — Storage & rendering: one Document, one Realiser, one Catalogue
+
+**Status:** the active refactor target. Supersedes the two-store model (`SketcherAssemblyStore` +
+`OPFSCatalogueStore`) and the dual render representation (`gltfPath` vs `compose`).
+
+### Why one
+
+Today a set exists in two stores (an editable `SketcherAssemblyStore` draft + a published
+`OPFSCatalogueStore` entry linked by `sourceAssemblyId`), in two representations (a baked GLB or a
+procedural `compose`), behind two AI grammars (`SET_PIECE_JSON_SCHEMA` vs `AI_DRAFT_JSON_SCHEMA`),
+and two save buttons ("Save as Item" vs "Save as Setting"). Every persistence wrinkle we've hit —
+zombie assemblies, duplicate saves, the "box" note, the five-button confusion — is a symptom of
+that split. The fix is one Document, one Realiser, one Catalogue.
+
+### Target model (aligned with set-staging-architecture.md)
+
+The catalogue stores **Definitions**; a Definition is a **Node tree**. One node type, used
+fractally (item / assembly / set / venue), with `role`, `ref`, `overrides`, and `children`:
+
+```
+Node {
+  id: string                          // stable path segment, unique within parent ("lamp_03")
+  role: 'Prop' | 'Light' | 'Camera' | 'Structure' | 'RigAnchor'
+  transform: { position: Vec3, quaternion: [x,y,z,w], scale: Vec3 }   // LOCAL, relative to parent
+  children: Node[]                    // recursion
+  ref?: string                        // instance of a catalogue Definition (entry id)
+  overrides?: Override[]              // sparse patches on a ref
+  content?: PropContent               // leaf geometry when role=Prop and ref is absent
+  tags?: string[]                     // "movable", "set-dressing", "venue"
+}
+
+PropContent =
+  | { type: 'primitive'; shape: 'box'|'sphere'|'cylinder'|'cone'|'torus'|'capsule'; size: number[] }
+  | { type: 'sketch';    shapePoints: [number,number][]; holes?; depth: number }
+  | { type: 'lathe';     lathePoints: [number,number][]; phiLength: number }
+  | { type: 'gltf';      url: string }        // pre-made leaf (a degenerate ref)
+
+Override = { path: string; op: 'remove' | 'override_transform' | 'swap_ref'; value? }
+```
+
+```
+SetDocument {
+  root: Node[]            // top-level children (a scene = a list of top-level nodes)
+  environment?: string    // HDRI catalogue id — a scene property, not a placed node
+}
+```
+
+- **Lights and cameras are nodes** (`role: Light` / `role: Camera`) with a role payload + a local
+  transform — not fields, not a separate "stage settings" object (set-staging-architecture.md).
+- **Environment (HDRI)** stays a document field: it's a whole-scene background, not a placed,
+  transformable object, and the role enum has no Environment role.
+- A `Prop` is either a **leaf** (`content`: primitive / sketch / lathe / gltf) or an **instance**
+  (`ref` to another Definition + `overrides`). `gltf` is just the opaque leaf; `ref` is the
+  general, editable, override-able case.
+- **Reuse-with-variation** (`ref` + `overrides`) and **layering** (venue vs dressing vs shot) are
+  supported by the schema now, but their *resolution* is a later increment (see step 9) — the
+  single-store/Document foundation lands first.
+
+### Realiser (one render path)
+
+One pure function `realise(document) → THREE.Scene` switches on node kind/role: build geometry for
+primitive/sketch/lathe, load the file for `gltf`, recurse into `children`, resolve `ref` to its
+Definition and apply `overrides`. **Both** the sketch view and the production renderer call it.
+"Flattening happens only at final render, as a throwaway artifact" — this is that function.
+
+### Principles
+
+1. **Local transforms, drill-in editing.** A node stores its transform relative to its immediate
+   parent; the editor only ever transforms the *direct children* of the current container (root or
+   an entered group). One matrix inversion per commit — no nested-transform chains.
+2. **One representation per kind.** A set-piece is always a `SetDocument`. No stored GLB, no stored
+   `compose`. GLB is *export-only* ("Download GLB").
+3. **Document is canonical; view is derived.** The Realiser builds the scene from the Document on
+   open/undo; live gizmo/sketch drags mutate the realised meshes and commit to the Document at
+   interaction boundaries (the pattern the code already uses).
+4. **Stable paths.** Node ids are name-derived, parent-unique segments, so the animation layer
+   addresses `Schoolroom/Row2/Desk3/Lamp` — never a guid, never a flattened mesh.
+5. **One persistence lifecycle.** Create/rename/duplicate/delete/open all live in the catalogue
+   tree. Implicit autosave. No "publish" step, no "Untitled".
+
+### Step-by-step implementation
+
+Each increment is shippable and test-guarded. Protect the fragile systems (attach/joint, gimbal
+transform, sketch/extrude) with their existing tests before touching them.
+
+1. **Extract the Realiser.** Factor the geometry-building out of `CartoonSketcher.loadDraft` into
+   `realise(document): THREE.Group` (pure, headless). Sketch view calls it. No behaviour change.
+   Guard: `toDraft`/`loadDraft` round-trip + `exportGLB` tests.
+
+2. **Tree Document + local transforms + drill-in.** Replace flat `parts[] + groups` with the
+   `Node` tree; store local transforms; ids become parent-unique name-segments. Re-home
+   `sketcherCommands`/`SketcherDocument` over the tree; make member-edit/group-edit the only edit
+   mode. Guard: `CartoonSketcher.test.ts`, `SketcherDocument.test.ts`, `SelectionManager.test.ts`.
+
+3. **Map attach/joints onto the tree.** `AttachManager`'s rigid `groups` → `role: Structure`
+   nodes; live joints → `snap`/`rigid` edges (the doc's glue/weld distinction). Guard:
+   `AttachManager.test.ts` ported first.
+
+4. **One store.** Catalogue entry = `{ id, name, kind, isSetting, document, addedAt, modifiedAt }`.
+   Migrate assemblies → entries via `sourceAssemblyId`; orphan drafts become entries (or drop).
+   Delete `SketcherAssemblyStore`, `sourceAssemblyId`, `catalogueLifecycle` cascade.
+
+5. **Production renders the Document.** Give `storedSceneToModel` / `settingSpec` a `document`
+   branch that calls `realise`. `gltfPath`/`compose` stop being user-set representations; GLB is
+   export-only. Guard: `storedSceneToModel` + `settingSpec` tests.
+
+6. **Collapse the AI + save surfaces.** One create verb (AI Draft → `fromAIDraft` → document →
+   store). Retire `SET_PIECE_JSON_SCHEMA`/`normalizeSetPieceInput`/`createSetPiece`/`addSetPiece`
+   for sets. `isSetting` becomes a property. Remove "Save as Item"/"Save as Setting",
+   "New"/"Save As…"/"Open…", "Untitled".
+
+7. **UI: persistent catalogue column.** Left-hand tree in the sketch tool (always visible /
+   collapsible): **+ New set**, **inline rename**, **duplicate**, **delete**, **click-to-open**,
+   drill-in. Name-on-create. The same tree already lives in the production view.
+
+8. **Bundled library → documents.** Convert bundled set-piece props (`CATALOGUE_ENTRIES` +
+   generators) to `SetDocument`s so there is one set-piece representation. Lights/environments
+   remain their own kinds. Delete the sidecar machinery.
+
+9. **(Later) `ref` + `overrides` + layering.** Implement instance resolution and venue/dressing
+   layer composition — the doc's reuse-with-variation story — on top of the foundation. The schema
+   already supports it; this is where it becomes behaviour.
+
+### Migration
+
+- Assemblies merge into catalogue entries via `sourceAssemblyId` (step 4).
+- Existing GLB-backed set-pieces keep rendering (their GLB is a throwaway cache until step 5
+  replaces it with direct draft rendering), then the GLB sidecar is deleted (step 8).
+- Bundled `compose` props are converted to documents (step 8).
+
+### Deletion list
+
+`SketcherAssemblyStore`; `localStorage['sketcher-assembly-id']` restore; `sourceAssemblyId` +
+`findByAssemblyId`/`sourceAssemblyIdOf` + `catalogueLifecycle` cascade; `compose`/`geometry`/
+`material` as user-set representations (`addSetPiece`, `updateSetPieceMeta`, `normalizeSetPieceInput`,
+`SET_PIECE_JSON_SCHEMA`); `exportDraftGLB` as a stored step (keep `exportGLB` for download);
+"Save as Item"/"Save as Setting"/"New"/"Save As…"/"Open…" buttons + "Untitled".
+
+### Relationship to Part 1 (identity vs storage)
+
+Part 1 (above) is about *which* asset a script name resolves to — machine ids, namespaces,
+bindings. Part 2 is about *what a set is made of* — the Document tree and how it renders. They are
+orthogonal and reconcile cleanly: **entry id is a machine URN** (Part 1), while **node id is a
+stable human path-segment** for animation addressing (Part 2 / set-staging-architecture.md).
+No conflict.
+
 ## Cross-references
 
 - [ROADMAP.md](ROADMAP.md) — Track CAT (CAT-1/2/3/4/5) and the Data Contract's refinement-layer
@@ -142,3 +292,7 @@ needed.
   inherit the same identity/resolution concerns.
 - [ROADMAP_HUMANOID.md](ROADMAP_HUMANOID.md) — humanoid rework that changes how characters are
   produced, not how they are identified.
+- [set-staging-architecture.md](set-staging-architecture.md) — the Node/Definition/Instance/override
+  and layering model that Part 2 realises.
+- [SKETCHER_ROADMAP.md](SKETCHER_ROADMAP.md) — the editor (Track SET) that Part 2 collapses to one
+  tool; the sketcher phases this refactor touches.

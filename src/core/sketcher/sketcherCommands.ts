@@ -148,7 +148,7 @@ export class RenameGroupCommand implements SketcherCommand {
  * The TC gizmo applies the transform to the Three.js object directly, before
  * this command is constructed. execute() only needs to replay attach joints so
  * attached partners stay flush. The actual undo/redo of the transform is handled
- * by SketcherDocument restoring the before/after SessionSnapshot (which uses
+ * by SketcherDocument restoring the before/after SetSnapshot (which uses
  * world-space transforms and is immune to stale object references).
  *
  * mode 'group': the whole group moved — pass all group member ids so intra-group

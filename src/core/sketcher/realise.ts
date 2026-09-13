@@ -1,0 +1,98 @@
+import * as THREE from 'three';
+import { buildExtrusionGeometry } from './ExtrusionHandle.js';
+import { PRESET_BY_NAME, buildLatheGeometry, buildMaterials } from './geometry.js';
+import type { PartDraft, SketcherDraft } from './types.js';
+import type { SetDocument, SetNode } from './documentTree.js';
+
+/**
+ * Build a THREE.Group of meshes from a SketcherDraft — pure, headless, no Sketcher
+ * state. One mesh per draft part (in order), each carrying `userData.sketcherPartId`
+ * + `depth`. Geometry and materials (including face colours/textures) are realised
+ * here; group re-parenting and attach joints live in the interactive Sketcher.
+ */
+export function realise(draft: SketcherDraft): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'realised-set';
+  for (const pd of draft.parts) {
+    const mesh = buildPartMesh(pd);
+    if (mesh) group.add(mesh);
+  }
+  return group;
+}
+
+/**
+ * Build a nested THREE scene from the tree document — the increment-2 target
+ * realiser. Each `group` node becomes a THREE.Group placed at its stored transform,
+ * and each `part` leaf becomes a mesh carrying its local transform (so the group's
+ * transform composes with the leaf's, reproducing world space). Pure and headless:
+ * no Sketcher state, no attach/joint bookkeeping.
+ */
+export function realiseDocument(doc: SetDocument): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'realised-set';
+  for (const node of doc.root) {
+    const object = realiseNode(node);
+    if (object) root.add(object);
+  }
+  return root;
+}
+
+function realiseNode(node: SetNode): THREE.Object3D | null {
+  if (node.kind === 'part') return buildPartMesh(node.part);
+
+  const group = new THREE.Group();
+  group.name = node.name ?? 'group';
+  if (node.position) group.position.set(node.position[0], node.position[1], node.position[2]);
+  if (node.quaternion) group.quaternion.set(node.quaternion[0], node.quaternion[1], node.quaternion[2], node.quaternion[3]);
+  if (node.scale) group.scale.set(node.scale[0], node.scale[1], node.scale[2]);
+  for (const child of node.children) {
+    const object = realiseNode(child);
+    if (object) group.add(object);
+  }
+  return group;
+}
+
+function buildPartMesh(pd: PartDraft): THREE.Mesh | null {
+  let geometry: THREE.BufferGeometry;
+  let lathePoints: [number, number][] | null = null;
+  let depth = 0;
+
+  if (pd.kind === 'primitive') {
+    const preset = PRESET_BY_NAME.get(pd.name.toLowerCase());
+    if (!preset) return null;
+    geometry = preset.geometry();
+  } else if (pd.kind === 'lathed') {
+    if (!pd.lathePoints) return null;
+    lathePoints = pd.lathePoints;
+    geometry = buildLatheGeometry(pd.lathePoints, pd.phiLength ?? Math.PI * 2);
+  } else {
+    if (!pd.shapePoints || !pd.depth) return null;
+    depth = pd.depth;
+    const pts = pd.shapePoints.map(([x, y]) => new THREE.Vector2(x, y));
+    const shape = new THREE.Shape(pts);
+    if (pd.holes) {
+      for (const holePts of pd.holes) {
+        shape.holes.push(new THREE.Path(holePts.map(([x, y]) => new THREE.Vector2(x, y))));
+      }
+    }
+    geometry = buildExtrusionGeometry(shape, depth);
+  }
+
+  const materials = buildMaterials(geometry, pd.color, lathePoints !== null ? THREE.DoubleSide : THREE.FrontSide);
+  const faceColors = pd.faceColors ? [...pd.faceColors] : materials.map(() => pd.color);
+  faceColors.forEach((c, i) => { if (i < materials.length) materials[i].color.setHex(c); });
+  const faceTextures = pd.faceTextures ? [...pd.faceTextures] : materials.map(() => null);
+  faceTextures.forEach((url, i) => {
+    if (url && i < materials.length) {
+      materials[i].map = new THREE.TextureLoader().load(url);
+      materials[i].needsUpdate = true;
+    }
+  });
+  const mesh = new THREE.Mesh(geometry, materials);
+  mesh.position.set(pd.position[0], pd.position[1], pd.position[2]);
+  mesh.quaternion.set(pd.quaternion[0], pd.quaternion[1], pd.quaternion[2], pd.quaternion[3]);
+  mesh.scale.set(pd.scale[0], pd.scale[1], pd.scale[2]);
+  mesh.updateWorldMatrix(false, true);
+  mesh.userData = { sketcherPartId: pd.id, depth };
+  return mesh;
+}

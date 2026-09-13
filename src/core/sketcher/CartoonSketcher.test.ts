@@ -747,6 +747,67 @@ describe('toDraft / loadDraft', () => {
     expect(sketcher.getSession().parts).toHaveLength(3);
   });
 
+  it('toDraft()/loadDraft() round-trip persists the group transform and local member transforms', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    a.mesh.position.set(0, 0, 0);
+    b.mesh.position.set(1, 0, 0);
+    const ag = sketcher.attachManager.createGroup([a, b], 'leg');
+    ag.group.position.set(5, 2, -3);
+    ag.group.updateMatrixWorld(true);
+
+    const worldA = new THREE.Vector3();
+    a.mesh.getWorldPosition(worldA);
+
+    const draft = sketcher.toDraft();
+    expect(draft.groups).toHaveLength(1);
+    expect(draft.groups![0].position).toEqual([5, 2, -3]);
+    // Members are serialised in local space (relative to the group).
+    expect(draft.parts.find((p) => p.id === a.id)!.position).not.toEqual([0, 0, 0]);
+
+    sketcher.loadDraft(draft);
+
+    const restoredGroup = sketcher.attachManager.getAssemblyGroups()[0];
+    expect(restoredGroup.group.position.toArray()).toEqual([5, 2, -3]);
+    const restoredA = sketcher.getSession().parts.find((p) => p.id === a.id)!;
+    const restoredWorldA = new THREE.Vector3();
+    restoredA.mesh.getWorldPosition(restoredWorldA);
+    expect(restoredWorldA.x).toBeCloseTo(worldA.x, 5);
+    expect(restoredWorldA.y).toBeCloseTo(worldA.y, 5);
+    expect(restoredWorldA.z).toBeCloseTo(worldA.z, 5);
+  });
+
+  it('toDocument()/loadDocument() round-trips the tree document (group node + local transforms)', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    a.mesh.position.set(0, 0, 0);
+    b.mesh.position.set(1, 0, 0);
+    const ag = sketcher.attachManager.createGroup([a, b], 'leg');
+    ag.group.position.set(5, 2, -3);
+    ag.group.updateMatrixWorld(true);
+
+    const worldA = new THREE.Vector3();
+    a.mesh.getWorldPosition(worldA);
+
+    const doc = sketcher.toDocument();
+    const groupNode = doc.root.find((n) => n.kind === 'group');
+    expect(groupNode).toBeDefined();
+    if (groupNode?.kind !== 'group') throw new Error('expected a group node');
+    expect(groupNode.position).toEqual([5, 2, -3]);
+    expect(groupNode.children).toHaveLength(2);
+
+    sketcher.loadDocument(doc);
+
+    const restoredGroup = sketcher.attachManager.getAssemblyGroups()[0];
+    expect(restoredGroup.group.position.toArray()).toEqual([5, 2, -3]);
+    const restoredA = sketcher.getSession().parts.find((p) => p.id === a.id)!;
+    const restoredWorldA = new THREE.Vector3();
+    restoredA.mesh.getWorldPosition(restoredWorldA);
+    expect(restoredWorldA.x).toBeCloseTo(worldA.x, 5);
+    expect(restoredWorldA.y).toBeCloseTo(worldA.y, 5);
+    expect(restoredWorldA.z).toBeCloseTo(worldA.z, 5);
+  });
+
   it('loadDraft() restores part ids so future inserts do not collide', () => {
     sketcher.insertPrimitive('box'); // part-1
     sketcher.insertPrimitive('box'); // part-2
@@ -1111,9 +1172,12 @@ describe('snapshot group round-trip', () => {
 
     const snap = sketcher.takeSnapshot();
 
-    expect(snap.groups).toHaveLength(1);
-    expect(snap.groups![0].partIds).toContain(a.id);
-    expect(snap.groups![0].partIds).toContain(b.id);
+    const groupNode = snap.root.find((n) => n.kind === 'group');
+    expect(groupNode).toBeDefined();
+    if (groupNode?.kind !== 'group') throw new Error('expected a group node');
+    const memberIds = groupNode.children.map((c) => (c.kind === 'part' ? c.part.id : null));
+    expect(memberIds).toContain(a.id);
+    expect(memberIds).toContain(b.id);
   });
 
   it('takeSnapshot returns empty groups when no groups exist', () => {
@@ -1122,7 +1186,8 @@ describe('snapshot group round-trip', () => {
 
     const snap = sketcher.takeSnapshot();
 
-    expect(snap.groups).toHaveLength(0);
+    expect(snap.root.filter((n) => n.kind === 'group')).toHaveLength(0);
+    expect(snap.root).toHaveLength(2);
   });
 
   it('restoreSnapshot re-creates groups at correct world positions', () => {
@@ -1152,13 +1217,13 @@ describe('snapshot group round-trip', () => {
     expect(wpB.x).toBeCloseTo(5);
   });
 
-  it('restoreSnapshot is backward-compatible when groups is absent', () => {
+  it('restoreSnapshot handles a snapshot with only part nodes (no groups)', () => {
     const a = sketcher.insertPrimitive('box')!;
     const snap = sketcher.takeSnapshot();
-    // Simulate an old snapshot without groups.
-    const oldSnap = { parts: snap.parts, joints: snap.joints };
+    expect(snap.root).toHaveLength(1);
+    expect(snap.root[0].kind).toBe('part');
 
-    expect(() => sketcher.restoreSnapshot(oldSnap)).not.toThrow();
+    expect(() => sketcher.restoreSnapshot(snap)).not.toThrow();
     expect(sketcher.getSession().parts).toHaveLength(1);
     expect(sketcher.getSession().parts[0].id).toBe(a.id);
   });

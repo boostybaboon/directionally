@@ -9,9 +9,9 @@ import type { PartDraft, SketcherDraft } from './types.js';
  * by stable part id and applies only what changed, as one undoable command.
  *
  * v1 applies primitives only for *added* parts; unchanged sketch/lathe parts are
- * left untouched by the diff (same id + same data → no-op). Transforms are set as
- * world-space local values, correct for ungrouped parts (group-aware world→local
- * conversion is a follow-up alongside the group/node-model work).
+ * left untouched by the diff (same id + same data → no-op). Transforms are local
+ * (relative to the parent group); the world→local conversion from the AI Draft
+ * happens in `fromAIDraft` before this diff runs.
  */
 
 export type DraftDiff = {

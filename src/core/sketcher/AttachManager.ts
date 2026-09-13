@@ -372,13 +372,13 @@ export class AttachManager {
    * Groups with isGroup === true (or absent, for backward compat) are registered
    * as pure rigid groups. Others are plain assembly groups (attach groups).
    *
-   * Pass `groupComponents` (from SessionSnapshot) when available so durable group
+   * Pass `groupComponents` (from SetSnapshot) when available so durable group
    * bond topology is also restored. Without it, bond components are derived from
    * the group-marked groups (backward-compatible but cannot restore bonds that
    * were merged into a larger attach assembly).
    */
   rebuildGroupsFromSnapshot(
-    groups: Array<{ partIds: string[]; isGroup?: boolean; name?: string }>,
+    groups: Array<{ partIds: string[]; isGroup?: boolean; name?: string; position?: [number, number, number]; quaternion?: [number, number, number, number]; scale?: [number, number, number] }>,
     allParts: SketcherPart[],
     groupComponents?: string[][],
   ): void {
@@ -387,7 +387,7 @@ export class AttachManager {
         .map((id) => allParts.find((p) => p.id === id))
         .filter((p): p is SketcherPart => p !== undefined);
       if (parts.length < 2) continue;
-      const ag = this._createGroup(parts, wg.name);
+      const ag = this._createGroup(parts, wg.name, wg.position !== undefined ? { position: wg.position, quaternion: wg.quaternion, scale: wg.scale } : undefined);
       if (wg.isGroup !== false) {
         // isGroup absent (legacy) or true → group; groupIds marked here;
         // groupComponents handled below to avoid double-adding when using the new format.
@@ -541,20 +541,31 @@ export class AttachManager {
     }
   }
 
-  private _createGroup(parts: SketcherPart[], name?: string): AssemblyGroup {
+  private _createGroup(
+    parts: SketcherPart[],
+    name?: string,
+    transform?: { position?: [number, number, number]; quaternion?: [number, number, number, number]; scale?: [number, number, number] },
+  ): AssemblyGroup {
     const group = new THREE.Group();
     group.name = `assembly-${_groupSeq++}`;
-    // Position group at AABB centroid of members for a well-placed gizmo pivot.
-    const box = new THREE.Box3();
-    for (const p of parts) {
-      p.mesh.updateWorldMatrix(true, false);
-      box.expandByObject(p.mesh);
-    }
-    box.getCenter(group.position);
     this.scene.add(group);
 
-    for (const p of parts) {
-      group.attach(p.mesh); // preserves world transform
+    if (transform) {
+      // Restore path: parts carry LOCAL transforms; place the group and keep members local.
+      if (transform.position) group.position.set(...transform.position);
+      if (transform.quaternion) group.quaternion.set(...transform.quaternion);
+      if (transform.scale) group.scale.set(...transform.scale);
+      for (const p of parts) group.add(p.mesh);
+    } else {
+      // Live path: parts carry WORLD transforms. Position group at the AABB centroid
+      // of members for a well-placed gizmo pivot, preserving world transforms via attach.
+      const box = new THREE.Box3();
+      for (const p of parts) {
+        p.mesh.updateWorldMatrix(true, false);
+        box.expandByObject(p.mesh);
+      }
+      box.getCenter(group.position);
+      for (const p of parts) group.attach(p.mesh);
     }
 
     const ag: AssemblyGroup = {

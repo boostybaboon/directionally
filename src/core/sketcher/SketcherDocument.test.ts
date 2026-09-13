@@ -148,7 +148,7 @@ describe('SketcherDocument', () => {
     const { doc } = makeDoc(sketcher);
     sketcher.insertPrimitive('box');
     const snap = doc.captureSnapshot();
-    expect(snap.parts).toHaveLength(1);
+    expect(snap.root).toHaveLength(1);
     expect(snap.joints).toHaveLength(0);
   });
 

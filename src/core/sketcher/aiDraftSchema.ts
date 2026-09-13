@@ -68,6 +68,9 @@ const GROUP_SCHEMA: Record<string, unknown> = {
   properties: {
     id: { type: 'string' },
     name: { type: 'string' },
+    position: VEC3_SCHEMA,
+    quaternion: { type: 'array', items: { type: 'number' }, minItems: 4, maxItems: 4 },
+    scale: VEC3_SCHEMA,
     children: { type: 'array', items: { type: 'string' }, minItems: 1 },
   },
 };
@@ -117,6 +120,11 @@ function asVec3(v: unknown, field: string): [number, number, number] {
   return [asNumber(v[0], `${field}[0]`), asNumber(v[1], `${field}[1]`), asNumber(v[2], `${field}[2]`)];
 }
 
+function asVec4(v: unknown, field: string): [number, number, number, number] {
+  if (!Array.isArray(v) || v.length !== 4) throw new Error(`${field} must be an array of 4 numbers`);
+  return [asNumber(v[0], `${field}[0]`), asNumber(v[1], `${field}[1]`), asNumber(v[2], `${field}[2]`), asNumber(v[3], `${field}[3]`)];
+}
+
 function normalizePart(v: unknown, field: string): AIPart {
   if (!isRecord(v)) throw new Error(`${field} must be an object`);
 
@@ -161,6 +169,9 @@ function normalizeGroup(v: unknown, field: string): AIGroup {
   const children = v.children.map((c, i) => asString(c, `${field}.children[${i}]`));
   const group: AIGroup = { id, children };
   if (v.name !== undefined) group.name = asString(v.name, `${field}.name`);
+  if (v.position !== undefined) group.position = asVec3(v.position, `${field}.position`);
+  if (v.quaternion !== undefined) group.quaternion = asVec4(v.quaternion, `${field}.quaternion`);
+  if (v.scale !== undefined) group.scale = asVec3(v.scale, `${field}.scale`);
   return group;
 }
 
