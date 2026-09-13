@@ -8,6 +8,7 @@
   import { storedSceneToModelAsync } from '../core/storage/storedSceneToModel.js';
   import { starterSceneShell } from '../core/storage/sceneBuilder.js';
   import * as OPFSCatalogueStore from '../core/storage/OPFSCatalogueStore.js';
+  import { deleteCatalogueEntry } from '../core/storage/catalogueLifecycle.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
 
   import { ProductionStore } from '../core/storage/ProductionStore.js';
@@ -20,7 +21,8 @@
   import { tokenizeScript, renderScript, sceneIndexForLine, retypeAlias } from '../core/treatment/sigilScript.js';
   import SigilTextarea from '$lib/script/SigilTextarea.svelte';
   import RosterPanel from '$lib/script/RosterPanel.svelte';
-  import { generateAsset } from '$lib/agentClient.js';
+  import { generateAsset, generateEditableSetting } from '$lib/agentClient.js';
+  import type { MakeResult } from '../core/agent/api.js';
 
 
   /**
@@ -300,7 +302,9 @@
   }
 
   async function handleCatalogueDelete(id: string) {
-    await OPFSCatalogueStore.remove(id);
+    // Cascade: deleting the published entry also removes its editable source
+    // (SketcherAssemblyStore) so no zombie assembly lingers in the Set designer.
+    await deleteCatalogueEntry(id);
     userCatalogueEntries = await OPFSCatalogueStore.list();
     new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
     scheduleCompile();
@@ -379,19 +383,24 @@
     }
   }
 
-  // AI-assisted creation: run the server LLM step, then persist + bind the
-  // document via the core `make` verb (same create-or-resume + bind path).
+  // AI-assisted creation: run the server LLM step, then persist + bind. Settings
+  // go through the editable bridge (compose → SketcherDraft → SketcherAssemblyStore
+  // → addSetPiece(sourceAssemblyId)); characters use the core `make` verb.
   async function handleRosterGenerate(kind: 'cast' | 'setting', name: string) {
     if (!currentProduction || generating) return;
     generating = true;
     statusMessage = `Generating ${name}…`;
     try {
-      const assetKind = kind === 'cast' ? 'character' : 'setting';
-      const result = await generateAsset(assetKind, name, name, {
-        userEntries: userCatalogueEntries,
-        castBindings,
-        settingBindings,
-      });
+      let result: MakeResult;
+      if (kind === 'setting') {
+        result = await generateEditableSetting(name, name, settingBindings);
+      } else {
+        result = await generateAsset('character', name, name, {
+          userEntries: userCatalogueEntries,
+          castBindings,
+          settingBindings,
+        });
+      }
       castBindings = result.castBindings;
       settingBindings = result.settingBindings;
       userCatalogueEntries = await OPFSCatalogueStore.list();

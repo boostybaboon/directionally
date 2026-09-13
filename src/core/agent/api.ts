@@ -24,6 +24,7 @@ import type { ResolveBindings } from '../treatment/fountainCompiler.js';
 import type { ScriptDocument } from '../treatment/fountain.js';
 import { createSetPiece as createSetting, SET_PIECE_JSON_SCHEMA } from '../setting/authoringApi.js';
 import { createCharacter, CHARACTER_JSON_SCHEMA } from '../character/authoringApi.js';
+import { AI_DRAFT_JSON_SCHEMA } from '../sketcher/aiDraftSchema.js';
 import type { AIProvider } from './provider.js';
 
 export type CatalogueSummary = {
@@ -174,9 +175,30 @@ export async function describeToDocument(
   kind: 'setting' | 'character',
   description: string,
 ): Promise<unknown> {
-  const systemPrompt =
-    'You design assets for a 3D animation app. Produce exactly one JSON document matching the schema supplied alongside this request. Respond with JSON only.';
+  const systemPrompt = kind === 'setting'
+    ? 'You design scenery for a 3D animation app. Produce one JSON document matching the supplied schema: a concise `compose` of at most 15 inline primitives (each with `geometry` + `material`; never use `ref`), plus optional `lights`. Keep it compact so the whole JSON fits in one response. Respond with JSON only.'
+    : 'You design a character for a 3D animation app. Produce one JSON document matching the supplied schema. Respond with JSON only.';
   return provider.generate(systemPrompt, description, targetSchema(kind));
+}
+
+/**
+ * describeSettingDraft — the editable-settings LLM step. Emits the AI Draft
+ * grammar (named parts, absolute `size`, Euler `rotation`, named groups) so the
+ * result can be rebuilt as a first-class `SketcherDraft` and published exactly
+ * like a human-drawn setting.
+ */
+export async function describeSettingDraft(
+  provider: AIProvider,
+  description: string,
+): Promise<unknown> {
+  const systemPrompt =
+    'You design scenery for a 3D animation app. Produce one JSON object describing the setting as named primitive parts, optionally organised into named groups. '
+    + 'Give the whole setting a `label` (a short, human-friendly name). '
+    + 'Coordinate convention: units are metres; up is +Y with the ground plane at Y=0; forward is -Z. '
+    + 'Each part needs a unique `id` handle, a semantic `name`, `shape` (box, sphere, cylinder, capsule, cone, or torus), absolute `size` in metres, `position` in metres, `rotation` as Euler angles in degrees [x, y, z], and a hex `color`. '
+    + 'Group related parts via `groups` (an `id`, optional `name`, and a `children` array of part handles). '
+    + 'Keep it compact so the whole JSON fits in one response. Respond with JSON only.';
+  return provider.generate(systemPrompt, description, AI_DRAFT_JSON_SCHEMA);
 }
 
 export async function make(

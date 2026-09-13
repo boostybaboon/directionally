@@ -243,7 +243,7 @@ export class AttachManager {
    * Unlike commitAttach, no face-snap math is performed — parts are grouped as-is.
    * All parts must be standalone (not already in any group).
    */
-  createGroup(parts: SketcherPart[]): AssemblyGroup {
+  createGroup(parts: SketcherPart[], name?: string): AssemblyGroup {
     // Dissolve any existing assembly groups for these parts before creating the
     // new combined group. Callers are responsible for passing the full expanded
     // member list (including members of any groups being merged).
@@ -274,7 +274,7 @@ export class AttachManager {
     }
     this.groupComponents.push(mergedWC);
 
-    const ag = this._createGroup(parts);
+    const ag = this._createGroup(parts, name);
     this.groupIds.add(ag.id);
     return ag;
   }
@@ -378,7 +378,7 @@ export class AttachManager {
    * were merged into a larger attach assembly).
    */
   rebuildGroupsFromSnapshot(
-    groups: Array<{ partIds: string[]; isGroup?: boolean }>,
+    groups: Array<{ partIds: string[]; isGroup?: boolean; name?: string }>,
     allParts: SketcherPart[],
     groupComponents?: string[][],
   ): void {
@@ -387,7 +387,7 @@ export class AttachManager {
         .map((id) => allParts.find((p) => p.id === id))
         .filter((p): p is SketcherPart => p !== undefined);
       if (parts.length < 2) continue;
-      const ag = this._createGroup(parts);
+      const ag = this._createGroup(parts, wg.name);
       if (wg.isGroup !== false) {
         // isGroup absent (legacy) or true → group; groupIds marked here;
         // groupComponents handled below to avoid double-adding when using the new format.
@@ -541,7 +541,7 @@ export class AttachManager {
     }
   }
 
-  private _createGroup(parts: SketcherPart[]): AssemblyGroup {
+  private _createGroup(parts: SketcherPart[], name?: string): AssemblyGroup {
     const group = new THREE.Group();
     group.name = `assembly-${_groupSeq++}`;
     // Position group at AABB centroid of members for a well-placed gizmo pivot.
@@ -559,6 +559,7 @@ export class AttachManager {
 
     const ag: AssemblyGroup = {
       id: group.name,
+      ...(name !== undefined ? { name } : {}),
       group,
       partIds: parts.map((p) => p.id),
     };

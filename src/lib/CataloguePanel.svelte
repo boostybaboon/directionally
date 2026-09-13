@@ -132,7 +132,11 @@
               {:else}
                 <span class="item-tag item-tag--prop">prop</span>
               {/if}
-              <span class="item-meta">{entry.compose ? `${entry.compose.length} parts` : entry.geometry ? (GEOMETRY_LABELS[entry.geometry.type] ?? entry.geometry.type) : '—'}</span>
+              <span class="item-meta">{userEntry?.partCount !== undefined
+                ? `${userEntry.partCount} part${userEntry.partCount === 1 ? '' : 's'}`
+                : entry.compose ? `${entry.compose.length} parts`
+                : entry.gltfPath ? '—'
+                : entry.geometry ? (GEOMETRY_LABELS[entry.geometry.type] ?? entry.geometry.type) : '—'}</span>
             </button>
             <div class="setpiece-actions">
               {#if userEntry?.sourceAssemblyId}

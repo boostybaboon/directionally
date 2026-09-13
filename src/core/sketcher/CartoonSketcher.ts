@@ -714,6 +714,20 @@ export class CartoonSketcher {
     });
   }
 
+  /** Set (or clear, with undefined) a part's semantic label. No-op for unknown id. */
+  setPartLabel(id: string, label: string | undefined): void {
+    const part = this.parts.find((p) => p.id === id);
+    if (!part) return;
+    part.label = label;
+  }
+
+  /** Set (or clear, with undefined) a group's semantic name. No-op for unknown group. */
+  setGroupName(groupId: string, name: string | undefined): void {
+    const ag = this.attach.getAssemblyGroups().find((g) => g.id === groupId);
+    if (!ag) return;
+    ag.name = name;
+  }
+
   /** Update the colour of a single draw group. Does not change part.color. */
   setFaceColor(id: string, materialIndex: number, color: number): void {
     const part = this.parts.find((p) => p.id === id);
@@ -839,7 +853,7 @@ export class CartoonSketcher {
    * positions. All parts must be standalone (not already in any assembly group).
    * Returns the new AssemblyGroup, or null if the input is invalid.
    */
-  group(partIds: string[]): AssemblyGroup | null {
+  group(partIds: string[], name?: string): AssemblyGroup | null {
     if (partIds.length < 2) return null;
     // Expand any grouped parts to include all members of their group so that
     // grouping a standalone D onto an existing A+B group produces an A+B+D group.
@@ -853,7 +867,7 @@ export class CartoonSketcher {
       .map((id) => this.parts.find((p) => p.id === id))
       .filter((p): p is SketcherPart => p !== undefined);
     if (parts.length < 2) return null;
-    return this.attach.createGroup(parts);
+    return this.attach.createGroup(parts, name);
   }
 
   /**
@@ -1000,6 +1014,7 @@ export class CartoonSketcher {
       p.mesh.matrixWorld.decompose(wp, wq, ws);
       return {
         id: p.id,
+        ...(p.label !== undefined ? { label: p.label } : {}),
         worldPosition: [wp.x, wp.y, wp.z],
         worldQuaternionXYZW: [wq.x, wq.y, wq.z, wq.w],
         worldScale: [ws.x, ws.y, ws.z],
@@ -1018,7 +1033,7 @@ export class CartoonSketcher {
     }));
     // Capture ALL assembly groups (group and attach) so undo/redo restores grouped state.
     const groups: GroupSnapshot[] = this.attach.getAssemblyGroups()
-      .map((ag) => ({ partIds: [...ag.partIds], isGroup: this.attach.isGroup(ag.partIds[0]) }));
+      .map((ag) => ({ partIds: [...ag.partIds], ...(ag.name !== undefined ? { name: ag.name } : {}), isGroup: this.attach.isGroup(ag.partIds[0]) }));
     return { parts, joints, groups, groupComponents: this.attach.getGroupComponents() };
   }
 
@@ -1049,6 +1064,7 @@ export class CartoonSketcher {
       part.mesh.scale.set(ps.worldScale[0], ps.worldScale[1], ps.worldScale[2]);
       part.mesh.updateWorldMatrix(false, true);
       part.color = ps.color;
+      part.label = ps.label;
       part.faceColors = [...ps.faceColors];
       part.faceTextures = [...ps.faceTextures];
       (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m, i) => {
@@ -1101,6 +1117,7 @@ export class CartoonSketcher {
         id: p.id,
         kind: p.shapePoints !== null ? 'sketch' : (p.lathePoints !== null ? 'lathed' : 'primitive'),
         name: p.name,
+        ...(p.label !== undefined ? { label: p.label } : {}),
         position: [wp.x, wp.y, wp.z],
         quaternion: [wq.x, wq.y, wq.z, wq.w],
         scale: [ws.x, ws.y, ws.z],
@@ -1131,6 +1148,7 @@ export class CartoonSketcher {
     }));
     const groups: GroupSnapshot[] = this.attach.getAssemblyGroups().map((ag) => ({
       partIds: [...ag.partIds],
+      ...(ag.name !== undefined ? { name: ag.name } : {}),
       isGroup: this.attach.isGroup(ag.partIds[0]),
     }));
     return {
@@ -1199,7 +1217,7 @@ export class CartoonSketcher {
       mesh.scale.set(pd.scale[0], pd.scale[1], pd.scale[2]);
       mesh.updateWorldMatrix(false, true);
 
-      const part: SketcherPart = { id: pd.id, mesh, depth, centroid, name: pd.name, color: pd.color, shapePoints, holes: pd.holes ? pd.holes : null, lathePoints, lathePhiLength, faceColors, faceTextures };
+      const part: SketcherPart = { id: pd.id, mesh, depth, centroid, name: pd.name, label: pd.label, color: pd.color, shapePoints, holes: pd.holes ? pd.holes : null, lathePoints, lathePhiLength, faceColors, faceTextures };
       this.scene.add(mesh);
       this.parts.push(part);
       this.allParts.set(part.id, part);

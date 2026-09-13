@@ -100,7 +100,8 @@ export class DeepSeekProvider implements AIProvider {
       const preview = content.length > 800
         ? `${content.slice(0, 400)}…[${content.length} chars]…${content.slice(-400)}`
         : content;
-      throw new Error(`DeepSeek returned non-JSON content (${content.length} chars): ${preview}`);
+      const truncated = /[}\]]\s*$/.test(content.trim()) ? '' : ' — output appears truncated (model token limit)';
+      throw new Error(`DeepSeek returned non-JSON content (${content.length} chars)${truncated}: ${preview}`);
     }
   }
 

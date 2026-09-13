@@ -8,6 +8,8 @@ export type SketcherPart = {
   centroid: THREE.Vector3;
   /** Display name shown in the HUD (e.g. 'Box', 'Cylinder', 'Shape'). */
   name: string;
+  /** Optional semantic name (e.g. 'tree trunk'); falls back to `name` when absent. */
+  label?: string;
   /** Hex colour integer, e.g. 0x8888cc. Kept in sync with mesh.material.color. */
   color: number;
   /**
@@ -69,6 +71,8 @@ export type AttachJoint = {
  */
 export type AssemblyGroup = {
   id: string;
+  /** Optional semantic name (e.g. "table"); absent until named. */
+  name?: string;
   group: THREE.Group;
   /** Mirrors group.children membership by part id. */
   partIds: string[];
@@ -104,6 +108,7 @@ export type FaceGroupInfo = {
 
 export type PartSnapshot = {
   id: string;
+  label?: string;
   /** World-space position — correct regardless of group parentage. */
   worldPosition: [number, number, number];
   worldQuaternionXYZW: [number, number, number, number];
@@ -134,6 +139,8 @@ export type JointSnapshot = {
 export type GroupSnapshot = {
   /** Ordered list of part ids that form the assembly group. */
   partIds: string[];
+  /** Optional semantic name (e.g. "table"); absent until named. */
+  name?: string;
   /**
    * True when the group was created by a Group command (pure rigid container,
    * no attach joints between members). False (or absent in legacy snapshots) means
@@ -168,6 +175,8 @@ export type PartDraft = {
   id: string;
   kind: 'primitive' | 'sketch' | 'lathed';
   name: string;
+  /** Optional semantic name; falls back to `name` when absent. */
+  label?: string;
   shapePoints?: [number, number][];
   holes?: [number, number][][];
   lathePoints?: [number, number][];

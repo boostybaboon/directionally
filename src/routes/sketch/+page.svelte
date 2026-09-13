@@ -19,6 +19,8 @@
     DeletePartCommand,
     ChangeColorCommand,
     ChangeFaceColorCommand,
+    ChangePartLabelCommand,
+    RenameGroupCommand,
     ApplyTextureCommand,
     TransformPartCommand,
     CommitAttachCommand,
@@ -30,6 +32,7 @@
   import { exportGLB } from '../../core/sketcher/exportGLB.js';
   import * as OPFSCatalogueStore from '../../core/storage/OPFSCatalogueStore.js';
   import * as SketcherAssemblyStore from '../../core/storage/SketcherAssemblyStore.js';
+  import { deleteCatalogueEntry, deleteAssemblyAndEntry } from '../../core/storage/catalogueLifecycle.js';
   import type { AssemblyMeta } from '../../core/storage/SketcherAssemblyStore.js';
 
   let canvas: HTMLCanvasElement;
@@ -139,6 +142,12 @@
   let inspSX = $state('1.000'); let inspSY = $state('1.000'); let inspSZ = $state('1.000');
   let uniformScale = $state(false);
   let inspectorFocused = false; // not reactive — only used to gate refreshInspector()
+
+  // SA13: name fields (part label + group name), editable via the inspector.
+  let inspName = $state('');
+  let inspNamePlaceholder = $state('');
+  let inspGroupName = $state('');
+  let hasSelectedGroup = $state(false);
 
   // Snapshot captured at TC drag-start; passed to execute() at drag-end.
   let tcPreDragSnapshot: ReturnType<typeof sketcherDoc.captureSnapshot> | null = null;
@@ -516,6 +525,10 @@
     inspX = pos.x.toFixed(3); inspY = pos.y.toFixed(3); inspZ = pos.z.toFixed(3);
     inspRX = toDeg(euler.x).toFixed(1); inspRY = toDeg(euler.y).toFixed(1); inspRZ = toDeg(euler.z).toFixed(1);
     inspSX = scale.x.toFixed(3); inspSY = scale.y.toFixed(3); inspSZ = scale.z.toFixed(3);
+    inspName = part.label ?? '';
+    inspNamePlaceholder = part.name;
+    hasSelectedGroup = ag !== null;
+    inspGroupName = ag?.name ?? '';
   }
 
   /**
@@ -617,6 +630,24 @@
     }
     inspPreFocusSnapshot = null;
     inspSpinnerActive = false;
+    refreshInspector();
+  }
+
+  /** Commit the name field to the selected part's label as an undoable command. */
+  function commitName() {
+    if (!selectedPartId || !sketcher) return;
+    const label = inspName.trim() || undefined;
+    sketcherDoc.execute(new ChangePartLabelCommand(selectedPartId, label, sketcher));
+    refreshInspector();
+  }
+
+  /** Commit the group-name field to the selected part's group as an undoable command. */
+  function commitGroupName() {
+    if (!selectedPartId || !sketcher) return;
+    const ag = sketcher.attachManager.groupForPart(selectedPartId);
+    if (!ag) return;
+    const name = inspGroupName.trim() || undefined;
+    sketcherDoc.execute(new RenameGroupCommand(ag.id, name, sketcher));
     refreshInspector();
   }
 
@@ -1281,8 +1312,10 @@
   }
 
   async function handleCatalogueDelete(id: string) {
-    await OPFSCatalogueStore.remove(id);
+    // Cascade: remove the published entry + its editable source assembly.
+    await deleteCatalogueEntry(id);
     userCatalogueEntries = await OPFSCatalogueStore.list();
+    savedAssemblies = await SketcherAssemblyStore.list();
     new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
   }
 
@@ -1506,8 +1539,12 @@
   }
 
   async function deleteAssembly(id: string) {
-    await SketcherAssemblyStore.remove(id);
+    // Cascade: remove the editable source + any published catalogue entry
+    // backed by it, and clear the last-opened pointer if it matches.
+    await deleteAssemblyAndEntry(id);
     savedAssemblies = await SketcherAssemblyStore.list();
+    userCatalogueEntries = await OPFSCatalogueStore.list();
+    new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
     if (currentAssemblyId === id) {
       currentAssemblyId = null;
       assemblyName = 'Untitled';
@@ -1674,7 +1711,7 @@
     if (currentAssemblyId) {
       const existing = await OPFSCatalogueStore.findByAssemblyId(currentAssemblyId);
       if (existing) {
-        await OPFSCatalogueStore.update(existing.id, blob, label);
+        await OPFSCatalogueStore.update(existing.id, blob, label, { partCount: session.parts.length });
         new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
         statusMessage = `Updated "${label}" in catalogue.`;
         return;
@@ -1682,7 +1719,7 @@
     }
 
     // First export: create a new catalogue entry linked to this assembly.
-    await OPFSCatalogueStore.add(blob, { kind: 'set-piece', label }, currentAssemblyId ?? undefined);
+    await OPFSCatalogueStore.add(blob, { kind: 'set-piece', label, partCount: session.parts.length }, currentAssemblyId ?? undefined);
     new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
     statusMessage = `Saved "${label}" to catalogue.`;
   }
@@ -1703,6 +1740,7 @@
       environmentId: session.environmentMap,
       lights: session.lights.length > 0 ? [...session.lights] : undefined,
       isSetting: true,
+      partCount: session.parts.length,
     };
 
     // Re-save path: update the existing catalogue entry in place (mirrors
@@ -1719,7 +1757,7 @@
 
     await OPFSCatalogueStore.add(
       blob,
-      { kind: 'set-piece', label, isSetting: true, ...(meta.environmentId ? { environmentId: meta.environmentId } : {}), ...(meta.lights ? { lights: meta.lights } : {}) },
+      { kind: 'set-piece', label, isSetting: true, partCount: session.parts.length, ...(meta.environmentId ? { environmentId: meta.environmentId } : {}), ...(meta.lights ? { lights: meta.lights } : {}) },
       currentAssemblyId ?? undefined,
     );
     new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
@@ -1944,6 +1982,26 @@
 
   {#if selectedPartId && !isExtruding && !isDrawing}
     <div class="transform-inspector">
+      <div class="insp-row">
+        <span class="insp-label">Name</span>
+        <input type="text" class="insp-field insp-name-field" placeholder={inspNamePlaceholder} value={inspName}
+          onfocus={() => { inspectorFocused = true; }}
+          oninput={(e) => { inspName = (e.target as HTMLInputElement).value; }}
+          onblur={() => { inspectorFocused = false; commitName(); }}
+          onkeydown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        />
+      </div>
+      {#if hasSelectedGroup}
+        <div class="insp-row">
+          <span class="insp-label">Group</span>
+          <input type="text" class="insp-field insp-name-field" placeholder="unnamed group" value={inspGroupName}
+            onfocus={() => { inspectorFocused = true; }}
+            oninput={(e) => { inspGroupName = (e.target as HTMLInputElement).value; }}
+            onblur={() => { inspectorFocused = false; commitGroupName(); }}
+            onkeydown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          />
+        </div>
+      {/if}
       <div class="insp-row">
         <span class="insp-label">Pos</span>
         <label>X<input type="number" step="0.01" class="insp-field" value={inspX}
@@ -2452,6 +2510,12 @@
     outline: none;
     border-color: #6050c8;
     color: #ffffff;
+  }
+
+  .insp-name-field {
+    width: auto;
+    flex: 1;
+    text-align: left;
   }
 
   .insp-lock {

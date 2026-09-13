@@ -231,15 +231,15 @@ CAT-0 through CAT-2 already guarantee nothing blocks — an unresolved name alwa
 something legible and clearly marked, so richer bundled defaults are purely a quality-of-life
 improvement on top of a system that already works end-to-end.
 
-### Future direction — AI-assisted asset generation *(north star, not scheduled)*
+### AI-assisted asset generation ✅ Landed
 
 When no catalogue or user-authored match exists for a typed setting (`aircraft cabin`) or
-character descriptor (`schoolteacher, male, 56`), an AI-assisted step could synthesize a
-starting asset instead of leaving the placeholder as the end state — a scenery layout via the
-Sketcher's primitive pipeline, or a character via parametric `ProceduralHumanoid` sliders driven
-by a text-to-parameters model — pre-filling the CAT-4 create flow instead of opening it blank.
-This depends on CAT-4's create-flow plumbing existing first and on a choice of AI backend that is
-out of scope for this POC's architecture today. Tracked here as direction, not committed work.
+character descriptor (`schoolteacher, male, 56`), the Roster "Generate" button synthesises a
+starting asset instead of leaving the placeholder as the end state — characters via the
+parametric `CharacterSpec` surface, and scenery via the AI Draft → `SketcherDraft` → GLB path
+(the editable generate path). Tracked in [ROADMAP_AI.md](ROADMAP_AI.md) (provider side) and
+[ROADMAP_API.md](ROADMAP_API.md) (authoring surface); the interactive `/agent/edit` loop is still
+in progress there.
 
 ---
 

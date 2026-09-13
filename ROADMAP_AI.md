@@ -1,67 +1,78 @@
 # Directionally — AI-Assisted Asset Generation Roadmap
 
-Not scheduled work. Parked here so the design isn't lost. This document covers the
-**provider side** only: how an LLM turns a free-text descriptor into the schema-validated JSON
-the [Authoring API](ROADMAP_API.md) consumes. The authoring surface itself — the verbs
-(`describe`/`preview`/`create`/`bind`/`make`), the schemas, and the headless apply path — lives
-in [ROADMAP_API.md](ROADMAP_API.md); this document is deliberately subordinate to it and must
-not drift from it.
+The batch bootstrap and the AI Draft grammar → editable-settings path (P0/P1) are implemented; the
+interactive edit loop and deployment surface below remain planned, not scheduled. This document
+covers the
+**provider side** only: how an LLM turns a free-text instruction into the JSON the
+[Authoring API](ROADMAP_API.md) consumes. The authoring surface itself — the AI Draft
+read/write (`describe_session`/`edit`/`apply_draft`) plus the retained
+`bind`/`create_character` verbs — lives in [ROADMAP_API.md](ROADMAP_API.md); this document is
+deliberately subordinate to it and must not drift from it.
 
 **Scope — asset design only, never script content.** AI here helps a script writer *visualise*
 their production by designing **characters and sets**. It does not, and deliberately will not,
 generate the creative content of the production itself — there is **no script API** by design,
 and none is planned in this roadmap.
 
-**Current state.** The authoring surface the AI feeds — the verbs, the two JSON schemas, their
-normalisers, and `make`'s create-or-resume + bind — is already implemented in `src/core/agent/`
-(see ROADMAP_API.md). Everything below is `make`'s one missing step: the free-text → document
-(LLM) step, which is this document's territory.
+**Current state.** The **batch bootstrap** path works locally against a dev `.env`
+`DEEPSEEK_API_KEY`: `AIProvider` + `DeepSeekProvider`, `describeToDocument`, the `/agent/make`
+route, and the Roster "Generate" button produce whole `CharacterSpec` documents (characters) and
+AI Draft → GLB settings (scenery). P0 (AI Draft grammar + projection + `applyDraft`) and P1
+(bridge to catalogue) are landed; the **interactive** path — the `describe_session`/`/agent/edit`
+read/write described in ROADMAP_API.md — is the P2–P4 plan below, not yet built. What remains is
+catalogue awareness + retry/rate-limit, then finessing the local interface, then deployment.
 
-**Early-skeleton goal.** Before any identity/billing work, prove the AI is a useful accelerator:
-e.g. DeepSeek reliably turns "a middle-aged woman" and "a classroom" into valid documents. This
-is exercised by `yarn agent:experiment` (scripts/agentExperiment.ts) against a dev
-`DEEPSEEK_API_KEY`. Identity, auth, and billing for the deployed tool are deliberately deferred —
-success here is the *motivation* to solve them, not a prerequisite.
+**Plan.** Two walking skeletons, in order: **(A)** build the interactive co-editing surface — the
+AI Draft projection + id-diff from ROADMAP_API.md (P0–P4), plus catalogue awareness and
+retry/rate-limit — using your own key; then **(B)** the deployment surface (Azure default,
+production posture, user BYOK, local models). Identity, auth, and billing are a separate roadmap
+and gate any "free" default quota.
 
 **Finding (DeepSeek).** Both kinds generate and validate: a character descriptor yields a valid
-`CharacterSpec`, and a setting descriptor yields a valid, coherent `compose` scene (floor, walls,
-furniture, lights). Rough edges to resolve when generation is wired into the app:
+`CharacterSpec`, and a setting descriptor yields a valid, coherent scene (floor, walls,
+furniture, lights) as either a procedural `compose` or an AI Draft. Rough edges to resolve when
+generation is wired into the app:
 - Colour fields sometimes invent a plausible-but-unlisted hex rather than a listed swatch — if
   fidelity matters, tighten `hairColor`/`eyeColor` to label-or-hex (`oneOf`, like `skinTone`).
 - The setting prompt has no catalogue context, so `environmentId`/`ref` values can be
   hallucinated — inject `describe_catalogue` output into the prompt during orchestration.
 
-## Implementation checklist — the walking skeleton
+## Implementation checklist — two walking skeletons
 
-The phases below are ordered as a **walking skeleton**: get the smallest end-to-end slice
-working (one provider → one asset kind → one `make` call that turns a text descriptor into a
-bound, renderable asset), then broaden to the second asset kind, then harden, then let users
-plug in their own model. Each tick maps to the phase section of the same name further down; it
-is a visible checkpoint, with no hidden work behind it.
+The LLM plumbing is proven end-to-end (DeepSeek against a dev `.env` key). Remaining work splits
+into two skeletons: finesse the local experience first, then the deployment surface. Each tick
+maps to the phase section of the same name further down; it is a visible checkpoint, with no
+hidden work behind it.
 
-### Walking skeleton — minimal end-to-end (character)
+### Walking skeleton A — local dev (active): co-edit sets with the AI, your own key
 
-- [x] **AI-0 · Provider interface** — define `AIProvider.generate(systemPrompt, userPrompt, jsonSchema)` and a first adapter (`DeepSeekProvider`, OpenAI-wire-compatible, zero Azure spend). A `make` call returns *some* JSON from the model.
-- [ ] **AI-0 · Default backend** — provision Azure OpenAI + `AzureOpenAIProvider` as the shipped default; swapping providers is a config value, not a route/schema change.
-- [ ] **AI-1 · Character generation** — system prompt embeds `CHARACTER_JSON_SCHEMA`; the model emits a `CharacterSpec`; the server clamps it via `validateCharacterSpec`. `make("character", "BERNARD", "middle-aged portly gentleman…")` returns a bound, rebuildable character.
-- [ ] **AI-3 · Wire the LLM into `make`** — the free-text → document step joins the existing `make` (describe → create → bind), idempotent by name. The name flips `UNRESOLVED`/`AMBIGUOUS` → `BOUND` in the Roster with no page reload.
+- [x] **AI-0 · Provider interface** — `AIProvider` + `DeepSeekProvider`.
+- [x] **Batch bootstrap** — `describeToDocument` + `/agent/make` + Roster "Generate" produce whole
+      `CharacterSpec` documents (characters) and AI Draft → GLB settings (scenery; via
+      `describeSettingDraft` + `AI_DRAFT_JSON_SCHEMA`).
+- [x] **P0 · AI Draft grammar + projection** — `toAIDraft`/`fromAIDraft`, `applyDraft`,
+      `AI_DRAFT_JSON_SCHEMA` + `normalizeAIDraft`, and the enrichment (part `label`, group
+      `name`, primitive `size`) are done. See ROADMAP_API.md.
+- [x] **P1 · bridge to catalogue** — `generateEditableSetting` persists a draft → assembly → GLB
+      bake → catalogue entry with `sourceAssemblyId`, so an AI-created design is editable in the
+      Sketcher and re-saves in place.
+- [ ] **P2 · `describe_session`** — serialise the live session as an AI Draft; programmatic
+      `insert_sketch`/`insert_lathe` if needed.
+- [ ] **P3 · `edit` route + agent loop** — `/agent/edit` (draft-in/draft-out) mirroring `/agent/make`.
+- [ ] **P4 · conversation UX** — chat panel in `/sketch`: human/AI turns, review/undo, propose-vs-auto-apply.
+- [ ] **Catalogue awareness** — inject `describe_catalogue` so the AI reuses real bundled items
+      (replaces the temporary "never use `ref`" bootstrap rule).
+- [ ] **Retry + rate limit (AI-4)** — retry-once-on-invalid and a per-session limit on `/agent/*`.
 
-### Broaden — scenery parity
+### Walking skeleton B — deployment (deferred): Azure default, user BYOK, identity/billing
 
-- [ ] **AI-2 · Scenery generation** — same path for `SET_PIECE_JSON_SCHEMA` (`SettingSpec`) → `normalizeSetPieceInput`. `make("setting", "PUB", "traditional English pub…")` returns a bound, resolvable setting.
+- [ ] **AI-0 · Default backend** — provision Azure OpenAI + `AzureOpenAIProvider` as the shipped default (config-only swap).
+- [ ] **AI-5 · Production posture** — own Azure Function App (Flex Consumption); key in Key Vault via Managed Identity; Application Insights.
+- [ ] **AI-6 · BYOK** — "AI Settings" panel; user pastes a DeepSeek/OpenAI/Claude key; per-request header; cost disclaimer.
+- [ ] **AI-7 · Local models** — Ollama server-proxied + client-direct (`OLLAMA_ORIGINS`) paths.
 
-### Harden
-
-- [ ] **AI-4 · Validation & cost** — schema validation (Zod or equivalent), retry-once-on-invalid-JSON, per-session/per-IP rate limit. Malformed output never reaches the renderer; rapid "regenerate" clicks are throttled with a visible message.
-
-### Production posture *(only if this graduates past POC)*
-
-- [ ] **AI-5 · Production** — split the AI proxy into its own Azure Function App (Flex Consumption); Azure OpenAI key → Key Vault via Managed Identity; Application Insights on latency / error / validation-failure rate.
-
-### Provider flexibility
-
-- [ ] **AI-6 · BYOK** — `ClaudeProvider` (native Messages API + `tool_choice`), an "AI Settings" panel, per-request key header, and a cost/latency disclaimer. The zero-config default stays unchanged.
-- [ ] **AI-7 · Local models** — `OllamaProvider`, an "Ollama (local)" option, server-proxied + client-direct (`OLLAMA_ORIGINS`) paths, and the validation module shared client-side.
+> **Identity & billing is a separate roadmap.** Accounts, quotas, metering, and payment gate any
+> "free" default quota, so they are planned independently — not checklist items here.
 
 ---
 
@@ -284,6 +295,10 @@ Exit criteria: `make("character", "BERNARD", "middle-aged portly gentleman…")`
 catalogue character whose spec is valid and rebuildable at scene load.
 
 ## Phase AI-2 — Scenery document generation
+
+> **Note:** this phase covers the *headless* `make`/`create_setting` path (a procedural,
+> non-editable `compose` entry). The *editable* generate path — AI Draft grammar → assembly →
+> GLB — is P0/P1 in ROADMAP_API.md, not here.
 
 - The generation target is `SET_PIECE_JSON_SCHEMA` (`SettingSpec`/`NewProceduralSetPiece`) from
   ROADMAP_API.md, not a batch of `CartoonSketcher` primitive commands — the LLM composes a

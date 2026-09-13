@@ -100,7 +100,7 @@ const PLACED_PROP_SCHEMA: Record<string, unknown> = {
 export const SET_PIECE_JSON_SCHEMA: Record<string, unknown> = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   title: 'Scenery set-piece',
-  description: 'A reusable scenery asset (item, assembly, or whole setting) for Directionally.',
+  description: 'A reusable scenery asset for Directionally. Either a leaf (geometry + material) OR an assembly/setting (compose), never both. For a whole setting, put the floor, walls, and all furniture/props in compose, plus optional lights and environmentId.',
   type: 'object',
   additionalProperties: false,
   required: ['label'],
@@ -265,18 +265,21 @@ export function normalizeSetPieceInput(input: unknown): NewProceduralSetPiece {
   const label = str(input.label, 'label').trim();
   if (!label) throw new Error('set-piece requires a non-empty "label"');
 
+  const compose = input.compose;
+  const hasCompose = Array.isArray(compose) && compose.length > 0;
   const hasLeaf = input.geometry !== undefined || input.material !== undefined;
-  const hasCompose = input.compose !== undefined;
-  if (hasLeaf === hasCompose) {
-    throw new Error('set-piece must provide either "compose" (composite) or "geometry" + "material" (leaf), not both');
-  }
 
   const out: NewProceduralSetPiece = { label };
-  if (hasLeaf) {
+  if (hasCompose) {
+    // Composite/setting. AI generation sometimes adds a stray top-level
+    // geometry/material (a "room shell") alongside a non-empty compose; the
+    // compose is the intent, so the leaf fields are ignored.
+    out.compose = assignLocalIds(normalizeCompose(compose));
+  } else if (hasLeaf) {
     out.geometry = normalizeGeometry(input.geometry);
     out.material = normalizeMaterial(input.material);
   } else {
-    out.compose = assignLocalIds(normalizeCompose(input.compose));
+    throw new Error('set-piece must provide either "compose" (composite) or "geometry" + "material" (leaf)');
   }
   if (input.defaultRotation !== undefined) out.defaultRotation = vec3(input.defaultRotation, 'defaultRotation');
   if (input.environmentId !== undefined) out.environmentId = str(input.environmentId, 'environmentId');

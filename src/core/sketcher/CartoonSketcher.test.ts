@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import { CartoonSketcher } from './CartoonSketcher.js';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
-import { exportGLB } from './exportGLB.js';
-import type { SketcherSession } from './types.js';
+import { exportGLB, exportDraftGLB } from './exportGLB.js';
+import type { SketcherDraft, SketcherSession } from './types.js';
 import type { SetPieceEntry } from '../catalogue/types.js';
 
 // GLTFExporter uses FileReader internally which is not available in the Node
@@ -541,6 +541,32 @@ describe('CartoonSketcher', () => {
     expect(() => sketcher.setPartColor('nonexistent', 0xff0000)).not.toThrow();
   });
 
+  it('setPartLabel() sets and clears a part label', () => {
+    const part = sketcher.insertPrimitive('box')!;
+    sketcher.setPartLabel(part.id, 'tabletop');
+    expect(part.label).toBe('tabletop');
+    sketcher.setPartLabel(part.id, undefined);
+    expect(part.label).toBeUndefined();
+  });
+
+  it('setPartLabel() is a no-op for unknown id', () => {
+    expect(() => sketcher.setPartLabel('nonexistent', 'x')).not.toThrow();
+  });
+
+  it('setGroupName() sets and clears a group name', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    const ag = sketcher.attachManager.createGroup([a, b], 'leg');
+    sketcher.setGroupName(ag.id, 'table-leg');
+    expect(ag.name).toBe('table-leg');
+    sketcher.setGroupName(ag.id, undefined);
+    expect(ag.name).toBeUndefined();
+  });
+
+  it('setGroupName() is a no-op for unknown group', () => {
+    expect(() => sketcher.setGroupName('nonexistent', 'x')).not.toThrow();
+  });
+
   it('insertPrimitive() initialises faceTextures to null for each material slot', () => {
     const part = sketcher.insertPrimitive('box')!;
     // Box has 6 face groups.
@@ -629,6 +655,24 @@ describe('exportGLB', () => {
     const session: SketcherSession = { parts: [], joints: [], assemblyGroups: [], lights: [] };
     const { blob } = await exportGLB(session);
     expect(blob.size).toBeGreaterThan(0); // GLTF header is always present
+  });
+
+  it('exportDraftGLB() bakes a primitive draft headlessly', async () => {
+    const draft: SketcherDraft = {
+      version: 2,
+      parts: [{
+        id: 'import-0',
+        kind: 'primitive',
+        name: 'Box',
+        position: [0, 0, 0],
+        quaternion: [0, 0, 0, 1],
+        scale: [1, 1, 1],
+        color: 0x8888cc,
+      }],
+      joints: [],
+    };
+    const blob = await exportDraftGLB(draft);
+    expect(blob.size).toBeGreaterThan(0);
   });
 });
 

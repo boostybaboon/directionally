@@ -7,6 +7,7 @@ import {
   remove,
   update,
   findByAssemblyId,
+  findByLabel,
   addSetPiece,
   validateSetPieceMeta,
 } from './OPFSCatalogueStore';
@@ -216,6 +217,18 @@ describe('OPFSCatalogueStore – sourceAssemblyId', () => {
     expect(await findByAssemblyId('asm-unknown')).toBeNull();
   });
 
+  it('findByAssemblyId() returns a metadata-only (procedural) entry', async () => {
+    const compose: PlacedProp[] = [
+      { name: 'seat', geometry: { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, material: { color: 0x663311 }, position: [0, 0.45, 0] },
+    ];
+    await addSetPiece({ label: 'AI Chair', compose }, 'asm-proc-1');
+    const found = await findByAssemblyId('asm-proc-1');
+    expect(found).not.toBeNull();
+    expect(found!.label).toBe('AI Chair');
+    expect(found!.sourceAssemblyId).toBe('asm-proc-1');
+    expect('gltfPath' in found!).toBe(false);
+  });
+
   it('add() without sourceAssemblyId leaves sourceAssemblyId undefined', async () => {
     await add(new Blob(['data']), { kind: 'set-piece', label: 'Box' });
     const listed = await list();
@@ -284,6 +297,28 @@ describe('OPFSCatalogueStore – update', () => {
     expect(piece.environmentId).toBeUndefined();
     expect(piece.lights).toBeUndefined();
   });
+
+  it('update() migrates a metadata-only entry to GLB-backed (drops compose, keeps id/label/sourceAssemblyId)', async () => {
+    const compose: PlacedProp[] = [
+      { name: 'seat', geometry: { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, material: { color: 0x663311 }, position: [0, 0.45, 0] },
+    ];
+    const entry = await addSetPiece({ label: 'AI Chair', compose }, 'asm-migrate');
+    vi.mocked(URL.createObjectURL).mockReturnValue('blob:migrated-url');
+
+    const updated = await update(entry.id, new Blob(['baked']), undefined, { partCount: 1 });
+    expect(updated).not.toBeNull();
+    expect(updated!.gltfPath).toBe('blob:migrated-url');
+    expect(updated!.sourceAssemblyId).toBe('asm-migrate');
+    expect(updated!.partCount).toBe(1);
+
+    const listed = await list();
+    const piece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
+    expect(piece.id).toBe(entry.id);
+    expect(piece.label).toBe('AI Chair');
+    expect(piece.compose).toBeUndefined();
+    expect(piece.gltfPath).toBe('blob:migrated-url');
+    expect(piece.sourceAssemblyId).toBe('asm-migrate');
+  });
 });
 
 describe('OPFSCatalogueStore – addSetPiece (procedural / composite)', () => {
@@ -303,6 +338,20 @@ describe('OPFSCatalogueStore – addSetPiece (procedural / composite)', () => {
     const listed = await list();
     expect(listed).toHaveLength(1);
     expect((listed[0] as SetPieceEntry).compose).toEqual(composeChair);
+  });
+
+  it('addSetPiece() records partCount from the compose length', async () => {
+    const entry = await addSetPiece({ label: 'AI Chair', compose: composeChair });
+    expect(entry.partCount).toBe(1);
+  });
+
+  it('addSetPiece() records partCount 1 for a leaf geometry', async () => {
+    const entry = await addSetPiece({
+      label: 'AI Blackboard',
+      geometry: { type: 'box', width: 2, height: 1, depth: 0.1 },
+      material: { color: 0x112233 },
+    });
+    expect(entry.partCount).toBe(1);
   });
 
   it('persists a procedural leaf set-piece with geometry + material', async () => {
@@ -358,6 +407,32 @@ describe('OPFSCatalogueStore – addSetPiece (procedural / composite)', () => {
     expect(piece.environmentId).toBe('exterior-sky');
     expect(piece.lights).toHaveLength(1);
     expect(piece.lights?.[0].id).toBe('sky');
+  });
+});
+
+describe('OPFSCatalogueStore – findByLabel', () => {
+  const composeChair: PlacedProp[] = [
+    { name: 'seat', geometry: { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, material: { color: 0x663311 }, position: [0, 0.45, 0] },
+  ];
+
+  it('findByLabel() returns a metadata-only entry case-insensitively', async () => {
+    await addSetPiece({ label: 'Classroom', compose: composeChair }, 'asm-cls');
+    const found = await findByLabel('classroom');
+    expect(found).not.toBeNull();
+    expect(found!.label).toBe('Classroom');
+    expect(found!.sourceAssemblyId).toBe('asm-cls');
+  });
+
+  it('findByLabel() returns null when no entry matches', async () => {
+    expect(await findByLabel('missing')).toBeNull();
+  });
+
+  it('findByLabel() returns a GLB-backed entry too', async () => {
+    await add(new Blob(['data']), { kind: 'set-piece', label: 'Baked' }, 'asm-baked');
+    const found = await findByLabel('baked');
+    expect(found).not.toBeNull();
+    expect(found!.label).toBe('Baked');
+    expect('gltfPath' in found!).toBe(true);
   });
 });
 

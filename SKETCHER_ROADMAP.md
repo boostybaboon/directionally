@@ -38,6 +38,15 @@ No phases with open obligations remain in the original sketch-only scope. Track 
 
 Implements the Definition/Instance model from `set-staging-architecture*.md`: a catalogue **Definition** is a `SetPieceEntry` (already supports nested `compose`); an **Instance** is a placed `SetPiece` carrying a `ref` to a Definition. Flattening a `ref` into its rendered children happens only at render time (`resolveInstance`/`resolveInstances`) — the authored scene keeps the reference, never the expansion. Level 0 deliberately excludes per-instance **overrides**, an isolated **Edit Source** mode, and the venue/dressing **layering** split described in the design docs — those are real, understood, and named below as deferred, not forgotten.
 
+> **Render-time structure + AI surface — two additions to Track SET's scope:**
+> - **Render the same hierarchy the editor holds.** Today `resolveInstances` flattens `ref`s into
+>   meshes at render time. To animate a "table" or "car" as a unit — even a group-of-groups — the
+>   production renderer must materialise groups/instances as `THREE.Group`s with stable paths
+>   (set-staging-architecture.md's "stable path" rule), not a flattened mesh soup.
+> - **The AI Draft projection** (ROADMAP_API.md) targets the flat `SketcherDraft` today and will be
+>   re-pointed at the Node tree as Track SET lands — the AI-facing surface stays stable; only the
+>   projection pair changes.
+
 ### N1 — Stable `localId` foundation ✅ COMPLETE
 
 Every child of a catalogue Definition's `compose` list needs an identity that survives reordering/insertion — a prerequisite for any future override mechanism (N5+) to keep addressing "the same child" across edits to the Definition.
@@ -88,6 +97,10 @@ Added so an LLM/agent can drive asset creation without the Three.js runtime — 
 
 Together with the pre-existing `resolveSettingSpec`/`validateSettingSpec` + `/agent/setting` (resolve-only, over HTTP) and `addSetPiece`, this is the complete "something the AI talks to" for scenery: **schema → validated create → broadcast → script auto-resolves**. No `N4`/`N10` UI work is a prerequisite for it.
 
+> **Note (updated):** this is the *headless* scenery surface (procedural `compose` → `createSetPiece`).
+> The *editable* generate path — AI Draft grammar → assembly → GLB → catalogue entry — lives in
+> ROADMAP_API.md P0/P1 and `generateEditableSetting`.
+
 ### N4 — Save as Item / Save as Setting ✅ COMPLETE (whole-scene)
 
 Generalises the old `exportToCatalogue` (GLB-only) and Set Studio's `saveAsSetting` (whole-scene-only) into two whole-scene saves in the Set tool:
@@ -119,6 +132,8 @@ These are real, named requirements from the design docs — not gaps discovered 
 ## N11 — Catalogue hygiene / duplicate-setting UI snags
 
 Surfaced from a real authoring session: typing `#EXT GARDEN DAY`, using "Create →" to jump to the Sketcher, building a tree, exporting, and finding (a) the production still showed an older placeholder tree, (b) four duplicate GARDEN entries had accumulated in the catalogue with no way to remove them, and (c) a GARDEN catalogue item couldn't be inserted into a new GARDEN2 session. Root causes traced to specific code, not flakiness — see below.
+
+**Status (updated).** Fixes **1, 3, 4, and 6** below have landed, and the AI-set work hardened the save path further: `findByAssemblyId` now resolves metadata-only (AI-generated) entries, `update()` migrates a procedural entry to GLB on re-save (so "Save as Setting" never duplicates the AI CLASSROOM), `partCount` + `findByLabel` keep the catalogue note honest and make `generateEditableSetting` resume-by-name. Delete is now cascading in both directions (`catalogueLifecycle.ts`): removing a catalogue entry also removes its backing assembly and vice-versa, so deleted sets no longer resurface as zombies in the Set designer's Open panel. Still open: **2** (resolve the newest match, not the oldest) and **5** (a visible "resolved via" indicator).
 
 **Root causes:**
 - Label-match resolution (`resolveSetting` in `fountainCompiler.ts`) does `.find()` over `[...CATALOGUE_ENTRIES, ...userEntries]`, so with duplicate labels it silently binds to the **oldest** matching entry, not the most recent export. `settingBindings` can override this but nothing surfaces that duplicates exist or which entry won.

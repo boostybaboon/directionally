@@ -11,7 +11,8 @@ A "resolve-or-create" pattern works cleanly for characters because a character i
 *flat*: one entity, one avatar, done. Sets resist this because they are actually **four
 different problems wearing one trenchcoat**:
 
-1. A **part-of** hierarchy (lamp is part of a desk-setup is part of a schoolroom)
+1. A **part-of** hierarchy
+ (lamp is part of a desk-setup is part of a schoolroom)
 2. A **catalogue-vs-placement** distinction (a "chair" definition vs *this specific chair,
    rotated 12°, missing its cushion*)
 3. A **reuse-with-variation** problem (same set, minus one chair, for this scene only)

@@ -65,10 +65,27 @@ describe('normalizeSetPieceInput', () => {
     expect(() => normalizeSetPieceInput({ label: '   ' })).toThrow('label');
   });
 
-  it('rejects when both compose and geometry are present', () => {
-    expect(() => normalizeSetPieceInput({
-      label: 'X', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0 }, compose: [],
-    })).toThrow('either');
+  it('prefers compose and ignores a stray geometry/material when both are present', () => {
+    const out = normalizeSetPieceInput({
+      label: 'X',
+      geometry: { type: 'box', width: 1, height: 1, depth: 1 },
+      material: { color: 0 },
+      compose: [{ ref: 'box' }],
+    });
+    expect(out.compose).toHaveLength(1);
+    expect(out.geometry).toBeUndefined();
+    expect(out.material).toBeUndefined();
+  });
+
+  it('treats an empty compose alongside geometry as a leaf', () => {
+    const out = normalizeSetPieceInput({
+      label: 'X',
+      geometry: { type: 'box', width: 1, height: 1, depth: 1 },
+      material: { color: 0 },
+      compose: [],
+    });
+    expect(out.geometry).toEqual({ type: 'box', width: 1, height: 1, depth: 1 });
+    expect(out.compose).toBeUndefined();
   });
 
   it('rejects when neither compose nor geometry is present', () => {

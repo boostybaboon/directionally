@@ -108,6 +108,38 @@ export class ApplyTextureCommand implements SketcherCommand {
   }
 }
 
+// ── ChangePartLabelCommand ────────────────────────────────────────────────────
+
+export class ChangePartLabelCommand implements SketcherCommand {
+  readonly label = 'Rename part';
+
+  constructor(
+    private readonly partId: string,
+    private readonly newLabel: string | undefined,
+    private readonly sketcher: CartoonSketcher,
+  ) {}
+
+  execute(): void {
+    this.sketcher.setPartLabel(this.partId, this.newLabel);
+  }
+}
+
+// ── RenameGroupCommand ────────────────────────────────────────────────────────
+
+export class RenameGroupCommand implements SketcherCommand {
+  readonly label = 'Rename group';
+
+  constructor(
+    private readonly groupId: string,
+    private readonly newName: string | undefined,
+    private readonly sketcher: CartoonSketcher,
+  ) {}
+
+  execute(): void {
+    this.sketcher.setGroupName(this.groupId, this.newName);
+  }
+}
+
 // ── TransformPartCommand ──────────────────────────────────────────────────────
 
 /**
