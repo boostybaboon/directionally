@@ -2,11 +2,11 @@ import * as THREE from 'three';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { AttachManager } from './AttachManager.js';
-import { V, PRIMITIVE_PRESETS, PRESET_BY_NAME, buildLatheGeometry, buildMaterials } from './geometry.js';
-import { realise } from './realise.js';
-import type { PartSnapshot, JointSnapshot, GroupSnapshot, PartDraft, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
-import { draftToDocument, documentToDraft } from './documentTree.js';
-import type { SetDocument, SetSnapshot, SetSnapshotNode } from './documentTree.js';
+import { V, PRIMITIVE_PRESETS, PRESET_BY_NAME, buildLatheGeometry } from './geometry.js';
+import { buildPartMesh } from './realise.js';
+import type { JointSnapshot, GroupSnapshot, PartDraft, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
+import { draftToDocument, documentToDraft, insertPart, groupParts, ungroupPart, removePart as removeTreePart, setPartColor as setTreePartColor, setFaceColor as setTreeFaceColor, setFaceTexture as setTreeFaceTexture, setPartLabel as setTreePartLabel, findGroupOfPartId } from './documentTree.js';
+import type { SetDocument, SetNode, SetSnapshot } from './documentTree.js';
 import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 import { expandEntry } from '../setting/settingSpec.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
@@ -278,32 +278,25 @@ export class CartoonSketcher {
 
     const phiLength = Math.max(1, Math.min(360, phiLengthDeg)) * Math.PI / 180;
     const profilePoints: [number, number][] = shape.getPoints().map((p) => [p.x, p.y]);
-    const geo = buildLatheGeometry(profilePoints, phiLength);
-    // centroid is (0,0,0) for XY-plane profiles; floor-snap on Y only.
-    geo.computeBoundingBox();
-    const minY = geo.boundingBox!.min.y;
-    const materials = buildMaterials(geo, DEFAULT_COLOR, THREE.DoubleSide);
-    const faceColors = Array<number>(geo.groups.length).fill(DEFAULT_COLOR);
-    const faceTextures = Array<null>(geo.groups.length).fill(null);
-    const mesh = new THREE.Mesh(geo, materials);
-    mesh.position.set(centroid.x, -minY, centroid.z);
-    this.scene.add(mesh);
-    const part: SketcherPart = {
-      id: `part-${this.nextId++}`,
-      mesh,
-      depth: 0,
-      centroid: centroid.clone(),
+    // Floor-snap on Y: lowest point sits on y = 0 (centroid is (0,0,0) for XY profiles).
+    const tmpGeo = buildLatheGeometry(profilePoints, phiLength);
+    tmpGeo.computeBoundingBox();
+    const minY = tmpGeo.boundingBox!.min.y;
+    tmpGeo.dispose();
+
+    const id = `part-${this.nextId++}`;
+    const draft: PartDraft = {
+      id,
+      kind: 'lathed',
       name: 'Lathe',
-      color: DEFAULT_COLOR,
-      shapePoints: null,
-      holes: null,
+      position: [centroid.x, -minY, centroid.z],
+      quaternion: [0, 0, 0, 1],
+      scale: [1, 1, 1],
       lathePoints: profilePoints,
-      lathePhiLength: phiLength,
-      faceColors,
-      faceTextures,
+      ...(phiLength < Math.PI * 2 - 1e-6 ? { phiLength } : {}),
+      color: DEFAULT_COLOR,
     };
-    this.parts.push(part);
-    this.allParts.set(part.id, part);
+    this.editDocument((doc) => insertPart(doc, draft));
   }
 
   /**
@@ -366,29 +359,22 @@ export class CartoonSketcher {
     const preset = PRESET_BY_NAME.get(name.toLowerCase());
     if (!preset) return null;
     const geometry = preset.geometry();
-    const materials = buildMaterials(geometry, DEFAULT_COLOR);
-    const mesh = new THREE.Mesh(geometry, materials);
-    // Sit the primitive on the floor (y = 0 ground plane).
     geometry.computeBoundingBox();
-    mesh.position.y = -(geometry.boundingBox!.min.y);
-    const part: SketcherPart = {
-      id: `part-${this.nextId++}`,
-      mesh,
-      depth: 0,
-      centroid: new THREE.Vector3(),
+    // Sit the primitive on the floor (y = 0 ground plane).
+    const floorY = -(geometry.boundingBox!.min.y);
+    geometry.dispose();
+    const id = `part-${this.nextId++}`;
+    const draft: PartDraft = {
+      id,
+      kind: 'primitive',
       name: preset.name,
+      position: [0, floorY, 0],
+      quaternion: [0, 0, 0, 1],
+      scale: [1, 1, 1],
       color: DEFAULT_COLOR,
-      shapePoints: null,
-      holes: null,
-      lathePoints: null,
-      lathePhiLength: null,
-      faceColors: materials.map(() => DEFAULT_COLOR),
-      faceTextures: materials.map(() => null),
     };
-    this.scene.add(mesh);
-    this.parts.push(part);
-    this.allParts.set(part.id, part);
-    return part;
+    this.editDocument((doc) => insertPart(doc, draft));
+    return this.parts.find((p) => p.id === id) ?? null;
   }
 
   /** All available preset names, in display order. */
@@ -504,21 +490,12 @@ export class CartoonSketcher {
 
   /** Update a part's colour, resetting all face colours to a uniform value. */
   setPartColor(id: string, color: number): void {
-    const part = this.parts.find((p) => p.id === id);
-    if (!part) return;
-    part.color = color;
-    part.faceColors.fill(color);
-    // Skip faces with an active texture — their material colour must stay white (colour × map = map).
-    (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m, i) => {
-      if (!part.faceTextures[i]) m.color.setHex(color);
-    });
+    this.editDocument((doc) => setTreePartColor(doc, id, color));
   }
 
   /** Set (or clear, with undefined) a part's semantic label. No-op for unknown id. */
   setPartLabel(id: string, label: string | undefined): void {
-    const part = this.parts.find((p) => p.id === id);
-    if (!part) return;
-    part.label = label;
+    this.editDocument((doc) => setTreePartLabel(doc, id, label));
   }
 
   /** Set (or clear, with undefined) a group's semantic name. No-op for unknown group. */
@@ -530,14 +507,7 @@ export class CartoonSketcher {
 
   /** Update the colour of a single draw group. Does not change part.color. */
   setFaceColor(id: string, materialIndex: number, color: number): void {
-    const part = this.parts.find((p) => p.id === id);
-    if (!part) return;
-    if (materialIndex < 0 || materialIndex >= part.faceColors.length) return;
-    part.faceColors[materialIndex] = color;
-    // Skip if a texture is active on this slot — material colour must stay white.
-    if (!part.faceTextures[materialIndex]) {
-      (part.mesh.material as THREE.MeshStandardMaterial[])[materialIndex].color.setHex(color);
-    }
+    this.editDocument((doc) => setTreeFaceColor(doc, id, materialIndex, color));
   }
 
   /**
@@ -545,22 +515,7 @@ export class CartoonSketcher {
    * texture on that slot. Pass null to clear the texture.
    */
   setFaceTexture(id: string, materialIndex: number, dataUrl: string | null): void {
-    const part = this.parts.find((p) => p.id === id);
-    if (!part) return;
-    if (materialIndex < 0 || materialIndex >= part.faceTextures.length) return;
-    const mat = (part.mesh.material as THREE.MeshStandardMaterial[])[materialIndex];
-    // Dispose the existing texture before replacing it.
-    if (mat.map) { mat.map.dispose(); mat.map = null; }
-    part.faceTextures[materialIndex] = dataUrl;
-    if (dataUrl) {
-      mat.map = new THREE.TextureLoader().load(dataUrl);
-      // Set color to white so the texture displays unmodified (MeshStandardMaterial multiplies color × map).
-      mat.color.set(0xffffff);
-    } else {
-      // Restore the face's solid color when the texture is removed.
-      mat.color.setHex(part.faceColors[materialIndex]);
-    }
-    mat.needsUpdate = true;
+    this.editDocument((doc) => setTreeFaceTexture(doc, id, materialIndex, dataUrl));
   }
 
   /**
@@ -570,55 +525,28 @@ export class CartoonSketcher {
   duplicatePart(id: string): SketcherPart | null {
     const src = this.parts.find((p) => p.id === id);
     if (!src) return null;
-    const geo = src.mesh.geometry.clone();
-    const mats = (src.mesh.material as THREE.MeshStandardMaterial[]).map((m) => m.clone());
-    const mesh = new THREE.Mesh(geo, mats);
-    mesh.position.copy(src.mesh.position);
-    mesh.position.x += 1;
-    mesh.rotation.copy(src.mesh.rotation);
-    mesh.scale.copy(src.mesh.scale);
-    // Create new textures from stored data URLs (do not share Texture instances).
-    mats.forEach((m, i) => {
-      if (m.map) { m.map.dispose(); m.map = null; }
-      const url = src.faceTextures[i];
-      if (url) { m.map = new THREE.TextureLoader().load(url); m.needsUpdate = true; }
-    });
-    const part: SketcherPart = {
-      id: `part-${this.nextId++}`,
-      mesh,
-      depth: src.depth,
-      centroid: src.centroid.clone(),
-      name: src.name,
-      color: src.color,
-      shapePoints: src.shapePoints,
-      holes: src.holes,
-      lathePoints: src.lathePoints,
-      lathePhiLength: src.lathePhiLength,
-      faceColors: [...src.faceColors],
-      faceTextures: [...src.faceTextures],
-    };
-    this.scene.add(mesh);
-    this.parts.push(part);
-    this.allParts.set(part.id, part);
-    return part;
+    const newId = `part-${this.nextId++}`;
+    const draft = this.partToDraft(src);
+    draft.id = newId;
+    // Offset by +1 on local X, mirroring the old mesh-clone behaviour.
+    draft.position = [src.mesh.position.x + 1, src.mesh.position.y, src.mesh.position.z];
+    this.editDocument((doc) => insertPart(doc, draft));
+    return this.parts.find((p) => p.id === newId) ?? null;
   }
 
   /**
-   * Remove a single part by id.
-   * Geometry and material are NOT disposed — the part stays in allParts so
-   * SketcherDocument.undo() can reinsert it via restoreSnapshot() without
-   * recreating GPU resources.
+   * Remove a single part by id. Its joints are dropped; if it was in a group
+   * that now has only one member, that group is dissolved.
    */
   removePart(id: string): void {
-    const idx = this.parts.findIndex((p) => p.id === id);
-    if (idx === -1) return;
-    // Detach before removing from the parts list so BFS can still find neighbours.
-    this.attach.detachAll(id, this.parts);
-    // Clean up residual group membership (for groups that stayed connected after detach).
-    this.attach.evictFromGroup(id, this.parts);
-    const [part] = this.parts.splice(idx, 1);
-    part.mesh.removeFromParent();
-    // part remains in allParts for potential undo restoration.
+    this.editDocument((doc) => {
+      doc.joints = doc.joints.filter((j) => j.partAId !== id && j.partBId !== id);
+      const group = findGroupOfPartId(doc, id);
+      removeTreePart(doc, id);
+      if (group && group.children.length === 1 && group.children[0].kind === 'part') {
+        ungroupPart(doc, group.children[0].part.id);
+      }
+    });
   }
 
   /**
@@ -663,11 +591,15 @@ export class CartoonSketcher {
         return ag ? ag.partIds : [id];
       })
     )];
-    const parts = expandedIds
-      .map((id) => this.parts.find((p) => p.id === id))
-      .filter((p): p is SketcherPart => p !== undefined);
-    if (parts.length < 2) return null;
-    return this.attach.createGroup(parts, name);
+    if (expandedIds.length < 2) return null;
+    this.editDocument((doc) => {
+      // Ungroup any member already in a group so all become root siblings.
+      for (const id of expandedIds) {
+        if (findGroupOfPartId(doc, id)) ungroupPart(doc, id);
+      }
+      groupParts(doc, expandedIds, name);
+    });
+    return this.attach.groupForPart(expandedIds[0]) ?? null;
   }
 
   /**
@@ -676,12 +608,9 @@ export class CartoonSketcher {
    * No-op if the part is not in a group.
    */
   ungroup(partId: string): void {
-    if (this.attach.isGroup(partId)) {
-      const ag = this.attach.groupForPart(partId);
-      if (ag) this.attach.dissolveGroup(ag.id, this.parts);
-    } else if (this.attach.isInGroupComponent(partId)) {
-      this.attach.dissolveGroupComponent(partId, this.parts);
-    }
+    this.editDocument((doc) => {
+      if (findGroupOfPartId(doc, partId)) ungroupPart(doc, partId);
+    });
   }
 
   /** Return a snapshot of the current session. */
@@ -808,51 +737,14 @@ export class CartoonSketcher {
    * re-created on restore.
    */
   takeSnapshot(): SetSnapshot {
-    const partOf = (p: SketcherPart): PartSnapshot => ({
-      id: p.id,
-      ...(p.label !== undefined ? { label: p.label } : {}),
-      position: [p.mesh.position.x, p.mesh.position.y, p.mesh.position.z],
-      quaternion: [p.mesh.quaternion.x, p.mesh.quaternion.y, p.mesh.quaternion.z, p.mesh.quaternion.w],
-      scale: [p.mesh.scale.x, p.mesh.scale.y, p.mesh.scale.z],
-      color: p.color,
-      faceColors: [...p.faceColors],
-      faceTextures: [...p.faceTextures],
-    });
-
-    // Capture ALL assembly groups (group and attach) so undo/redo restores grouped state.
-    const grouped = new Set<string>();
-    const groupNodes: SetSnapshotNode[] = this.attach.getAssemblyGroups()
-      .map((ag) => {
-        const children: SetSnapshotNode[] = ag.partIds
-          .map((id) => this.allParts.get(id))
-          .filter((p): p is SketcherPart => p !== undefined)
-          .map((p) => { grouped.add(p.id); return { kind: 'part' as const, part: partOf(p) }; });
-        return {
-          kind: 'group' as const,
-          ...(ag.name !== undefined ? { name: ag.name } : {}),
-          position: [ag.group.position.x, ag.group.position.y, ag.group.position.z],
-          quaternion: [ag.group.quaternion.x, ag.group.quaternion.y, ag.group.quaternion.z, ag.group.quaternion.w],
-          scale: [ag.group.scale.x, ag.group.scale.y, ag.group.scale.z],
-          isGroup: this.attach.isGroup(ag.partIds[0]),
-          children,
-        };
-      });
-
-    const root: SetSnapshotNode[] = [
-      ...this.parts.filter((p) => !grouped.has(p.id)).map((p) => ({ kind: 'part' as const, part: partOf(p) })),
-      ...groupNodes,
-    ];
-
-    const joints: JointSnapshot[] = this.attach.getJoints().map((j) => ({
-      partAId: j.partAId,
-      localPointA: [j.localPointA.x, j.localPointA.y, j.localPointA.z],
-      localNormalA: [j.localNormalA.x, j.localNormalA.y, j.localNormalA.z],
-      partBId: j.partBId,
-      localPointB: [j.localPointB.x, j.localPointB.y, j.localPointB.z],
-      localNormalB: [j.localNormalB.x, j.localNormalB.y, j.localNormalB.z],
-    }));
-
-    return { root, joints, groupComponents: this.attach.getGroupComponents() };
+    const { root, joints, lights, environmentMap } = this.toDocument();
+    return {
+      root,
+      joints,
+      ...(lights !== undefined ? { lights } : {}),
+      ...(environmentMap !== undefined ? { environmentMap } : {}),
+      groupComponents: this.attach.getGroupComponents(),
+    };
   }
 
   /**
@@ -863,87 +755,8 @@ export class CartoonSketcher {
    * reflect the attached state).
    */
   restoreSnapshot(snap: SetSnapshot): void {
-    // Flatten the tree snapshot into the flat parts/groups the restore path consumes.
-    const parts: PartSnapshot[] = [];
-    const groups: GroupSnapshot[] = [];
-    const flatten = (nodes: SetSnapshotNode[]) => {
-      for (const node of nodes) {
-        if (node.kind === 'part') {
-          parts.push(node.part);
-        } else {
-          const partIds: string[] = [];
-          const collect = (n: SetSnapshotNode) => {
-            if (n.kind === 'part') { partIds.push(n.part.id); parts.push(n.part); }
-            else n.children.forEach(collect);
-          };
-          node.children.forEach(collect);
-          groups.push({
-            partIds,
-            ...(node.name !== undefined ? { name: node.name } : {}),
-            ...(node.position !== undefined ? { position: node.position } : {}),
-            ...(node.quaternion !== undefined ? { quaternion: node.quaternion } : {}),
-            ...(node.scale !== undefined ? { scale: node.scale } : {}),
-            ...(node.isGroup !== undefined ? { isGroup: node.isGroup } : {}),
-          });
-        }
-      }
-    };
-    flatten(snap.root);
-
-    // Remove all current meshes from their parents (group or scene root).
-    for (const part of this.parts) {
-      part.mesh.removeFromParent();
-    }
-    // Dissolve all groups and clear the joint list.
-    this.attach.dispose();
-    this.parts.length = 0;
-
-    // Restore part meshes at their LOCAL transforms; groups are rebuilt below and
-    // re-parent members, turning those local transforms back into world space.
-    for (const ps of parts) {
-      const part = this.allParts.get(ps.id);
-      if (!part) continue;
-      part.mesh.position.set(ps.position[0], ps.position[1], ps.position[2]);
-      part.mesh.quaternion.set(ps.quaternion[0], ps.quaternion[1], ps.quaternion[2], ps.quaternion[3]);
-      part.mesh.scale.set(ps.scale[0], ps.scale[1], ps.scale[2]);
-      part.mesh.updateWorldMatrix(false, true);
-      part.color = ps.color;
-      part.label = ps.label;
-      part.faceColors = [...ps.faceColors];
-      part.faceTextures = [...ps.faceTextures];
-      (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m, i) => {
-        if (m.map) { m.map.dispose(); m.map = null; }
-        const url = ps.faceTextures[i] ?? null;
-        if (url) {
-          m.map = new THREE.TextureLoader().load(url);
-          m.color.set(0xffffff);
-        } else {
-          m.color.setHex(ps.faceColors[i] ?? ps.color);
-        }
-        m.needsUpdate = true;
-      });
-      this.scene.add(part.mesh);
-      this.parts.push(part);
-    }
-
-    // Re-register joints (no group creation here — groups are rebuilt below).
-    for (const js of snap.joints) {
-      const partA = this.parts.find((p) => p.id === js.partAId);
-      const partB = this.parts.find((p) => p.id === js.partBId);
-      if (partA && partB) {
-        this.attach.registerJoint(
-          partA,
-          new THREE.Vector3(js.localPointA[0], js.localPointA[1], js.localPointA[2]),
-          new THREE.Vector3(js.localNormalA[0], js.localNormalA[1], js.localNormalA[2]),
-          partB,
-          new THREE.Vector3(js.localPointB[0], js.localPointB[1], js.localPointB[2]),
-          new THREE.Vector3(js.localNormalB[0], js.localNormalB[1], js.localNormalB[2]),
-        );
-      }
-    }
-
-    // Rebuild all assembly groups from snapshot data (preserves group/attach types).
-    this.attach.rebuildGroupsFromSnapshot(groups, this.parts, snap.groupComponents);
+    this.syncFromDocument(snap);
+    this.attach.setGroupComponents(snap.groupComponents ?? []);
   }
 
   /**
@@ -951,33 +764,9 @@ export class CartoonSketcher {
    * Call on every mutation (debounced) and write to localStorage to survive page refresh.
    */
   toDraft(): SketcherDraft {
-    const parts: PartDraft[] = this.parts.map((p) => {
-      const draft: PartDraft = {
-        id: p.id,
-        kind: p.shapePoints !== null ? 'sketch' : (p.lathePoints !== null ? 'lathed' : 'primitive'),
-        name: p.name,
-        ...(p.label !== undefined ? { label: p.label } : {}),
-        position: [p.mesh.position.x, p.mesh.position.y, p.mesh.position.z],
-        quaternion: [p.mesh.quaternion.x, p.mesh.quaternion.y, p.mesh.quaternion.z, p.mesh.quaternion.w],
-        scale: [p.mesh.scale.x, p.mesh.scale.y, p.mesh.scale.z],
-        color: p.color,
-        faceColors: [...p.faceColors],
-        faceTextures: [...p.faceTextures],
-      };
-      if (p.shapePoints !== null) {
-        draft.shapePoints = p.shapePoints;
-        draft.depth = p.depth;
-        if (p.holes && p.holes.length > 0) draft.holes = p.holes;
-      }
-      if (p.lathePoints !== null) {
-        draft.lathePoints = p.lathePoints;
-        if (p.lathePhiLength !== null && p.lathePhiLength < Math.PI * 2 - 1e-6) {
-          draft.phiLength = p.lathePhiLength;
-        }
-      }
-      return draft;
-    });
+    const parts: PartDraft[] = this.parts.map((p) => this.partToDraft(p));
     const joints: JointSnapshot[] = this.attach.getJoints().map((j) => ({
+      type: j.type,
       partAId: j.partAId,
       localPointA: [j.localPointA.x, j.localPointA.y, j.localPointA.z],
       localNormalA: [j.localNormalA.x, j.localNormalA.y, j.localNormalA.z],
@@ -1003,6 +792,33 @@ export class CartoonSketcher {
     };
   }
 
+  private partToDraft(p: SketcherPart): PartDraft {
+    const draft: PartDraft = {
+      id: p.id,
+      kind: p.shapePoints !== null ? 'sketch' : (p.lathePoints !== null ? 'lathed' : 'primitive'),
+      name: p.name,
+      ...(p.label !== undefined ? { label: p.label } : {}),
+      position: [p.mesh.position.x, p.mesh.position.y, p.mesh.position.z],
+      quaternion: [p.mesh.quaternion.x, p.mesh.quaternion.y, p.mesh.quaternion.z, p.mesh.quaternion.w],
+      scale: [p.mesh.scale.x, p.mesh.scale.y, p.mesh.scale.z],
+      color: p.color,
+      faceColors: [...p.faceColors],
+      faceTextures: [...p.faceTextures],
+    };
+    if (p.shapePoints !== null) {
+      draft.shapePoints = p.shapePoints;
+      draft.depth = p.depth;
+      if (p.holes && p.holes.length > 0) draft.holes = p.holes;
+    }
+    if (p.lathePoints !== null) {
+      draft.lathePoints = p.lathePoints;
+      if (p.lathePhiLength !== null && p.lathePhiLength < Math.PI * 2 - 1e-6) {
+        draft.phiLength = p.lathePhiLength;
+      }
+    }
+    return draft;
+  }
+
   /** Serialise the session as its tree document (the increment-2 canonical form). */
   toDocument(): SetDocument {
     return draftToDocument(this.toDraft());
@@ -1010,31 +826,87 @@ export class CartoonSketcher {
 
   /** Rebuild the Three.js scene from a tree document (the inverse of toDocument). */
   loadDocument(doc: SetDocument): void {
-    this.loadDraft(documentToDraft(doc));
+    this.syncFromDocument(doc);
   }
 
-  /**
-   * Reconstruct the Three.js scene from a plain-data draft (the inverse of toDraft).
-   * Clears the current session first. Part ids are preserved so the nextId counter
-   * is advanced past the highest restored id to avoid collisions.
-   */
-  loadDraft(draft: SketcherDraft): void {
-    this.clearSession();
-    this.nextId = 1;
+  /** Re-derive the scene from the tree, reusing live meshes by guid (identity-preserving). */
+  private syncFromDocument(doc: SetSnapshot): void {
+    // Collect PartDrafts by guid from the tree.
+    const partDrafts = new Map<string, PartDraft>();
+    const collectParts = (nodes: SetNode[]) => {
+      for (const n of nodes) {
+        if (n.kind === 'part') partDrafts.set(n.part.id, n.part);
+        else collectParts(n.children);
+      }
+    };
+    collectParts(doc.root);
 
-    const meshes = realise(draft);
-    const meshById = new Map<string, THREE.Mesh>();
-    for (const child of meshes.children) {
-      const mesh = child as THREE.Mesh;
-      if (mesh.userData?.sketcherPartId) meshById.set(mesh.userData.sketcherPartId, mesh);
+    // Dissolve current groups (return members to scene root) + clear joint/group state.
+    this.attach.resetGroups();
+
+    // Dispose meshes no longer in the tree.
+    for (let i = this.parts.length - 1; i >= 0; i--) {
+      const p = this.parts[i];
+      if (!partDrafts.has(p.id)) {
+        p.mesh.removeFromParent();
+        p.mesh.geometry.dispose();
+        (p.mesh.material as THREE.MeshStandardMaterial[]).forEach((m) => { m.map?.dispose(); m.dispose(); });
+        this.parts.splice(i, 1);
+        this.allParts.delete(p.id);
+      }
     }
 
-    for (const pd of draft.parts) {
-      const mesh = meshById.get(pd.id);
-      if (!mesh) continue;
-      const materials = mesh.material as THREE.MeshStandardMaterial[];
-      const faceColors = pd.faceColors ? [...pd.faceColors] : materials.map(() => pd.color);
-      const faceTextures = pd.faceTextures ? [...pd.faceTextures] : materials.map(() => null);
+    // Reuse existing meshes (update transform) + realise new ones, in tree order.
+    const existing = new Map(this.parts.map((p) => [p.id, p]));
+    this.parts.length = 0;
+    this.nextId = 1;
+
+    const buildPart = (pd: PartDraft): SketcherPart | null => {
+      const prev = existing.get(pd.id);
+      if (prev) {
+        const mesh = prev.mesh;
+        mesh.position.set(pd.position[0], pd.position[1], pd.position[2]);
+        mesh.quaternion.set(pd.quaternion[0], pd.quaternion[1], pd.quaternion[2], pd.quaternion[3]);
+        mesh.scale.set(pd.scale[0], pd.scale[1], pd.scale[2]);
+        mesh.updateWorldMatrix(false, true);
+        // Re-apply colour/faces/textures so undo/redo of colour edits is visual too.
+        const mats = mesh.material as THREE.MeshStandardMaterial[];
+        const cols = pd.faceColors ?? mats.map(() => pd.color);
+        const texs = pd.faceTextures ?? mats.map(() => null);
+        mats.forEach((m, i) => {
+          if (m.map) { m.map.dispose(); m.map = null; }
+          const url = texs[i] ?? null;
+          if (url) {
+            m.map = new THREE.TextureLoader().load(url);
+            m.color.set(0xffffff);
+          } else {
+            m.color.setHex(cols[i] ?? pd.color);
+          }
+          m.needsUpdate = true;
+        });
+        // Update the live wrapper in place (preserve object identity for selection/gizmo).
+        prev.depth = pd.kind === 'sketch' ? (pd.depth ?? 0) : 0;
+        prev.name = pd.name;
+        prev.label = pd.label;
+        prev.color = pd.color;
+        prev.shapePoints = pd.kind === 'sketch' ? (pd.shapePoints ?? null) : null;
+        prev.holes = pd.holes ?? null;
+        prev.lathePoints = pd.kind === 'lathed' ? (pd.lathePoints ?? null) : null;
+        prev.lathePhiLength = pd.kind === 'lathed' ? (pd.phiLength ?? Math.PI * 2) : null;
+        prev.faceColors = pd.faceColors ? [...pd.faceColors] : mats.map(() => pd.color);
+        prev.faceTextures = pd.faceTextures ? [...pd.faceTextures] : mats.map(() => null);
+        this.parts.push(prev);
+        this.allParts.set(prev.id, prev);
+        const num = parseInt(pd.id.replace('part-', ''), 10);
+        if (!isNaN(num) && num >= this.nextId) this.nextId = num + 1;
+        return prev;
+      }
+
+      const mesh = buildPartMesh(pd);
+      if (!mesh) return null;
+      const mats = mesh.material as THREE.MeshStandardMaterial[];
+      const faceColors = pd.faceColors ? [...pd.faceColors] : mats.map(() => pd.color);
+      const faceTextures = pd.faceTextures ? [...pd.faceTextures] : mats.map(() => null);
       const part: SketcherPart = {
         id: pd.id,
         mesh,
@@ -1050,15 +922,63 @@ export class CartoonSketcher {
         faceColors,
         faceTextures,
       };
-      this.scene.add(mesh);
       this.parts.push(part);
       this.allParts.set(part.id, part);
-
       const num = parseInt(pd.id.replace('part-', ''), 10);
       if (!isNaN(num) && num >= this.nextId) this.nextId = num + 1;
-    }
+      return part;
+    };
 
-    for (const js of draft.joints) {
+    // Walk the tree, building parts and adopting groups.
+    const walkTree = (nodes: SetNode[]) => {
+      for (const node of nodes) {
+        if (node.kind === 'part') {
+          const part = buildPart(node.part);
+          if (part) this.scene.add(part.mesh);
+        } else {
+          const group = new THREE.Group();
+          if (node.position) group.position.set(node.position[0], node.position[1], node.position[2]);
+          if (node.quaternion) group.quaternion.set(node.quaternion[0], node.quaternion[1], node.quaternion[2], node.quaternion[3]);
+          if (node.scale) group.scale.set(node.scale[0], node.scale[1], node.scale[2]);
+          const memberIds: string[] = [];
+          const collectMembers = (n: SetNode) => {
+            if (n.kind === 'part') { memberIds.push(n.part.id); buildPart(n.part); }
+            else n.children.forEach(collectMembers);
+          };
+          node.children.forEach(collectMembers);
+          for (const id of memberIds) {
+            const part = this.allParts.get(id);
+            if (part) group.add(part.mesh);
+          }
+          this.scene.add(group);
+          this.attach.adoptGroup(group, memberIds, node.name, node.isGroup);
+        }
+      }
+    };
+    walkTree(doc.root);
+
+    // Rebuild durable group bond components from the tree's pure groups.
+    const components: string[][] = [];
+    const collectComponents = (nodes: SetNode[]) => {
+      for (const n of nodes) {
+        if (n.kind === 'group') {
+          if (n.isGroup !== false) {
+            const ids: string[] = [];
+            const collectIds = (x: SetNode) => {
+              if (x.kind === 'part') ids.push(x.part.id);
+              else x.children.forEach(collectIds);
+            };
+            n.children.forEach(collectIds);
+            components.push(ids);
+          }
+          collectComponents(n.children);
+        }
+      }
+    };
+    collectComponents(doc.root);
+    this.attach.setGroupComponents(components);
+
+    for (const js of doc.joints) {
       const partA = this.parts.find((p) => p.id === js.partAId);
       const partB = this.parts.find((p) => p.id === js.partBId);
       if (partA && partB) {
@@ -1069,16 +989,36 @@ export class CartoonSketcher {
           partB,
           new THREE.Vector3(js.localPointB[0], js.localPointB[1], js.localPointB[2]),
           new THREE.Vector3(js.localNormalB[0], js.localNormalB[1], js.localNormalB[2]),
+          js.type,
         );
       }
     }
 
-    this.attach.rebuildGroupsFromSnapshot(draft.groups ?? [], this.parts);
+    // Clear + re-add lights.
+    for (const light of this.lightObjects.values()) this.scene.remove(light);
+    this.lightObjects.clear();
+    this.lights.length = 0;
+    for (const config of doc.lights ?? []) this.addLight(config);
+    this._environmentMap = doc.environmentMap;
+  }
 
-    for (const config of draft.lights ?? []) {
-      this.addLight(config);
-    }
-    this._environmentMap = draft.environmentMap;
+  /**
+   * Apply a mutation to the document tree and re-derive the scene from it.
+   * The tree is read fresh from the live scene on entry, so mixed mutation paths
+   * (tree-backed and mesh-backed) stay consistent during the migration.
+   */
+  private editDocument(edit: (doc: SetDocument) => void): void {
+    const doc = this.toDocument();
+    edit(doc);
+    this.syncFromDocument(doc);
+  }
+
+  /**
+   * Reconstruct the Three.js scene from a plain-data draft (the inverse of toDraft).
+   * Delegates to the tree path so the persistent document is populated.
+   */
+  loadDraft(draft: SketcherDraft): void {
+    this.loadDocument(draftToDocument(draft));
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────
@@ -1121,11 +1061,24 @@ export class CartoonSketcher {
       (this.extrusionHandle.handle.material as THREE.Material).dispose();
       this.extrusionHandle = null;
     }
-    const faceColors = Array<number>(mesh.geometry.groups.length).fill(DEFAULT_COLOR);
-    const faceTextures = Array<null>(mesh.geometry.groups.length).fill(null);
-    this.parts.push({ id: `part-${this.nextId++}`, mesh, depth, centroid: centroid.clone(), name: 'Shape', color: DEFAULT_COLOR, shapePoints, holes: holes.length > 0 ? holes : null, lathePoints: null, lathePhiLength: null, faceColors, faceTextures });
-    const part = this.parts[this.parts.length - 1];
-    this.allParts.set(part.id, part);
+    // Commit the sketch via the tree; the reconcile rebuilds the mesh, so dispose the preview.
+    mesh.removeFromParent();
+    mesh.geometry.dispose();
+    (mesh.material as THREE.MeshStandardMaterial[]).forEach((m) => { m.map?.dispose(); m.dispose(); });
+    const id = `part-${this.nextId++}`;
+    const draft: PartDraft = {
+      id,
+      kind: 'sketch',
+      name: 'Shape',
+      position: [mesh.position.x, mesh.position.y, mesh.position.z],
+      quaternion: [mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w],
+      scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
+      shapePoints,
+      depth,
+      ...(holes.length > 0 ? { holes } : {}),
+      color: DEFAULT_COLOR,
+    };
+    this.editDocument((doc) => insertPart(doc, draft));
     this.phase = 'idle';
   }
 

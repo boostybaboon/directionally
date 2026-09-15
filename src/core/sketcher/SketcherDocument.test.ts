@@ -335,6 +335,17 @@ describe('ChangeColorCommand', () => {
     expect(sketcher.getSession().parts[0].color).toBe(original);
   });
 
+  it('doc.undo() restores the mesh material colour too', () => {
+    const { sketcher } = makeSketcher();
+    const { doc } = makeDoc(sketcher);
+    const part = sketcher.insertPrimitive('box')!;
+    const original = part.color;
+    doc.execute(new ChangeColorCommand(part.id, 0xff0000, sketcher));
+    doc.undo();
+    const material = sketcher.getSession().parts[0].mesh.material as THREE.MeshStandardMaterial[];
+    expect(material[0].color.getHex()).toBe(original);
+  });
+
   it('doc.redo() re-applies the new colour', () => {
     const { sketcher } = makeSketcher();
     const { doc } = makeDoc(sketcher);

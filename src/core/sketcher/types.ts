@@ -52,6 +52,8 @@ export type SketcherPart = {
  */
 export type AttachJoint = {
   id: string;
+  /** 'snap' = face-snap (glue); 'rigid' = full weld (positional + rotational lock). */
+  type: 'snap' | 'rigid';
   partAId: string;
   /** Contact point in partA's mesh local space. */
   localPointA: THREE.Vector3;
@@ -106,20 +108,9 @@ export type FaceGroupInfo = {
 
 // ── Snapshot types (used by SketcherDocument for undo/redo) ──────────────────
 
-export type PartSnapshot = {
-  id: string;
-  label?: string;
-  /** Local-space transform — relative to the parent group, or world when ungrouped. */
-  position: [number, number, number];
-  quaternion: [number, number, number, number];
-  scale: [number, number, number];
-  color: number;
-  faceColors: number[];
-  /** Per-draw-group texture data URLs matching faceColors. */
-  faceTextures: (string | null)[];
-};
-
 export type JointSnapshot = {
+  /** 'snap' = face-snap (glue); 'rigid' = full weld (positional + rotational lock). */
+  type: 'snap' | 'rigid';
   partAId: string;
   /** Local-space — unchanged by group transforms. */
   localPointA: [number, number, number];

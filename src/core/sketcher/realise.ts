@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { buildExtrusionGeometry } from './ExtrusionHandle.js';
 import { PRESET_BY_NAME, buildLatheGeometry, buildMaterials } from './geometry.js';
 import type { PartDraft, SketcherDraft } from './types.js';
-import type { SetDocument, SetNode } from './documentTree.js';
+import type { SetNode } from './documentTree.js';
 
 /**
  * Build a THREE.Group of meshes from a SketcherDraft — pure, headless, no Sketcher
@@ -27,7 +27,7 @@ export function realise(draft: SketcherDraft): THREE.Group {
  * transform composes with the leaf's, reproducing world space). Pure and headless:
  * no Sketcher state, no attach/joint bookkeeping.
  */
-export function realiseDocument(doc: SetDocument): THREE.Group {
+export function realiseDocument(doc: { root: SetNode[] }): THREE.Group {
   const root = new THREE.Group();
   root.name = 'realised-set';
   for (const node of doc.root) {
@@ -42,6 +42,9 @@ function realiseNode(node: SetNode): THREE.Object3D | null {
 
   const group = new THREE.Group();
   group.name = node.name ?? 'group';
+  // Tag group nodes so the runtime can map them back to the tree when building
+  // SketcherParts + AssemblyGroups from the realised scene.
+  group.userData = { isGroupNode: true, groupName: node.name, groupIsGroup: node.isGroup === true };
   if (node.position) group.position.set(node.position[0], node.position[1], node.position[2]);
   if (node.quaternion) group.quaternion.set(node.quaternion[0], node.quaternion[1], node.quaternion[2], node.quaternion[3]);
   if (node.scale) group.scale.set(node.scale[0], node.scale[1], node.scale[2]);
@@ -52,7 +55,7 @@ function realiseNode(node: SetNode): THREE.Object3D | null {
   return group;
 }
 
-function buildPartMesh(pd: PartDraft): THREE.Mesh | null {
+export function buildPartMesh(pd: PartDraft): THREE.Mesh | null {
   let geometry: THREE.BufferGeometry;
   let lathePoints: [number, number][] | null = null;
   let depth = 0;

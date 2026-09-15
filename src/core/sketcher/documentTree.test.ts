@@ -88,6 +88,20 @@ describe('draftToDocument / documentToDraft', () => {
     const doc = draftToDocument(draft);
     expect(doc.root.map((n) => (n.kind === 'part' ? n.id : ''))).toEqual(['box', 'box-2', 'box-3']);
   });
+
+  it('assigns role: prop to parts and role: structure to groups', () => {
+    const draft: SketcherDraft = {
+      version: 2,
+      parts: [part('a', 'Box'), part('b', 'Box'), part('loose', 'Box')],
+      joints: [],
+      groups: [{ partIds: ['a', 'b'], name: 'pair' }],
+    };
+    const doc = draftToDocument(draft);
+    const group = doc.root.find((n) => n.kind === 'group');
+    if (group?.kind === 'group') expect(group.role).toBe('structure');
+    const loose = doc.root.find((n) => n.kind === 'part');
+    if (loose?.kind === 'part') expect(loose.role).toBe('prop');
+  });
 });
 
 describe('tree mutation operations', () => {

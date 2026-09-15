@@ -876,13 +876,16 @@ describe('toDraft / loadDraft', () => {
       [pA, pB],
     );
     expect(sketcher.getSession().joints).toHaveLength(1);
+    expect(sketcher.getSession().joints[0].type).toBe('snap');
 
     const draft = sketcher.toDraft();
     expect(draft.joints).toHaveLength(1);
+    expect(draft.joints[0].type).toBe('snap');
 
     sketcher.loadDraft(draft);
 
     expect(sketcher.getSession().joints).toHaveLength(1);
+    expect(sketcher.getSession().joints[0].type).toBe('snap');
     expect(sketcher.getSession().parts).toHaveLength(2);
     // Attach creates a group; after draft round-trip the group is restored.
     const ag = sketcher.attachManager.groupForPart(sketcher.getSession().parts[0].id);

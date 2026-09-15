@@ -102,6 +102,7 @@ export class AttachManager {
 
     const joint: AttachJoint = {
       id: `joint-${_jointSeq++}`,
+      type: 'snap',
       partAId: partA.id, localPointA: localPointA.clone(), localNormalA: localNormalA.clone(),
       partBId: partB.id, localPointB: localPointB.clone(), localNormalB: localNormalB.clone(),
     };
@@ -280,6 +281,21 @@ export class AttachManager {
   }
 
   /**
+   * Register an already-realised THREE.Group as an assembly group (used by the
+   * tree-aware scene construction, where realiseDocument has already built the
+   * group node with members parented). Marks groupIds when it is a pure Group
+   * rather than an attach assembly.
+   */
+  adoptGroup(group: THREE.Group, partIds: string[], name?: string, isGroup?: boolean): AssemblyGroup {
+    const id = `assembly-${_groupSeq++}`;
+    group.name = id;
+    const ag: AssemblyGroup = { id, ...(name !== undefined ? { name } : {}), group, partIds };
+    this.assemblyGroups.push(ag);
+    if (isGroup !== false) this.groupIds.add(ag.id);
+    return ag;
+  }
+
+  /**
    * Dissolve a group by id. All children are returned to scene root
    * at their current world positions. No-op if the group is not a created group.
    */
@@ -308,6 +324,12 @@ export class AttachManager {
   /** Return all durable group bond components as plain arrays (for snapshot serialization). */
   getGroupComponents(): string[][] {
     return this.groupComponents.map((wc) => [...wc]);
+  }
+
+  /** Replace the durable group bond components (used by snapshot restore). */
+  setGroupComponents(components: string[][]): void {
+    this.groupComponents.length = 0;
+    for (const wc of components) this.groupComponents.push(new Set(wc));
   }
 
   /**
@@ -354,9 +376,11 @@ export class AttachManager {
   registerJoint(
     partA: SketcherPart, localPointA: THREE.Vector3, localNormalA: THREE.Vector3,
     partB: SketcherPart, localPointB: THREE.Vector3, localNormalB: THREE.Vector3,
+    type: 'snap' | 'rigid' = 'snap',
   ): AttachJoint {
     const joint: AttachJoint = {
       id: `joint-${_jointSeq++}`,
+      type,
       partAId: partA.id, localPointA: localPointA.clone(), localNormalA: localNormalA.clone(),
       partBId: partB.id, localPointB: localPointB.clone(), localNormalB: localNormalB.clone(),
     };
@@ -412,6 +436,18 @@ export class AttachManager {
 
   dispose(): void {
     for (const ag of this.assemblyGroups) {
+      this.scene.remove(ag.group);
+    }
+    this.joints.length = 0;
+    this.assemblyGroups.length = 0;
+    this.groupIds.clear();
+    this.groupComponents.length = 0;
+  }
+
+  /** Return all group members to scene root (world preserved) and clear group/joint state. Meshes are NOT disposed. */
+  resetGroups(): void {
+    for (const ag of this.assemblyGroups) {
+      for (const child of [...ag.group.children]) this.scene.attach(child);
       this.scene.remove(ag.group);
     }
     this.joints.length = 0;

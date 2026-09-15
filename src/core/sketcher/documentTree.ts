@@ -1,4 +1,4 @@
-import type { GroupSnapshot, JointSnapshot, PartDraft, PartSnapshot, SketcherDraft } from './types.js';
+import type { GroupSnapshot, JointSnapshot, PartDraft, SketcherDraft } from './types.js';
 import type { LightConfig } from '../domain/types.js';
 import { slug } from './aiDraft.js';
 import { IDENTITY_TRANSFORM, localToWorld, worldToLocal } from './transform.js';
@@ -16,8 +16,8 @@ import type { Transform } from './transform.js';
  * path addressing (`group-id/part-id`).
  */
 export type SetNode =
-  | { kind: 'part'; id: string; part: PartDraft }
-  | { kind: 'group'; id: string; name?: string; isGroup?: boolean; position?: [number, number, number]; quaternion?: [number, number, number, number]; scale?: [number, number, number]; children: SetNode[] };
+  | { kind: 'part'; id: string; role: 'prop'; part: PartDraft }
+  | { kind: 'group'; id: string; role: 'structure'; name?: string; isGroup?: boolean; position?: [number, number, number]; quaternion?: [number, number, number, number]; scale?: [number, number, number]; children: SetNode[] };
 
 export type SetDocument = {
   version: 2;
@@ -28,18 +28,15 @@ export type SetDocument = {
 };
 
 /**
- * Tree-shaped undo snapshot — the same tree shape as `SetDocument`, but leaves are
- * lightweight `PartSnapshot`s (live meshes are reused on restore, so geometry and
- * object identity persist), and it carries the durable group-bond topology
- * (`groupComponents`) that the draft intentionally omits.
+ * Tree-shaped undo snapshot — the same tree shape as `SetDocument` (full `PartDraft`
+ * leaves, so restore can re-realise geometry from scratch), plus the durable
+ * group-bond topology (`groupComponents`) that the draft intentionally omits.
  */
-export type SetSnapshotNode =
-  | { kind: 'part'; part: PartSnapshot }
-  | { kind: 'group'; name?: string; isGroup?: boolean; position?: [number, number, number]; quaternion?: [number, number, number, number]; scale?: [number, number, number]; children: SetSnapshotNode[] };
-
 export type SetSnapshot = {
-  root: SetSnapshotNode[];
+  root: SetNode[];
   joints: JointSnapshot[];
+  lights?: LightConfig[];
+  environmentMap?: string;
   /**
    * Durable group bond components: each entry is the set of part IDs that form
    * one group unit. Unlike groups, these survive attach merges — when an attach
@@ -77,7 +74,7 @@ export function draftToDocument(draft: SketcherDraft): SetDocument {
   for (const pd of draft.parts) {
     const gi = groupOfPart.get(pd.id);
     const taken = gi === undefined ? rootTaken : groupTaken[gi];
-    const node: SetNode = { kind: 'part', id: nameSegment(pd.label ?? pd.name, taken), part: pd };
+    const node: SetNode = { kind: 'part', id: nameSegment(pd.label ?? pd.name, taken), role: 'prop', part: pd };
     if (gi === undefined) root.push(node);
     else groupChildren[gi].push(node);
   }
@@ -85,6 +82,7 @@ export function draftToDocument(draft: SketcherDraft): SetDocument {
   const groupNodes: SetNode[] = groups.map((g, i) => ({
     kind: 'group' as const,
     id: nameSegment(g.name ?? 'group', rootTaken),
+    role: 'structure' as const,
     ...(g.name !== undefined ? { name: g.name } : {}),
     ...(g.isGroup !== undefined ? { isGroup: g.isGroup } : {}),
     ...(g.position !== undefined ? { position: g.position } : {}),
@@ -192,9 +190,15 @@ function findGroupOfPart(nodes: SetNode[], partId: string, parent: Transform): {
   return null;
 }
 
+/** Return the group node that directly contains `partId`, or null. */
+export function findGroupOfPartId(doc: SetDocument, partId: string): Extract<SetNode, { kind: 'group' }> | null {
+  const found = findGroupOfPart(doc.root, partId, IDENTITY_TRANSFORM);
+  return found ? found.group : null;
+}
+
 /** Add a part leaf to the document root. */
 export function insertPart(doc: SetDocument, part: PartDraft): void {
-  doc.root.push({ kind: 'part', id: nameSegment(part.label ?? part.name, segmentsOf(doc.root)), part });
+  doc.root.push({ kind: 'part', id: nameSegment(part.label ?? part.name, segmentsOf(doc.root)), role: 'prop', part });
 }
 
 /** Remove a part leaf (by guid) from the tree. */
@@ -246,6 +250,7 @@ export function groupParts(doc: SetDocument, partIds: string[], name?: string): 
   const groupNode: SetNode = {
     kind: 'group',
     id: nameSegment(name ?? 'group', segmentsOf(first.nodes)),
+    role: 'structure',
     ...(name !== undefined ? { name } : {}),
     position: centroid,
     children: ascending.map((x) => x.node),
@@ -292,12 +297,48 @@ export function setPartTransform(doc: SetDocument, partId: string, transform: Tr
   return true;
 }
 
-/** Set a part leaf's colour. */
+/** Set a part leaf's colour (and reset per-face colours to the uniform colour). */
 export function setPartColor(doc: SetDocument, partId: string, color: number): boolean {
   const loc = findPartLocation(doc.root, partId, IDENTITY_TRANSFORM);
   if (!loc) return false;
   const node = loc.nodes[loc.index];
   if (node.kind !== 'part') return false;
   node.part.color = color;
+  node.part.faceColors = undefined; // reset per-face colours to the uniform colour
+  return true;
+}
+
+/** Set a single draw group's colour. */
+export function setFaceColor(doc: SetDocument, partId: string, materialIndex: number, color: number): boolean {
+  const loc = findPartLocation(doc.root, partId, IDENTITY_TRANSFORM);
+  if (!loc) return false;
+  const node = loc.nodes[loc.index];
+  if (node.kind !== 'part') return false;
+  const part = node.part;
+  if (!part.faceColors || materialIndex < 0 || materialIndex >= part.faceColors.length) return false;
+  part.faceColors[materialIndex] = color;
+  return true;
+}
+
+/** Set (or clear, with null) a single draw group's texture data URL. */
+export function setFaceTexture(doc: SetDocument, partId: string, materialIndex: number, dataUrl: string | null): boolean {
+  const loc = findPartLocation(doc.root, partId, IDENTITY_TRANSFORM);
+  if (!loc) return false;
+  const node = loc.nodes[loc.index];
+  if (node.kind !== 'part') return false;
+  const part = node.part;
+  if (!part.faceTextures || materialIndex < 0 || materialIndex >= part.faceTextures.length) return false;
+  part.faceTextures[materialIndex] = dataUrl;
+  return true;
+}
+
+/** Set (or clear, with undefined) a part's semantic label. */
+export function setPartLabel(doc: SetDocument, partId: string, label: string | undefined): boolean {
+  const loc = findPartLocation(doc.root, partId, IDENTITY_TRANSFORM);
+  if (!loc) return false;
+  const node = loc.nodes[loc.index];
+  if (node.kind !== 'part') return false;
+  if (label === undefined) delete node.part.label;
+  else node.part.label = label;
   return true;
 }

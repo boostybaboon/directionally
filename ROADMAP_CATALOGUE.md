@@ -223,6 +223,29 @@ Definition and apply `overrides`. **Both** the sketch view and the production re
 Each increment is shippable and test-guarded. Protect the fragile systems (attach/joint, gimbal
 transform, sketch/extrude) with their existing tests before touching them.
 
+### Progress
+
+- [x] **1. Extract the Realiser** — `realise.ts` / `geometry.ts` (pure draft → THREE).
+- [x] **2. Tree Document + local transforms + drill-in**
+  - [x] **2a** tree foundation — `documentTree.ts` (`SetNode`/`SetDocument` + `draftToDocument`/`documentToDraft`).
+  - [x] **2b** local transforms — parts store local (group-relative) transforms, groups store their world transform.
+  - [x] **2c** undo/redo over the tree — `SetSnapshot` tree snapshots (undo re-realises geometry, no mesh reuse).
+  - [x] **2d** name-segment ids — `SetNode.id` parent-unique segments (drill-in editing already existed).
+  - [x] **live-model (most of 2's "replace flat with tree")** — structural + colour/label + sketch/lathe commit mutations edit the tree via `editDocument` + an identity-preserving reconcile `syncFromDocument`.
+- [x] **3. Map attach/joints onto the tree (schema)** — `role: 'prop' | 'structure'` nodes + `snap`/`rigid` joint edges.
+- [ ] **4. One store**
+- [ ] **5. Production renders the Document**
+- [ ] **6. Collapse the AI + save surfaces**
+- [ ] **7. UI: persistent catalogue column**
+- [ ] **8. Bundled library → documents** (adds custom-geometry `PartDraft` support — unblocks step 9)
+- [ ] **9. Finish the tree runtime** — migrate the catalogue insert + attach flow onto the tree, then the persistent-tree/transform-write-back, then delete the flat `SketcherDraft`.
+- [ ] **10. (Later) `ref` + `overrides` + layering**
+
+**Notes:** the live scene is still the transform/gizmo source of truth (the "transient tree" model —
+`toDocument()` re-derives from the mesh). Promoting the tree to the *persistent* source (step 9) is
+deliberately deferred until after step 8, because the catalogue commit path uses custom geometry that
+`PartDraft` can't yet express.
+
 1. **Extract the Realiser.** Factor the geometry-building out of `CartoonSketcher.loadDraft` into
    `realise(document): THREE.Group` (pure, headless). Sketch view calls it. No behaviour change.
    Guard: `toDraft`/`loadDraft` round-trip + `exportGLB` tests.
@@ -232,9 +255,10 @@ transform, sketch/extrude) with their existing tests before touching them.
    `sketcherCommands`/`SketcherDocument` over the tree; make member-edit/group-edit the only edit
    mode. Guard: `CartoonSketcher.test.ts`, `SketcherDocument.test.ts`, `SelectionManager.test.ts`.
 
-3. **Map attach/joints onto the tree.** `AttachManager`'s rigid `groups` → `role: Structure`
-   nodes; live joints → `snap`/`rigid` edges (the doc's glue/weld distinction). Guard:
-   `AttachManager.test.ts` ported first.
+3. **Map attach/joints onto the tree (schema).** Give the `Node` tree the attach/joint vocabulary:
+   `role: 'structure'` group nodes (vs `'prop'` parts) and `snap`/`rigid` joint edges (the doc's
+   glue/weld distinction). Pure schema + converters; the runtime still re-derives the tree from the
+   mesh (see step 9). Guard: `documentTree.test.ts` + `AttachManager.test.ts`.
 
 4. **One store.** Catalogue entry = `{ id, name, kind, isSetting, document, addedAt, modifiedAt }`.
    Migrate assemblies → entries via `sourceAssemblyId`; orphan drafts become entries (or drop).
@@ -254,12 +278,21 @@ transform, sketch/extrude) with their existing tests before touching them.
    drill-in. Name-on-create. The same tree already lives in the production view.
 
 8. **Bundled library → documents.** Convert bundled set-piece props (`CATALOGUE_ENTRIES` +
-   generators) to `SetDocument`s so there is one set-piece representation. Lights/environments
+   generators) to `SetDocument`s so there is one set-piece representation. This also gives `PartDraft`
+   a custom-geometry kind (so `insertCataloguePiece` can go through the tree). Lights/environments
    remain their own kinds. Delete the sidecar machinery.
 
-9. **(Later) `ref` + `overrides` + layering.** Implement instance resolution and venue/dressing
-   layer composition — the doc's reuse-with-variation story — on top of the foundation. The schema
-   already supports it; this is where it becomes behaviour.
+9. **Finish the tree runtime (persistent tree).** With custom geometry in `PartDraft` (step 8), make
+   the tree the *persistent* source of truth rather than a re-derived projection:
+   1. migrate `insertCataloguePiece`/`insertCatalogueEntry` onto the tree;
+   2. migrate the attach flow (`commitAttach`/`createGroup`/`detachAll`) onto the tree;
+   3. add the persistent `document` + gizmo transform write-back (`toDocument()` reads the tree);
+   4. delete the flat `SketcherDraft` and the flat `realise()`.
+   Guard: the existing `CartoonSketcher`/`SketcherDocument`/`AttachManager` round-trip suites.
+
+10. **(Later) `ref` + `overrides` + layering.** Implement instance resolution and venue/dressing
+    layer composition — the doc's reuse-with-variation story — on top of the foundation. The schema
+    already supports it; this is where it becomes behaviour.
 
 ### Migration
 
@@ -274,7 +307,8 @@ transform, sketch/extrude) with their existing tests before touching them.
 `findByAssemblyId`/`sourceAssemblyIdOf` + `catalogueLifecycle` cascade; `compose`/`geometry`/
 `material` as user-set representations (`addSetPiece`, `updateSetPieceMeta`, `normalizeSetPieceInput`,
 `SET_PIECE_JSON_SCHEMA`); `exportDraftGLB` as a stored step (keep `exportGLB` for download);
-"Save as Item"/"Save as Setting"/"New"/"Save As…"/"Open…" buttons + "Untitled".
+"Save as Item"/"Save as Setting"/"New"/"Save As…"/"Open…" buttons + "Untitled"; the flat
+`SketcherDraft` and flat `realise()` (step 9 — superseded by the tree document + tree realiser).
 
 ### Relationship to Part 1 (identity vs storage)
 
