@@ -1499,6 +1499,7 @@
     };
     if (currentEntryId) {
       await OPFSCatalogueStore.saveDocument(currentEntryId, document, meta);
+      await refreshSets();
     } else {
       // Sets authored here are scenery by default — a venue the script can place —
       // and the column's tag flips one to a component prop.
@@ -1510,8 +1511,10 @@
       pendingSetLabel = null;
       currentEntryId = entry.id;
       localStorage.setItem('sketcher-entry-id', entry.id);
+      // A new set is a catalogue item from the moment it exists, so the other views
+      // (catalogue panel, script) hear about it through the usual channel.
+      await refreshCatalogueViews();
     }
-    await refreshSets();
     return currentEntryId;
   }
 
