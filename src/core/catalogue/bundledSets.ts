@@ -61,7 +61,7 @@ function part(
   };
 }
 
-/** A single-body set piece: one part, no assembly. */
+/** A single-body set piece: one part, no assembly. Its part keeps the entry's id as its label. */
 function solid(
   id: string,
   label: string,
@@ -73,7 +73,7 @@ function solid(
     kind: 'set-piece',
     id,
     label,
-    document: documentFromParts([part(label.toLowerCase(), geometry, material, undefined, quaternion)]),
+    document: documentFromParts([part(id, geometry, material, undefined, quaternion)]),
   };
 }
 
