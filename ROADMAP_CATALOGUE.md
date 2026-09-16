@@ -216,7 +216,9 @@ Definition and apply `overrides`. **Both** the sketch view and the production re
 4. **Stable paths.** Node ids are name-derived, parent-unique segments, so the animation layer
    addresses `Schoolroom/Row2/Desk3/Lamp` — never a guid, never a flattened mesh.
 5. **One persistence lifecycle.** Create/rename/duplicate/delete/open all live in the catalogue
-   tree. Implicit autosave. No "publish" step, no "Untitled".
+   tree. Implicit autosave. No "publish" step, no "Untitled". (Step 7 delivers the tree and the
+   autosave; "Publish" is the last of the publish step, and it goes when step 8 makes the document
+   itself the catalogue artefact.)
 
 ### Step-by-step implementation
 
@@ -233,10 +235,18 @@ transform, sketch/extrude) with their existing tests before touching them.
   - [x] **2d** name-segment ids — `SetNode.id` parent-unique segments (drill-in editing already existed).
   - [x] **live-model (most of 2's "replace flat with tree")** — structural + colour/label + sketch/lathe commit mutations edit the tree via `editDocument` + an identity-preserving reconcile `syncFromDocument`.
 - [x] **3. Map attach/joints onto the tree (schema)** — `role: 'prop' | 'structure'` nodes + `snap`/`rigid` joint edges.
-- [ ] **4. One store**
-- [ ] **5. Production renders the Document**
-- [ ] **6. Collapse the AI + save surfaces**
-- [ ] **7. UI: persistent catalogue column**
+- [x] **4. One store** — a set *is* its catalogue entry: the entry carries the tree document (sibling file), the autosave/open/new flow edits it directly, and the assembly store + delete cascade are gone.
+  - [x] **4a** store: a set-piece entry can carry a `SetDocument` document (stored in a sibling file)
+  - [x] **4b** page: the sketch tool edits a catalogue entry's document directly (autosave/open/new)
+  - [x] **4c** delete `SketcherAssemblyStore` + `catalogueLifecycle` + `sourceAssemblyId` + the `sketcher-assembly-id` pointer
+- [x] **5. Production renders the Document** — `expandEntry` emits a `catalogueId` piece for a document-backed entry; the storage layer materialises its document, `realiseDocument` builds the tree, and the Model carries it as a pre-built group (`Model.groups`).
+- [x] **6. Collapse the AI + save surfaces** — one scenery create verb (AI Draft → `fromAIDraft` → tree document → entry); the compose/geometry authoring API and grammar are gone.
+  - [x] **6a** core: `createSetPiece(aiDraft)` is the only scenery verb; the settings LLM step uses the AI Draft grammar; `SET_PIECE_JSON_SCHEMA` / `normalizeSetPieceInput` / `addSetPiece` / `NewProceduralSetPiece` deleted; one client `generateAsset(kind, …)`.
+  - [x] **6b** UI: the sketch toolbar's save surfaces ("Save as Item"/"Save as Setting", "New"/"Save As…"/"Open…", "Untitled") are gone — step 7's catalogue column replaced them, so the tool never lost its set management. One **Publish** is left, and the row's scenery/prop tag replaced the two save modes.
+- [x] **7. UI: persistent catalogue column** — `SetsColumn.svelte`, the sketch tool's left column
+  (collapsible from the toolbar): **+ New set**, **inline rename**, **duplicate**, **delete**,
+  **click-to-open**. Name-on-create (a new or duplicated set opens its name field), and every rename
+  goes to the entry via `updateSetPieceMeta`, so the column and the store never disagree.
 - [ ] **8. Bundled library → documents** (adds custom-geometry `PartDraft` support — unblocks step 9)
 - [ ] **9. Finish the tree runtime** — migrate the catalogue insert + attach flow onto the tree, then the persistent-tree/transform-write-back, then delete the flat `SketcherDraft`.
 - [ ] **10. (Later) `ref` + `overrides` + layering**
@@ -260,22 +270,45 @@ deliberately deferred until after step 8, because the catalogue commit path uses
    glue/weld distinction). Pure schema + converters; the runtime still re-derives the tree from the
    mesh (see step 9). Guard: `documentTree.test.ts` + `AttachManager.test.ts`.
 
-4. **One store.** Catalogue entry = `{ id, name, kind, isSetting, document, addedAt, modifiedAt }`.
-   Migrate assemblies → entries via `sourceAssemblyId`; orphan drafts become entries (or drop).
-   Delete `SketcherAssemblyStore`, `sourceAssemblyId`, `catalogueLifecycle` cascade.
+4. **One store.** Catalogue entry = `{ id, label, kind, isSetting, document, addedAt, modifiedAt }`.
+   A set-piece entry keeps its tree document in a sibling `<id>.document.json` and only `hasDocument`
+   in the metadata index. The document and the GLB bake live on the *same* entry, so publishing writes
+   in place instead of duplicating; `list()` returns published entries only, while `listDocuments()`
+   feeds the Sketcher's Open list (drafts included). The "assembly" concept is gone — deleted
+   `SketcherAssemblyStore`, `catalogueLifecycle`, and the assemblies' `sourceAssemblyId` link. The
+   surviving `sourceDesignId` field links character assets to their `CharacterDesignStore` design;
+   unifying *that* store is out of scope here (step 10).
 
-5. **Production renders the Document.** Give `storedSceneToModel` / `settingSpec` a `document`
-   branch that calls `realise`. `gltfPath`/`compose` stop being user-set representations; GLB is
-   export-only. Guard: `storedSceneToModel` + `settingSpec` tests.
+5. **Production renders the Document.** `expandEntry` emits one piece carrying the entry's
+   `catalogueId` (never its GLB) when the entry has a document; `storedSceneToModelAsync` loads that
+   document from OPFS, `realiseDocument` builds the tree, and the result reaches the renderer as a
+   pre-built object tree (`Model.groups` → `buildSceneGraph`, selectable by piece name). A piece whose
+   document is missing falls back to its placeholder geometry — never to a stale bake. Still to come:
+   the `gltfPath`/`compose` *representations* are AI (`make`) + bundled authoring (steps 6/8), and the
+   GLB the Sketcher bakes on publish stays the catalogue's publish signal + export artefact until
+   step 8 deletes that sidecar.
 
-6. **Collapse the AI + save surfaces.** One create verb (AI Draft → `fromAIDraft` → document →
-   store). Retire `SET_PIECE_JSON_SCHEMA`/`normalizeSetPieceInput`/`createSetPiece`/`addSetPiece`
-   for sets. `isSetting` becomes a property. Remove "Save as Item"/"Save as Setting",
-   "New"/"Save As…"/"Open…", "Untitled".
+6. **Collapse the AI + save surfaces.** One create verb: an AI Draft goes in, a document-backed
+   entry comes out (`createSetPiece`, `setting/authoringApi.ts`), and the settings LLM step
+   (`describeToDocument`) fills the AI Draft grammar. `SET_PIECE_JSON_SCHEMA`, `normalizeSetPieceInput`,
+   `createSetPiece`'s compose/geometry input, `addSetPiece` and `NewProceduralSetPiece` are deleted, so
+   `make` → `create_setting` is the only scenery creation path for both humans and agents, and the
+   client exposes one `generateAsset(kind, …)`. `isSetting` is now a property of the entry
+   (`createSetPieceDocument`), not a save mode. The toolbar's save surfaces went with step 7.
 
-7. **UI: persistent catalogue column.** Left-hand tree in the sketch tool (always visible /
-   collapsible): **+ New set**, **inline rename**, **duplicate**, **delete**, **click-to-open**,
-   drill-in. Name-on-create. The same tree already lives in the production view.
+7. **UI: persistent catalogue column.** `SetsColumn.svelte` is the sketch tool's left column,
+   collapsible from the toolbar. It lists every document-backed entry (`listDocuments`), so
+   unpublished drafts and published sets are one list, and it owns the whole lifecycle: **+ New set**,
+   **inline rename**, **duplicate** (the copy opens if you duplicated the set you were editing),
+   **delete** (which closes the session when it was that set's, so a later edit cannot resurrect the
+   entry), and **click-to-open**, which drills in — `openSet` persists first, swaps the document and
+   clears the undo stack. **Name-on-create**: a new or duplicated set opens its name field
+   preselected. Every rename and reclassification writes the entry
+   (`OPFSCatalogueStore.updateSetPieceMeta`), never the page, which keeps no name of its own.
+   The row's *scenery / prop* tag is where a human sets `isSetting` (a new set starts as scenery — a
+   venue, matching `createSetPiece`'s default), and **Publish** is the one remaining save surface:
+   it bakes the GLB, captures the session's baseline lighting/environment and part count, and leaves
+   the classification alone. The column re-measures the viewport when it is collapsed or expanded.
 
 8. **Bundled library → documents.** Convert bundled set-piece props (`CATALOGUE_ENTRIES` +
    generators) to `SetDocument`s so there is one set-piece representation. This also gives `PartDraft`
@@ -294,21 +327,38 @@ deliberately deferred until after step 8, because the catalogue commit path uses
     layer composition — the doc's reuse-with-variation story — on top of the foundation. The schema
     already supports it; this is where it becomes behaviour.
 
+11. **(Later) One store for characters.** `CharacterDesignStore` is still a second editable-source
+    store behind `sourceDesignId`, exactly as `SketcherAssemblyStore` was for sets. Step 4 only
+    unified the *set* side.
+
 ### Migration
 
-- Assemblies merge into catalogue entries via `sourceAssemblyId` (step 4).
+- Assemblies are gone: a saved set *is* its catalogue entry, and its draft lives in the entry's
+  `<id>.document.json` sibling (step 4). No data migration was written — there are no users, so
+  stale assembly/draft files are simply abandoned.
 - Existing GLB-backed set-pieces keep rendering (their GLB is a throwaway cache until step 5
   replaces it with direct draft rendering), then the GLB sidecar is deleted (step 8).
 - Bundled `compose` props are converted to documents (step 8).
 
 ### Deletion list
 
-`SketcherAssemblyStore`; `localStorage['sketcher-assembly-id']` restore; `sourceAssemblyId` +
-`findByAssemblyId`/`sourceAssemblyIdOf` + `catalogueLifecycle` cascade; `compose`/`geometry`/
-`material` as user-set representations (`addSetPiece`, `updateSetPieceMeta`, `normalizeSetPieceInput`,
-`SET_PIECE_JSON_SCHEMA`); `exportDraftGLB` as a stored step (keep `exportGLB` for download);
-"Save as Item"/"Save as Setting"/"New"/"Save As…"/"Open…" buttons + "Untitled"; the flat
-`SketcherDraft` and flat `realise()` (step 9 — superseded by the tree document + tree realiser).
+Done in step 4: `SketcherAssemblyStore`; `localStorage['sketcher-assembly-id']` restore; the
+assemblies' `sourceAssemblyId` (renamed `sourceDesignId` for character designs) plus
+`sourceAssemblyIdOf` and the `catalogueLifecycle` cascade.
+
+Done in step 6: `SET_PIECE_JSON_SCHEMA`; `normalizeSetPieceInput` and its geometry/material/light
+normalisers; `addSetPiece`; `NewProceduralSetPiece`/`NewSetPieceMeta` (`add` is character-only now);
+`describeSettingDraft`; `generateEditableSetting`.
+
+Done in step 7: the sketch toolbar's "Save as Item"/"Save as Setting"/"New"/"Save As…"/"Open…"
+buttons and the "Untitled" name field; the `Open…` panel; the page's `setName` state and
+`saveSetAs`/`renameCurrentSet` (the entry carries the name now, via `updateSetPieceMeta`).
+
+Still to come in step 8 (it owns everything compose-shaped): `assignLocalIds`/`localId` (dead since
+the compose authoring path went, but the field is stitched through `PlacedProp`), the `compose` branch
+of `expandEntry`, `compose`/`geometry`/`material` as user-set representations, and the GLB sidecar
+(`exportDraftGLB` as a stored step — keep `exportGLB` for download). Step 9 still owns the flat
+`SketcherDraft` and flat `realise()`.
 
 ### Relationship to Part 1 (identity vs storage)
 

@@ -6,10 +6,14 @@ import { resolveInstances } from '../setting/settingSpec.js';
 import type { CatalogueEntry } from '../catalogue/types.js';
 import type { CharacterSpec } from '../character/characterSpec.js';
 import { specCharacterToGlbUrl } from '../character/specCharacter.js';
+import { realiseDocument } from '../sketcher/realise.js';
+import type { SetDocument } from '../sketcher/documentTree.js';
+import * as OPFSCatalogueStore from './OPFSCatalogueStore.js';
 import { actorBlockToTracks, lightBlockToTracks, setPieceBlockToTracks, cameraBlockToTracks } from '../domain/blockCompiler.js';
 import type { Actor } from '../domain/Production.js';
 import type { ActorVoice, ActorBlock, LightBlock, SetPieceBlock, CameraBlock, Vec3, SceneAction, SetPiece } from '../domain/types.js';
 import type { Model } from '../../lib/Model.js';
+import type * as THREE from 'three';
 import type { StoredScene, StoredActor } from './types.js';
 
 // ── Default voice cycle ───────────────────────────────────────────────────────
@@ -64,7 +68,8 @@ function resolveOpfsGltfPath(
  *
  * Pass `userEntries` to resolve `opfs://<id>` gltfPath references in set
  * pieces to the current session blob URLs produced by OPFSCatalogueStore,
- * and to look up user-added characters by catalogueId.
+ * to look up user-added characters by catalogueId, and to supply the tree
+ * documents (`document`) that document-backed set pieces are realised from.
  */
 /** Loose user-entry shape sufficient for actor/character resolution. */
 type UserEntryLike = {
@@ -74,7 +79,34 @@ type UserEntryLike = {
   defaultAnimation?: string;
   defaultRotation?: [number, number, number];
   spec?: CharacterSpec;
+  /** Set on a sketcher-authored set — its `document` is what the renderer needs. */
+  hasDocument?: boolean;
+  /** The entry's tree document, attached by whoever materialised the entry. */
+  document?: SetDocument;
 };
+
+/**
+ * Realise every document-backed piece into a pre-built object tree, keyed by piece
+ * name. A piece whose entry (or document) is missing yields nothing, so it falls
+ * back to the placeholder geometry the resolver gave it rather than silently
+ * rendering a stale GLB bake.
+ */
+function realiseDocumentSets(
+  pieces: SetPiece[],
+  userEntries: UserEntryLike[],
+): Map<string, THREE.Object3D> {
+  const groups = new Map<string, THREE.Object3D>();
+  for (const piece of pieces) {
+    if (!piece.catalogueId) continue;
+    const document = userEntries.find((e) => e.id === piece.catalogueId)?.document;
+    if (!document) {
+      console.warn(`storedSceneToModel: no document for catalogue piece "${piece.catalogueId}" — rendering placeholder geometry`);
+      continue;
+    }
+    groups.set(piece.name, realiseDocument(document));
+  }
+  return groups;
+}
 
 export function storedSceneToModel(
   storedScene: StoredScene,
@@ -259,14 +291,17 @@ export function storedSceneToModel(
     scene.addAction(action);
   }
 
-  return sceneToModel(scene, actors);
+  return sceneToModel(scene, actors, realiseDocumentSets(resolvedSet, userEntries));
 }
 
 /**
- * Async variant of `storedSceneToModel` that first materialises any spec-backed
- * character (ROADMAP_API.md API-2) into a GLB blob URL, then delegates to the
- * synchronous deserialiser unchanged. Spec-backed characters carry a
- * `CharacterSpec` instead of a `gltfPath`; the GLB is derived at load time.
+ * Async variant of `storedSceneToModel` that first materialises anything the
+ * renderer can't read straight from the metadata index, then delegates to the
+ * synchronous deserialiser unchanged:
+ *
+ *   - spec-backed characters (ROADMAP_API.md API-2) become a GLB blob URL;
+ *   - document-backed sets gain their tree document, loaded from OPFS, which
+ *     `storedSceneToModel` realises into a pre-built object tree (step 5).
  */
 export async function storedSceneToModelAsync(
   storedScene: StoredScene,
@@ -282,6 +317,10 @@ export async function storedSceneToModelAsync(
           console.error('Failed to build spec-backed character', e.id, err);
           return e; // fall through to the placeholder GLB
         }
+      }
+      if (e.hasDocument) {
+        const document = await OPFSCatalogueStore.getDocument(e.id);
+        if (document) return { ...e, document };
       }
       return e;
     }),

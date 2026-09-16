@@ -4,12 +4,11 @@ import type { LightConfig } from '../domain/types.js';
 
 /**
  * The AI Draft grammar as a JSON Schema, plus the validator that turns untrusted
- * LLM output into a well-formed `AIDraft`. Mirrors `SET_PIECE_JSON_SCHEMA` +
- * `normalizeSetPieceInput` in `setting/authoringApi.ts`, but for the richer
- * AI-facing grammar (named parts, absolute `size`, Euler `rotation`, groups).
- *
- * This is the contract the editable generate path (`generateEditableSetting`)
- * fills; the canonical `SketcherDraft` remains the single source of truth.
+ * LLM output into a well-formed `AIDraft`. This is the *only* contract the scenery
+ * generate path fills (characters keep their own schema); `createSetPiece`
+ * (setting/authoringApi.ts) turns a validated draft into a catalogue entry's tree
+ * document, so the canonical `SketcherDraft`/`SetDocument` remains the single
+ * source of truth.
  */
 
 // ── JSON Schema ───────────────────────────────────────────────────────────────

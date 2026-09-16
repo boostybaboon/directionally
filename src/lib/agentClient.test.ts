@@ -1,13 +1,9 @@
 import { describe, it, expect, afterEach, beforeAll, beforeEach, vi } from 'vitest';
-import { generateAsset, generateEditableSetting } from './agentClient.js';
-import { _setDirectoryProvider, _resetDirectoryProvider, list } from '../core/storage/OPFSCatalogueStore.js';
-import {
-  _setDirectoryProvider as _setAssemblyDir,
-  _resetDirectoryProvider as _resetAssemblyDir,
-} from '../core/storage/SketcherAssemblyStore.js';
+import { generateAsset } from './agentClient.js';
+import { _setDirectoryProvider, _resetDirectoryProvider, list, getDocument } from '../core/storage/OPFSCatalogueStore.js';
 
 // GLTFExporter uses FileReader internally, which is unavailable in Node. Mock it
-// so the headless draft → GLB bake used by generateEditableSetting is testable.
+// so the headless draft → GLB bake performed for generated settings is testable.
 vi.mock('three/examples/jsm/exporters/GLTFExporter.js', () => ({
   GLTFExporter: class {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -52,12 +48,10 @@ let mock: ReturnType<typeof createMockDir>;
 beforeEach(() => {
   mock = createMockDir();
   _setDirectoryProvider(async () => mock.handle);
-  _setAssemblyDir(async () => mock.handle);
 });
 
 afterEach(() => {
   _resetDirectoryProvider();
-  _resetAssemblyDir();
   vi.unstubAllGlobals();
 });
 
@@ -90,7 +84,7 @@ describe('generateAsset', () => {
   });
 });
 
-describe('generateEditableSetting', () => {
+describe('generateAsset – setting', () => {
   const document = {
     label: 'Classroom',
     parts: [
@@ -102,20 +96,23 @@ describe('generateEditableSetting', () => {
     ],
   };
 
-  it('publishes a GLB-backed entry with an editable source and partCount', async () => {
+  it('publishes a GLB-backed entry with an editable document and partCount', async () => {
     vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ document }), { status: 200 }));
 
-    const result = await generateEditableSetting('CLASSROOM', 'a classroom', {});
+    const result = await generateAsset('setting', 'CLASSROOM', 'a classroom');
 
     expect(result.boundTo).toBe('CLASSROOM');
     expect(result.created).toBe(true);
     expect(result.entry.kind).toBe('set-piece');
     expect(result.entry.label).toBe('Classroom');
-    // The generated setting is a GLB bake of an assembly — identical to a human save.
+    // The generated setting is a GLB bake on the same entry that carries the document.
     expect('gltfPath' in result.entry).toBe(true);
-    expect((result.entry as { sourceAssemblyId?: string }).sourceAssemblyId).toBeDefined();
+    expect((result.entry as { hasDocument?: boolean }).hasDocument).toBe(true);
     expect((result.entry as { partCount?: number }).partCount).toBe(2);
     expect((result.entry as { isSetting?: boolean }).isSetting).toBe(true);
+
+    const document_ = await getDocument(result.entry.id);
+    expect(document_?.root).toHaveLength(2);
 
     expect(await list()).toHaveLength(1);
   });
@@ -123,8 +120,8 @@ describe('generateEditableSetting', () => {
   it('resumes by name on re-generation without duplicating', async () => {
     vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ document }), { status: 200 }));
 
-    const first = await generateEditableSetting('CLASSROOM', 'a classroom', {});
-    const second = await generateEditableSetting('CLASSROOM', 'a classroom', {});
+    const first = await generateAsset('setting', 'CLASSROOM', 'a classroom');
+    const second = await generateAsset('setting', 'CLASSROOM', 'a classroom');
 
     expect(first.created).toBe(true);
     expect(second.created).toBe(false);

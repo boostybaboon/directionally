@@ -8,7 +8,8 @@
   import { faceGroupFromNormal, faceGroupLabel } from '../../core/sketcher/AttachManager.js';
   import { SketcherDocument } from '../../core/sketcher/SketcherDocument.js';
   import CataloguePanel from '../../lib/CataloguePanel.svelte';
-  import { getById } from '../../core/catalogue/catalogue.js';
+  import SetsColumn from '../../lib/SetsColumn.svelte';
+  import { getById, isSettingEntry } from '../../core/catalogue/catalogue.js';
   import { CATALOGUE_ENTRIES } from '../../core/catalogue/entries.js';
   import type { CatalogueEntry } from '../../core/catalogue/types.js';
   import type { LightConfig } from '../../core/domain/types.js';
@@ -31,9 +32,7 @@
   } from '../../core/sketcher/sketcherCommands.js';
   import { exportGLB } from '../../core/sketcher/exportGLB.js';
   import * as OPFSCatalogueStore from '../../core/storage/OPFSCatalogueStore.js';
-  import * as SketcherAssemblyStore from '../../core/storage/SketcherAssemblyStore.js';
-  import { deleteCatalogueEntry, deleteAssemblyAndEntry } from '../../core/storage/catalogueLifecycle.js';
-  import type { AssemblyMeta } from '../../core/storage/SketcherAssemblyStore.js';
+  import type { UserCatalogueEntry } from '../../core/storage/OPFSCatalogueStore.js';
 
   let canvas: HTMLCanvasElement;
   let statusMessage = $state('');
@@ -64,11 +63,19 @@
   let dragTargetMaterialIndex = $state<number | null>(null);
   let canUndo = $state(false);
   let canRedo = $state(false);
-  // Assembly management (SA9)
-  let assemblyName = $state('Untitled');
-  let currentAssemblyId = $state<string | null>(null);
-  let savedAssemblies = $state<AssemblyMeta[]>([]);
-  let showOpenPanel = $state(false);
+  // Editable set management (SA9) — a saved set *is* its catalogue entry, carrying
+  // the tree document as its editable source. The Sets column is the tool's only
+  // surface for creating, renaming, duplicating, opening and deleting them.
+  let sets = $state<UserCatalogueEntry[]>([]);
+  let currentEntryId = $state<string | null>(null);
+  let renamingSetId = $state<string | null>(null);
+  let showSetsColumn = $state(true);
+  // Name for a set that does not exist yet, e.g. ?prefillName= from the script view.
+  let pendingSetLabel = $state<string | null>(null);
+  /** Name of the open set; a set that only exists in memory has no entry yet. */
+  const currentSetLabel = $derived(
+    sets.find((s) => s.id === currentEntryId)?.label ?? pendingSetLabel ?? 'Untitled',
+  );
   // Catalogue panel (Track SET, N3) — user-added entries + active environment.
   let userCatalogueEntries = $state<CatalogueEntry[]>([]);
   let showCataloguePanel = $state(false);
@@ -301,72 +308,45 @@
       // Persist the session after every mutation so it survives a page reload.
       if (draftSaveTimer !== null) clearTimeout(draftSaveTimer);
       draftSaveTimer = setTimeout(async () => {
-        const draft = sketcher.toDraft();
-        if (currentAssemblyId) {
-          await SketcherAssemblyStore.save(currentAssemblyId, assemblyName, draft);
-        } else {
-          const meta = await SketcherAssemblyStore.create(assemblyName, draft);
-          currentAssemblyId = meta.id;
-          localStorage.setItem('sketcher-assembly-id', meta.id);
-          savedAssemblies = await SketcherAssemblyStore.list();
-        }
+        await persistSet();
         draftSaveTimer = null;
       }, 500);
     });
 
-    // Restore the last-opened assembly from OPFS, or migrate the legacy localStorage draft.
+    // Restore the last-opened set from its catalogue entry.
     void (async () => {
-      savedAssemblies = await SketcherAssemblyStore.list();
-      // Allow deep-linking to a specific assembly via ?assemblyId=<id> (e.g. "Edit in Sketcher").
-      // CAT-4: ?prefillName starts a fresh, pre-named assembly instead of restoring.
-      // N11: if a same-named assembly already exists, resume it instead of minting
+      sets = await OPFSCatalogueStore.listDocuments();
+      // Allow deep-linking to a specific set via ?entryId=<id> (e.g. "Edit in Sketcher").
+      // CAT-4: ?prefillName starts a fresh, pre-named set instead of restoring.
+      // N11: if a same-named set already exists, resume it instead of minting
       // a duplicate every time the script view's "Create →" is clicked.
-      const prefill = new URLSearchParams(window.location.search).get('prefillName');
-      const urlAssemblyId = new URLSearchParams(window.location.search).get('assemblyId');
+      const params = new URLSearchParams(window.location.search);
+      const prefill = params.get('prefillName');
+      const urlEntryId = params.get('entryId');
       const prefillTrimmed = (prefill ?? '').trim().toLowerCase();
       const nameMatch = prefillTrimmed
-        ? savedAssemblies.find((a) => a.name.trim().toLowerCase() === prefillTrimmed)
+        ? sets.find((s) => s.label.trim().toLowerCase() === prefillTrimmed)
         : undefined;
-      const lastId = urlAssemblyId ?? nameMatch?.id ?? (prefill ? null : localStorage.getItem('sketcher-assembly-id'));
-    if (lastId) {
-      const draft = await SketcherAssemblyStore.get(lastId);
-      const meta = savedAssemblies.find((a) => a.id === lastId);
-      if (draft && meta) {
-        sketcher.loadDraft(draft);
-        currentAssemblyId = lastId;
-        assemblyName = meta.name;
-        localStorage.setItem('sketcher-assembly-id', lastId);
-      }
-    } else {
-      // Migrate legacy localStorage draft to a named OPFS assembly.
-      const rawDraft = localStorage.getItem('sketcher-draft');
-      if (rawDraft) {
-        try {
-          const draft = JSON.parse(rawDraft);
-          if (draft?.version === 2) {
-            sketcher.loadDraft(draft);
-            const meta = await SketcherAssemblyStore.create('Untitled', draft);
-            currentAssemblyId = meta.id;
-            assemblyName = meta.name;
-            localStorage.setItem('sketcher-assembly-id', meta.id);
-            localStorage.removeItem('sketcher-draft');
-            savedAssemblies = await SketcherAssemblyStore.list();
-          }
-        } catch {
-          // Corrupt legacy draft — ignore and start fresh.
+      const lastId = urlEntryId ?? nameMatch?.id ?? (prefill ? null : localStorage.getItem('sketcher-entry-id'));
+      if (lastId) {
+        const document = await OPFSCatalogueStore.getDocument(lastId);
+        const meta = sets.find((s) => s.id === lastId);
+        if (document && meta) {
+          sketcher.loadDocument(document);
+          currentEntryId = lastId;
+          localStorage.setItem('sketcher-entry-id', lastId);
         }
       }
-    }
 
-    if (prefill) {
-      assemblyName = prefill.trim() || 'Untitled';
-    }
+      if (prefill) {
+        pendingSetLabel = prefill.trim() || null;
+      }
 
-    // Restore the applied HDRI environment (loadDraft only records the id).
-    if (sketcher.environmentMap) {
-      activeEnvironmentId = sketcher.environmentMap;
-      void handleApplyEnvironment(sketcher.environmentMap);
-    }
+      // Restore the applied HDRI environment (loadDocument only records the id).
+      if (sketcher.environmentMap) {
+        activeEnvironmentId = sketcher.environmentMap;
+        void handleApplyEnvironment(sketcher.environmentMap);
+      }
     })();
 
     // Catalogue panel: load user-added entries once, then stay in sync with
@@ -417,14 +397,7 @@
     };
     window.addEventListener('keydown', onKey);
 
-    const handleResize = () => {
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
-      renderer.setSize(w, h);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-    };
-    window.addEventListener('resize', handleResize);
+    window.addEventListener('resize', resizeCanvas);
 
     const render = () => {
       animId = requestAnimationFrame(render);
@@ -435,7 +408,7 @@
 
     return () => {
       window.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('resize', resizeCanvas);
     };
   });
 
@@ -1311,14 +1284,6 @@
     statusMessage = `Added ${entry.label}.`;
   }
 
-  async function handleCatalogueDelete(id: string) {
-    // Cascade: remove the published entry + its editable source assembly.
-    await deleteCatalogueEntry(id);
-    userCatalogueEntries = await OPFSCatalogueStore.list();
-    savedAssemblies = await SketcherAssemblyStore.list();
-    new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
-  }
-
   async function handleApplyEnvironment(environmentId: string | undefined) {
     if (!renderer || !scene) return;
     if (!environmentId) {
@@ -1507,71 +1472,125 @@
     statusMessage = 'Session cleared.';
   }
 
-  async function newAssembly() {
-    if (currentAssemblyId) {
-      await SketcherAssemblyStore.save(currentAssemblyId, assemblyName, sketcher.toDraft());
-    }
-    clearSession();
-    const meta = await SketcherAssemblyStore.create('Untitled', { version: 2, parts: [], joints: [], groups: [] });
-    currentAssemblyId = meta.id;
-    assemblyName = meta.name;
-    localStorage.setItem('sketcher-assembly-id', meta.id);
-    savedAssemblies = await SketcherAssemblyStore.list();
-    statusMessage = 'New assembly started.';
+  /** Re-read the sets column from the store. */
+  async function refreshSets(): Promise<void> {
+    sets = await OPFSCatalogueStore.listDocuments();
   }
 
-  async function openAssembly(id: string) {
-    if (currentAssemblyId) {
-      await SketcherAssemblyStore.save(currentAssemblyId, assemblyName, sketcher.toDraft());
-    }
-    const meta = savedAssemblies.find((a) => a.id === id);
-    const draft = await SketcherAssemblyStore.get(id);
-    if (draft && meta) {
-      clearSession();
-      sketcher.loadDraft(draft);
-      sketcherDoc.clearStack();
-      currentAssemblyId = id;
-      assemblyName = meta.name;
-      localStorage.setItem('sketcher-assembly-id', id);
-      showOpenPanel = false;
-      statusMessage = `Opened "${meta.name}".`;
-    }
-  }
-
-  async function deleteAssembly(id: string) {
-    // Cascade: remove the editable source + any published catalogue entry
-    // backed by it, and clear the last-opened pointer if it matches.
-    await deleteAssemblyAndEntry(id);
-    savedAssemblies = await SketcherAssemblyStore.list();
+  /** Re-read the sets column and the catalogue, then tell the other views to refresh. */
+  async function refreshCatalogueViews(): Promise<void> {
+    await refreshSets();
     userCatalogueEntries = await OPFSCatalogueStore.list();
     new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
-    if (currentAssemblyId === id) {
-      currentAssemblyId = null;
-      assemblyName = 'Untitled';
-      localStorage.removeItem('sketcher-assembly-id');
+  }
+
+  /**
+   * Write the session's tree document to its catalogue entry, creating the entry
+   * on first save. Returns the entry id, or null when an empty session has no entry
+   * to write to yet.
+   */
+  async function persistSet(): Promise<string | null> {
+    const document = sketcher.toDocument();
+    if (!currentEntryId && document.root.length === 0) return null;
+    if (currentEntryId) {
+      await OPFSCatalogueStore.saveDocument(currentEntryId, document);
+    } else {
+      // Sets authored here are scenery by default — a venue the script can place —
+      // and the column's tag flips one to a component prop.
+      const entry = await OPFSCatalogueStore.createSetPieceDocument(pendingSetLabel ?? 'Untitled', {
+        document,
+        isSetting: true,
+      });
+      pendingSetLabel = null;
+      currentEntryId = entry.id;
+      localStorage.setItem('sketcher-entry-id', entry.id);
     }
+    await refreshSets();
+    return currentEntryId;
   }
 
-  async function renameCurrentAssembly() {
-    if (!currentAssemblyId) return;
-    await SketcherAssemblyStore.save(currentAssemblyId, assemblyName, sketcher.toDraft());
-    savedAssemblies = await SketcherAssemblyStore.list();
+  async function newSet() {
+    await persistSet();
+    clearSession();
+    const entry = await OPFSCatalogueStore.createSetPieceDocument('Untitled', { isSetting: true });
+    currentEntryId = entry.id;
+    localStorage.setItem('sketcher-entry-id', entry.id);
+    await refreshSets();
+    // Name on create: the new row opens its name field straight away.
+    renamingSetId = entry.id;
+    statusMessage = 'New set — name it in the Sets column.';
   }
 
-  async function saveAssemblyAs() {
-    const newName = window.prompt('Save a copy of this assembly as:', `${assemblyName} copy`);
-    if (newName === null) return;
-    const trimmed = newName.trim() || 'Untitled copy';
-    // Snapshot the current draft and write it to a NEW assembly entry, so the
-    // copy can be edited independently without touching the original. The
-    // current session stays as-is; only the id/name switch to the copy.
-    const draft = sketcher.toDraft();
-    const meta = await SketcherAssemblyStore.create(trimmed, draft);
-    currentAssemblyId = meta.id;
-    assemblyName = meta.name;
-    localStorage.setItem('sketcher-assembly-id', meta.id);
-    savedAssemblies = await SketcherAssemblyStore.list();
-    statusMessage = `Saved copy as "${meta.name}".`;
+  async function openSet(id: string) {
+    if (id === currentEntryId) return;
+    await persistSet();
+    const meta = sets.find((s) => s.id === id);
+    const document = await OPFSCatalogueStore.getDocument(id);
+    if (!document || !meta) return;
+    clearSession();
+    sketcher.loadDocument(document);
+    sketcherDoc.clearStack();
+    currentEntryId = id;
+    localStorage.setItem('sketcher-entry-id', id);
+    // loadDocument only records the environment id; the environment itself is applied here.
+    activeEnvironmentId = sketcher.environmentMap;
+    void handleApplyEnvironment(sketcher.environmentMap);
+    statusMessage = `Opened "${meta.label}".`;
+  }
+
+  async function deleteSet(id: string) {
+    // The entry is the editable source *and* the published asset, so one removal
+    // retires the set everywhere — no cascade between stores.
+    const label = sets.find((s) => s.id === id)?.label ?? 'Untitled';
+    await OPFSCatalogueStore.remove(id);
+    await refreshCatalogueViews();
+    if (currentEntryId === id) {
+      // The session *is* that set: close it, or the next edit would mint a fresh
+      // entry for content the user just deleted.
+      currentEntryId = null;
+      localStorage.removeItem('sketcher-entry-id');
+      clearSession();
+    }
+    statusMessage = `Deleted "${label}".`;
+  }
+
+  async function renameSet(id: string, label: string) {
+    await OPFSCatalogueStore.updateSetPieceMeta(id, { label });
+    await refreshSets();
+    statusMessage = `Renamed to "${label}".`;
+  }
+
+  async function classifySet(id: string, isSetting: boolean) {
+    await OPFSCatalogueStore.updateSetPieceMeta(id, { isSetting });
+    await refreshSets();
+    statusMessage = isSetting
+      ? 'Marked as scenery — a venue a scene can be set in.'
+      : 'Marked as a component prop.';
+  }
+
+  async function duplicateSet(id: string) {
+    await persistSet();
+    const source = sets.find((s) => s.id === id);
+    const document = await OPFSCatalogueStore.getDocument(id);
+    if (!source || !document) return;
+    // The copy is independent from the outset — its own document, its own metadata —
+    // so editing it never reaches back into the original.
+    const entry = await OPFSCatalogueStore.createSetPieceDocument(`${source.label} copy`, {
+      document: JSON.parse(JSON.stringify(document)),
+      isSetting: isSettingEntry(source),
+      ...(source.kind === 'set-piece' && source.environmentId
+        ? { environmentId: source.environmentId }
+        : {}),
+      ...(source.kind === 'set-piece' && source.lights ? { lights: [...source.lights] } : {}),
+      ...(source.partCount !== undefined ? { partCount: source.partCount } : {}),
+    });
+    await refreshSets();
+    if (id === currentEntryId) {
+      // Duplicating what you are editing continues in the copy, as "save as" did.
+      await openSet(entry.id);
+      renamingSetId = entry.id;
+    }
+    statusMessage = `Duplicated "${source.label}".`;
   }
 
   // ── Group edit mode ──────────────────────────────────────────────────────────
@@ -1695,93 +1714,63 @@
     sketcherDoc.execute(new SnapToFloorCommand(selectedPartId, sketcher, mode));
   }
 
-  async function exportToCatalogue() {
+  /**
+   * Publish the session to the catalogue: bake the scene into a GLB and write it —
+   * plus the session's baseline lighting, environment and part count — onto the
+   * set's own entry. The document and its bake therefore stay in lock-step, and
+   * re-publishing updates in place rather than duplicating. The entry's
+   * classification (scenery vs prop) is a property of the entry and is left alone.
+   */
+  async function publishSet() {
     const session = sketcher?.getSession();
     if (!session || session.parts.length === 0) {
-      statusMessage = 'No parts to export. Complete at least one sketch first.';
+      statusMessage = 'No parts to publish. Complete at least one sketch first.';
       return;
     }
-    statusMessage = 'Exporting…';
+    statusMessage = 'Publishing…';
     // Clear any mesh highlight so the exported GLB has no selection overlay.
     selection?.deselect();
     const { blob } = await exportGLB(session);
-    const label = assemblyName.trim() || 'Untitled';
 
-    // Re-export path: update the existing catalogue entry in place.
-    if (currentAssemblyId) {
-      const existing = await OPFSCatalogueStore.findByAssemblyId(currentAssemblyId);
-      if (existing) {
-        await OPFSCatalogueStore.update(existing.id, blob, label, { partCount: session.parts.length });
-        new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
-        statusMessage = `Updated "${label}" in catalogue.`;
-        return;
-      }
-    }
-
-    // First export: create a new catalogue entry linked to this assembly.
-    await OPFSCatalogueStore.add(blob, { kind: 'set-piece', label, partCount: session.parts.length }, currentAssemblyId ?? undefined);
-    new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
-    statusMessage = `Saved "${label}" to catalogue.`;
-  }
-
-  async function saveAsSetting() {
-    const session = sketcher?.getSession();
-    if (!session || session.parts.length === 0) {
-      statusMessage = 'No parts to save. Add geometry or a sketch first.';
-      return;
-    }
-    statusMessage = 'Saving setting…';
-    selection?.deselect();
-    const { blob } = await exportGLB(session);
-    const label = assemblyName.trim() || 'Untitled';
-    // Whole-scene save: capture the baseline lighting + environment alongside
-    // the baked geometry so the entry resolves as a fully-lit setting.
-    const meta = {
+    const entryId = await persistSet();
+    if (!entryId) return;
+    await OPFSCatalogueStore.update(entryId, blob, undefined, {
+      partCount: session.parts.length,
       environmentId: session.environmentMap,
       lights: session.lights.length > 0 ? [...session.lights] : undefined,
-      isSetting: true,
-      partCount: session.parts.length,
-    };
+    });
 
-    // Re-save path: update the existing catalogue entry in place (mirrors
-    // exportToCatalogue) so repeated "Save as Setting" never duplicates.
-    if (currentAssemblyId) {
-      const existing = await OPFSCatalogueStore.findByAssemblyId(currentAssemblyId);
-      if (existing) {
-        await OPFSCatalogueStore.update(existing.id, blob, label, meta);
-        new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
-        statusMessage = `Updated setting "${label}" in catalogue.`;
-        return;
-      }
-    }
+    await refreshCatalogueViews();
+    statusMessage = `Published "${currentSetLabel}" to catalogue.`;
+  }
 
-    await OPFSCatalogueStore.add(
-      blob,
-      { kind: 'set-piece', label, isSetting: true, partCount: session.parts.length, ...(meta.environmentId ? { environmentId: meta.environmentId } : {}), ...(meta.lights ? { lights: meta.lights } : {}) },
-      currentAssemblyId ?? undefined,
-    );
-    new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
-    statusMessage = `Saved setting "${label}" to catalogue.`;
+  /**
+   * Re-measure the viewport and resize the renderer. The canvas carries its size as
+   * inline styles (renderer.setSize writes them), so they are cleared first to let
+   * the layout decide how much room is actually left.
+   */
+  function resizeCanvas() {
+    if (!renderer || !camera) return;
+    canvas.style.width = '';
+    canvas.style.height = '';
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    if (w === 0 || h === 0) return;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+
+  function toggleSetsColumn() {
+    showSetsColumn = !showSetsColumn;
+    // The viewport area changes with the column; re-measure once layout has settled.
+    requestAnimationFrame(resizeCanvas);
   }
 </script>
 
-<div class="sketch-page">
+<div class="sketch-page" class:with-sets-column={showSetsColumn}>
   <header class="toolbar">
     <a class="back-link" href="/">← Back</a>
-    <div class="assembly-controls">
-      <input
-        class="assembly-name-input"
-        type="text"
-        bind:value={assemblyName}
-        onblur={renameCurrentAssembly}
-        onkeydown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-        title="Assembly name"
-        placeholder="Untitled"
-      />
-      <button onclick={newAssembly} title="New assembly">New</button>
-      <button onclick={saveAssemblyAs} title="Save a copy of this assembly under a new name">Save As…</button>
-      <button class:active={showOpenPanel} onclick={() => { showOpenPanel = !showOpenPanel; }} title="Open saved assembly">Open…</button>
-    </div>
     <div class="actions">
       <select
         class="sketch-mode-select"
@@ -1812,40 +1801,33 @@
       <button class:active={transformMode === 'rotate'} onclick={() => setTransformMode('rotate')} title="E">Rotate</button>
       <button class:active={transformMode === 'scale'} onclick={() => setTransformMode('scale')} title="R">Scale</button>
       <span class="separator"></span>
-      <button class="primary" onclick={exportToCatalogue} title="Save the whole scene as a reusable geometry item">Save as Item</button>
-      <button class="primary" onclick={saveAsSetting} title="Save the whole scene, including its lighting and environment, as a reusable setting">Save as Setting</button>
+      <button class="primary" onclick={publishSet} title="Bake the scene and publish it — document, lighting and all — to the catalogue">Publish</button>
       <span class="separator"></span>
+      <button class:active={showSetsColumn} onclick={toggleSetsColumn} title="Toggle the sets column">Sets</button>
       <button class:active={showCataloguePanel} onclick={() => { showCataloguePanel = !showCataloguePanel; }} title="Toggle catalogue">Catalogue</button>
     </div>
   </header>
 
-  {#if showOpenPanel}
-    <div class="open-panel">
-      <div class="open-panel-header">
-        <span>Saved assemblies</span>
-        <button class="panel-close" onclick={() => { showOpenPanel = false; }}>✕</button>
-      </div>
-      {#if savedAssemblies.length === 0}
-        <p class="open-panel-empty">No saved assemblies yet.</p>
-      {:else}
-        <ul class="assembly-list">
-          {#each savedAssemblies as a (a.id)}
-            <li class="assembly-item" class:current={a.id === currentAssemblyId}>
-              <button class="assembly-open-btn" onclick={() => openAssembly(a.id)}>
-                <span class="assembly-item-name">{a.name}</span>
-                <span class="assembly-item-date">{new Date(a.modifiedAt).toLocaleDateString()}</span>
-              </button>
-              <button class="assembly-delete-btn" title="Delete" onclick={() => deleteAssembly(a.id)}>✕</button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
+  {#if showSetsColumn}
+    <div class="sets-slot">
+      <SetsColumn
+        entries={sets}
+        currentId={currentEntryId}
+        bind:renamingId={renamingSetId}
+        onopen={openSet}
+        oncreate={newSet}
+        onrename={renameSet}
+        onduplicate={duplicateSet}
+        ondelete={deleteSet}
+        onclassify={classifySet}
+        oncollapse={toggleSetsColumn}
+      />
     </div>
   {/if}
 
   {#if showCataloguePanel}
     <aside class="catalogue-drawer">
-      <div class="open-panel-header">
+      <div class="panel-header">
         <span>Catalogue</span>
         <button class="panel-close" onclick={() => { showCataloguePanel = false; }}>✕</button>
       </div>
@@ -1853,7 +1835,7 @@
         userEntries={userCatalogueEntries}
         onadd={handleCatalogueAdd}
         onapplyenvironment={handleApplyEnvironment}
-        ondelete={handleCatalogueDelete}
+        ondelete={deleteSet}
         activeEnvironmentId={activeEnvironmentId}
       />
     </aside>
@@ -2150,16 +2132,30 @@
 
 <style>
   .sketch-page {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    /* The sets column is the only thing in track 1; hiding it collapses the track. */
+    --sets-column-width: 0px;
+    grid-template-columns: var(--sets-column-width) 1fr;
+    grid-template-rows: auto auto 1fr;
     height: 100dvh;
     background: #0f0f1a;
     color: #e0e0f0;
     font-family: sans-serif;
     position: relative;
   }
+  .sketch-page.with-sets-column {
+    --sets-column-width: 232px;
+  }
+
+  .sets-slot {
+    grid-column: 1;
+    grid-row: 2 / 4;
+    min-height: 0;
+    display: flex;
+  }
 
   .toolbar {
+    grid-column: 1 / -1;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -2169,43 +2165,7 @@
     flex-shrink: 0;
   }
 
-  .assembly-controls {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex: 1;
-  }
-
-  .assembly-name-input {
-    background: #1e1e3a;
-    border: 1px solid #3a3a6a;
-    border-radius: 4px;
-    color: #e0e0ff;
-    font-size: 13px;
-    padding: 3px 8px;
-    width: 160px;
-  }
-  .assembly-name-input:focus {
-    outline: none;
-    border-color: #6050c8;
-  }
-
-  .open-panel {
-    position: absolute;
-    top: 36px;
-    left: 52px;
-    z-index: 100;
-    background: #1a1a36;
-    border: 1px solid #3a3a6a;
-    border-radius: 6px;
-    min-width: 280px;
-    max-height: 320px;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 4px 16px #0008;
-  }
-
-  .open-panel-header {
+  .panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -2229,7 +2189,7 @@
   .catalogue-drawer {
     position: absolute;
     top: 0;
-    left: 0;
+    left: var(--sets-column-width);
     bottom: 0;
     z-index: 90;
     width: 280px;
@@ -2238,63 +2198,6 @@
     display: flex;
     flex-direction: column;
   }
-
-  .open-panel-empty {
-    padding: 16px 12px;
-    font-size: 12px;
-    color: #5555a0;
-    margin: 0;
-  }
-
-  .assembly-list {
-    list-style: none;
-    margin: 0;
-    padding: 4px 0;
-    overflow-y: auto;
-  }
-
-  .assembly-item {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-  }
-  .assembly-item.current { background: #25254a; }
-
-  .assembly-open-btn {
-    flex: 1;
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    background: none;
-    border: none;
-    text-align: left;
-    cursor: pointer;
-    padding: 6px 4px;
-    border-radius: 3px;
-    color: #d0d0f0;
-  }
-  .assembly-open-btn:hover { background: #2a2a50; }
-
-  .assembly-item-name {
-    font-size: 13px;
-    flex: 1;
-  }
-
-  .assembly-item-date {
-    font-size: 11px;
-    color: #5555a0;
-  }
-
-  .assembly-delete-btn {
-    background: none;
-    border: none;
-    color: #5555a0;
-    cursor: pointer;
-    font-size: 13px;
-    padding: 2px 6px;
-  }
-  .assembly-delete-btn:hover { color: #cc4444; }
 
   .back-link {
     color: #8888cc;
@@ -2307,6 +2210,8 @@
     display: flex;
     gap: 8px;
     align-items: center;
+    /* The actions cluster sits at the far end of the toolbar. */
+    margin-left: auto;
   }
 
   .separator {
@@ -2322,6 +2227,8 @@
   }
 
   .primitives-bar {
+    grid-column: 2;
+    grid-row: 2;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -2355,7 +2262,8 @@
   .sketch-hint {
     position: absolute;
     bottom: 12px;
-    left: 12px;
+    /* Clears the sets column, which occupies the left edge of the page. */
+    left: calc(12px + var(--sets-column-width));
     font-size: 12px;
     color: #9090c8;
     background: rgba(15, 15, 26, 0.75);
@@ -2459,7 +2367,8 @@
   .transform-inspector {
     position: absolute;
     top: 80px;
-    left: 12px;
+    /* Clears the sets column, which occupies the left edge of the page. */
+    left: calc(12px + var(--sets-column-width));
     background: #12122a;
     border: 1px solid #2a2a4a;
     border-radius: 6px;
@@ -2579,7 +2488,8 @@
   .segments-input:disabled { opacity: 0.5; }
 
   .sketch-canvas {
-    flex: 1;
+    grid-column: 2;
+    grid-row: 3;
     display: block;
     width: 100%;
     height: 100%;

@@ -39,6 +39,14 @@ export type SetPiece = {
    * `material` on an instance piece are a placeholder only, never rendered directly.
    */
   ref?: string;
+  /**
+   * Catalogue SetPieceEntry id this piece is *rendered from* (ROADMAP_CATALOGUE step 5).
+   * Set when the entry carries an editable tree document: the renderer realises that
+   * tree instead of the placeholder `geometry`/`material` below, so a saved set never
+   * depends on a baked GLB. `name` stays the scene-local identity; this stays the
+   * catalogue identity, so renaming the piece can't orphan it.
+   */
+  catalogueId?: string;
 };
 
 // A placed prop: a reference to a catalogue set piece (`ref`) or an inline

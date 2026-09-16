@@ -22,7 +22,7 @@ import type { CatalogueEntry } from '../catalogue/types.js';
 import { resolveCastName, resolveSetting } from '../treatment/fountainCompiler.js';
 import type { ResolveBindings } from '../treatment/fountainCompiler.js';
 import type { ScriptDocument } from '../treatment/fountain.js';
-import { createSetPiece as createSetting, SET_PIECE_JSON_SCHEMA } from '../setting/authoringApi.js';
+import { createSetPiece as createSetting } from '../setting/authoringApi.js';
 import { createCharacter, CHARACTER_JSON_SCHEMA } from '../character/authoringApi.js';
 import { AI_DRAFT_JSON_SCHEMA } from '../sketcher/aiDraftSchema.js';
 import type { AIProvider } from './provider.js';
@@ -152,16 +152,18 @@ export type MakeResult = {
  * resume an existing same-label entry), then bind `name` to it. One call turns
  * an `UNRESOLVED` script name into a bound, resolvable asset.
  *
- * `document` is the full spec the matching `create_*` verb accepts (it carries
+ * `document` is the document the matching `create_*` verb accepts (it carries
  * `label`; if absent, `name` is used as the label). Pass a free-text
  * description string plus `options.provider` instead to have the LLM build that
- * spec first (ROADMAP_AI.md AI-0). Resume-by-name checks the merged bundled +
- * user catalogue so a repeat `make` never duplicates.
+ * document first (ROADMAP_AI.md AI-0).
+ *
+ * Settings generate an AI Draft and resume in the user catalogue (the create verb
+ * owns that); characters resume against the merged bundled + user catalogue.
  */
 
 /** The JSON schema the AI must fill for a given asset kind. */
 function targetSchema(kind: 'setting' | 'character'): Record<string, unknown> {
-  return kind === 'character' ? CHARACTER_JSON_SCHEMA : SET_PIECE_JSON_SCHEMA;
+  return kind === 'character' ? CHARACTER_JSON_SCHEMA : AI_DRAFT_JSON_SCHEMA;
 }
 
 /**
@@ -169,6 +171,9 @@ function targetSchema(kind: 'setting' | 'character'): Record<string, unknown> {
  * the provider to emit one JSON document matching the asset kind's schema. The
  * returned value is not validated here; the matching `create_*` verb clamps it
  * (ROADMAP_AI.md AI-4 hardens this with retry + rate limiting).
+ *
+ * Scenery uses the AI Draft grammar, so the result can be rebuilt as a canonical
+ * `SketcherDraft` and published exactly like a human-drawn set.
  */
 export async function describeToDocument(
   provider: AIProvider,
@@ -176,29 +181,14 @@ export async function describeToDocument(
   description: string,
 ): Promise<unknown> {
   const systemPrompt = kind === 'setting'
-    ? 'You design scenery for a 3D animation app. Produce one JSON document matching the supplied schema: a concise `compose` of at most 15 inline primitives (each with `geometry` + `material`; never use `ref`), plus optional `lights`. Keep it compact so the whole JSON fits in one response. Respond with JSON only.'
+    ? 'You design scenery for a 3D animation app. Produce one JSON object describing the setting as named primitive parts, optionally organised into named groups. '
+      + 'Give the whole setting a `label` (a short, human-friendly name). '
+      + 'Coordinate convention: units are metres; up is +Y with the ground plane at Y=0; forward is -Z. '
+      + 'Each part needs a unique `id` handle, a semantic `name`, `shape` (box, sphere, cylinder, capsule, cone, or torus), absolute `size` in metres, `position` in metres, `rotation` as Euler angles in degrees [x, y, z], and a hex `color`. '
+      + 'Group related parts via `groups` (an `id`, optional `name`, and a `children` array of part handles). '
+      + 'Keep it compact so the whole JSON fits in one response. Respond with JSON only.'
     : 'You design a character for a 3D animation app. Produce one JSON document matching the supplied schema. Respond with JSON only.';
   return provider.generate(systemPrompt, description, targetSchema(kind));
-}
-
-/**
- * describeSettingDraft — the editable-settings LLM step. Emits the AI Draft
- * grammar (named parts, absolute `size`, Euler `rotation`, named groups) so the
- * result can be rebuilt as a first-class `SketcherDraft` and published exactly
- * like a human-drawn setting.
- */
-export async function describeSettingDraft(
-  provider: AIProvider,
-  description: string,
-): Promise<unknown> {
-  const systemPrompt =
-    'You design scenery for a 3D animation app. Produce one JSON object describing the setting as named primitive parts, optionally organised into named groups. '
-    + 'Give the whole setting a `label` (a short, human-friendly name). '
-    + 'Coordinate convention: units are metres; up is +Y with the ground plane at Y=0; forward is -Z. '
-    + 'Each part needs a unique `id` handle, a semantic `name`, `shape` (box, sphere, cylinder, capsule, cone, or torus), absolute `size` in metres, `position` in metres, `rotation` as Euler angles in degrees [x, y, z], and a hex `color`. '
-    + 'Group related parts via `groups` (an `id`, optional `name`, and a `children` array of part handles). '
-    + 'Keep it compact so the whole JSON fits in one response. Respond with JSON only.';
-  return provider.generate(systemPrompt, description, AI_DRAFT_JSON_SCHEMA);
 }
 
 export async function make(
@@ -225,24 +215,34 @@ export async function make(
   const label = (typeof source.label === 'string' && source.label.trim()) ? source.label.trim() : name.trim();
   const doc = { ...source, label };
 
-  const entryKind = kind === 'setting' ? 'set-piece' : 'character';
-  const existing = [...CATALOGUE_ENTRIES, ...userEntries].find(
-    (e) => e.kind === entryKind && e.label.trim().toLowerCase() === label.toLowerCase(),
-  );
-
-  const entry: CatalogueEntry = existing ?? (kind === 'setting'
-    ? await createSetting(doc)
-    : await createCharacter(doc));
-
   const key = name.trim().toUpperCase();
-  const warnings = existing ? [`Reused existing "${existing.label}".`] : [];
+
+  if (kind === 'setting') {
+    // Scenery has one create verb, which owns create-or-resume: an AI Draft becomes
+    // the entry's tree document (and carries its lights/environment), so a repeat
+    // `make` updates that set rather than minting a duplicate.
+    const { entry, created } = await createSetting(doc, { isSetting: true, fallbackLabel: label });
+    return {
+      entry,
+      boundTo: key,
+      created,
+      castBindings,
+      settingBindings: bindName(key, entry.id, settingBindings),
+      warnings: created ? [] : [`Reused existing "${entry.label}".`],
+    };
+  }
+
+  const existing = [...CATALOGUE_ENTRIES, ...userEntries].find(
+    (e) => e.kind === 'character' && e.label.trim().toLowerCase() === label.toLowerCase(),
+  );
+  const entry: CatalogueEntry = existing ?? await createCharacter(doc);
 
   return {
     entry,
     boundTo: key,
     created: existing == null,
-    castBindings: kind === 'character' ? bindName(key, entry.id, castBindings) : castBindings,
-    settingBindings: kind === 'setting' ? bindName(key, entry.id, settingBindings) : settingBindings,
-    warnings,
+    castBindings: bindName(key, entry.id, castBindings),
+    settingBindings,
+    warnings: existing ? [`Reused existing "${existing.label}".`] : [],
   };
 }

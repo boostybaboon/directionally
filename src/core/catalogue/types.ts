@@ -1,5 +1,6 @@
 import type { GeometryConfig, LightConfig, MaterialConfig, PlacedProp, Vec3 } from '../domain/types.js';
 import type { CharacterSpec } from '../character/characterSpec.js';
+import type { SetDocument } from '../sketcher/documentTree.js';
 
 export type CatalogueKind = 'character' | 'set-piece' | 'light' | 'environment';
 
@@ -39,6 +40,18 @@ export interface SetPieceEntry {
   kind: 'set-piece';
   id: string;
   label: string;
+  /**
+   * True when the entry has an editable tree document. A set *is* its entry
+   * (ROADMAP_CATALOGUE step 4), so this marks a sketcher-authored set — the
+   * production renderer realises its document instead of a baked GLB (step 5).
+   */
+  hasDocument?: boolean;
+  /**
+   * The entry's editable tree document. Stored in a sibling file rather than the
+   * metadata list (it can be large), so it is only attached in memory — by the
+   * resolver that materialises it for the renderer.
+   */
+  document?: SetDocument;
   /** When set, load this GLB path instead of using procedural geometry. */
   gltfPath?: string;
   /** Procedural geometry for a leaf entry; omit when `compose` is set. */

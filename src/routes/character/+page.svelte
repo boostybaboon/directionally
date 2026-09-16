@@ -393,7 +393,7 @@
 
     // Re-export path: update the existing catalogue entry in place.
     if (currentDesignId) {
-      const existing = await OPFSCatalogueStore.findByAssemblyId(currentDesignId);
+      const existing = await OPFSCatalogueStore.findBySourceDesignId(currentDesignId);
       if (existing) {
         await OPFSCatalogueStore.update(existing.id, blob, label);
         new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });

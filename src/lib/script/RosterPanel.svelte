@@ -53,10 +53,17 @@
 
   function editHref(entry: CatalogueEntry | undefined): string | null {
     if (!entry) return null;
-    const sid = (entry as { sourceAssemblyId?: unknown }).sourceAssemblyId;
-    if (typeof sid !== 'string' || sid.length === 0) return null;
-    if (entry.kind === 'character') return `/character?id=${encodeURIComponent(sid)}`;
-    if (entry.kind === 'set-piece') return `/sketch?assemblyId=${encodeURIComponent(sid)}`;
+    // A character's editable source is its CharacterDesignStore design; a set *is*
+    // its catalogue entry, so it deep-links by entry id.
+    if (entry.kind === 'character') {
+      const sid = (entry as { sourceDesignId?: unknown }).sourceDesignId;
+      return typeof sid === 'string' && sid.length > 0 ? `/character?id=${encodeURIComponent(sid)}` : null;
+    }
+    if (entry.kind === 'set-piece') {
+      return (entry as { hasDocument?: unknown }).hasDocument
+        ? `/sketch?entryId=${encodeURIComponent(entry.id)}`
+        : null;
+    }
     return null;
   }
 

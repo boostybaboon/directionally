@@ -87,10 +87,10 @@ describe('describeToDocument', () => {
     expect((schema as Record<string, unknown>).properties).toHaveProperty('spec');
   });
 
-  it('passes the setting schema for kind "setting"', async () => {
+  it('passes the AI Draft schema for kind "setting"', async () => {
     let schema: unknown;
     const provider: AIProvider = { generate: async (_s, _u, s) => { schema = s; return {}; } };
     await describeToDocument(provider, 'setting', 'a cosy pub');
-    expect((schema as Record<string, unknown>).properties).toHaveProperty('geometry');
+    expect((schema as Record<string, unknown>).properties).toHaveProperty('parts');
   });
 });

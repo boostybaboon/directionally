@@ -117,6 +117,45 @@ describe('expandEntry', () => {
   });
 });
 
+describe('expandEntry – document-backed entries (step 5)', () => {
+  const documentEntry: CatalogueEntry = {
+    kind: 'set-piece',
+    id: 'classroom',
+    label: 'Classroom',
+    hasDocument: true,
+    // A baked GLB must be ignored: the tree document is the rendered form.
+    gltfPath: 'blob:http://localhost/bake',
+  };
+
+  it('emits one piece carrying the catalogue identity, not the GLB', () => {
+    const pieces = expandEntry(documentEntry, undefined, []);
+    expect(pieces).toHaveLength(1);
+    expect(pieces[0].name).toBe('classroom');
+    expect(pieces[0].catalogueId).toBe('classroom');
+    expect(pieces[0].gltfPath).toBeUndefined();
+  });
+
+  it('applies the caller placement to the whole set', () => {
+    const pieces = expandEntry(documentEntry, { position: [2, 0, -3], scale: [2, 2, 2] }, []);
+    expect(pieces[0].position).toEqual([2, 0, -3]);
+    expect(pieces[0].scale).toEqual([2, 2, 2]);
+  });
+
+  it('resolves an instance ref through to the document piece', () => {
+    const instance: SetPieceParam = {
+      name: 'my-classroom',
+      ref: 'classroom',
+      geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 },
+      material: { color: 0 },
+      position: [5, 0, 0],
+    };
+    const out = resolveInstance(instance, [documentEntry]);
+    expect(out).toHaveLength(1);
+    expect(out[0].catalogueId).toBe('classroom');
+    expect(out[0].position).toEqual([5, 0, 0]);
+  });
+});
+
 describe('resolveInstance', () => {
   it('returns the piece unchanged when it has no ref', () => {
     const piece: SetPieceParam = { name: 'box', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0x888888 } };

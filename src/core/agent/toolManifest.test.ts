@@ -21,7 +21,7 @@ describe('toolManifest', () => {
   it('create_setting and create_character reference the authoring schemas', () => {
     const setting = manifest.find((t) => t.name === 'create_setting')!;
     const character = manifest.find((t) => t.name === 'create_character')!;
-    expect(setting.inputSchema.required).toContain('label');
+    expect(setting.inputSchema.required).toContain('parts');
     expect(character.inputSchema.required).toContain('label');
     expect((character.inputSchema.properties as Record<string, unknown>).spec).toBeDefined();
   });

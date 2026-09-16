@@ -8,7 +8,6 @@
   import { storedSceneToModelAsync } from '../core/storage/storedSceneToModel.js';
   import { starterSceneShell } from '../core/storage/sceneBuilder.js';
   import * as OPFSCatalogueStore from '../core/storage/OPFSCatalogueStore.js';
-  import { deleteCatalogueEntry } from '../core/storage/catalogueLifecycle.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
 
   import { ProductionStore } from '../core/storage/ProductionStore.js';
@@ -21,8 +20,7 @@
   import { tokenizeScript, renderScript, sceneIndexForLine, retypeAlias } from '../core/treatment/sigilScript.js';
   import SigilTextarea from '$lib/script/SigilTextarea.svelte';
   import RosterPanel from '$lib/script/RosterPanel.svelte';
-  import { generateAsset, generateEditableSetting } from '$lib/agentClient.js';
-  import type { MakeResult } from '../core/agent/api.js';
+  import { generateAsset } from '$lib/agentClient.js';
 
 
   /**
@@ -302,9 +300,9 @@
   }
 
   async function handleCatalogueDelete(id: string) {
-    // Cascade: deleting the published entry also removes its editable source
-    // (SketcherAssemblyStore) so no zombie assembly lingers in the Set designer.
-    await deleteCatalogueEntry(id);
+    // A set-piece entry carries its own editable document, so one removal retires
+    // the asset everywhere — there is no second store to cascade into.
+    await OPFSCatalogueStore.remove(id);
     userCatalogueEntries = await OPFSCatalogueStore.list();
     new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
     scheduleCompile();
@@ -383,24 +381,19 @@
     }
   }
 
-  // AI-assisted creation: run the server LLM step, then persist + bind. Settings
-  // go through the editable bridge (compose → SketcherDraft → SketcherAssemblyStore
-  // → addSetPiece(sourceAssemblyId)); characters use the core `make` verb.
+  // AI-assisted creation: run the server LLM step, then persist + bind. One call
+  // covers both kinds — settings arrive as an AI Draft that becomes the set's tree
+  // document, characters as a spec — so there is no separate settings path.
   async function handleRosterGenerate(kind: 'cast' | 'setting', name: string) {
     if (!currentProduction || generating) return;
     generating = true;
     statusMessage = `Generating ${name}…`;
     try {
-      let result: MakeResult;
-      if (kind === 'setting') {
-        result = await generateEditableSetting(name, name, settingBindings);
-      } else {
-        result = await generateAsset('character', name, name, {
-          userEntries: userCatalogueEntries,
-          castBindings,
-          settingBindings,
-        });
-      }
+      const result = await generateAsset(kind === 'setting' ? 'setting' : 'character', name, name, {
+        userEntries: userCatalogueEntries,
+        castBindings,
+        settingBindings,
+      });
       castBindings = result.castBindings;
       settingBindings = result.settingBindings;
       userCatalogueEntries = await OPFSCatalogueStore.list();

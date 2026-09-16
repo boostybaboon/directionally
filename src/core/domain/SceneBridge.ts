@@ -17,6 +17,7 @@ import {
 import { MeshStandardMaterialAsset } from '../../lib/model/Material.js';
 import { MeshAsset } from '../../lib/model/Mesh.js';
 import { GLTFAsset } from '../../lib/model/GLTF.js';
+import { Object3DAsset } from '../../lib/model/Object3DAsset.js';
 import {
   KeyframeAction,
   GLTFAction,
@@ -110,10 +111,18 @@ function trackTypeToDomain(trackType: TrackType): KeyframeTrackType {
  * Convert a domain Scene + production actor roster into a Model that the existing
  * Presenter/PlaybackEngine pipeline can render.
  *
+ * `realisedSets` supplies pre-built object trees for document-backed pieces
+ * (ROADMAP_CATALOGUE step 5), keyed by piece name; pieces without an entry there
+ * fall back to their `gltfPath`/procedural geometry.
+ *
  * Not all SceneAction types have renderer support yet:
  *   - SpeakAction, EnterAction, ExitAction are logged and skipped.
  */
-export function sceneToModel(scene: Scene, actors: Actor[]): Model {
+export function sceneToModel(
+  scene: Scene,
+  actors: Actor[],
+  realisedSets?: Map<string, THREE.Object3D>,
+): Model {
   const actorMap = new Map<string, Actor>(actors.map((a) => [a.id, a]));
 
   // Camera
@@ -134,10 +143,23 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
     if (light) lights.push(light);
   }
 
-  // Set pieces → MeshAssets or GLTFAssets
+  // Set pieces → MeshAssets, GLTFAssets or pre-built object trees
   const meshes: MeshAsset[] = [];
   const gltfs: GLTFAsset[] = [];
+  const groups: Object3DAsset[] = [];
   for (const piece of scene.set) {
+    // A document-backed piece renders from its realised tree; the placeholder
+    // geometry/material the resolver gave it is never built.
+    const realised = piece.catalogueId ? realisedSets?.get(piece.name) : undefined;
+    if (realised) {
+      const asset = new Object3DAsset(piece.name, realised);
+      if (piece.position) asset.position = new THREE.Vector3(...piece.position);
+      if (piece.rotation) asset.rotation = new THREE.Euler(...piece.rotation);
+      if (piece.scale)    asset.scale    = new THREE.Vector3(...piece.scale);
+      if (piece.parent)   asset.parent   = piece.parent;
+      groups.push(asset);
+      continue;
+    }
     if (piece.gltfPath) {
       const gltf = new GLTFAsset(piece.name, piece.gltfPath);
       if (piece.position) gltf.position = new THREE.Vector3(...piece.position);
@@ -281,6 +303,6 @@ export function sceneToModel(scene: Scene, actors: Actor[]): Model {
     ? { label: scene.placeholderSetting }
     : undefined;
 
-  return new Model(camera, meshes, gltfs, actions, lights, scene.backgroundColor, speechEntries, scene.duration, scene.environmentMap, placeholderActors, placeholderSetting);
+  return new Model(camera, meshes, gltfs, actions, lights, scene.backgroundColor, speechEntries, scene.duration, scene.environmentMap, placeholderActors, placeholderSetting, groups);
 }
 

@@ -3,18 +3,18 @@ import {
   _setDirectoryProvider,
   _resetDirectoryProvider,
   list,
+  listDocuments,
   add,
   remove,
   update,
-  findByAssemblyId,
+  findBySourceDesignId,
   findByLabel,
-  addSetPiece,
-  validateSetPieceMeta,
+  createSetPieceDocument,
+  getDocument,
+  saveDocument,
+  updateSetPieceMeta,
 } from './OPFSCatalogueStore';
-import type { SetPieceEntry } from '../catalogue/types.js';
-import type { PlacedProp } from '../domain/types.js';
-import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
-import { resolveSettingSpec } from '../setting/settingSpec.js';
+import type { SetDocument } from '../sketcher/documentTree.js';
 
 // ── In-memory OPFS mock ───────────────────────────────────────────────────────
 
@@ -98,33 +98,38 @@ describe('OPFSCatalogueStore – add + list', () => {
     expect(listed[0].userAdded).toBe(true);
   });
 
-  it('add() a set-piece → list() returns it with geometry', async () => {
-    const entry = await add(new Blob(['data']), { kind: 'set-piece', label: 'Chair' });
+  it('a set-piece is created from its document and joins the catalogue once baked', async () => {
+    const entry = await createSetPieceDocument('Chair');
 
     expect(entry.kind).toBe('set-piece');
     expect(entry.label).toBe('Chair');
+    expect(entry.hasDocument).toBe(true);
+    // Unpublished: the document is the editing surface, not yet a catalogue item.
+    expect(await list()).toHaveLength(0);
+
+    await update(entry.id, new Blob(['glb']), 'Chair');
     const listed = await list();
     expect(listed).toHaveLength(1);
     expect(listed[0].kind).toBe('set-piece');
-    // geometry placeholder is populated when caller omits it
-    expect((listed[0] as Extract<typeof listed[0], { kind: 'set-piece' }>).geometry).toBeDefined();
+    expect(listed[0].label).toBe('Chair');
   });
 
-  it('add() a GLB set-piece as a setting → round-trips environmentId and lights', async () => {
-    const entry = await add(new Blob(['data']), {
-      kind: 'set-piece',
-      label: 'Classroom',
+  it('createSetPieceDocument() captures the setting metadata', async () => {
+    const entry = await createSetPieceDocument('Classroom', {
+      isSetting: true,
       environmentId: 'env-night-sky',
       lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
     });
 
     expect(entry.kind).toBe('set-piece');
     const piece = entry as Extract<typeof entry, { kind: 'set-piece' }>;
+    expect(piece.isSetting).toBe(true);
     expect(piece.environmentId).toBe('env-night-sky');
     expect(piece.lights).toEqual([
       { id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] },
     ]);
 
+    await update(entry.id, new Blob(['glb']), 'Classroom');
     const listed = await list();
     expect(listed).toHaveLength(1);
     const listedPiece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
@@ -197,48 +202,36 @@ describe('OPFSCatalogueStore – metadata persistence', () => {
   });
 });
 
-describe('OPFSCatalogueStore – sourceAssemblyId', () => {
-  it('add() with sourceAssemblyId round-trips through list()', async () => {
-    await add(new Blob(['data']), { kind: 'set-piece', label: 'Chair' }, 'asm-001');
+describe('OPFSCatalogueStore – sourceDesignId', () => {
+  it('add() with sourceDesignId round-trips through list()', async () => {
+    await add(new Blob(['data']), { kind: 'character', label: 'Bernard' }, 'design-001');
     const listed = await list();
-    expect(listed[0].sourceAssemblyId).toBe('asm-001');
+    expect(listed[0].sourceDesignId).toBe('design-001');
   });
 
-  it('findByAssemblyId() returns the matching entry', async () => {
-    await add(new Blob(['data']), { kind: 'set-piece', label: 'Lamp' }, 'asm-002');
-    const found = await findByAssemblyId('asm-002');
+  it('findBySourceDesignId() returns the matching entry', async () => {
+    await add(new Blob(['data']), { kind: 'character', label: 'Sonny' }, 'design-002');
+    const found = await findBySourceDesignId('design-002');
     expect(found).not.toBeNull();
-    expect(found!.label).toBe('Lamp');
-    expect(found!.sourceAssemblyId).toBe('asm-002');
+    expect(found!.label).toBe('Sonny');
+    expect(found!.sourceDesignId).toBe('design-002');
   });
 
-  it('findByAssemblyId() returns null when no entry matches', async () => {
-    await add(new Blob(['data']), { kind: 'set-piece', label: 'Table' }, 'asm-003');
-    expect(await findByAssemblyId('asm-unknown')).toBeNull();
+  it('findBySourceDesignId() returns null when no entry matches', async () => {
+    await add(new Blob(['data']), { kind: 'character', label: 'C3PO' }, 'design-003');
+    expect(await findBySourceDesignId('design-unknown')).toBeNull();
   });
 
-  it('findByAssemblyId() returns a metadata-only (procedural) entry', async () => {
-    const compose: PlacedProp[] = [
-      { name: 'seat', geometry: { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, material: { color: 0x663311 }, position: [0, 0.45, 0] },
-    ];
-    await addSetPiece({ label: 'AI Chair', compose }, 'asm-proc-1');
-    const found = await findByAssemblyId('asm-proc-1');
-    expect(found).not.toBeNull();
-    expect(found!.label).toBe('AI Chair');
-    expect(found!.sourceAssemblyId).toBe('asm-proc-1');
-    expect('gltfPath' in found!).toBe(false);
-  });
-
-  it('add() without sourceAssemblyId leaves sourceAssemblyId undefined', async () => {
-    await add(new Blob(['data']), { kind: 'set-piece', label: 'Box' });
+  it('add() without sourceDesignId leaves sourceDesignId undefined', async () => {
+    await add(new Blob(['data']), { kind: 'character', label: 'Anonymous' });
     const listed = await list();
-    expect(listed[0].sourceAssemblyId).toBeUndefined();
+    expect(listed[0].sourceDesignId).toBeUndefined();
   });
 });
 
 describe('OPFSCatalogueStore – update', () => {
   it('update() overwrites the GLB and returns the updated entry', async () => {
-    const entry = await add(new Blob(['v1']), { kind: 'set-piece', label: 'Chair' }, 'asm-004');
+    const entry = await createSetPieceDocument('Chair');
     vi.mocked(URL.createObjectURL).mockReturnValue('blob:updated-url');
 
     const updated = await update(entry.id, new Blob(['v2']));
@@ -248,28 +241,29 @@ describe('OPFSCatalogueStore – update', () => {
   });
 
   it('update() with a new label updates it in metadata', async () => {
-    const entry = await add(new Blob(['v1']), { kind: 'set-piece', label: 'Old Name' });
+    const entry = await createSetPieceDocument('Old Name');
     await update(entry.id, new Blob(['v2']), 'New Name');
     const listed = await list();
     expect(listed[0].label).toBe('New Name');
   });
 
-  it('update() preserves sourceAssemblyId', async () => {
-    const entry = await add(new Blob(['v1']), { kind: 'set-piece', label: 'Chair' }, 'asm-005');
+  it('update() preserves sourceDesignId', async () => {
+    const entry = await add(new Blob(['v1']), { kind: 'character', label: 'Bernard' }, 'design-005');
     await update(entry.id, new Blob(['v2']));
     const listed = await list();
-    expect(listed[0].sourceAssemblyId).toBe('asm-005');
+    expect(listed[0].sourceDesignId).toBe('design-005');
   });
 
   it('update() with unknown id returns null without changing the store', async () => {
-    await add(new Blob(['data']), { kind: 'set-piece', label: 'Keep' });
+    const kept = await createSetPieceDocument('Keep');
+    await update(kept.id, new Blob(['glb']));
     const result = await update('non-existent-id', new Blob(['new']));
     expect(result).toBeNull();
     expect(await list()).toHaveLength(1);
   });
 
   it('update() persists environmentId and lights for a re-saved setting', async () => {
-    const entry = await add(new Blob(['v1']), { kind: 'set-piece', label: 'Garden' }, 'asm-006');
+    const entry = await createSetPieceDocument('Garden');
     await update(entry.id, new Blob(['v2']), 'Garden', {
       environmentId: 'env-exterior',
       lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
@@ -284,12 +278,10 @@ describe('OPFSCatalogueStore – update', () => {
   });
 
   it('update() clears environmentId and lights when meta omits them', async () => {
-    const entry = await add(new Blob(['v1']), {
-      kind: 'set-piece',
-      label: 'Garden',
+    const entry = await createSetPieceDocument('Garden', {
       environmentId: 'env-exterior',
       lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
-    }, 'asm-007');
+    });
 
     await update(entry.id, new Blob(['v2']), 'Garden', { environmentId: undefined, lights: undefined });
     const listed = await list();
@@ -298,158 +290,124 @@ describe('OPFSCatalogueStore – update', () => {
     expect(piece.lights).toBeUndefined();
   });
 
-  it('update() migrates a metadata-only entry to GLB-backed (drops compose, keeps id/label/sourceAssemblyId)', async () => {
-    const compose: PlacedProp[] = [
-      { name: 'seat', geometry: { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, material: { color: 0x663311 }, position: [0, 0.45, 0] },
-    ];
-    const entry = await addSetPiece({ label: 'AI Chair', compose }, 'asm-migrate');
-    vi.mocked(URL.createObjectURL).mockReturnValue('blob:migrated-url');
+  it('update() publishes a document-backed set, keeping its document editable', async () => {
+    const entry = await createSetPieceDocument('AI Chair');
+    vi.mocked(URL.createObjectURL).mockReturnValue('blob:baked-url');
 
     const updated = await update(entry.id, new Blob(['baked']), undefined, { partCount: 1 });
     expect(updated).not.toBeNull();
-    expect(updated!.gltfPath).toBe('blob:migrated-url');
-    expect(updated!.sourceAssemblyId).toBe('asm-migrate');
+    expect(updated!.gltfPath).toBe('blob:baked-url');
+    expect(updated!.hasDocument).toBe(true);
     expect(updated!.partCount).toBe(1);
 
     const listed = await list();
     const piece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
     expect(piece.id).toBe(entry.id);
     expect(piece.label).toBe('AI Chair');
-    expect(piece.compose).toBeUndefined();
-    expect(piece.gltfPath).toBe('blob:migrated-url');
-    expect(piece.sourceAssemblyId).toBe('asm-migrate');
+    expect(piece.gltfPath).toBe('blob:baked-url');
+    expect(await getDocument(entry.id)).not.toBeNull();
   });
 });
 
-describe('OPFSCatalogueStore – addSetPiece (procedural / composite)', () => {
-  const composeChair: PlacedProp[] = [
-    { name: 'seat', geometry: { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, material: { color: 0x663311 }, position: [0, 0.45, 0] },
-  ];
+describe('OPFSCatalogueStore – updateSetPieceMeta', () => {
+  it('renames a published set without touching its document or its bake', async () => {
+    const document: SetDocument = { version: 2, root: [], joints: [] };
+    const entry = await createSetPieceDocument('Draft');
+    await saveDocument(entry.id, document);
+    await update(entry.id, new Blob(['glb']), 'Draft');
+    expect(mockDir.files.has(`${entry.id}.glb`)).toBe(true);
 
-  it('persists a composite set-piece and lists it with compose (no gltfPath)', async () => {
-    const entry = await addSetPiece({ label: 'AI Chair', compose: composeChair });
-
-    expect(entry.kind).toBe('set-piece');
-    expect(entry.label).toBe('AI Chair');
-    expect('gltfPath' in entry).toBe(false);
-    expect((entry as SetPieceEntry).compose).toEqual(composeChair);
-    expect(entry.userAdded).toBe(true);
-
+    const renamed = await updateSetPieceMeta(entry.id, { label: '  Renamed  ' });
+    expect(renamed).not.toBeNull();
+    expect(renamed!.label).toBe('Renamed');
+    expect(await getDocument(entry.id)).toEqual(document);
+    expect(mockDir.files.has(`${entry.id}.glb`)).toBe(true);
+    // The bake is the publish marker: a rename must not unpublish the set.
     const listed = await list();
     expect(listed).toHaveLength(1);
-    expect((listed[0] as SetPieceEntry).compose).toEqual(composeChair);
+    expect(listed[0].label).toBe('Renamed');
   });
 
-  it('addSetPiece() records partCount from the compose length', async () => {
-    const entry = await addSetPiece({ label: 'AI Chair', compose: composeChair });
-    expect(entry.partCount).toBe(1);
+  it('flips the scenery/prop classification in place', async () => {
+    const entry = await createSetPieceDocument('Chair', { isSetting: true });
+
+    await updateSetPieceMeta(entry.id, { isSetting: false });
+    const asProp = (await listDocuments())[0] as Extract<(typeof entry), { kind: 'set-piece' }>;
+    expect(asProp.isSetting).toBe(false);
+
+    await updateSetPieceMeta(entry.id, { isSetting: true });
+    const asScenery = (await listDocuments())[0] as Extract<(typeof entry), { kind: 'set-piece' }>;
+    expect(asScenery.isSetting).toBe(true);
   });
 
-  it('addSetPiece() records partCount 1 for a leaf geometry', async () => {
-    const entry = await addSetPiece({
-      label: 'AI Blackboard',
-      geometry: { type: 'box', width: 2, height: 1, depth: 0.1 },
-      material: { color: 0x112233 },
-    });
-    expect(entry.partCount).toBe(1);
-  });
-
-  it('persists a procedural leaf set-piece with geometry + material', async () => {
-    await addSetPiece({
-      label: 'AI Blackboard',
-      geometry: { type: 'box', width: 2, height: 1, depth: 0.1 },
-      material: { color: 0x112233 },
+  it('leaves fields the caller omits alone', async () => {
+    const entry = await createSetPieceDocument('Garden', {
+      environmentId: 'env-exterior',
+      lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
+      partCount: 3,
     });
 
-    const listed = await list();
-    expect((listed[0] as SetPieceEntry).geometry).toMatchObject({ type: 'box' });
-    expect((listed[0] as SetPieceEntry).material?.color).toBe(0x112233);
-    expect('gltfPath' in listed[0]).toBe(false);
-  });
-
-  it('rejects invalid metadata', async () => {
-    await expect(addSetPiece({ label: '' })).rejects.toThrow('label is required');
-    await expect(addSetPiece({ label: 'X' })).rejects.toThrow('compose');
-    await expect(addSetPiece({ label: 'X', compose: [{ ref: 'box' }, {} as never] })).rejects.toThrow('ref');
-  });
-
-  it('remove() deletes a metadata-only entry', async () => {
-    const entry = await addSetPiece({ label: 'Temp', compose: composeChair });
-    await remove(entry.id);
-    expect(await list()).toHaveLength(0);
-  });
-
-  it('composite metadata survives across list() calls', async () => {
-    await addSetPiece({ label: 'Persistent Chair', compose: composeChair });
-    expect((await list())[0].label).toBe('Persistent Chair');
-    expect((await list())[0].label).toBe('Persistent Chair');
-  });
-
-  it('a saved composite is reusable by the setting resolver', async () => {
-    await addSetPiece({ label: 'AI Chair', compose: composeChair });
-    const listed = await list();
-
-    const r = resolveSettingSpec({ props: [{ ref: 'AI Chair' }] }, [...CATALOGUE_ENTRIES, ...listed]);
-    expect(r.unresolved).toEqual([]);
-    expect(r.set.some((p) => p.name === 'seat')).toBe(true);
-  });
-
-  it('round-trips environmentId and lights for a saved setting', async () => {
-    await addSetPiece({
-      label: 'AI Classroom',
-      compose: composeChair,
-      environmentId: 'exterior-sky',
-      lights: [{ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 1 }],
-    });
-
-    const listed = await list();
-    const piece = listed[0] as SetPieceEntry;
-    expect(piece.environmentId).toBe('exterior-sky');
+    await updateSetPieceMeta(entry.id, { label: 'Yard' });
+    const piece = (await listDocuments())[0] as Extract<(typeof entry), { kind: 'set-piece' }>;
+    expect(piece.label).toBe('Yard');
+    expect(piece.environmentId).toBe('env-exterior');
     expect(piece.lights).toHaveLength(1);
-    expect(piece.lights?.[0].id).toBe('sky');
+    expect(piece.partCount).toBe(3);
+  });
+
+  it('clears baseline lighting when the caller passes undefined', async () => {
+    const entry = await createSetPieceDocument('Garden', {
+      environmentId: 'env-exterior',
+      lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
+    });
+
+    await updateSetPieceMeta(entry.id, { environmentId: undefined, lights: undefined });
+    const piece = (await listDocuments())[0] as Extract<(typeof entry), { kind: 'set-piece' }>;
+    expect(piece.environmentId).toBeUndefined();
+    expect(piece.lights).toBeUndefined();
+  });
+
+  it('marks the entry modified so a renamed set floats to the top of the column', async () => {
+    vi.useFakeTimers();
+    try {
+      const older = await createSetPieceDocument('Older');
+      vi.advanceTimersByTime(1000);
+      const newer = await createSetPieceDocument('Newer');
+      expect((await listDocuments())[0].id).toBe(newer.id);
+
+      vi.advanceTimersByTime(1000);
+      await updateSetPieceMeta(older.id, { label: 'Older set' });
+      expect((await listDocuments())[0].id).toBe(older.id);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns null for a character entry and for an unknown id', async () => {
+    const character = await add(new Blob(['data']), { kind: 'character', label: 'Nan' });
+    expect(await updateSetPieceMeta(character.id, { label: 'Nope' })).toBeNull();
+    expect((await list())[0].label).toBe('Nan');
+    expect(await updateSetPieceMeta('non-existent-id', { label: 'Nope' })).toBeNull();
   });
 });
 
 describe('OPFSCatalogueStore – findByLabel', () => {
-  const composeChair: PlacedProp[] = [
-    { name: 'seat', geometry: { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, material: { color: 0x663311 }, position: [0, 0.45, 0] },
-  ];
-
-  it('findByLabel() returns a metadata-only entry case-insensitively', async () => {
-    await addSetPiece({ label: 'Classroom', compose: composeChair }, 'asm-cls');
+  it('findByLabel() returns an unpublished set case-insensitively', async () => {
+    await createSetPieceDocument('Classroom');
     const found = await findByLabel('classroom');
     expect(found).not.toBeNull();
     expect(found!.label).toBe('Classroom');
-    expect(found!.sourceAssemblyId).toBe('asm-cls');
   });
 
   it('findByLabel() returns null when no entry matches', async () => {
     expect(await findByLabel('missing')).toBeNull();
   });
 
-  it('findByLabel() returns a GLB-backed entry too', async () => {
-    await add(new Blob(['data']), { kind: 'set-piece', label: 'Baked' }, 'asm-baked');
+  it('findByLabel() returns a GLB-backed character too', async () => {
+    await add(new Blob(['data']), { kind: 'character', label: 'Baked' });
     const found = await findByLabel('baked');
     expect(found).not.toBeNull();
     expect(found!.label).toBe('Baked');
     expect('gltfPath' in found!).toBe(true);
-  });
-});
-
-describe('validateSetPieceMeta', () => {
-  it('accepts a composite and a leaf', () => {
-    expect(validateSetPieceMeta({ label: 'Chair', compose: [{ ref: 'box' }] })).toBeNull();
-    expect(
-      validateSetPieceMeta({ label: 'Board', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0 } }),
-    ).toBeNull();
-  });
-
-  it('rejects missing label, empty/both shapes, and malformed compose items', () => {
-    expect(validateSetPieceMeta({ label: '' })).toBe('label is required');
-    expect(validateSetPieceMeta({ label: 'X' })).toContain('compose');
-    expect(
-      validateSetPieceMeta({ label: 'X', compose: [{ ref: 'box' }], geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0 } }),
-    ).toContain('not both');
-    expect(validateSetPieceMeta({ label: 'X', compose: [{ ref: 'box' }, {} as never] })).toContain('ref');
   });
 });

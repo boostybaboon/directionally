@@ -3,6 +3,7 @@ import type { CameraAsset } from './model/Camera';
 import type { LightAsset } from './model/Light';
 import type { MeshAsset } from './model/Mesh';
 import type { GLTFAsset } from './model/GLTF';
+import type { Object3DAsset } from './model/Object3DAsset';
 import type { Action } from './model/Action';
 import type { SpeechEntry } from '../core/scene/types';
 
@@ -31,6 +32,12 @@ export class Model {
   camera: CameraAsset;
   meshes: MeshAsset[];
   gltfs: GLTFAsset[];
+  /**
+   * Pre-built object trees added to the scene as single units — a realised set
+   * document (ROADMAP_CATALOGUE step 5). They carry no animations, so unlike
+   * `gltfs` they need no mixer wiring.
+   */
+  groups: Object3DAsset[];
   actions: Action[];
   lights: LightAsset[];
   backgroundColor?: number;
@@ -52,10 +59,12 @@ export class Model {
     environmentMap?: string,
     placeholderActors: PlaceholderActor[] = [],
     placeholderSetting?: PlaceholderSetting,
+    groups: Object3DAsset[] = [],
   ) {
     this.camera = camera;
     this.meshes = meshes;
     this.gltfs = gltfs;
+    this.groups = groups;
     this.actions = actions;
     this.lights = lights;
     this.backgroundColor = backgroundColor;

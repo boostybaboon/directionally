@@ -1,5 +1,11 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { storedSceneToModelAsync } from './storedSceneToModel.js';
+import {
+  _setDirectoryProvider,
+  _resetDirectoryProvider,
+  createSetPieceDocument,
+} from './OPFSCatalogueStore.js';
+import type { SetDocument } from '../sketcher/documentTree.js';
 import type { StoredScene, StoredActor } from './types.js';
 
 // The browser-only GLB materialisation (GLTFLoader.loadAsync + URL.createObjectURL)
@@ -8,6 +14,30 @@ import type { StoredScene, StoredActor } from './types.js';
 vi.mock('../character/specCharacter.js', () => ({
   specCharacterToGlbUrl: async () => 'blob:mock-spec-character',
 }));
+
+/** In-memory OPFS mock — enough for reading back a stored document. */
+function createMockDir() {
+  const files = new Map<string, Blob>();
+  const handle = {
+    getFileHandle(name: string, options?: { create?: boolean }) {
+      if (!options?.create && !files.has(name)) {
+        return Promise.reject(new DOMException('Not found', 'NotFoundError'));
+      }
+      return Promise.resolve({
+        getFile: () => Promise.resolve(files.get(name) ?? new Blob()),
+        createWritable: () => {
+          const chunks: BlobPart[] = [];
+          return Promise.resolve({
+            write: (data: BlobPart) => { chunks.push(data); return Promise.resolve(); },
+            close: () => { files.set(name, new Blob(chunks)); return Promise.resolve(); },
+          });
+        },
+      });
+    },
+    removeEntry: (name: string) => { files.delete(name); return Promise.resolve(); },
+  } as unknown as FileSystemDirectoryHandle;
+  return { handle, files };
+}
 
 function baseScene(overrides: Partial<StoredScene> = {}): StoredScene {
   return {
@@ -41,5 +71,61 @@ describe('storedSceneToModelAsync', () => {
 
     expect(model.gltfs).toHaveLength(1);
     expect(model.gltfs[0].url).toBe('/models/gltf/RobotExpressive.glb');
+  });
+});
+
+describe('storedSceneToModelAsync – document-backed sets (step 5)', () => {
+  const document: SetDocument = {
+    version: 2,
+    root: [
+      {
+        kind: 'part',
+        id: 'cube',
+        role: 'prop',
+        part: {
+          id: 'part-cube',
+          kind: 'primitive',
+          name: 'Box',
+          position: [0, 0.5, 0],
+          quaternion: [0, 0, 0, 1],
+          scale: [1, 1, 1],
+          color: 0x8844aa,
+        },
+      },
+    ],
+    joints: [],
+  };
+
+  beforeEach(() => {
+    const mock = createMockDir();
+    _setDirectoryProvider(async () => mock.handle);
+  });
+
+  afterEach(() => _resetDirectoryProvider());
+
+  it('loads the entry document from OPFS and realises it', async () => {
+    const entry = await createSetPieceDocument('Classroom', { document });
+    const piece = {
+      name: entry.id,
+      catalogueId: entry.id,
+      geometry: { type: 'box' as const, width: 0.01, height: 0.01, depth: 0.01 },
+      material: { color: 0 },
+    };
+
+    const model = await storedSceneToModelAsync(baseScene({ set: [piece] }), [], [
+      { id: entry.id, kind: 'set-piece', hasDocument: true },
+    ]);
+
+    expect(model.meshes).toHaveLength(0);
+    expect(model.groups).toHaveLength(1);
+    expect(model.groups[0].threeObject.children).toHaveLength(1);
+  });
+
+  it('skips the OPFS read for entries without a document', async () => {
+    const model = await storedSceneToModelAsync(baseScene(), [], [
+      { id: 'bundled', kind: 'set-piece', gltfPath: 'blob:bundled' },
+    ]);
+
+    expect(model.groups).toHaveLength(0);
   });
 });

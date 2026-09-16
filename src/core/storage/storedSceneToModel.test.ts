@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { storedSceneToModel } from './storedSceneToModel';
 import { PerspectiveCameraAsset } from '../../lib/model/Camera';
 import type { StoredScene, StoredActor } from './types';
+import type { SetPiece } from '../domain/types';
+import type { SetDocument } from '../sketcher/documentTree';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -292,3 +294,84 @@ describe('storedSceneToModel – placeholder setting', () => {
     expect(model.placeholderSetting).toBeUndefined();
   });
 });
+
+// ── Document-backed set pieces (step 5) ────────────────────────────────────────
+
+describe('storedSceneToModel – document-backed set pieces', () => {
+  const document: SetDocument = {
+    version: 2,
+    root: [
+      {
+        kind: 'part',
+        id: 'cube',
+        role: 'prop',
+        part: {
+          id: 'part-cube',
+          kind: 'primitive',
+          name: 'Box',
+          position: [0, 0.5, 0],
+          quaternion: [0, 0, 0, 1],
+          scale: [1, 1, 1],
+          color: 0x8844aa,
+        },
+      },
+    ],
+    joints: [],
+  };
+
+  function documentPiece(overrides: Partial<SetPiece> = {}): SetPiece {
+    return {
+      name: 'classroom',
+      catalogueId: 'classroom',
+      geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 },
+      material: { color: 0 },
+      ...overrides,
+    };
+  }
+
+  it('realises the entry document into a group instead of a mesh', () => {
+    const scene = baseScene({ set: [documentPiece({ position: [0, 1, 0] })] });
+    const model = storedSceneToModel(scene, [], [{ id: 'classroom', hasDocument: true, document }]);
+
+    expect(model.meshes).toHaveLength(0);
+    expect(model.groups).toHaveLength(1);
+    expect(model.groups[0].name).toBe('classroom');
+    // The piece's placement lands on the whole set; inner parts keep local transforms.
+    expect(model.groups[0].position.toArray()).toEqual([0, 1, 0]);
+    expect(model.groups[0].threeObject.children).toHaveLength(1);
+    expect(model.groups[0].threeObject.children[0].position.toArray()).toEqual([0, 0.5, 0]);
+  });
+
+  it('realises document and plain pieces side by side', () => {
+    const scene = baseScene({
+      set: [
+        documentPiece(),
+        { name: 'ground', geometry: { type: 'plane', width: 10, height: 10 }, material: { color: 0x888888 } },
+      ],
+    });
+    const model = storedSceneToModel(scene, [], [{ id: 'classroom', hasDocument: true, document }]);
+
+    expect(model.groups.map((g) => g.name)).toEqual(['classroom']);
+    expect(model.meshes.map((m) => m.name)).toEqual(['ground']);
+  });
+
+  it('falls back to the placeholder piece when no document was materialised', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const scene = baseScene({ set: [documentPiece()] });
+    const model = storedSceneToModel(scene, [], [{ id: 'classroom', hasDocument: true }]);
+
+    expect(model.groups).toHaveLength(0);
+    expect(model.meshes.map((m) => m.name)).toEqual(['classroom']);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('classroom'));
+    warn.mockRestore();
+  });
+
+  it('leaves a piece without a catalogueId on the mesh path', () => {
+    const scene = baseScene({ set: [{ name: 'loose', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0 } }] });
+    const model = storedSceneToModel(scene, [], [{ id: 'classroom', hasDocument: true, document }]);
+
+    expect(model.groups).toHaveLength(0);
+    expect(model.meshes.map((m) => m.name)).toEqual(['loose']);
+  });
+});
+

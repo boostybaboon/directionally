@@ -139,10 +139,10 @@
                 : entry.geometry ? (GEOMETRY_LABELS[entry.geometry.type] ?? entry.geometry.type) : '—'}</span>
             </button>
             <div class="setpiece-actions">
-              {#if userEntry?.sourceAssemblyId}
+              {#if userEntry?.hasDocument}
                 <a
                   class="edit-in-sketcher-btn"
-                  href="/sketch?assemblyId={userEntry.sourceAssemblyId}"
+                  href="/sketch?entryId={userEntry.id}"
                   title="Edit {entry.label} in Sketcher"
                   aria-label="Edit {entry.label} in Sketcher"
                 >✎</a>

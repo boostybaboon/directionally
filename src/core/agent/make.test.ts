@@ -49,14 +49,36 @@ describe('make', () => {
     expect(second.warnings).toHaveLength(1);
   });
 
-  it('creates and binds a setting', async () => {
+  it('creates and binds a setting from an AI Draft', async () => {
     _setDirectoryProvider(async () => mockDir());
-    const result = await make('setting', 'PUB', { label: 'Pub', geometry: { type: 'box', width: 4, height: 3, depth: 4 }, material: { color: 0x8b5a2b } }, { userEntries: [], settingBindings: {} });
+    const result = await make('setting', 'PUB', {
+      label: 'Pub',
+      parts: [
+        { id: 'floor', name: 'floor', shape: 'box', size: [4, 0.2, 4], position: [0, 0, 0], color: 0x8b5a2b },
+      ],
+    }, { userEntries: [], settingBindings: {} });
 
     expect(result.created).toBe(true);
     expect(result.boundTo).toBe('PUB');
     expect(result.entry.kind).toBe('set-piece');
+    expect((result.entry as Extract<typeof result.entry, { kind: 'set-piece' }>).hasDocument).toBe(true);
     expect(result.settingBindings.PUB).toBe(result.entry.id);
+  });
+
+  it('resumes a setting by label, updating its document instead of duplicating', async () => {
+    // A single stable directory: create-or-resume reads and writes it across calls.
+    const dir = mockDir();
+    _setDirectoryProvider(async () => dir);
+    const draft = {
+      label: 'Pub',
+      parts: [{ id: 'floor', name: 'floor', shape: 'box', size: [4, 0.2, 4], position: [0, 0, 0], color: 0x8b5a2b }],
+    };
+    const first = await make('setting', 'PUB', draft, { settingBindings: {} });
+    const second = await make('setting', 'PUB', draft, { settingBindings: {} });
+
+    expect(second.created).toBe(false);
+    expect(second.entry.id).toBe(first.entry.id);
+    expect(second.warnings).toHaveLength(1);
   });
 
   it('uses the script name as the label when the document omits one', async () => {

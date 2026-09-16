@@ -1,5 +1,7 @@
 import type {
+  GeometryConfig,
   LightConfig,
+  MaterialConfig,
   Placement,
   PlacedProp,
   SetPiece,
@@ -88,6 +90,10 @@ const DEFAULT_LIGHTS: LightConfig[] = [
 ];
 
 const MAX_COMPOSITE_DEPTH = 8;
+
+/** Placeholder body for a piece whose real geometry comes from elsewhere (a document). */
+const PLACEHOLDER_GEOMETRY: GeometryConfig = { type: 'box', width: 0.01, height: 0.01, depth: 0.01 };
+const PLACEHOLDER_MATERIAL: MaterialConfig = { color: 0x000000, metalness: 0, roughness: 1 };
 
 function normalize(s: string): string {
   return s.trim().toLowerCase();
@@ -204,10 +210,11 @@ function backdropToSetPiece(b: BackdropSpec, index: number): SetPiece {
 }
 
 /**
- * Expand a catalogue SetPieceEntry into its flattened SetPieces. Composite
- * entries (`compose`) are expanded recursively; leaf entries become a single
- * piece (procedural geometry or a `gltfPath`). `placement` offsets composite
- * children / places the leaf.
+ * Expand a catalogue SetPieceEntry into its flattened SetPieces. A document-backed
+ * entry becomes a single piece carrying its catalogue identity (`catalogueId`) —
+ * the renderer realises the tree itself. Composite entries (`compose`) are expanded
+ * recursively; leaf entries become a single piece (procedural geometry or a
+ * `gltfPath`). `placement` offsets composite children / places the leaf.
  */
 export function expandEntry(
   entry: SetPieceEntry,
@@ -216,6 +223,19 @@ export function expandEntry(
   unresolved: string[] = [],
   depth = 0,
 ): SetPiece[] {
+  if (entry.hasDocument) {
+    // A sketcher-authored set renders from its tree document (ROADMAP_CATALOGUE
+    // step 5), so its geometry/material are placeholders and any baked GLB is
+    // ignored — `storedSceneToModel` loads the document and realises it.
+    const piece: SetPiece = {
+      name: entry.id,
+      catalogueId: entry.id,
+      geometry: PLACEHOLDER_GEOMETRY,
+      material: PLACEHOLDER_MATERIAL,
+    };
+    if (entry.defaultRotation) piece.rotation = entry.defaultRotation;
+    return [placement ? applyPlacement(piece, placement) : piece];
+  }
   if (entry.compose) {
     if (depth >= MAX_COMPOSITE_DEPTH) return [];
     const children = expandProps(entry.compose, entries, unresolved, depth + 1);
@@ -223,8 +243,8 @@ export function expandEntry(
   }
   const piece: SetPiece = {
     name: entry.id,
-    geometry: entry.geometry ?? { type: 'box', width: 0.01, height: 0.01, depth: 0.01 },
-    material: entry.material ?? { color: 0x000000, metalness: 0, roughness: 1 },
+    geometry: entry.geometry ?? PLACEHOLDER_GEOMETRY,
+    material: entry.material ?? PLACEHOLDER_MATERIAL,
   };
   if (entry.gltfPath) {
     piece.gltfPath = entry.gltfPath.startsWith('blob:') ? `opfs://${entry.id}` : entry.gltfPath;

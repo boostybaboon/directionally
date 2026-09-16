@@ -1,4 +1,4 @@
-import { SET_PIECE_JSON_SCHEMA } from '../setting/authoringApi.js';
+import { AI_DRAFT_JSON_SCHEMA } from '../sketcher/aiDraftSchema.js';
 import { CHARACTER_JSON_SCHEMA } from '../character/authoringApi.js';
 
 /**
@@ -40,13 +40,13 @@ const MAKE_SCHEMA: Record<string, unknown> = {
 /**
  * The authoring surface expressed as tool definitions (API-4): the grammar an
  * AI agent is handed, derived read-only from the existing authoring schemas
- * (SET_PIECE_JSON_SCHEMA / CHARACTER_JSON_SCHEMA) plus small argument contracts.
+ * (AI_DRAFT_JSON_SCHEMA / CHARACTER_JSON_SCHEMA) plus small argument contracts.
  */
 export function toolManifest(): ToolDefinition[] {
   return [
     { name: 'describe_catalogue', description: 'List catalogue entries (id, label, kind, isSetting, summary).', inputSchema: NO_ARGS_SCHEMA },
     { name: 'describe_script', description: 'Describe the production cast + settings with resolution status (bound/ambiguous/unresolved).', inputSchema: NO_ARGS_SCHEMA },
-    { name: 'create_setting', description: 'Create (and persist) a scenery/setting from a validated document.', inputSchema: SET_PIECE_JSON_SCHEMA },
+    { name: 'create_setting', description: 'Create (or update) a scenery set from an AI Draft document; the draft becomes the set\'s tree document.', inputSchema: AI_DRAFT_JSON_SCHEMA },
     { name: 'create_character', description: 'Create (and persist) a spec-backed character from a validated document.', inputSchema: CHARACTER_JSON_SCHEMA },
     { name: 'bind', description: 'Point a script name (cast or setting) at a catalogue id.', inputSchema: BIND_SCHEMA },
     { name: 'make', description: 'Ensure an asset exists (create-or-resume) and bind a script name to it — one call.', inputSchema: MAKE_SCHEMA },

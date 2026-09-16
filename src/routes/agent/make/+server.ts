@@ -2,23 +2,21 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { DeepSeekProvider } from '../../../core/agent/provider.js';
-import { describeToDocument, describeSettingDraft } from '../../../core/agent/api.js';
+import { describeToDocument } from '../../../core/agent/api.js';
 
 /**
  * AI generation step of `make` (ROADMAP_AI.md AI-3). Runs the LLM server-side —
  * the DeepSeek key never reaches the browser — and returns the generated
  * document. The client then persists + binds it via the core `make` verb.
  *
- * Settings generation is dual-grammar: the editable path (`draft: true`, from
- * `generateEditableSetting`) emits the AI Draft grammar; the default path emits
- * the procedural `compose` grammar for the core `make` verb.
+ * Settings emit the AI Draft grammar, which the create verb turns into the set's
+ * tree document; characters emit their own spec grammar.
  */
 export const POST: RequestHandler = async ({ request }) => {
   const body = (await request.json().catch(() => ({}))) as {
     kind?: unknown;
     name?: unknown;
     description?: unknown;
-    draft?: unknown;
   };
 
   const kind = body.kind;
@@ -40,10 +38,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
   try {
     const provider = new DeepSeekProvider({ apiKey });
-    const document = kind === 'setting' && body.draft === true
-      ? await describeSettingDraft(provider, description)
-      : await describeToDocument(provider, kind, description);
-    return json({ document });
+    return json({ document: await describeToDocument(provider, kind, description) });
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : String(err) }, { status: 502 });
   }

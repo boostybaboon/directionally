@@ -77,6 +77,21 @@ export async function buildSceneGraph(model: Model): Promise<SceneGraphResult> {
       }),
   );
 
+  // Pre-built object trees (realised set documents) — added whole, then re-parented
+  // like any other asset so a document-backed piece honours `parent`.
+  model.groups.forEach((group) => {
+    scene.add(group.threeObject);
+    if (group.parent) {
+      const parentObject = scene.getObjectByName(group.parent);
+      if (parentObject) {
+        scene.remove(group.threeObject);
+        parentObject.add(group.threeObject);
+      } else {
+        console.warn(`Parent object ${group.parent} not found for ${group.name}`);
+      }
+    }
+  });
+
   // Clip lookup built during GLTF loading; used only to wire up actions below.
   const modelAnimationClips: { [key: string]: THREE.AnimationClip[] } = {};
   const discoveredClips: Record<string, string[]> = {};

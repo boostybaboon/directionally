@@ -1,41 +1,28 @@
 import type { CharacterEntry, SetPieceEntry } from '../catalogue/types.js';
 import type { CharacterSpec } from '../character/characterSpec.js';
-import type { GeometryConfig, LightConfig, MaterialConfig, PlacedProp, Vec3 } from '../domain/types.js';
+import type { SetDocument } from '../sketcher/documentTree.js';
+import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
 export type UserCatalogueEntry = (CharacterEntry | SetPieceEntry) & {
   userAdded: true;
   addedAt: number;
-  /** Set when this entry was exported from a Sketcher assembly — enables round-trip editing. */
-  sourceAssemblyId?: string;
+  /** Last modification time (ms); equals `addedAt` for entries never edited. */
+  modifiedAt?: number;
+  /**
+   * Mirrors `SetPieceEntry.hasDocument` so callers holding the character|set-piece
+   * union can test it without narrowing first.
+   */
+  hasDocument?: boolean;
+  /** Id of the editable design backing this asset (a CharacterDesignStore design). */
+  sourceDesignId?: string;
   /** Number of editable primitives backing this entry (for the catalogue tree note). */
   partCount?: number;
 };
 
-/** Caller-provided metadata when adding a new asset (id, addedAt, and gltfPath are generated). */
+/** Caller-provided metadata when adding a GLB-backed character (id, addedAt and gltfPath are generated). */
 export type NewCharacterMeta = Omit<CharacterEntry, 'id' | 'gltfPath'>;
-export type NewSetPieceMeta = Omit<SetPieceEntry, 'id' | 'geometry' | 'material'> & {
-  geometry?: GeometryConfig;
-  material?: MaterialConfig;
-  /** Number of primitives in the baked assembly — recorded so the catalogue note reads "N parts". */
-  partCount?: number;
-};
-export type NewAssetMeta = NewCharacterMeta | NewSetPieceMeta;
-
-/** Metadata for a procedural set-piece saved without a GLB — a leaf
- *  (`geometry` + `material`) or a composite (`compose`). When used as a
- *  setting, an optional environment and lights are captured too. */
-export type NewProceduralSetPiece = {
-  label: string;
-  compose?: PlacedProp[];
-  geometry?: GeometryConfig;
-  material?: MaterialConfig;
-  defaultRotation?: Vec3;
-  environmentId?: string;
-  lights?: LightConfig[];
-  isSetting?: boolean;
-};
 
 /** Metadata for a spec-backed character (no GLB) — the API-2 create path. */
 export type NewSpecCharacter = {
@@ -59,18 +46,18 @@ type StoredEntry = {
   defaultAnimation?: string;
   /** Procedural character description for spec-backed characters (no GLB). */
   spec?: CharacterSpec;
-  geometry?: GeometryConfig;
-  material?: MaterialConfig;
-  /** Composite of placed sub-items for metadata-only composite set-pieces. */
-  compose?: PlacedProp[];
   /** Environment catalogue id captured when this entry was saved as a setting. */
   environmentId?: string;
   /** Lights captured when this entry was saved as a setting. */
   lights?: LightConfig[];
   /** Marks a set-piece as a top-level setting rather than a component prop. */
   isSetting?: boolean;
-  /** ID of the SketcherAssemblyStore entry that produced this asset. */
-  sourceAssemblyId?: string;
+  /** True when a `<id>.document.json` sibling file holds this entry's editable tree. */
+  hasDocument?: boolean;
+  /** Last modification time (ms); defaults to `addedAt`. */
+  modifiedAt?: number;
+  /** ID of the editable design backing this asset (a CharacterDesignStore design). */
+  sourceDesignId?: string;
   /** Number of editable primitives backing this entry. */
   partCount?: number;
 };
@@ -134,7 +121,7 @@ function toUserEntry(s: StoredEntry, gltfPath?: string): UserCatalogueEntry {
         defaultRotation: s.defaultRotation,
         userAdded: true,
         addedAt: s.addedAt,
-        sourceAssemblyId: s.sourceAssemblyId,
+        sourceDesignId: s.sourceDesignId,
       };
     }
     return {
@@ -147,44 +134,44 @@ function toUserEntry(s: StoredEntry, gltfPath?: string): UserCatalogueEntry {
       defaultRotation: s.defaultRotation,
       userAdded: true,
       addedAt: s.addedAt,
-      sourceAssemblyId: s.sourceAssemblyId,
+      sourceDesignId: s.sourceDesignId,
     };
   }
-  if (s.compose) {
-    return {
-      kind: 'set-piece',
-      id: s.id,
-      label: s.label,
-      compose: s.compose,
-      defaultRotation: s.defaultRotation,
-      ...(s.environmentId ? { environmentId: s.environmentId } : {}),
-      ...(s.lights ? { lights: s.lights } : {}),
-      ...(s.isSetting ? { isSetting: true } : {}),
-      userAdded: true,
-      addedAt: s.addedAt,
-      sourceAssemblyId: s.sourceAssemblyId,
-      ...(s.partCount !== undefined ? { partCount: s.partCount } : {}),
-    };
-  }
+  // A set-piece entry is document-backed: the placeholder body below is inert and
+  // only exists so the write path (a GLB bake) keeps one `SetPieceEntry` shape.
   return {
     kind: 'set-piece',
     id: s.id,
     label: s.label,
     ...(gltfPath ? { gltfPath } : {}),
-    geometry: s.geometry ?? PLACEHOLDER_GEOMETRY,
-    material: s.material ?? PLACEHOLDER_MATERIAL,
+    geometry: PLACEHOLDER_GEOMETRY,
+    material: PLACEHOLDER_MATERIAL,
     defaultRotation: s.defaultRotation,
     ...(s.environmentId ? { environmentId: s.environmentId } : {}),
     ...(s.lights ? { lights: s.lights } : {}),
-    ...(s.isSetting ? { isSetting: true } : {}),
+    // An explicit classification round-trips, including `false` (a prop), which is
+    // what stops `isSettingEntry` from falling back to the lighting heuristic.
+    ...(s.isSetting !== undefined ? { isSetting: s.isSetting } : {}),
     userAdded: true,
     addedAt: s.addedAt,
-    sourceAssemblyId: s.sourceAssemblyId,
+    ...(s.modifiedAt !== undefined ? { modifiedAt: s.modifiedAt } : {}),
+    ...(s.hasDocument ? { hasDocument: true } : {}),
+    sourceDesignId: s.sourceDesignId,
     ...(s.partCount !== undefined ? { partCount: s.partCount } : {}),
   };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * True when an entry is usable as an asset: it has a baked GLB or a character spec.
+ * A document-only entry is still an unpublished draft — the Sketcher's editing
+ * surface, not a catalogue item (ROADMAP_CATALOGUE step 8 removes the bake and
+ * makes the document itself the published artefact).
+ */
+function isPublishedEntry(s: StoredEntry): boolean {
+  return s.filename !== '' || Boolean(s.spec);
+}
 
 /**
  * Return all user-added catalogue entries. Each entry gets a fresh gltfPath
@@ -196,6 +183,7 @@ export async function list(): Promise<UserCatalogueEntry[]> {
   const stored = await readMeta(dir);
   const results: UserCatalogueEntry[] = [];
   for (const s of stored) {
+    if (!isPublishedEntry(s)) continue;
     if (s.filename === '') {
       // Metadata-only entry (procedural leaf or composite) — no GLB file to read.
       results.push(toUserEntry(s));
@@ -213,16 +201,32 @@ export async function list(): Promise<UserCatalogueEntry[]> {
 }
 
 /**
- * Store a GLB blob to OPFS and register it in the metadata index.
+ * Return every entry backed by an editable document — a saved set — most recently
+ * modified first. This is the Sketcher's "Open" list; it includes drafts that have
+ * not been published to the catalogue yet.
+ */
+export async function listDocuments(): Promise<UserCatalogueEntry[]> {
+  const dir = await _getDir();
+  const stored = await readMeta(dir);
+  return stored
+    .filter((s) => s.hasDocument)
+    .map((s) => toUserEntry(s))
+    .sort((a, b) => (b.modifiedAt ?? b.addedAt) - (a.modifiedAt ?? a.addedAt));
+}
+
+/**
+ * Store a GLB blob to OPFS and register it in the metadata index as a character.
  * Returns the new catalogue entry with a fresh gltfPath object URL.
  *
- * Pass `sourceAssemblyId` to record which SketcherAssemblyStore entry
- * produced this asset — enables "Edit in Sketcher" and in-place re-export.
+ * Pass `sourceDesignId` to link the character to the design it was built from,
+ * which is what the script roster's "edit" affordance deep-links to. Sets are not
+ * added this way: a set is created from its tree document
+ * (`createSetPieceDocument`), and a GLB bake is written onto that same entry.
  */
 export async function add(
   blob: Blob,
-  meta: NewAssetMeta,
-  sourceAssemblyId?: string,
+  meta: NewCharacterMeta,
+  sourceDesignId?: string,
 ): Promise<UserCatalogueEntry> {
   const id = crypto.randomUUID();
   const filename = `${id}.glb`;
@@ -239,31 +243,12 @@ export async function add(
     id,
     filename,
     addedAt,
-    kind: meta.kind as 'character' | 'set-piece',
+    kind: 'character',
     label: meta.label,
     defaultRotation: meta.defaultRotation,
-    ...(meta.kind === 'character'
-      ? {
-          defaultScale: (meta as NewCharacterMeta).defaultScale,
-          defaultAnimation: (meta as NewCharacterMeta).defaultAnimation,
-        }
-      : {
-          geometry: (meta as NewSetPieceMeta).geometry,
-          material: (meta as NewSetPieceMeta).material,
-          ...((meta as NewSetPieceMeta).partCount !== undefined
-            ? { partCount: (meta as NewSetPieceMeta).partCount }
-            : {}),
-          ...((meta as NewSetPieceMeta).environmentId
-            ? { environmentId: (meta as NewSetPieceMeta).environmentId }
-            : {}),
-          ...((meta as NewSetPieceMeta).lights
-            ? { lights: (meta as NewSetPieceMeta).lights }
-            : {}),
-          ...((meta as NewSetPieceMeta).isSetting
-            ? { isSetting: true }
-            : {}),
-        }),
-    ...(sourceAssemblyId ? { sourceAssemblyId } : {}),
+    defaultScale: meta.defaultScale,
+    defaultAnimation: meta.defaultAnimation,
+    ...(sourceDesignId ? { sourceDesignId } : {}),
   };
 
   const stored = await readMeta(dir);
@@ -274,14 +259,42 @@ export async function add(
 }
 
 /**
- * Overwrite the GLB for an existing entry in place, optionally updating the label.
- * Returns the updated entry, or null if the id is not found.
+ * Metadata a set-piece carries alongside its document and bake: its name, its
+ * classification (scenery vs prop) and the baseline lighting it was built with.
+ */
+export type SetPieceMeta = {
+  label?: string;
+  isSetting?: boolean;
+  environmentId?: string;
+  lights?: LightConfig[];
+  partCount?: number;
+};
+
+/**
+ * Merge metadata onto a stored entry and mark it modified. A key the caller omits
+ * keeps its stored value; a key explicitly set to `undefined` clears it.
+ */
+function mergeSetPieceMeta(entry: StoredEntry, meta: SetPieceMeta): StoredEntry {
+  return {
+    ...entry,
+    ...(meta.label !== undefined ? { label: meta.label.trim() } : {}),
+    ...(meta.isSetting !== undefined ? { isSetting: meta.isSetting } : {}),
+    ...('environmentId' in meta ? { environmentId: meta.environmentId } : {}),
+    ...('lights' in meta ? { lights: meta.lights } : {}),
+    ...(meta.partCount !== undefined ? { partCount: meta.partCount } : {}),
+    modifiedAt: Date.now(),
+  };
+}
+
+/**
+ * Overwrite the GLB baked for an existing entry in place, optionally updating its
+ * label and metadata. Returns the updated entry, or null if the id is not found.
  */
 export async function update(
   id: string,
   blob: Blob,
   label?: string,
-  meta?: { environmentId?: string; lights?: LightConfig[]; isSetting?: boolean; partCount?: number },
+  meta?: Omit<SetPieceMeta, 'label'>,
 ): Promise<UserCatalogueEntry | null> {
   const dir = await _getDir();
   const stored = await readMeta(dir);
@@ -289,10 +302,8 @@ export async function update(
   if (idx === -1) return null;
 
   const prev = stored[idx];
-  // A procedural (metadata-only) entry being overwritten by a GLB bake must
-  // migrate to GLB-backed: it gains a filename and drops its now-superseded
-  // `compose`/`geometry`/`material` so the entry behaves like a human save.
-  const migrating = prev.filename === '';
+  // A document-backed entry gains its bake here: it keeps the document and takes
+  // the GLB filename that marks the set as published.
   const filename = prev.filename || `${id}.glb`;
 
   const fh = await dir.getFileHandle(filename, { create: true });
@@ -300,29 +311,44 @@ export async function update(
   await writable.write(blob);
   await writable.close();
 
-  stored[idx] = {
-    ...prev,
-    filename,
-    ...(migrating ? { compose: undefined, geometry: undefined, material: undefined } : {}),
-    ...(label !== undefined ? { label } : {}),
-    ...(meta && 'environmentId' in meta ? { environmentId: meta.environmentId } : {}),
-    ...(meta && 'lights' in meta ? { lights: meta.lights } : {}),
-    ...(meta && 'isSetting' in meta ? { isSetting: meta.isSetting } : {}),
-    ...(meta && 'partCount' in meta ? { partCount: meta.partCount } : {}),
-  };
+  stored[idx] = mergeSetPieceMeta(
+    { ...prev, filename },
+    { ...meta, ...(label !== undefined ? { label } : {}) },
+  );
   await writeMeta(dir, stored);
 
   return toUserEntry(stored[idx], URL.createObjectURL(blob));
 }
 
 /**
- * Find the catalogue entry whose `sourceAssemblyId` matches the given assembly id.
- * Returns null when no entry has been exported from that assembly yet.
+ * Rewrite a set-piece's metadata without touching its document or its bake — the
+ * Sketcher's rename and reclassify path. Returns the updated entry, or null when the
+ * id is unknown or is not a set-piece.
  */
-export async function findByAssemblyId(assemblyId: string): Promise<UserCatalogueEntry | null> {
+export async function updateSetPieceMeta(
+  id: string,
+  meta: SetPieceMeta,
+): Promise<UserCatalogueEntry | null> {
   const dir = await _getDir();
   const stored = await readMeta(dir);
-  const entry = stored.find((e) => e.sourceAssemblyId === assemblyId);
+  const idx = stored.findIndex((e) => e.id === id);
+  if (idx === -1 || stored[idx].kind !== 'set-piece') return null;
+
+  stored[idx] = mergeSetPieceMeta(stored[idx], meta);
+  await writeMeta(dir, stored);
+
+  return toUserEntry(stored[idx]);
+}
+
+/**
+ * Find the catalogue entry backed by the given design id. Used to resume an
+ * edit-in-place flow from a character design. Returns null when no entry has
+ * been published from that design yet.
+ */
+export async function findBySourceDesignId(designId: string): Promise<UserCatalogueEntry | null> {
+  const dir = await _getDir();
+  const stored = await readMeta(dir);
+  const entry = stored.find((e) => e.sourceDesignId === designId);
   if (!entry) return null;
   // Metadata-only (procedural) entries have no GLB file to open.
   if (entry.filename === '') return toUserEntry(entry);
@@ -333,17 +359,6 @@ export async function findByAssemblyId(assemblyId: string): Promise<UserCatalogu
   } catch {
     return null;
   }
-}
-
-/**
- * Return the `sourceAssemblyId` backing a catalogue entry, or undefined. Used by
- * the delete cascade so removing a published entry also removes its editable
- * assembly (no object URL is created — just a metadata read).
- */
-export async function sourceAssemblyIdOf(id: string): Promise<string | undefined> {
-  const dir = await _getDir();
-  const stored = await readMeta(dir);
-  return stored.find((e) => e.id === id)?.sourceAssemblyId;
 }
 
 /**
@@ -385,86 +400,15 @@ export async function remove(id: string): Promise<void> {
     }
   }
 
-  await writeMeta(dir, stored.filter((e) => e.id !== id));
-}
-
-function isPlacedProp(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null) return false;
-  const item = value as Record<string, unknown>;
-  if (typeof item.ref === 'string') return true;
-  return Boolean(item.geometry && item.material);
-}
-
-/**
- * Validate the metadata for a procedural set-piece. Returns an error message,
- * or null when valid.
- */
-export function validateSetPieceMeta(meta: NewProceduralSetPiece): string | null {
-  if (!meta.label || !meta.label.trim()) return 'label is required';
-  const hasCompose = Boolean(meta.compose && meta.compose.length > 0);
-  const hasLeaf = Boolean(meta.geometry && meta.material);
-  if (hasCompose && hasLeaf) return 'provide either `compose` or `geometry` + `material`, not both';
-  if (!hasCompose && !hasLeaf) return 'provide `compose` (composite) or `geometry` + `material` (leaf)';
-  if (hasCompose) {
-    for (const item of meta.compose!) {
-      if (!isPlacedProp(item)) return 'each `compose` item needs a `ref` or `geometry` + `material`';
+  if (entry.hasDocument) {
+    try {
+      await dir.removeEntry(documentFileName(id));
+    } catch {
+      // Document file already gone — continue with metadata cleanup
     }
   }
-  return null;
-}
 
-/**
- * Build the `StoredEntry` for a procedural set-piece (leaf or composite),
- * deriving `partCount` from the number of editable primitives.
- */
-function proceduralEntry(
-  id: string,
-  filename: string,
-  addedAt: number,
-  meta: NewProceduralSetPiece,
-  sourceAssemblyId?: string,
-): StoredEntry {
-  const isCompose = Boolean(meta.compose && meta.compose.length > 0);
-  return {
-    id,
-    filename,
-    addedAt,
-    kind: 'set-piece',
-    label: meta.label.trim(),
-    defaultRotation: meta.defaultRotation,
-    ...(isCompose
-      ? { compose: meta.compose, partCount: meta.compose!.length }
-      : { geometry: meta.geometry, material: meta.material, ...(meta.geometry ? { partCount: 1 } : {}) }),
-    ...(meta.environmentId ? { environmentId: meta.environmentId } : {}),
-    ...(meta.lights && meta.lights.length > 0 ? { lights: meta.lights } : {}),
-    ...(meta.isSetting ? { isSetting: true } : {}),
-    ...(sourceAssemblyId ? { sourceAssemblyId } : {}),
-  };
-}
-
-/**
- * Persist a procedural set-piece (leaf geometry or a composite of primitives)
- * with no GLB file. Returns the new catalogue entry — composites carry no
- * gltfPath and expand via the setting resolver's `expandEntry`.
- *
- * Pass `sourceAssemblyId` to record which SketcherAssemblyStore entry produced
- * this asset — enables "Edit in Sketcher", symmetric with GLB-backed entries.
- */
-export async function addSetPiece(meta: NewProceduralSetPiece, sourceAssemblyId?: string): Promise<UserCatalogueEntry> {
-  const error = validateSetPieceMeta(meta);
-  if (error) throw new Error(error);
-
-  const id = crypto.randomUUID();
-  const addedAt = Date.now();
-  const dir = await _getDir();
-
-  const entry = proceduralEntry(id, '', addedAt, meta, sourceAssemblyId);
-
-  const stored = await readMeta(dir);
-  stored.push(entry);
-  await writeMeta(dir, stored);
-
-  return toUserEntry(entry);
+  await writeMeta(dir, stored.filter((e) => e.id !== id));
 }
 
 /**
@@ -492,3 +436,105 @@ export async function addCharacter(meta: NewSpecCharacter): Promise<UserCatalogu
 
   return toUserEntry(entry);
 }
+
+// ── Editable documents (sketcher-authored sets) ───────────────────────────────
+
+/** Sibling file holding an entry's editable tree document. */
+function documentFileName(id: string): string {
+  return `${id}.document.json`;
+}
+
+const EMPTY_DOCUMENT: SetDocument = { version: 2, root: [], joints: [] };
+
+/**
+ * Create a set-piece entry backed by an editable document (a sketcher-authored set).
+ * The document lives in a sibling file; the metadata records `hasDocument` so the
+ * list stays small. Pass `isSetting` to mark it as a top-level setting.
+ */
+export async function createSetPieceDocument(
+  label: string,
+  opts: {
+    document?: SetDocument;
+    /** Marks the set as a top-level setting (a venue) rather than a component prop. */
+    isSetting?: boolean;
+    /** Environment catalogue id, captured when the set is used as a setting. */
+    environmentId?: string;
+    /** Baseline lights, captured when the set is used as a setting. */
+    lights?: LightConfig[];
+    /** Number of editable primitives, for the catalogue note. */
+    partCount?: number;
+  } = {},
+): Promise<UserCatalogueEntry> {
+  const id = crypto.randomUUID();
+  const addedAt = Date.now();
+  const dir = await _getDir();
+
+  const fh = await dir.getFileHandle(documentFileName(id), { create: true });
+  const writable = await fh.createWritable();
+  await writable.write(JSON.stringify(opts.document ?? EMPTY_DOCUMENT));
+  await writable.close();
+
+  const entry: StoredEntry = {
+    id,
+    filename: '',
+    addedAt,
+    modifiedAt: addedAt,
+    kind: 'set-piece',
+    label: label.trim(),
+    hasDocument: true,
+    ...(opts.isSetting ? { isSetting: true } : {}),
+    ...(opts.environmentId ? { environmentId: opts.environmentId } : {}),
+    ...(opts.lights && opts.lights.length > 0 ? { lights: opts.lights } : {}),
+    ...(opts.partCount !== undefined ? { partCount: opts.partCount } : {}),
+  };
+
+  const stored = await readMeta(dir);
+  stored.push(entry);
+  await writeMeta(dir, stored);
+
+  return toUserEntry(entry);
+}
+
+/** Read an entry's editable document, or null when it has none. */
+export async function getDocument(id: string): Promise<SetDocument | null> {
+  const dir = await _getDir();
+  try {
+    const fh = await dir.getFileHandle(documentFileName(id));
+    const file = await fh.getFile();
+    return JSON.parse(await file.text()) as SetDocument;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write an entry's editable document and bump `modifiedAt` (optionally renaming).
+ * A set-piece with no document yet becomes editable. Returns the updated entry, or
+ * null when the id is unknown or is not a set-piece.
+ */
+export async function saveDocument(
+  id: string,
+  document: SetDocument,
+  label?: string,
+): Promise<UserCatalogueEntry | null> {
+  const dir = await _getDir();
+  const stored = await readMeta(dir);
+  const idx = stored.findIndex((e) => e.id === id);
+  if (idx === -1 || stored[idx].kind !== 'set-piece') return null;
+
+  const fh = await dir.getFileHandle(documentFileName(id), { create: true });
+  const writable = await fh.createWritable();
+  await writable.write(JSON.stringify(document));
+  await writable.close();
+
+  stored[idx] = {
+    ...stored[idx],
+    hasDocument: true,
+    modifiedAt: Date.now(),
+    ...(label !== undefined ? { label: label.trim() } : {}),
+  };
+  await writeMeta(dir, stored);
+
+  return toUserEntry(stored[idx]);
+}
+

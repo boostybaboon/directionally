@@ -1,156 +1,104 @@
-import { describe, it, expect } from 'vitest';
-import { normalizeSetPieceInput, createSetPiece, SET_PIECE_JSON_SCHEMA } from './authoringApi.js';
-import { _setDirectoryProvider, _resetDirectoryProvider, list } from '../storage/OPFSCatalogueStore.js';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
+import { createSetPiece } from './authoringApi.js';
+import {
+  _setDirectoryProvider,
+  _resetDirectoryProvider,
+  getDocument,
+  list,
+  listDocuments,
+} from '../storage/OPFSCatalogueStore.js';
 
-describe('SET_PIECE_JSON_SCHEMA', () => {
-  it('is a JSON-serialisable object with a label contract', () => {
-    const json = JSON.stringify(SET_PIECE_JSON_SCHEMA);
-    expect(JSON.parse(json)).toEqual(SET_PIECE_JSON_SCHEMA);
-    expect((SET_PIECE_JSON_SCHEMA.properties as Record<string, unknown>).label).toEqual({ type: 'string' });
-  });
+// ── In-memory OPFS mock ───────────────────────────────────────────────────────
+
+function createMockDir() {
+  const files = new Map<string, Blob>();
+  const handle = {
+    getFileHandle(name: string, options?: { create?: boolean }) {
+      if (!options?.create && !files.has(name)) {
+        return Promise.reject(new DOMException('Not found', 'NotFoundError'));
+      }
+      return Promise.resolve({
+        getFile: () => Promise.resolve(files.get(name) ?? new Blob()),
+        createWritable: () => {
+          const chunks: BlobPart[] = [];
+          return Promise.resolve({
+            write: (data: BlobPart) => { chunks.push(data); return Promise.resolve(); },
+            close: () => { files.set(name, new Blob(chunks)); return Promise.resolve(); },
+          });
+        },
+      });
+    },
+    removeEntry: (name: string) => { files.delete(name); return Promise.resolve(); },
+  } as unknown as FileSystemDirectoryHandle;
+  return { handle, files };
+}
+
+beforeAll(() => {
+  (URL as unknown as Record<string, unknown>).createObjectURL = vi.fn(() => 'blob:test-url');
+  (URL as unknown as Record<string, unknown>).revokeObjectURL = vi.fn();
 });
 
-describe('normalizeSetPieceInput', () => {
-  it('normalises a leaf (geometry + material)', () => {
-    const out = normalizeSetPieceInput({
-      label: '  Box  ',
-      geometry: { type: 'box', width: 1, height: 2, depth: 3 },
-      material: { color: 0x8844aa, roughness: 0.5 },
-    });
-    expect(out.label).toBe('Box');
-    expect(out.geometry).toEqual({ type: 'box', width: 1, height: 2, depth: 3 });
-    expect(out.material?.color).toBe(0x8844aa);
-  });
+let dir: ReturnType<typeof createMockDir>;
 
-  it('normalises a composite with inline geometry children and assigns localIds', () => {
-    const out = normalizeSetPieceInput({
-      label: 'Chair',
-      compose: [
-        { name: 'seat', geometry: { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, material: { color: 0x663311 }, position: [0, 0.45, 0] },
-        { name: 'back', geometry: { type: 'box', width: 0.5, height: 0.5, depth: 0.1 }, material: { color: 0x663311 }, position: [0, 0.7, -0.2] },
-      ],
-    });
-    expect(out.compose).toHaveLength(2);
-    for (const p of out.compose!) expect(p.localId).toBeDefined();
-  });
-
-  it('normalises a composite with ref children (reuse of catalogue items)', () => {
-    const out = normalizeSetPieceInput({
-      label: 'Table setting',
-      compose: [
-        { ref: 'chair', position: [1, 0, 0] },
-        { ref: 'table' },
-      ],
-    });
-    expect(out.compose).toHaveLength(2);
-    expect(out.compose![0]).toMatchObject({ ref: 'chair', position: [1, 0, 0] });
-    expect(out.compose![1]).toMatchObject({ ref: 'table' });
-  });
-
-  it('normalises a setting (compose + lights + environmentId + defaultRotation)', () => {
-    const out = normalizeSetPieceInput({
-      label: 'Classroom',
-      compose: [{ ref: 'floor-plane' }],
-      environmentId: 'studio-neutral',
-      defaultRotation: [-Math.PI / 2, 0, 0],
-      lights: [{ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] }],
-    });
-    expect(out.environmentId).toBe('studio-neutral');
-    expect(out.defaultRotation).toEqual([-Math.PI / 2, 0, 0]);
-    expect(out.lights).toHaveLength(1);
-  });
-
-  it('rejects a missing/empty label', () => {
-    expect(() => normalizeSetPieceInput({ geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0 } })).toThrow('label');
-    expect(() => normalizeSetPieceInput({ label: '   ' })).toThrow('label');
-  });
-
-  it('prefers compose and ignores a stray geometry/material when both are present', () => {
-    const out = normalizeSetPieceInput({
-      label: 'X',
-      geometry: { type: 'box', width: 1, height: 1, depth: 1 },
-      material: { color: 0 },
-      compose: [{ ref: 'box' }],
-    });
-    expect(out.compose).toHaveLength(1);
-    expect(out.geometry).toBeUndefined();
-    expect(out.material).toBeUndefined();
-  });
-
-  it('treats an empty compose alongside geometry as a leaf', () => {
-    const out = normalizeSetPieceInput({
-      label: 'X',
-      geometry: { type: 'box', width: 1, height: 1, depth: 1 },
-      material: { color: 0 },
-      compose: [],
-    });
-    expect(out.geometry).toEqual({ type: 'box', width: 1, height: 1, depth: 1 });
-    expect(out.compose).toBeUndefined();
-  });
-
-  it('rejects when neither compose nor geometry is present', () => {
-    expect(() => normalizeSetPieceInput({ label: 'X' })).toThrow('either');
-  });
-
-  it('rejects an unknown geometry type', () => {
-    expect(() => normalizeSetPieceInput({ label: 'X', geometry: { type: 'torus' }, material: { color: 0 } })).toThrow('geometry type');
-  });
-
-  it('rejects an unknown light type', () => {
-    expect(() => normalizeSetPieceInput({ label: 'X', compose: [{ ref: 'box' }], lights: [{ type: 'laser' }] })).toThrow('light type');
-  });
-
-  it('rejects non-object input', () => {
-    expect(() => normalizeSetPieceInput(null)).toThrow('object');
-    expect(() => normalizeSetPieceInput('chair')).toThrow('object');
-  });
+beforeEach(() => {
+  dir = createMockDir();
+  _setDirectoryProvider(async () => dir.handle);
 });
+
+afterEach(() => _resetDirectoryProvider());
+
+// ── Fixtures ──────────────────────────────────────────────────────────────────
+
+const draft = {
+  label: 'Classroom',
+  parts: [
+    { id: 'floor', name: 'floor', kind: 'primitive', shape: 'box', size: [6, 0.2, 8], position: [0, 0, 0], rotation: [0, 0, 0], color: 0x888888 },
+    { id: 'desk', name: 'desk', kind: 'primitive', shape: 'box', size: [1.2, 0.8, 0.6], position: [0, 0.5, 1], rotation: [0, 0, 0], color: 0xaa7744 },
+  ],
+};
 
 describe('createSetPiece', () => {
-  it('persists a validated composite and returns the created entry', async () => {
-    const files = new Map<string, Blob>();
-    const dir = {
-      getFileHandle: async (name: string, opts?: { create?: boolean }) => {
-        if (!opts?.create && !files.has(name)) throw new Error('not found');
-        return {
-          getFile: async () => files.get(name) ?? new Blob(),
-          createWritable: async () => {
-            const chunks: BlobPart[] = [];
-            return { write: (d: BlobPart) => { chunks.push(d); return Promise.resolve(); }, close: () => { files.set(name, new Blob(chunks)); return Promise.resolve(); } };
-          },
-        };
-      },
-      removeEntry: async () => {},
-    } as unknown as FileSystemDirectoryHandle;
-    _setDirectoryProvider(async () => dir);
+  it('turns an AI Draft into a document-backed scenery entry', async () => {
+    const { entry, created } = await createSetPiece(draft);
+    const piece = entry as Extract<typeof entry, { kind: 'set-piece' }>;
 
-    const entry = await createSetPiece({
-      label: 'AI Chair',
-      compose: [{ name: 'seat', geometry: { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, material: { color: 0x663311 } }],
-    });
-
+    expect(created).toBe(true);
     expect(entry.kind).toBe('set-piece');
-    expect(entry.label).toBe('AI Chair');
-    expect((await list())).toHaveLength(1);
-    _resetDirectoryProvider();
+    expect(entry.label).toBe('Classroom');
+    expect(entry.hasDocument).toBe(true);
+    expect(entry.partCount).toBe(2);
+    expect(piece.isSetting).toBe(true);
+    // The draft's parts become the entry's tree document (one leaf per part).
+    expect((await getDocument(entry.id))?.root).toHaveLength(2);
+  });
+
+  it('captures the draft lights and environment on the entry', async () => {
+    const { entry } = await createSetPiece({
+      ...draft,
+      environmentMap: 'studio-neutral',
+      lights: [{ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 1 }],
+    });
+    const piece = entry as Extract<typeof entry, { kind: 'set-piece' }>;
+
+    expect(piece.environmentId).toBe('studio-neutral');
+    expect(piece.lights).toHaveLength(1);
+  });
+
+  it('resumes a same-label entry in place instead of duplicating it', async () => {
+    const first = await createSetPiece(draft);
+    const second = await createSetPiece(draft);
+
+    expect(second.created).toBe(false);
+    expect(second.entry.id).toBe(first.entry.id);
+    expect(await listDocuments()).toHaveLength(1);
+  });
+
+  it('leaves the entry unpublished until it carries a bake', async () => {
+    await createSetPiece(draft);
+    expect(await list()).toHaveLength(0);
+  });
+
+  it('rejects a draft with no parts', async () => {
+    await expect(createSetPiece({ label: 'Empty', parts: [] })).rejects.toThrow('parts');
   });
 });
-
-describe('normalizeSetPieceInput (isSetting)', () => {
-  const leaf = { label: 'Box', geometry: { type: 'box' as const, width: 1, height: 1, depth: 1 }, material: { color: 0x8844aa } };
-
-  it('accepts and preserves an explicit isSetting flag', () => {
-    const out = normalizeSetPieceInput({ ...leaf, isSetting: true });
-    expect(out.isSetting).toBe(true);
-  });
-
-  it('rejects a non-boolean isSetting', () => {
-    expect(() => normalizeSetPieceInput({ ...leaf, isSetting: 'yes' })).toThrow('isSetting must be a boolean');
-  });
-
-  it('defaults to undefined when isSetting is omitted', () => {
-    const out = normalizeSetPieceInput(leaf);
-    expect(out.isSetting).toBeUndefined();
-  });
-});
-
