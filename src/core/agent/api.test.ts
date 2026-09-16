@@ -1,11 +1,28 @@
 import { describe, it, expect } from 'vitest';
 import { describeCatalogue, describeScript, bindName, describeToDocument } from './api.js';
 import type { CatalogueEntry, SetPieceEntry } from '../catalogue/types.js';
+import { documentFromParts } from '../sketcher/documentTree.js';
+import type { SetDocument } from '../sketcher/documentTree.js';
 import type { ScriptDocument } from '../treatment/fountain.js';
 import type { AIProvider } from './provider.js';
 
 const character = (id: string, label: string): CatalogueEntry => ({ kind: 'character', id, label, gltfPath: `/m/${id}.glb` });
-const setPiece = (id: string, label: string, extra: Omit<Partial<SetPieceEntry>, 'kind' | 'id'> = {}): SetPieceEntry => ({ kind: 'set-piece', id, label, geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0x11aa22 }, ...extra });
+const setPiece = (id: string, label: string, extra: Omit<Partial<SetPieceEntry>, 'kind' | 'id'> = {}): SetPieceEntry => ({ kind: 'set-piece', id, label, document: testSetDocument(), ...extra });
+
+/** A one-part set-piece document — the bundled library's authoring form. */
+function testSetDocument(): SetDocument {
+  return documentFromParts([{
+    id: 'box',
+    kind: 'catalogue',
+    name: 'Box',
+    geometry: { type: 'box', width: 1, height: 1, depth: 1 },
+    material: { color: 0x11aa22 },
+    position: [0, 0, 0],
+    quaternion: [0, 0, 0, 1],
+    scale: [1, 1, 1],
+    color: 0x11aa22,
+  }]);
+}
 const environment = (id: string, label: string): CatalogueEntry => ({ kind: 'environment', id, label, hdriPath: `/env/${id}.hdr` });
 
 function doc(cast: string[], settings: Array<string | undefined>): ScriptDocument {

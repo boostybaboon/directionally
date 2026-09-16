@@ -24,8 +24,6 @@ export type MaterialConfig = {
 // A piece of scenery: static geometry placed in the scene (floor, walls, steps, blocks etc.)
 export type SetPiece = {
   name: string;
-  /** When set, load this GLB path instead of using procedural geometry. */
-  gltfPath?: string;
   geometry: GeometryConfig;
   material: MaterialConfig;
   position?: Vec3;
@@ -41,24 +39,24 @@ export type SetPiece = {
   ref?: string;
   /**
    * Catalogue SetPieceEntry id this piece is *rendered from* (ROADMAP_CATALOGUE step 5).
-   * Set when the entry carries an editable tree document: the renderer realises that
-   * tree instead of the placeholder `geometry`/`material` below, so a saved set never
-   * depends on a baked GLB. `name` stays the scene-local identity; this stays the
-   * catalogue identity, so renaming the piece can't orphan it.
+   * Set when the entry carries a tree document: the renderer realises that tree
+   * instead of the placeholder `geometry`/`material` below, so a set never depends on
+   * a baked GLB. `name` stays the scene-local identity; this stays the catalogue
+   * identity, so renaming the piece can't orphan it.
    */
   catalogueId?: string;
 };
 
 // A placed prop: a reference to a catalogue set piece (`ref`) or an inline
-// procedural primitive, with an optional placement transform. Shared by the
-// setting resolver and by composite catalogue entries (`SetPieceEntry.compose`).
+// procedural primitive, with an optional placement transform. Used by the setting
+// resolver (`SettingSpec.props`).
 export type PropSpec =
   | { ref: string }
   | { geometry: GeometryConfig; material: MaterialConfig; name?: string };
 
 export type PlacedProp =
-  | { ref: string; position?: Vec3; rotation?: Vec3; scale?: Vec3; localId?: string }
-  | { geometry: GeometryConfig; material: MaterialConfig; name?: string; position?: Vec3; rotation?: Vec3; scale?: Vec3; localId?: string };
+  | { ref: string; position?: Vec3; rotation?: Vec3; scale?: Vec3 }
+  | { geometry: GeometryConfig; material: MaterialConfig; name?: string; position?: Vec3; rotation?: Vec3; scale?: Vec3 };
 
 /** A placement transform (no prop body) — used by `expandEntry` to place an entry. */
 export type Placement = { position?: Vec3; rotation?: Vec3; scale?: Vec3 };

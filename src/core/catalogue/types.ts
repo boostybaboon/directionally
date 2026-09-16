@@ -1,4 +1,4 @@
-import type { GeometryConfig, LightConfig, MaterialConfig, PlacedProp, Vec3 } from '../domain/types.js';
+import type { LightConfig, Vec3 } from '../domain/types.js';
 import type { CharacterSpec } from '../character/characterSpec.js';
 import type { SetDocument } from '../sketcher/documentTree.js';
 
@@ -41,25 +41,17 @@ export interface SetPieceEntry {
   id: string;
   label: string;
   /**
-   * True when the entry has an editable tree document. A set *is* its entry
-   * (ROADMAP_CATALOGUE step 4), so this marks a sketcher-authored set — the
-   * production renderer realises its document instead of a baked GLB (step 5).
-   */
-  hasDocument?: boolean;
-  /**
-   * The entry's editable tree document. Stored in a sibling file rather than the
-   * metadata list (it can be large), so it is only attached in memory — by the
-   * resolver that materialises it for the renderer.
+   * The entry's tree document — the one representation of a set piece
+   * (ROADMAP_CATALOGUE step 8). Bundled definitions carry it inline; a
+   * sketcher-authored set stores it in a sibling OPFS file (`hasDocument`),
+   * so this is only attached by whoever materialises the entry.
    */
   document?: SetDocument;
-  /** When set, load this GLB path instead of using procedural geometry. */
-  gltfPath?: string;
-  /** Procedural geometry for a leaf entry; omit when `compose` is set. */
-  geometry?: GeometryConfig;
-  /** Procedural material for a leaf entry; omit when `compose` is set. */
-  material?: MaterialConfig;
-  /** Compose this entry from placed sub-items (catalogue refs or inline primitives). */
-  compose?: PlacedProp[];
+  /**
+   * True when the entry's document lives in its own OPFS file, loaded by
+   * `OPFSCatalogueStore.getDocument` rather than carried inline.
+   */
+  hasDocument?: boolean;
   /** Optional environment (catalogue id) applied when this entry is used as a setting. */
   environmentId?: string;
   /** Optional lights applied when this entry is used as a setting. */
@@ -70,13 +62,6 @@ export interface SetPieceEntry {
    * infers top-level status from `environmentId`/`lights` (captured on "save as setting").
    */
   isSetting?: boolean;
-  /**
-   * Euler XYZ rotation (radians) applied to the SetPiece on first placement.
-   * Use this to correct geometry whose default orientation differs from the scene
-   * convention, e.g. THREE.PlaneGeometry is in the XY plane and needs [-π/2, 0, 0]
-   * to lie flat on the XZ ground plane.
-   */
-  defaultRotation?: Vec3;
 }
 
 /** Distributive Omit: correctly removes a key from each member of a union type. */

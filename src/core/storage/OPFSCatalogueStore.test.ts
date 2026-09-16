@@ -15,6 +15,7 @@ import {
   updateSetPieceMeta,
 } from './OPFSCatalogueStore';
 import type { SetDocument } from '../sketcher/documentTree.js';
+import type { UserCatalogueEntry } from './OPFSCatalogueStore.js';
 
 // ── In-memory OPFS mock ───────────────────────────────────────────────────────
 
@@ -41,6 +42,11 @@ function createMockDir() {
   } as unknown as FileSystemDirectoryHandle;
 
   return { handle, files };
+}
+
+/** gltfPath is character-only: a set-piece is document-backed (step 8). */
+function characterGltfPath(entry: UserCatalogueEntry): string | undefined {
+  return entry.kind === 'character' ? entry.gltfPath : undefined;
 }
 
 // ── Test setup ────────────────────────────────────────────────────────────────
@@ -79,7 +85,7 @@ describe('OPFSCatalogueStore – add + list', () => {
 
     expect(entry.kind).toBe('character');
     expect(entry.label).toBe('My Robot');
-    expect(entry.gltfPath).toBe('blob:test-url');
+    expect(characterGltfPath(entry)).toBe('blob:test-url');
     expect(entry.userAdded).toBe(true);
     expect(typeof entry.id).toBe('string');
     expect(entry.id.length).toBeGreaterThan(0);
@@ -94,20 +100,18 @@ describe('OPFSCatalogueStore – add + list', () => {
     expect(listed[0].id).toBe(entry.id);
     expect(listed[0].kind).toBe('character');
     expect(listed[0].label).toBe('Bob');
-    expect(listed[0].gltfPath).toBe('blob:test-url');
+    expect(characterGltfPath(listed[0])).toBe('blob:test-url');
     expect(listed[0].userAdded).toBe(true);
   });
 
-  it('a set-piece is created from its document and joins the catalogue once baked', async () => {
+  it('a set-piece is created from its document and joins the catalogue straight away', async () => {
     const entry = await createSetPieceDocument('Chair');
 
     expect(entry.kind).toBe('set-piece');
     expect(entry.label).toBe('Chair');
     expect(entry.hasDocument).toBe(true);
-    // Unpublished: the document is the editing surface, not yet a catalogue item.
-    expect(await list()).toHaveLength(0);
-
-    await update(entry.id, new Blob(['glb']), 'Chair');
+    // The document *is* the artefact: no bake, no publish step.
+    expect(mockDir.files.has(`${entry.id}.glb`)).toBe(false);
     const listed = await list();
     expect(listed).toHaveLength(1);
     expect(listed[0].kind).toBe('set-piece');
@@ -129,7 +133,6 @@ describe('OPFSCatalogueStore – add + list', () => {
       { id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] },
     ]);
 
-    await update(entry.id, new Blob(['glb']), 'Classroom');
     const listed = await list();
     expect(listed).toHaveLength(1);
     const listedPiece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
@@ -229,19 +232,19 @@ describe('OPFSCatalogueStore – sourceDesignId', () => {
   });
 });
 
-describe('OPFSCatalogueStore – update', () => {
+describe('OPFSCatalogueStore – update (character bake)', () => {
   it('update() overwrites the GLB and returns the updated entry', async () => {
-    const entry = await createSetPieceDocument('Chair');
+    const entry = await add(new Blob(['v1']), { kind: 'character', label: 'Chair' });
     vi.mocked(URL.createObjectURL).mockReturnValue('blob:updated-url');
 
     const updated = await update(entry.id, new Blob(['v2']));
     expect(updated).not.toBeNull();
-    expect(updated!.gltfPath).toBe('blob:updated-url');
+    expect(characterGltfPath(updated!)).toBe('blob:updated-url');
     expect(updated!.label).toBe('Chair'); // label unchanged when not provided
   });
 
   it('update() with a new label updates it in metadata', async () => {
-    const entry = await createSetPieceDocument('Old Name');
+    const entry = await add(new Blob(['v1']), { kind: 'character', label: 'Old Name' });
     await update(entry.id, new Blob(['v2']), 'New Name');
     const listed = await list();
     expect(listed[0].label).toBe('New Name');
@@ -255,16 +258,15 @@ describe('OPFSCatalogueStore – update', () => {
   });
 
   it('update() with unknown id returns null without changing the store', async () => {
-    const kept = await createSetPieceDocument('Keep');
-    await update(kept.id, new Blob(['glb']));
+    await add(new Blob(['data']), { kind: 'character', label: 'Keep' });
     const result = await update('non-existent-id', new Blob(['new']));
     expect(result).toBeNull();
     expect(await list()).toHaveLength(1);
   });
 
-  it('update() persists environmentId and lights for a re-saved setting', async () => {
+  it('saveDocument() persists environmentId and lights for a re-saved setting', async () => {
     const entry = await createSetPieceDocument('Garden');
-    await update(entry.id, new Blob(['v2']), 'Garden', {
+    await saveDocument(entry.id, { version: 2, root: [], joints: [] }, {
       environmentId: 'env-exterior',
       lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
     });
@@ -277,26 +279,25 @@ describe('OPFSCatalogueStore – update', () => {
     ]);
   });
 
-  it('update() clears environmentId and lights when meta omits them', async () => {
+  it('saveDocument() clears environmentId and lights when meta omits them', async () => {
     const entry = await createSetPieceDocument('Garden', {
       environmentId: 'env-exterior',
       lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
     });
 
-    await update(entry.id, new Blob(['v2']), 'Garden', { environmentId: undefined, lights: undefined });
+    await saveDocument(entry.id, { version: 2, root: [], joints: [] }, { environmentId: undefined, lights: undefined });
     const listed = await list();
     const piece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
     expect(piece.environmentId).toBeUndefined();
     expect(piece.lights).toBeUndefined();
   });
 
-  it('update() publishes a document-backed set, keeping its document editable', async () => {
+  it('saveDocument() writes metadata with the document in one pass', async () => {
     const entry = await createSetPieceDocument('AI Chair');
-    vi.mocked(URL.createObjectURL).mockReturnValue('blob:baked-url');
+    const document: SetDocument = { version: 2, root: [], joints: [] };
 
-    const updated = await update(entry.id, new Blob(['baked']), undefined, { partCount: 1 });
+    const updated = await saveDocument(entry.id, document, { partCount: 1 });
     expect(updated).not.toBeNull();
-    expect(updated!.gltfPath).toBe('blob:baked-url');
     expect(updated!.hasDocument).toBe(true);
     expect(updated!.partCount).toBe(1);
 
@@ -304,25 +305,21 @@ describe('OPFSCatalogueStore – update', () => {
     const piece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
     expect(piece.id).toBe(entry.id);
     expect(piece.label).toBe('AI Chair');
-    expect(piece.gltfPath).toBe('blob:baked-url');
-    expect(await getDocument(entry.id)).not.toBeNull();
+    expect(await getDocument(entry.id)).toEqual(document);
   });
 });
 
 describe('OPFSCatalogueStore – updateSetPieceMeta', () => {
-  it('renames a published set without touching its document or its bake', async () => {
+  it('renames a set without touching its document', async () => {
     const document: SetDocument = { version: 2, root: [], joints: [] };
     const entry = await createSetPieceDocument('Draft');
     await saveDocument(entry.id, document);
-    await update(entry.id, new Blob(['glb']), 'Draft');
-    expect(mockDir.files.has(`${entry.id}.glb`)).toBe(true);
 
     const renamed = await updateSetPieceMeta(entry.id, { label: '  Renamed  ' });
     expect(renamed).not.toBeNull();
     expect(renamed!.label).toBe('Renamed');
     expect(await getDocument(entry.id)).toEqual(document);
-    expect(mockDir.files.has(`${entry.id}.glb`)).toBe(true);
-    // The bake is the publish marker: a rename must not unpublish the set.
+    // The document is what keeps a set in the catalogue: a rename can't drop it.
     const listed = await list();
     expect(listed).toHaveLength(1);
     expect(listed[0].label).toBe('Renamed');

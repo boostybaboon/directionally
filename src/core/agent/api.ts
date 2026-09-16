@@ -172,8 +172,8 @@ function targetSchema(kind: 'setting' | 'character'): Record<string, unknown> {
  * returned value is not validated here; the matching `create_*` verb clamps it
  * (ROADMAP_AI.md AI-4 hardens this with retry + rate limiting).
  *
- * Scenery uses the AI Draft grammar, so the result can be rebuilt as a canonical
- * `SketcherDraft` and published exactly like a human-drawn set.
+ * Scenery uses the AI Draft grammar, so the result becomes the same tree document a
+ * human-drawn set has — `create_setting` stores it on the entry unchanged.
  */
 export async function describeToDocument(
   provider: AIProvider,

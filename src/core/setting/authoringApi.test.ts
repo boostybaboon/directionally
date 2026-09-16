@@ -93,9 +93,11 @@ describe('createSetPiece', () => {
     expect(await listDocuments()).toHaveLength(1);
   });
 
-  it('leaves the entry unpublished until it carries a bake', async () => {
+  it('is a catalogue item as soon as it is created — no publish step', async () => {
     await createSetPiece(draft);
-    expect(await list()).toHaveLength(0);
+    const listed = await list();
+    expect(listed).toHaveLength(1);
+    expect(listed[0].hasDocument).toBe(true);
   });
 
   it('rejects a draft with no parts', async () => {

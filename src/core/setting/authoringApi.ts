@@ -39,7 +39,12 @@ export async function createSetPiece(
 
   const existingId = opts.resumeEntryId ?? (await OPFSCatalogueStore.findByLabel(label))?.id;
   if (existingId) {
-    const updated = await OPFSCatalogueStore.saveDocument(existingId, document, label);
+    const updated = await OPFSCatalogueStore.saveDocument(existingId, document, {
+      label,
+      environmentId: aiDraft.environmentMap,
+      lights: aiDraft.lights,
+      partCount: draft.parts.length,
+    });
     if (updated) return { entry: updated, created: false };
   }
 

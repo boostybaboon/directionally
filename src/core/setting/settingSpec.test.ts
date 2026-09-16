@@ -13,20 +13,47 @@ import {
   matchesByLabel,
 } from './settingSpec.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
+import { documentFromParts } from '../sketcher/documentTree.js';
+import type { PartDraft } from '../sketcher/types.js';
 import type { StoredScene } from '../storage/types.js';
-import type { SetPiece as SetPieceParam } from '../domain/types.js';
+import type { GeometryConfig, MaterialConfig, Vec3, SetPiece as SetPieceParam } from '../domain/types.js';
+
+/** A catalogue part: procedural geometry + material at a local transform. */
+function part(id: string, geometry: GeometryConfig, material: MaterialConfig, position?: Vec3): PartDraft {
+  return {
+    id,
+    kind: 'catalogue',
+    name: 'Box',
+    geometry,
+    material,
+    position: position ?? [0, 0, 0],
+    quaternion: [0, 0, 0, 1],
+    scale: [1, 1, 1],
+    color: material.color,
+  };
+}
 
 // Controlled fixtures — tests must not depend on real seed data.
-const box: CatalogueEntry = { kind: 'set-piece', id: 'box', label: 'Box', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0x8844aa } };
-const woodFloor: CatalogueEntry = { kind: 'set-piece', id: 'wood-floor', label: 'Wood Floor', geometry: { type: 'plane', width: 8, height: 8 }, material: { color: 0xffffff, textureUrl: '/textures/wood-boards.jpg' }, defaultRotation: [-Math.PI / 2, 0, 0] };
+const box: CatalogueEntry = {
+  kind: 'set-piece',
+  id: 'box',
+  label: 'Box',
+  document: documentFromParts([part('box', { type: 'box', width: 1, height: 1, depth: 1 }, { color: 0x8844aa })]),
+};
+const woodFloor: CatalogueEntry = {
+  kind: 'set-piece',
+  id: 'wood-floor',
+  label: 'Wood Floor',
+  document: documentFromParts([part('floor', { type: 'plane', width: 8, height: 8 }, { color: 0xffffff, textureUrl: '/textures/wood-boards.jpg' })]),
+};
 const chair: CatalogueEntry = {
   kind: 'set-piece',
   id: 'chair',
   label: 'Chair',
-  compose: [
-    { name: 'seat', geometry: { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, material: { color: 0x663311 }, position: [0, 0.45, 0] },
-    { name: 'back', geometry: { type: 'box', width: 0.5, height: 0.5, depth: 0.1 }, material: { color: 0x663311 }, position: [0, 0.7, -0.2] },
-  ],
+  document: documentFromParts([
+    part('seat', { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, { color: 0x663311 }, [0, 0.45, 0]),
+    part('back', { type: 'box', width: 0.5, height: 0.5, depth: 0.1 }, { color: 0x663311 }, [0, 0.7, -0.2]),
+  ]),
 };
 const env: CatalogueEntry = { kind: 'environment', id: 'studio-neutral', label: 'Studio (neutral)', hdriPath: '/environments/studio-neutral.hdr' };
 const light: CatalogueEntry = { kind: 'light', id: 'directional-light', label: 'Directional Light', config: { type: 'directional', color: 0xffffff, intensity: 1, position: [0, 10, 5] } };
@@ -64,20 +91,21 @@ describe('resolveSettingSpec', () => {
     const piece = r.set.find((p) => p.name === 'box');
     expect(piece).toBeDefined();
     expect(piece!.position).toEqual([1, 2, 3]);
-    expect(piece!.geometry).toMatchObject({ type: 'box', width: 1 });
+    expect(piece!.catalogueId).toBe('box');
   });
 
-  it('bakes a catalogue floor piece with its default rotation', () => {
+  it('resolves a catalogue floor ref to the entry that owns the geometry', () => {
     const r = resolveSettingSpec({ floor: { ref: 'wood-floor' } }, fixture);
     const floor = r.set.find((p) => p.name === 'wood-floor');
-    expect(floor!.rotation).toEqual([-Math.PI / 2, 0, 0]);
+    expect(floor!.catalogueId).toBe('wood-floor');
   });
 
-  it('flattens a composite catalogue entry and offsets children by placement', () => {
+  it('places a catalogue prop through the instance transform', () => {
     const r = resolveSettingSpec({ props: [{ ref: 'chair', position: [5, 0, 0] }] }, fixture);
-    const seat = r.set.find((p) => p.name === 'seat');
-    expect(seat).toBeDefined();
-    expect(seat!.position).toEqual([5, 0.45, 0]);
+    const piece = r.set.find((p) => p.name === 'chair');
+    expect(piece).toBeDefined();
+    expect(piece!.catalogueId).toBe('chair');
+    expect(piece!.position).toEqual([5, 0, 0]);
   });
 
   it('resolves an inline primitive directly', () => {
@@ -105,38 +133,35 @@ describe('resolveSettingSpec', () => {
 });
 
 describe('expandEntry', () => {
-  it('flattens a composite entry to multiple pieces', () => {
-    const chairEntry = resolveProp('chair', fixture)!;
-    const pieces = expandEntry(chairEntry, undefined, fixture);
-    expect(pieces.map((p) => p.name)).toEqual(['seat', 'back']);
+  it('emits one piece carrying the catalogue identity — the document holds the body', () => {
+    const pieces = expandEntry(resolveProp('chair', fixture)!);
+    expect(pieces.map((p) => p.name)).toEqual(['chair']);
+    expect(pieces[0].catalogueId).toBe('chair');
   });
 
-  it('returns a single piece for a leaf entry', () => {
-    const boxEntry = resolveProp('box', fixture)!;
-    expect(expandEntry(boxEntry, undefined, fixture)).toHaveLength(1);
+  it('applies the caller placement to the whole entry', () => {
+    const pieces = expandEntry(resolveProp('box', fixture)!, { position: [1, 2, 3] });
+    expect(pieces[0].position).toEqual([1, 2, 3]);
   });
 });
 
-describe('expandEntry – document-backed entries (step 5)', () => {
+describe('expandEntry – saved sets', () => {
   const documentEntry: CatalogueEntry = {
     kind: 'set-piece',
     id: 'classroom',
     label: 'Classroom',
     hasDocument: true,
-    // A baked GLB must be ignored: the tree document is the rendered form.
-    gltfPath: 'blob:http://localhost/bake',
   };
 
-  it('emits one piece carrying the catalogue identity, not the GLB', () => {
-    const pieces = expandEntry(documentEntry, undefined, []);
+  it('emits one piece carrying the catalogue identity', () => {
+    const pieces = expandEntry(documentEntry);
     expect(pieces).toHaveLength(1);
     expect(pieces[0].name).toBe('classroom');
     expect(pieces[0].catalogueId).toBe('classroom');
-    expect(pieces[0].gltfPath).toBeUndefined();
   });
 
   it('applies the caller placement to the whole set', () => {
-    const pieces = expandEntry(documentEntry, { position: [2, 0, -3], scale: [2, 2, 2] }, []);
+    const pieces = expandEntry(documentEntry, { position: [2, 0, -3], scale: [2, 2, 2] });
     expect(pieces[0].position).toEqual([2, 0, -3]);
     expect(pieces[0].scale).toEqual([2, 2, 2]);
   });
@@ -167,14 +192,15 @@ describe('resolveInstance', () => {
     const out = resolveInstance(piece, fixture);
     expect(out).toHaveLength(1);
     expect(out[0].position).toEqual([1, 2, 3]);
-    expect(out[0].geometry).toMatchObject({ type: 'box', width: 1 });
+    expect(out[0].catalogueId).toBe('box');
   });
 
-  it('expands a composite-entry ref into multiple prefixed children', () => {
+  it('expands a prop ref into one prefixed piece at the instance transform', () => {
     const piece: SetPieceParam = { name: 'chair-1', ref: 'chair', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 }, position: [5, 0, 0] };
     const out = resolveInstance(piece, fixture);
-    expect(out.map((p) => p.name)).toEqual(['chair-1/seat', 'chair-1/back']);
-    expect(out[0].position).toEqual([5, 0.45, 0]);
+    expect(out.map((p) => p.name)).toEqual(['chair-1/chair']);
+    expect(out[0].catalogueId).toBe('chair');
+    expect(out[0].position).toEqual([5, 0, 0]);
   });
 
   it('multiple instances of the same Definition produce non-colliding names', () => {
@@ -199,7 +225,7 @@ describe('resolveInstances', () => {
     const ground: SetPieceParam = { name: 'ground', geometry: { type: 'plane', width: 12, height: 12 }, material: { color: 0x888888 } };
     const chairInstance: SetPieceParam = { name: 'chair-1', ref: 'chair', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 } };
     const out = resolveInstances([ground, chairInstance], fixture);
-    expect(out.map((p) => p.name)).toEqual(['ground', 'chair-1/seat', 'chair-1/back']);
+    expect(out.map((p) => p.name)).toEqual(['ground', 'chair-1/chair']);
   });
 });
 
@@ -275,8 +301,7 @@ describe('matchesByLabel', () => {
     kind: 'set-piece',
     id,
     label: 'GARDEN',
-    geometry: { type: 'box', width: 1, height: 1, depth: 1 },
-    material: { color: 0x11aa22 },
+    document: documentFromParts([part('ground', { type: 'box', width: 1, height: 1, depth: 1 }, { color: 0x11aa22 })]),
     userAdded: true as const,
     addedAt,
   });
@@ -284,7 +309,7 @@ describe('matchesByLabel', () => {
   it('returns all case-insensitive matches, most-recent user entry first', () => {
     const older = userGarden('garden-old', 1000);
     const newer = userGarden('garden-new', 2000);
-    const bundled: CatalogueEntry = { kind: 'set-piece', id: 'garden-bundled', label: 'garden', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0 } };
+    const bundled: CatalogueEntry = { kind: 'set-piece', id: 'garden-bundled', label: 'garden', document: documentFromParts([part('ground', { type: 'box', width: 1, height: 1, depth: 1 }, { color: 0 })]) };
     const result = matchesByLabel([bundled, older, newer], 'GARDEN');
     expect(result.map((e) => e.id)).toEqual(['garden-new', 'garden-old', 'garden-bundled']);
   });

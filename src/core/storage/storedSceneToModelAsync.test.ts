@@ -121,11 +121,20 @@ describe('storedSceneToModelAsync – document-backed sets (step 5)', () => {
     expect(model.groups[0].threeObject.children).toHaveLength(1);
   });
 
-  it('skips the OPFS read for entries without a document', async () => {
-    const model = await storedSceneToModelAsync(baseScene(), [], [
-      { id: 'bundled', kind: 'set-piece', gltfPath: 'blob:bundled' },
+  it('realises a bundled entry — inline document, no OPFS read', async () => {
+    const piece = {
+      name: 'bundled',
+      catalogueId: 'bundled',
+      geometry: { type: 'box' as const, width: 0.01, height: 0.01, depth: 0.01 },
+      material: { color: 0 },
+    };
+
+    const model = await storedSceneToModelAsync(baseScene({ set: [piece] }), [], [
+      { id: 'bundled', kind: 'set-piece', document },
     ]);
 
-    expect(model.groups).toHaveLength(0);
+    expect(model.meshes).toHaveLength(0);
+    expect(model.groups).toHaveLength(1);
+    expect(model.groups[0].threeObject.children).toHaveLength(1);
   });
 });

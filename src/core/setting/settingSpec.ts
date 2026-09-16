@@ -89,8 +89,6 @@ const DEFAULT_LIGHTS: LightConfig[] = [
   { type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] },
 ];
 
-const MAX_COMPOSITE_DEPTH = 8;
-
 /** Placeholder body for a piece whose real geometry comes from elsewhere (a document). */
 const PLACEHOLDER_GEOMETRY: GeometryConfig = { type: 'box', width: 0.01, height: 0.01, depth: 0.01 };
 const PLACEHOLDER_MATERIAL: MaterialConfig = { color: 0x000000, metalness: 0, roughness: 1 };
@@ -172,29 +170,6 @@ function applyPlacement(piece: SetPiece, placement: Placement): SetPiece {
   return out;
 }
 
-/**
- * Offset a composite child by its parent's placement (translation + scale).
- * Composite rotation is intentionally not applied yet — composites place props
- * by translation only, and rotating a whole assembly needs quaternion handling
- * that's out of scope for level 0.
- */
-function offsetPiece(piece: SetPiece, placement: Placement): SetPiece {
-  const out: SetPiece = { ...piece };
-  if (placement.position) {
-    const [dx, dy, dz] = placement.position;
-    out.position = piece.position
-      ? ([piece.position[0] + dx, piece.position[1] + dy, piece.position[2] + dz] as Vec3)
-      : ([dx, dy, dz] as Vec3);
-  }
-  if (placement.scale) {
-    const [sx, sy, sz] = placement.scale;
-    out.scale = piece.scale
-      ? ([piece.scale[0] * sx, piece.scale[1] * sy, piece.scale[2] * sz] as Vec3)
-      : ([sx, sy, sz] as Vec3);
-  }
-  return out;
-}
-
 function backdropToSetPiece(b: BackdropSpec, index: number): SetPiece {
   const textureUrl = b.texture ? TEXTURE_REGISTRY[b.texture] : undefined;
   const position: Vec3 = b.position ?? [0, b.height / 2, -5];
@@ -210,46 +185,23 @@ function backdropToSetPiece(b: BackdropSpec, index: number): SetPiece {
 }
 
 /**
- * Expand a catalogue SetPieceEntry into its flattened SetPieces. A document-backed
- * entry becomes a single piece carrying its catalogue identity (`catalogueId`) —
- * the renderer realises the tree itself. Composite entries (`compose`) are expanded
- * recursively; leaf entries become a single piece (procedural geometry or a
- * `gltfPath`). `placement` offsets composite children / places the leaf.
+ * Expand a catalogue SetPieceEntry into the piece the renderer consumes: one piece
+ * carrying the entry's catalogue identity (`catalogueId`), which the renderer
+ * realises into the entry's tree document. `placement` places the whole set.
  */
 export function expandEntry(
   entry: SetPieceEntry,
   placement?: Placement,
-  entries: CatalogueEntry[] = CATALOGUE_ENTRIES,
-  unresolved: string[] = [],
-  depth = 0,
 ): SetPiece[] {
-  if (entry.hasDocument) {
-    // A sketcher-authored set renders from its tree document (ROADMAP_CATALOGUE
-    // step 5), so its geometry/material are placeholders and any baked GLB is
-    // ignored — `storedSceneToModel` loads the document and realises it.
-    const piece: SetPiece = {
-      name: entry.id,
-      catalogueId: entry.id,
-      geometry: PLACEHOLDER_GEOMETRY,
-      material: PLACEHOLDER_MATERIAL,
-    };
-    if (entry.defaultRotation) piece.rotation = entry.defaultRotation;
-    return [placement ? applyPlacement(piece, placement) : piece];
-  }
-  if (entry.compose) {
-    if (depth >= MAX_COMPOSITE_DEPTH) return [];
-    const children = expandProps(entry.compose, entries, unresolved, depth + 1);
-    return placement ? children.map((c) => offsetPiece(c, placement)) : children;
-  }
+  // A set piece *is* its tree document (ROADMAP_CATALOGUE step 8), so this emits one
+  // piece carrying the entry's catalogue identity: its geometry, material and
+  // orientation are all in the document `storedSceneToModel` realises from that id.
   const piece: SetPiece = {
     name: entry.id,
-    geometry: entry.geometry ?? PLACEHOLDER_GEOMETRY,
-    material: entry.material ?? PLACEHOLDER_MATERIAL,
+    catalogueId: entry.id,
+    geometry: PLACEHOLDER_GEOMETRY,
+    material: PLACEHOLDER_MATERIAL,
   };
-  if (entry.gltfPath) {
-    piece.gltfPath = entry.gltfPath.startsWith('blob:') ? `opfs://${entry.id}` : entry.gltfPath;
-  }
-  if (entry.defaultRotation) piece.rotation = entry.defaultRotation;
   return [placement ? applyPlacement(piece, placement) : piece];
 }
 
@@ -257,14 +209,13 @@ function expandProps(
   props: PlacedProp[],
   entries: CatalogueEntry[],
   unresolved: string[],
-  depth: number,
 ): SetPiece[] {
   const out: SetPiece[] = [];
   for (const p of props) {
     if ('ref' in p) {
       const entry = resolveProp(p.ref, entries);
       if (entry) {
-        out.push(...expandEntry(entry, p, entries, unresolved, depth));
+        out.push(...expandEntry(entry, p));
         continue;
       }
       unresolved.push(p.ref);
@@ -304,7 +255,7 @@ export function resolveInstance(
     return [piece];
   }
   const placement: Placement = { position: piece.position, rotation: piece.rotation, scale: piece.scale };
-  const expanded = expandEntry(entry, placement, entries, unresolved);
+  const expanded = expandEntry(entry, placement);
   return expanded.map((c) => ({ ...c, name: `${piece.name}/${c.name}` }));
 }
 
@@ -332,10 +283,10 @@ function resolveSettingBody(
     else unresolved.push(v.environment);
   }
 
-  set.push(...expandProps([v.floor], entries, unresolved, 0));
+  set.push(...expandProps([v.floor], entries, unresolved));
 
   v.backdrops.forEach((b, i) => set.push(backdropToSetPiece(b, i)));
-  set.push(...expandProps(v.props, entries, unresolved, 0));
+  set.push(...expandProps(v.props, entries, unresolved));
 
   const lights: LightConfig[] = [];
   if (v.lights.length === 0) {

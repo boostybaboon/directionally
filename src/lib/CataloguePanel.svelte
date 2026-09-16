@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getCharacters, getLights, getSetPieces, getEnvironments, isSettingEntry } from '../core/catalogue/catalogue.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
+  import { countParts } from '../core/sketcher/documentTree.js';
   import type { CatalogueEntry } from '../core/catalogue/types.js';
   import type { UserCatalogueEntry } from '../core/storage/OPFSCatalogueStore.js';
   import PreviewRenderer from './PreviewRenderer.svelte';
@@ -38,12 +39,13 @@
     selectedCharacterId = selectedCharacterId === id ? null : id;
   }
 
-  const GEOMETRY_LABELS: Record<string, string> = {
-    box: 'box',
-    plane: 'plane',
-    sphere: 'sphere',
-    cylinder: 'cylinder',
-  };
+  /** A bundled entry's part count comes from its document (a saved set keeps its own). */
+  function partCountLabel(entry: CatalogueEntry): string {
+    if (entry.kind !== 'set-piece') return '';
+    if (!entry.document) return '—';
+    const count = countParts(entry.document);
+    return `${count} part${count === 1 ? '' : 's'}`;
+  }
 </script>
 
 <div class="catalogue">
@@ -134,9 +136,7 @@
               {/if}
               <span class="item-meta">{userEntry?.partCount !== undefined
                 ? `${userEntry.partCount} part${userEntry.partCount === 1 ? '' : 's'}`
-                : entry.compose ? `${entry.compose.length} parts`
-                : entry.gltfPath ? '—'
-                : entry.geometry ? (GEOMETRY_LABELS[entry.geometry.type] ?? entry.geometry.type) : '—'}</span>
+                : partCountLabel(entry)}</span>
             </button>
             <div class="setpiece-actions">
               {#if userEntry?.hasDocument}

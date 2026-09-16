@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 import { buildExtrusionGeometry } from './ExtrusionHandle.js';
-import { PRESET_BY_NAME, buildLatheGeometry, buildMaterials } from './geometry.js';
+import {
+  PRESET_BY_NAME,
+  buildCatalogueGeometry,
+  buildCatalogueMaterial,
+  buildLatheGeometry,
+  buildMaterials,
+  withSingleFaceGroup,
+} from './geometry.js';
 import type { PartDraft, SketcherDraft } from './types.js';
 import type { SetNode } from './documentTree.js';
 
@@ -64,6 +71,9 @@ export function buildPartMesh(pd: PartDraft): THREE.Mesh | null {
     const preset = PRESET_BY_NAME.get(pd.name.toLowerCase());
     if (!preset) return null;
     geometry = preset.geometry();
+  } else if (pd.kind === 'catalogue') {
+    if (!pd.geometry) return null;
+    geometry = withSingleFaceGroup(buildCatalogueGeometry(pd.geometry));
   } else if (pd.kind === 'lathed') {
     if (!pd.lathePoints) return null;
     lathePoints = pd.lathePoints;
@@ -81,7 +91,11 @@ export function buildPartMesh(pd: PartDraft): THREE.Mesh | null {
     geometry = buildExtrusionGeometry(shape, depth);
   }
 
-  const materials = buildMaterials(geometry, pd.color, lathePoints !== null ? THREE.DoubleSide : THREE.FrontSide);
+  // A catalogue part carries its own material (roughness/metalness/texture), so it
+  // keeps that body instead of the flat colour a sketched part is built from.
+  const materials = pd.kind === 'catalogue' && pd.material
+    ? [buildCatalogueMaterial(pd.material)]
+    : buildMaterials(geometry, pd.color, lathePoints !== null ? THREE.DoubleSide : THREE.FrontSide);
   const faceColors = pd.faceColors ? [...pd.faceColors] : materials.map(() => pd.color);
   faceColors.forEach((c, i) => { if (i < materials.length) materials[i].color.setHex(c); });
   const faceTextures = pd.faceTextures ? [...pd.faceTextures] : materials.map(() => null);

@@ -31,6 +31,7 @@
     UngroupCommand,
   } from '../../core/sketcher/sketcherCommands.js';
   import { exportGLB } from '../../core/sketcher/exportGLB.js';
+  import { countParts } from '../../core/sketcher/documentTree.js';
   import * as OPFSCatalogueStore from '../../core/storage/OPFSCatalogueStore.js';
   import type { UserCatalogueEntry } from '../../core/storage/OPFSCatalogueStore.js';
 
@@ -72,10 +73,6 @@
   let showSetsColumn = $state(true);
   // Name for a set that does not exist yet, e.g. ?prefillName= from the script view.
   let pendingSetLabel = $state<string | null>(null);
-  /** Name of the open set; a set that only exists in memory has no entry yet. */
-  const currentSetLabel = $derived(
-    sets.find((s) => s.id === currentEntryId)?.label ?? pendingSetLabel ?? 'Untitled',
-  );
   // Catalogue panel (Track SET, N3) — user-added entries + active environment.
   let userCatalogueEntries = $state<CatalogueEntry[]>([]);
   let showCataloguePanel = $state(false);
@@ -1269,9 +1266,9 @@
     }
     const entry = getById(id, mergedCatalogueEntries);
     if (entry?.kind !== 'set-piece') return;
-    const { parts, group } = sketcher.insertCatalogueEntry(entry, mergedCatalogueEntries);
+    const { parts, group } = sketcher.insertCatalogueEntry(entry);
     if (parts.length === 0) {
-      statusMessage = `"${entry.label}" has no editable geometry (GLB-backed).`;
+      statusMessage = `"${entry.label}" is a saved set — open it from the Sets column to edit or build on it.`;
       return;
     }
     const first = parts[0];
@@ -1485,21 +1482,30 @@
   }
 
   /**
-   * Write the session's tree document to its catalogue entry, creating the entry
-   * on first save. Returns the entry id, or null when an empty session has no entry
-   * to write to yet.
+   * Write the session's tree document to its catalogue entry — creating the entry on
+   * first save — along with the metadata that travels with a set (its baseline
+   * lighting, its environment and its part count). Autosave is the only save: the
+   * entry and its document are the same artefact, so there is nothing to publish.
+   * Returns the entry id, or null when an empty session has no entry to write to yet.
    */
   async function persistSet(): Promise<string | null> {
     const document = sketcher.toDocument();
     if (!currentEntryId && document.root.length === 0) return null;
+    const lights = sketcher.getLights();
+    const meta = {
+      environmentId: sketcher.environmentMap,
+      lights: lights.length > 0 ? [...lights] : undefined,
+      partCount: countParts(document),
+    };
     if (currentEntryId) {
-      await OPFSCatalogueStore.saveDocument(currentEntryId, document);
+      await OPFSCatalogueStore.saveDocument(currentEntryId, document, meta);
     } else {
       // Sets authored here are scenery by default — a venue the script can place —
       // and the column's tag flips one to a component prop.
       const entry = await OPFSCatalogueStore.createSetPieceDocument(pendingSetLabel ?? 'Untitled', {
         document,
         isSetting: true,
+        ...meta,
       });
       pendingSetLabel = null;
       currentEntryId = entry.id;
@@ -1715,33 +1721,26 @@
   }
 
   /**
-   * Publish the session to the catalogue: bake the scene into a GLB and write it —
-   * plus the session's baseline lighting, environment and part count — onto the
-   * set's own entry. The document and its bake therefore stay in lock-step, and
-   * re-publishing updates in place rather than duplicating. The entry's
-   * classification (scenery vs prop) is a property of the entry and is left alone.
+   * Download the session as a GLB. The document is the stored form of a set; GLB is
+   * export-only, for handing a built set to other 3D tools.
    */
-  async function publishSet() {
+  async function exportSceneGLB() {
     const session = sketcher?.getSession();
     if (!session || session.parts.length === 0) {
-      statusMessage = 'No parts to publish. Complete at least one sketch first.';
+      statusMessage = 'Nothing to export yet — build at least one part first.';
       return;
     }
-    statusMessage = 'Publishing…';
     // Clear any mesh highlight so the exported GLB has no selection overlay.
     selection?.deselect();
-    const { blob } = await exportGLB(session);
-
-    const entryId = await persistSet();
-    if (!entryId) return;
-    await OPFSCatalogueStore.update(entryId, blob, undefined, {
-      partCount: session.parts.length,
-      environmentId: session.environmentMap,
-      lights: session.lights.length > 0 ? [...session.lights] : undefined,
-    });
-
-    await refreshCatalogueViews();
-    statusMessage = `Published "${currentSetLabel}" to catalogue.`;
+    const { blob, filename } = await exportGLB(session);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    statusMessage = `Exported ${filename}.`;
   }
 
   /**
@@ -1801,7 +1800,7 @@
       <button class:active={transformMode === 'rotate'} onclick={() => setTransformMode('rotate')} title="E">Rotate</button>
       <button class:active={transformMode === 'scale'} onclick={() => setTransformMode('scale')} title="R">Scale</button>
       <span class="separator"></span>
-      <button class="primary" onclick={publishSet} title="Bake the scene and publish it — document, lighting and all — to the catalogue">Publish</button>
+      <button onclick={exportSceneGLB} title="Download this set as a GLB (export only — the document is what gets stored)">Export GLB</button>
       <span class="separator"></span>
       <button class:active={showSetsColumn} onclick={toggleSetsColumn} title="Toggle the sets column">Sets</button>
       <button class:active={showCataloguePanel} onclick={() => { showCataloguePanel = !showCataloguePanel; }} title="Toggle catalogue">Catalogue</button>
@@ -2256,8 +2255,6 @@
     cursor: pointer;
   }
   button:hover { background: #28285a; }
-  button.primary { background: #3d2d8a; border-color: #6050c8; color: #f0eeff; }
-  button.primary:hover { background: #4e3aaa; }
 
   .sketch-hint {
     position: absolute;

@@ -145,6 +145,30 @@ export function documentToDraft(doc: SetDocument): SketcherDraft {
 
 // ── Tree mutation operations (the live model's edit surface) ─────────────────
 
+/** Number of part leaves in a document, nested groups included. */
+export function countParts(doc: SetDocument): number {
+  let count = 0;
+  const walk = (nodes: SetNode[]) => {
+    for (const node of nodes) {
+      if (node.kind === 'part') count++;
+      else walk(node.children);
+    }
+  };
+  walk(doc.root);
+  return count;
+}
+
+/**
+ * Build a document from a flat list of parts — the bundled library's authoring form.
+ * Node ids are the same parent-unique name segments `insertPart` assigns, so a
+ * hand-written definition and an edited one address their nodes identically.
+ */
+export function documentFromParts(parts: PartDraft[]): SetDocument {
+  const doc: SetDocument = { version: 2, root: [], joints: [] };
+  for (const part of parts) insertPart(doc, part);
+  return doc;
+}
+
 function partTransform(part: PartDraft): Transform {
   return { position: part.position, quaternion: part.quaternion, scale: part.scale };
 }

@@ -433,7 +433,7 @@ function compileSceneBlock(
   // Track CAT, CAT-2: resolve the heading's setting against the merged catalogue.
   const setting = resolveSetting(block.setting, userEntries, bindings.setting);
   if (setting.kind === 'set-piece') {
-    scene.set = expandEntry(setting.entry, undefined, [...CATALOGUE_ENTRIES, ...userEntries]);
+    scene.set = expandEntry(setting.entry);
     if (setting.entry.environmentId) scene.environmentMap = setting.entry.environmentId;
     if (setting.entry.lights) scene.lights = setting.entry.lights;
   } else if (setting.kind === 'environment') {

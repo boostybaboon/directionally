@@ -2,17 +2,6 @@ import { describe, it, expect, afterEach, beforeAll, beforeEach, vi } from 'vite
 import { generateAsset } from './agentClient.js';
 import { _setDirectoryProvider, _resetDirectoryProvider, list, getDocument } from '../core/storage/OPFSCatalogueStore.js';
 
-// GLTFExporter uses FileReader internally, which is unavailable in Node. Mock it
-// so the headless draft → GLB bake performed for generated settings is testable.
-vi.mock('three/examples/jsm/exporters/GLTFExporter.js', () => ({
-  GLTFExporter: class {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    async parseAsync(_input: unknown, _options: unknown): Promise<ArrayBuffer> {
-      return new ArrayBuffer(16);
-    }
-  },
-}));
-
 // A stable, in-memory OPFS mock: one `handle` + one `files` map shared across
 // all store operations in a test (multi-step flows need state to persist).
 function createMockDir() {
@@ -96,7 +85,7 @@ describe('generateAsset – setting', () => {
     ],
   };
 
-  it('publishes a GLB-backed entry with an editable document and partCount', async () => {
+  it('persists the generated setting as a document-backed entry', async () => {
     vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ document }), { status: 200 }));
 
     const result = await generateAsset('setting', 'CLASSROOM', 'a classroom');
@@ -105,8 +94,9 @@ describe('generateAsset – setting', () => {
     expect(result.created).toBe(true);
     expect(result.entry.kind).toBe('set-piece');
     expect(result.entry.label).toBe('Classroom');
-    // The generated setting is a GLB bake on the same entry that carries the document.
-    expect('gltfPath' in result.entry).toBe(true);
+    // The document is the whole artefact — no bake, and the entry is a catalogue
+    // item from the moment it exists.
+    expect('gltfPath' in result.entry).toBe(false);
     expect((result.entry as { hasDocument?: boolean }).hasDocument).toBe(true);
     expect((result.entry as { partCount?: number }).partCount).toBe(2);
     expect((result.entry as { isSetting?: boolean }).isSetting).toBe(true);

@@ -38,25 +38,6 @@ function defaultVoice(index: number): ActorVoice {
 }
 
 /**
- * Resolve an `opfs://<id>` gltfPath reference to the current session blob URL.
- * Returns the piece unchanged if the gltfPath is absent or not an opfs:// ref.
- * Strips gltfPath when the entry cannot be resolved so SceneBridge falls back
- * to the placeholder mesh geometry rather than attempting a broken URL load.
- */
-function resolveOpfsGltfPath(
-  piece: SetPiece,
-  userEntries: Array<{ id: string; gltfPath?: string }>,
-): SetPiece {
-  if (!piece.gltfPath?.startsWith('opfs://')) return piece;
-  const entryId = piece.gltfPath.slice('opfs://'.length);
-  const entry = userEntries.find((e) => e.id === entryId);
-  if (entry?.gltfPath) return { ...piece, gltfPath: entry.gltfPath };
-  // Entry not found — remove gltfPath so SceneBridge uses the placeholder geometry.
-  const { gltfPath: _dropped, ...rest } = piece;
-  return rest as SetPiece;
-}
-
-/**
  * Deserialise a `StoredScene` + cast into a renderable `Model`.
  *
  * Resolves each `StoredActor` against the bundled catalogue to obtain its
@@ -66,10 +47,9 @@ function resolveOpfsGltfPath(
  * Actor IDs in `StoredScene.stagedActors` and `StoredScene.actions` must
  * match `StoredActor.id` — the IDs are not remapped.
  *
- * Pass `userEntries` to resolve `opfs://<id>` gltfPath references in set
- * pieces to the current session blob URLs produced by OPFSCatalogueStore,
- * to look up user-added characters by catalogueId, and to supply the tree
- * documents (`document`) that document-backed set pieces are realised from.
+ * Pass `userEntries` to look up user-added characters by catalogueId and to supply
+ * the tree documents (`document`) that saved sets are realised from. Bundled set
+ * pieces carry their document on the entry itself.
  */
 /** Loose user-entry shape sufficient for actor/character resolution. */
 type UserEntryLike = {
@@ -86,19 +66,22 @@ type UserEntryLike = {
 };
 
 /**
- * Realise every document-backed piece into a pre-built object tree, keyed by piece
- * name. A piece whose entry (or document) is missing yields nothing, so it falls
- * back to the placeholder geometry the resolver gave it rather than silently
- * rendering a stale GLB bake.
+ * Realise every set-piece into a pre-built object tree, keyed by piece name. A
+ * piece is realised from the tree document of the entry it names
+ * (`piece.catalogueId`) — bundled definitions carry it inline, a saved set has it
+ * attached by whoever materialised the entry list. A piece whose entry (or
+ * document) is missing yields nothing, so it falls back to the placeholder
+ * geometry the resolver gave it.
  */
 function realiseDocumentSets(
   pieces: SetPiece[],
-  userEntries: UserEntryLike[],
+  entries: CatalogueEntry[],
 ): Map<string, THREE.Object3D> {
   const groups = new Map<string, THREE.Object3D>();
   for (const piece of pieces) {
     if (!piece.catalogueId) continue;
-    const document = userEntries.find((e) => e.id === piece.catalogueId)?.document;
+    const entry = getById(piece.catalogueId, entries);
+    const document = entry?.kind === 'set-piece' ? entry.document : undefined;
     if (!document) {
       console.warn(`storedSceneToModel: no document for catalogue piece "${piece.catalogueId}" — rendering placeholder geometry`);
       continue;
@@ -151,13 +134,13 @@ export function storedSceneToModel(
   for (const light of storedScene.lights) {
     scene.addLight(light);
   }
-  // Expand any `ref` (Instance) pieces into their rendered children before the
-  // opfs:// gltfPath resolution and scene assembly below — flattening happens
-  // here, at render time, never persisted back onto the stored scene.
+  // Expand any `ref` (Instance) pieces into their rendered children before the scene
+  // assembly below — flattening happens here, at render time, never persisted back
+  // onto the stored scene.
   const mergedCatalogueEntries = [...CATALOGUE_ENTRIES, ...(userEntries as unknown as CatalogueEntry[])];
   const resolvedSet = resolveInstances(storedScene.set, mergedCatalogueEntries);
   for (const piece of resolvedSet) {
-    scene.addSetPiece(resolveOpfsGltfPath(piece, userEntries));
+    scene.addSetPiece(piece);
   }
   for (const staged of storedScene.stagedActors) {
     const { actorId, ...opts } = staged;
@@ -291,7 +274,7 @@ export function storedSceneToModel(
     scene.addAction(action);
   }
 
-  return sceneToModel(scene, actors, realiseDocumentSets(resolvedSet, userEntries));
+  return sceneToModel(scene, actors, realiseDocumentSets(resolvedSet, mergedCatalogueEntries));
 }
 
 /**

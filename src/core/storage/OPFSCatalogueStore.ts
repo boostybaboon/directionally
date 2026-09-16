@@ -1,7 +1,7 @@
 import type { CharacterEntry, SetPieceEntry } from '../catalogue/types.js';
 import type { CharacterSpec } from '../character/characterSpec.js';
 import type { SetDocument } from '../sketcher/documentTree.js';
-import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
+import type { LightConfig, Vec3 } from '../domain/types.js';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -61,11 +61,6 @@ type StoredEntry = {
   /** Number of editable primitives backing this entry. */
   partCount?: number;
 };
-
-// ── Placeholder for GLB set-pieces without explicit procedural geometry ───────
-
-const PLACEHOLDER_GEOMETRY: GeometryConfig = { type: 'box', width: 0.01, height: 0.01, depth: 0.01 };
-const PLACEHOLDER_MATERIAL: MaterialConfig = { color: 0x000000, metalness: 0, roughness: 1 };
 
 // ── OPFS helpers ──────────────────────────────────────────────────────────────
 
@@ -137,16 +132,12 @@ function toUserEntry(s: StoredEntry, gltfPath?: string): UserCatalogueEntry {
       sourceDesignId: s.sourceDesignId,
     };
   }
-  // A set-piece entry is document-backed: the placeholder body below is inert and
-  // only exists so the write path (a GLB bake) keeps one `SetPieceEntry` shape.
+  // A set-piece entry is document-backed: its body and its orientation are the tree
+  // document, so nothing besides identity and metadata lives on the entry.
   return {
     kind: 'set-piece',
     id: s.id,
     label: s.label,
-    ...(gltfPath ? { gltfPath } : {}),
-    geometry: PLACEHOLDER_GEOMETRY,
-    material: PLACEHOLDER_MATERIAL,
-    defaultRotation: s.defaultRotation,
     ...(s.environmentId ? { environmentId: s.environmentId } : {}),
     ...(s.lights ? { lights: s.lights } : {}),
     // An explicit classification round-trips, including `false` (a prop), which is
@@ -164,19 +155,20 @@ function toUserEntry(s: StoredEntry, gltfPath?: string): UserCatalogueEntry {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * True when an entry is usable as an asset: it has a baked GLB or a character spec.
- * A document-only entry is still an unpublished draft — the Sketcher's editing
- * surface, not a catalogue item (ROADMAP_CATALOGUE step 8 removes the bake and
- * makes the document itself the published artefact).
+ * True when an entry is usable as an asset. A character needs a baked GLB or a spec;
+ * a set-piece *is* its tree document (ROADMAP_CATALOGUE step 8), so having one is
+ * what publishes it — there is no separate bake and no publish step.
  */
 function isPublishedEntry(s: StoredEntry): boolean {
+  if (s.kind === 'set-piece') return Boolean(s.hasDocument);
   return s.filename !== '' || Boolean(s.spec);
 }
 
 /**
- * Return all user-added catalogue entries. Each entry gets a fresh gltfPath
- * object URL produced from its OPFS file — no reload fragility.
- * Entries whose OPFS file is missing are silently skipped.
+ * Return all user-added catalogue entries. Character entries get a fresh gltfPath
+ * object URL produced from their OPFS file — no reload fragility. Set-piece entries
+ * are document-backed and carry nothing but metadata here; their document is read on
+ * demand (`getDocument`). Entries whose OPFS file is missing are silently skipped.
  */
 export async function list(): Promise<UserCatalogueEntry[]> {
   const dir = await _getDir();
@@ -201,9 +193,8 @@ export async function list(): Promise<UserCatalogueEntry[]> {
 }
 
 /**
- * Return every entry backed by an editable document — a saved set — most recently
- * modified first. This is the Sketcher's "Open" list; it includes drafts that have
- * not been published to the catalogue yet.
+ * Return every entry backed by an editable document — every saved set, most
+ * recently modified first. This is the Sketcher's sets column.
  */
 export async function listDocuments(): Promise<UserCatalogueEntry[]> {
   const dir = await _getDir();
@@ -221,7 +212,7 @@ export async function listDocuments(): Promise<UserCatalogueEntry[]> {
  * Pass `sourceDesignId` to link the character to the design it was built from,
  * which is what the script roster's "edit" affordance deep-links to. Sets are not
  * added this way: a set is created from its tree document
- * (`createSetPieceDocument`), and a GLB bake is written onto that same entry.
+ * (`createSetPieceDocument`) and has no GLB of its own.
  */
 export async function add(
   blob: Blob,
@@ -259,8 +250,9 @@ export async function add(
 }
 
 /**
- * Metadata a set-piece carries alongside its document and bake: its name, its
- * classification (scenery vs prop) and the baseline lighting it was built with.
+ * Metadata a set-piece carries alongside its tree document: its name, its
+ * classification (scenery vs prop), the baseline lighting/environment it was built
+ * with, and how many parts it is made of.
  */
 export type SetPieceMeta = {
   label?: string;
@@ -287,42 +279,38 @@ function mergeSetPieceMeta(entry: StoredEntry, meta: SetPieceMeta): StoredEntry 
 }
 
 /**
- * Overwrite the GLB baked for an existing entry in place, optionally updating its
- * label and metadata. Returns the updated entry, or null if the id is not found.
+ * Overwrite the GLB baked for an existing character entry in place, optionally
+ * renaming it. Returns the updated entry, or null if the id is not found.
  */
 export async function update(
   id: string,
   blob: Blob,
   label?: string,
-  meta?: Omit<SetPieceMeta, 'label'>,
 ): Promise<UserCatalogueEntry | null> {
   const dir = await _getDir();
   const stored = await readMeta(dir);
   const idx = stored.findIndex((e) => e.id === id);
   if (idx === -1) return null;
 
-  const prev = stored[idx];
-  // A document-backed entry gains its bake here: it keeps the document and takes
-  // the GLB filename that marks the set as published.
-  const filename = prev.filename || `${id}.glb`;
-
+  const filename = stored[idx].filename || `${id}.glb`;
   const fh = await dir.getFileHandle(filename, { create: true });
   const writable = await fh.createWritable();
   await writable.write(blob);
   await writable.close();
 
-  stored[idx] = mergeSetPieceMeta(
-    { ...prev, filename },
-    { ...meta, ...(label !== undefined ? { label } : {}) },
-  );
+  stored[idx] = {
+    ...stored[idx],
+    filename,
+    ...(label !== undefined ? { label: label.trim() } : {}),
+  };
   await writeMeta(dir, stored);
 
   return toUserEntry(stored[idx], URL.createObjectURL(blob));
 }
 
 /**
- * Rewrite a set-piece's metadata without touching its document or its bake — the
- * Sketcher's rename and reclassify path. Returns the updated entry, or null when the
+ * Rewrite a set-piece's metadata without touching its document — the Sketcher's
+ * rename and reclassify path. Returns the updated entry, or null when the
  * id is unknown or is not a set-piece.
  */
 export async function updateSetPieceMeta(
@@ -508,14 +496,16 @@ export async function getDocument(id: string): Promise<SetDocument | null> {
 }
 
 /**
- * Write an entry's editable document and bump `modifiedAt` (optionally renaming).
- * A set-piece with no document yet becomes editable. Returns the updated entry, or
- * null when the id is unknown or is not a set-piece.
+ * Write an entry's editable document and, in the same pass, its metadata (name,
+ * classification, baseline lighting/environment, part count) — every autosave keeps
+ * the entry and its document in lock-step, so nothing about a set needs a separate
+ * save or publish step. A set-piece with no document yet becomes editable. Returns
+ * the updated entry, or null when the id is unknown or is not a set-piece.
  */
 export async function saveDocument(
   id: string,
   document: SetDocument,
-  label?: string,
+  meta: SetPieceMeta = {},
 ): Promise<UserCatalogueEntry | null> {
   const dir = await _getDir();
   const stored = await readMeta(dir);
@@ -527,12 +517,7 @@ export async function saveDocument(
   await writable.write(JSON.stringify(document));
   await writable.close();
 
-  stored[idx] = {
-    ...stored[idx],
-    hasDocument: true,
-    modifiedAt: Date.now(),
-    ...(label !== undefined ? { label: label.trim() } : {}),
-  };
+  stored[idx] = mergeSetPieceMeta({ ...stored[idx], hasDocument: true }, meta);
   await writeMeta(dir, stored);
 
   return toUserEntry(stored[idx]);

@@ -1,5 +1,5 @@
 import type * as THREE from 'three';
-import type { LightConfig } from '../domain/types.js';
+import type { GeometryConfig, LightConfig, MaterialConfig } from '../domain/types.js';
 
 export type SketcherPart = {
   id: string;
@@ -33,6 +33,12 @@ export type SketcherPart = {
    * Null for non-lathe parts.
    */
   lathePhiLength: number | null;
+  /**
+   * Body of a part inserted from the catalogue (a `catalogue` draft): the entry's
+   * procedural geometry and material. Absent for primitives, sketches and lathes.
+   */
+  geometry?: GeometryConfig;
+  material?: MaterialConfig;
   /** Per-draw-group colour array. Length matches mesh.material[]. */
   faceColors: number[];
   /**
@@ -147,17 +153,21 @@ export type GroupSnapshot = {
 // ── Draft types (used by CartoonSketcher.toDraft / loadDraft for persistence) ─
 
 /**
- * JSON-serializable description of a single part. Geometry is stored as either
- * a primitive name ('Box', 'Cylinder', …) or the XZ shape points + depth for
- * sketch-extruded parts. Transforms are local to the parent group (world when
- * the part is ungrouped).
+ * JSON-serializable description of a single part. Geometry is stored as a
+ * primitive name ('Box', 'Cylinder', …), the XZ shape points + depth for
+ * sketch-extruded parts, a revolve profile for lathed parts, or the procedural
+ * geometry/material of a catalogue part. Transforms are local to the parent group
+ * (world when the part is ungrouped).
  */
 export type PartDraft = {
   id: string;
-  kind: 'primitive' | 'sketch' | 'lathed';
+  kind: 'primitive' | 'sketch' | 'lathed' | 'catalogue';
   name: string;
   /** Optional semantic name; falls back to `name` when absent. */
   label?: string;
+  /** Body of a `catalogue` part — the entry's own procedural geometry and material. */
+  geometry?: GeometryConfig;
+  material?: MaterialConfig;
   shapePoints?: [number, number][];
   holes?: [number, number][][];
   lathePoints?: [number, number][];

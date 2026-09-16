@@ -2,15 +2,13 @@ import * as THREE from 'three';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { AttachManager } from './AttachManager.js';
-import { V, PRIMITIVE_PRESETS, PRESET_BY_NAME, buildLatheGeometry } from './geometry.js';
+import { PRIMITIVE_PRESETS, PRESET_BY_NAME, buildLatheGeometry } from './geometry.js';
 import { buildPartMesh } from './realise.js';
 import type { JointSnapshot, GroupSnapshot, PartDraft, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
 import { draftToDocument, documentToDraft, insertPart, groupParts, ungroupPart, removePart as removeTreePart, setPartColor as setTreePartColor, setFaceColor as setTreeFaceColor, setFaceTexture as setTreeFaceTexture, setPartLabel as setTreePartLabel, findGroupOfPartId } from './documentTree.js';
 import type { SetDocument, SetNode, SetSnapshot } from './documentTree.js';
 import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
-import { expandEntry } from '../setting/settingSpec.js';
-import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
-import type { CatalogueEntry, SetPieceEntry } from '../catalogue/types.js';
+import type { SetPieceEntry } from '../catalogue/types.js';
 
 const DEFAULT_COLOR = 0x8888cc;
 
@@ -45,48 +43,10 @@ function buildThreeLight(config: LightConfig): THREE.Light | null {
   }
 }
 
-/** Build a raw THREE.BufferGeometry from a catalogue GeometryConfig (Track SET, N3). */
-function buildCatalogueGeometry(config: GeometryConfig): THREE.BufferGeometry {
-  switch (config.type) {
-    case 'box':
-      return new THREE.BoxGeometry(config.width, config.height, config.depth);
-    case 'plane':
-      return new THREE.PlaneGeometry(config.width, config.height);
-    case 'sphere':
-      return new THREE.SphereGeometry(config.radius, config.widthSegments ?? 16, config.heightSegments ?? 12);
-    case 'cylinder':
-      return new THREE.CylinderGeometry(config.radiusTop, config.radiusBottom, config.height, config.radialSegments ?? 16);
-  }
-}
-
-/**
- * Collapse any existing draw groups into a single group so an imported catalogue
- * part always has exactly one material slot — catalogue geometry has no authored
- * per-face semantics, and the face-paint path assumes one FaceGroupInfo per slot.
- */
-function withSingleFaceGroup(geo: THREE.BufferGeometry): THREE.BufferGeometry {
-  geo.clearGroups();
-  const indexCount = geo.index ? geo.index.count : geo.attributes.position.count;
-  geo.addGroup(0, indexCount, 0);
-  geo.userData.faceGroups = [{ normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 }];
-  return geo;
-}
-
-/** Build a THREE.MeshStandardMaterial from a catalogue MaterialConfig. */
-function buildCatalogueMaterial(config: MaterialConfig): THREE.MeshStandardMaterial {
-  const mat = new THREE.MeshStandardMaterial({
-    color: config.color,
-    roughness: config.roughness ?? 0.5,
-    metalness: config.metalness ?? 0.1,
-  });
-  if (config.emissive !== undefined) mat.emissive.setHex(config.emissive);
-  if (config.textureUrl) {
-    const tex = new THREE.TextureLoader().load(config.textureUrl);
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(config.repeatU ?? 1, config.repeatV ?? 1);
-    mat.map = tex;
-  }
-  return mat;
+/** Euler XYZ (radians) → quaternion, the transform form a `PartDraft` stores. */
+function eulerToQuaternion(euler: Vec3): [number, number, number, number] {
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...euler));
+  return [q.x, q.y, q.z, q.w];
 }
 
 type Phase = 'idle' | 'drawing' | 'pending-holes' | 'hole-drawing' | 'extruding' | 'revolve-drawing' | 'pending-revolve';
@@ -427,9 +387,11 @@ export class CartoonSketcher {
   }
 
   /**
-   * Insert one leaf piece of catalogue geometry as a SketcherPart (Track SET, N3).
-   * The part is a single-material mesh with a single face group so it stays
-   * editable through the same colour/texture/transform paths as a sketched part.
+   * Insert one catalogue part — procedural geometry + material — as a tree leaf
+   * (Track SET, N3). The part is a single-material mesh with a single face group so
+   * it stays editable through the same colour/texture/transform paths as a sketched
+   * part, and it keeps the catalogue's own material body (roughness, metalness,
+   * texture repeat) rather than collapsing to a flat colour.
    */
   insertCataloguePiece(
     name: string,
@@ -438,53 +400,53 @@ export class CartoonSketcher {
     position?: Vec3,
     rotation?: Vec3,
     scale?: Vec3,
-  ): SketcherPart {
-    const geo = withSingleFaceGroup(buildCatalogueGeometry(geometry));
-    const mat = buildCatalogueMaterial(material);
-    const mesh = new THREE.Mesh(geo, [mat]);
-    if (position) mesh.position.set(...position);
-    if (rotation) mesh.rotation.set(...rotation);
-    if (scale) mesh.scale.set(...scale);
-
-    const color = material.color;
-    const part: SketcherPart = {
-      id: `part-${this.nextId++}`,
-      mesh,
-      depth: 0,
-      centroid: new THREE.Vector3(),
+  ): SketcherPart | null {
+    const id = `part-${this.nextId++}`;
+    const draft: PartDraft = {
+      id,
+      kind: 'catalogue',
       name,
-      color,
-      shapePoints: null,
-      holes: null,
-      lathePoints: null,
-      lathePhiLength: null,
-      faceColors: [color],
-      faceTextures: [material.textureUrl ?? null],
+      geometry,
+      material,
+      position: position ?? [0, 0, 0],
+      quaternion: rotation ? eulerToQuaternion(rotation) : [0, 0, 0, 1],
+      scale: scale ?? [1, 1, 1],
+      color: material.color,
+      faceColors: [material.color],
+      faceTextures: [null],
     };
-    this.scene.add(mesh);
-    this.parts.push(part);
-    this.allParts.set(part.id, part);
-    return part;
+    this.editDocument((doc) => insertPart(doc, draft));
+    return this.parts.find((p) => p.id === id) ?? null;
   }
 
   /**
-   * Insert a catalogue set-piece entry (Track SET, N3). A leaf entry becomes a
-   * single part; a composite (or nested composite) expands into multiple parts
-   * grouped into one movable AssemblyGroup. GLB-backed pieces are skipped — they
-   * have no editable procedural geometry. `entries` is only needed to resolve
-   * `ref`s inside a composite's `compose`.
+   * Insert a bundled catalogue entry (Track SET, N3). A bundled entry *is* its
+   * document, so this copies the document's part leaves into the session — at their
+   * own local transforms, under one group when the prop is an assembly (so it still
+   * moves as one unit). Runtime ids are reassigned per insert: two instances of the
+   * same definition are independent parts.
+   *
+   * A saved set (`hasDocument`) is not a component: it is opened from the Sets
+   * column, so nothing is inserted for one here.
    */
   insertCatalogueEntry(
     entry: SetPieceEntry,
-    entries: CatalogueEntry[] = CATALOGUE_ENTRIES,
   ): { parts: SketcherPart[]; group: AssemblyGroup | null } {
-    const pieces = expandEntry(entry, undefined, entries);
-    const parts: SketcherPart[] = [];
-    for (const piece of pieces) {
-      if (piece.gltfPath) continue;
-      parts.push(this.insertCataloguePiece(piece.name, piece.geometry, piece.material, piece.position, piece.rotation, piece.scale));
-    }
-    const group = parts.length >= 2 ? this.attach.createGroup(parts) : null;
+    if (!entry.document) return { parts: [], group: null };
+
+    const drafts: PartDraft[] = documentToDraft(entry.document).parts.map((pd) => ({
+      ...pd,
+      id: `part-${this.nextId++}`,
+    }));
+    this.editDocument((doc) => {
+      for (const draft of drafts) insertPart(doc, draft);
+      if (drafts.length > 1) groupParts(doc, drafts.map((d) => d.id), entry.label);
+    });
+
+    const parts = drafts
+      .map((d) => this.parts.find((p) => p.id === d.id))
+      .filter((p): p is SketcherPart => p !== undefined);
+    const group = parts.length > 1 ? this.attach.groupForPart(parts[0].id) ?? null : null;
     return { parts, group };
   }
 
@@ -795,9 +757,17 @@ export class CartoonSketcher {
   private partToDraft(p: SketcherPart): PartDraft {
     const draft: PartDraft = {
       id: p.id,
-      kind: p.shapePoints !== null ? 'sketch' : (p.lathePoints !== null ? 'lathed' : 'primitive'),
+      kind: p.shapePoints !== null
+        ? 'sketch'
+        : p.lathePoints !== null
+          ? 'lathed'
+          : p.geometry
+            ? 'catalogue'
+            : 'primitive',
       name: p.name,
       ...(p.label !== undefined ? { label: p.label } : {}),
+      ...(p.geometry !== undefined ? { geometry: p.geometry } : {}),
+      ...(p.material !== undefined ? { material: p.material } : {}),
       position: [p.mesh.position.x, p.mesh.position.y, p.mesh.position.z],
       quaternion: [p.mesh.quaternion.x, p.mesh.quaternion.y, p.mesh.quaternion.z, p.mesh.quaternion.w],
       scale: [p.mesh.scale.x, p.mesh.scale.y, p.mesh.scale.z],
@@ -888,6 +858,8 @@ export class CartoonSketcher {
         prev.depth = pd.kind === 'sketch' ? (pd.depth ?? 0) : 0;
         prev.name = pd.name;
         prev.label = pd.label;
+        prev.geometry = pd.geometry;
+        prev.material = pd.material;
         prev.color = pd.color;
         prev.shapePoints = pd.kind === 'sketch' ? (pd.shapePoints ?? null) : null;
         prev.holes = pd.holes ?? null;
@@ -914,6 +886,8 @@ export class CartoonSketcher {
         centroid: new THREE.Vector3(),
         name: pd.name,
         label: pd.label,
+        geometry: pd.geometry,
+        material: pd.material,
         color: pd.color,
         shapePoints: pd.kind === 'sketch' ? (pd.shapePoints ?? null) : null,
         holes: pd.holes ?? null,

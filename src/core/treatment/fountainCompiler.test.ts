@@ -2,7 +2,30 @@ import { describe, it, expect } from 'vitest';
 import { renderFountain, createDefaultScriptDocument } from './fountain';
 import { compileScriptDocument, resolveSetting } from './fountainCompiler';
 import type { ScriptDocument, Beat, ActionBeat, StageSide, StageMark } from './fountain';
+import { documentFromParts } from '../sketcher/documentTree.js';
 import type { CatalogueEntry } from '../catalogue/types.js';
+import type { PartDraft } from '../sketcher/types.js';
+import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
+
+/** A catalogue part, as a bundled set-piece document holds them. */
+function cataloguePart(
+  id: string,
+  geometry: GeometryConfig,
+  material: MaterialConfig,
+  position?: Vec3,
+): PartDraft {
+  return {
+    id,
+    kind: 'catalogue',
+    name: 'Box',
+    geometry,
+    material,
+    position: position ?? [0, 0, 0],
+    quaternion: [0, 0, 0, 1],
+    scale: [1, 1, 1],
+    color: material.color,
+  };
+}
 
 // ── Programmatic fixture builders ────────────────────────────────────────────
 
@@ -253,20 +276,19 @@ describe('compileScriptDocument', () => {
     expect(result.diagnostics.some((d) => d.level === 'info' && d.message.includes('CLASSROOM'))).toBe(true);
   });
 
-  it('resolves a user-authored (OPFS) set-piece entry with an opfs:// gltfPath', () => {
+  it('resolves a saved set to a piece carrying its catalogue identity', () => {
     const doc = buildDoc([sceneWithSetting('Classroom')], ['Robot']);
     const userEntry: CatalogueEntry = {
       kind: 'set-piece',
       id: 'user-classroom',
       label: 'Classroom',
-      gltfPath: 'blob:http://localhost/abc',
-      geometry: { type: 'box', width: 1, height: 1, depth: 1 },
-      material: { color: 0xffffff },
+      hasDocument: true,
     };
     const result = compileScriptDocument(doc, [userEntry]);
 
+    expect(result.scenes[0].scene.set).toHaveLength(1);
     expect(result.scenes[0].scene.set[0].name).toBe('user-classroom');
-    expect(result.scenes[0].scene.set[0].gltfPath).toBe('opfs://user-classroom');
+    expect(result.scenes[0].scene.set[0].catalogueId).toBe('user-classroom');
     expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
   });
 
@@ -276,9 +298,7 @@ describe('compileScriptDocument', () => {
       kind: 'set-piece',
       id: 'user-classroom-setting',
       label: 'Classroom',
-      compose: [
-        { geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0xffffff } },
-      ],
+      hasDocument: true,
       environmentId: 'exterior-sky',
       lights: [{ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 1 }],
     };
@@ -298,12 +318,12 @@ describe('compileScriptDocument', () => {
     expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
   });
 
-  it('flattens a composite set-piece entry into multiple pieces', () => {
+  it('resolves a bundled prop entry to a piece the renderer realises', () => {
     const doc = buildDoc([sceneWithSetting('Chair')], ['Robot']);
     const result = compileScriptDocument(doc);
 
     expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
-    expect(result.scenes[0].scene.set.length).toBeGreaterThan(1);
+    expect(result.scenes[0].scene.set.map((p) => p.catalogueId)).toEqual(['chair']);
   });
 
   it('does not emit a setting diagnostic when the heading has no setting', () => {
@@ -411,8 +431,7 @@ describe('resolveSetting (ambiguity + binding)', () => {
     kind: 'set-piece',
     id,
     label: 'GARDEN',
-    geometry: { type: 'box', width: 1, height: 1, depth: 1 },
-    material: { color: 0x11aa22 },
+    document: documentFromParts([cataloguePart('ground', { type: 'box', width: 1, height: 1, depth: 1 }, { color: 0x11aa22 })]),
     userAdded: true as const,
     addedAt,
   });
@@ -457,8 +476,7 @@ describe('compileScriptDocument (ambiguity + auto-bind)', () => {
     kind: 'set-piece',
     id,
     label,
-    geometry: { type: 'box', width: 1, height: 1, depth: 1 },
-    material: { color: 0x11aa22 },
+    document: documentFromParts([cataloguePart('ground', { type: 'box', width: 1, height: 1, depth: 1 }, { color: 0x11aa22 })]),
   });
 
   it('ambiguous cast name yields an ambiguous-cast diagnostic and no auto-bind', () => {

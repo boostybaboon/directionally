@@ -1,10 +1,31 @@
 import { describe, it, expect } from 'vitest';
 import { getCharacters, getSetPieces, getById, isSettingEntry } from './catalogue';
 import { CATALOGUE_ENTRIES } from './entries';
+import { documentFromParts, documentToDraft } from '../sketcher/documentTree';
 import type { CatalogueEntry, CharacterEntry, SetPieceEntry } from './types';
+import type { PartDraft } from '../sketcher/types';
+import type { GeometryConfig } from '../domain/types';
+
+/** First part of a bundled set-piece entry's document. */
+function bundledPart(id: string): PartDraft {
+  const entry = getById(id, CATALOGUE_ENTRIES) as SetPieceEntry | undefined;
+  return documentToDraft(entry?.document ?? { version: 2, root: [], joints: [] }).parts[0];
+}
 
 // Controlled fixture — tests must not depend on real seed data so they
 // remain green even when entries.ts changes.
+/** A one-part set-piece entry, as the bundled library defines them. */
+function solidEntry(id: string, label: string, geometry: GeometryConfig, color: number): SetPieceEntry {
+  return {
+    kind: 'set-piece',
+    id,
+    label,
+    document: documentFromParts([
+      { id: 'body', kind: 'catalogue', name: label, geometry, material: { color }, position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1], color },
+    ]),
+  };
+}
+
 const robot: CharacterEntry = {
   kind: 'character',
   id: 'robot-a',
@@ -12,29 +33,9 @@ const robot: CharacterEntry = {
   gltfPath: '/models/gltf/RobotExpressive.glb',
 };
 
-const box: SetPieceEntry = {
-  kind: 'set-piece',
-  id: 'box-1',
-  label: 'Box',
-  geometry: { type: 'box', width: 1, height: 1, depth: 1 },
-  material: { color: 0x888888 },
-};
-
-const sphere: SetPieceEntry = {
-  kind: 'set-piece',
-  id: 'sphere-1',
-  label: 'Sphere',
-  geometry: { type: 'sphere', radius: 0.5 },
-  material: { color: 0x4488cc },
-};
-
-const cylinder: SetPieceEntry = {
-  kind: 'set-piece',
-  id: 'cylinder-1',
-  label: 'Cylinder',
-  geometry: { type: 'cylinder', radiusTop: 0.5, radiusBottom: 0.5, height: 1 },
-  material: { color: 0xaa6644 },
-};
+const box: SetPieceEntry = solidEntry('box-1', 'Box', { type: 'box', width: 1, height: 1, depth: 1 }, 0x888888);
+const sphere: SetPieceEntry = solidEntry('sphere-1', 'Sphere', { type: 'sphere', radius: 0.5 }, 0x4488cc);
+const cylinder: SetPieceEntry = solidEntry('cylinder-1', 'Cylinder', { type: 'cylinder', radiusTop: 0.5, radiusBottom: 0.5, height: 1 }, 0xaa6644);
 
 const fixture: CatalogueEntry[] = [robot, box, sphere, cylinder];
 
@@ -121,13 +122,29 @@ describe('CATALOGUE_ENTRIES seed data — Phase 9.B set pieces', () => {
   );
 
   it('wall-flat is a box with correct proportions', () => {
-    const p = getById('wall-flat', CATALOGUE_ENTRIES) as SetPieceEntry | undefined;
-    expect(p?.geometry).toMatchObject({ type: 'box', width: 4, height: 3, depth: 0.15 });
+    expect(bundledPart('wall-flat').geometry).toMatchObject({ type: 'box', width: 4, height: 3, depth: 0.15 });
   });
 
   it('stage-deck is a plane', () => {
-    const p = getById('stage-deck', CATALOGUE_ENTRIES) as SetPieceEntry | undefined;
-    expect(p?.geometry?.type).toBe('plane');
+    expect(bundledPart('stage-deck').geometry?.type).toBe('plane');
+  });
+
+  it('a plane-bodied set piece lies flat on the ground', () => {
+    // The orientation belongs to the document (a part-local rotation), not to a
+    // placement convention: inserted or realised, the floor lies flat either way.
+    const [x, y, z, w] = bundledPart('concrete-floor').quaternion;
+    expect(x).toBeCloseTo(-Math.SQRT1_2);
+    expect(y).toBeCloseTo(0);
+    expect(z).toBeCloseTo(0);
+    expect(w).toBeCloseTo(Math.SQRT1_2);
+  });
+
+  it('every set piece carries its body as a tree document', () => {
+    for (const p of pieces) {
+      expect(p.document, p.id).toBeDefined();
+      expect(documentToDraft(p.document!).parts.length).toBeGreaterThan(0);
+      expect(p.document!.root.every((n) => n.kind === 'part')).toBe(true);
+    }
   });
 });
 

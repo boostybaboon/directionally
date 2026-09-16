@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import type { GeometryConfig, MaterialConfig } from '../domain/types.js';
 import type { FaceGroupInfo } from './types.js';
 
 // Pure geometry/material helpers, shared by the Realiser (`realise.ts`) and the
@@ -208,6 +209,59 @@ function buildMaterials(geo: THREE.BufferGeometry, color: number, defaultSide: T
   });
 }
 
-export { V, PRIMITIVE_PRESETS, PRESET_BY_NAME, buildLatheGeometry, buildMaterials };
+/** Build a raw THREE.BufferGeometry from a catalogue GeometryConfig. */
+function buildCatalogueGeometry(config: GeometryConfig): THREE.BufferGeometry {
+  switch (config.type) {
+    case 'box':
+      return new THREE.BoxGeometry(config.width, config.height, config.depth);
+    case 'plane':
+      return new THREE.PlaneGeometry(config.width, config.height);
+    case 'sphere':
+      return new THREE.SphereGeometry(config.radius, config.widthSegments ?? 16, config.heightSegments ?? 12);
+    case 'cylinder':
+      return new THREE.CylinderGeometry(config.radiusTop, config.radiusBottom, config.height, config.radialSegments ?? 16);
+  }
+}
+
+/**
+ * Collapse any existing draw groups into a single group so an imported catalogue
+ * part always has exactly one material slot — catalogue geometry has no authored
+ * per-face semantics, and the face-paint path assumes one FaceGroupInfo per slot.
+ */
+function withSingleFaceGroup(geo: THREE.BufferGeometry): THREE.BufferGeometry {
+  geo.clearGroups();
+  const indexCount = geo.index ? geo.index.count : geo.attributes.position.count;
+  geo.addGroup(0, indexCount, 0);
+  geo.userData.faceGroups = [{ normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 }];
+  return geo;
+}
+
+/** Build a MeshStandardMaterial from a catalogue MaterialConfig, repeating its texture. */
+function buildCatalogueMaterial(config: MaterialConfig): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({
+    color: config.color,
+    roughness: config.roughness ?? 0.5,
+    metalness: config.metalness ?? 0.1,
+  });
+  if (config.emissive !== undefined) mat.emissive.setHex(config.emissive);
+  if (config.textureUrl) {
+    const tex = new THREE.TextureLoader().load(config.textureUrl);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(config.repeatU ?? 1, config.repeatV ?? 1);
+    mat.map = tex;
+  }
+  return mat;
+}
+
+export {
+  V,
+  PRIMITIVE_PRESETS,
+  PRESET_BY_NAME,
+  buildLatheGeometry,
+  buildMaterials,
+  buildCatalogueGeometry,
+  withSingleFaceGroup,
+  buildCatalogueMaterial,
+};
 
 

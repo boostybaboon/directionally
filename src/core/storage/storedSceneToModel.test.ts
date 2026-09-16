@@ -99,39 +99,32 @@ describe('storedSceneToModel – set pieces', () => {
     expect(model.meshes[0].rotation.y).toBeCloseTo(1);
   });
 
-  it('resolves opfs:// set piece gltfPath to the session blob URL from userEntries', () => {
+  it('realises a bundled entry into its document tree, placed by the piece transform', () => {
     const scene = baseScene({
-      set: [{
-        name: 'my-chair',
-        gltfPath: 'opfs://user-entry-abc',
-        geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 },
-        material: { color: 0x000000, metalness: 0, roughness: 1 },
-      }],
+      set: [{ name: 'chair-1', ref: 'chair', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 }, position: [2, 0, 0] }],
     });
-    const userEntries = [{ id: 'user-entry-abc', gltfPath: 'blob:http://localhost/fake-url' }];
-    const model = storedSceneToModel(scene, [], userEntries);
-    expect(model.gltfs).toHaveLength(1);
-    expect(model.gltfs[0].name).toBe('my-chair');
+    const model = storedSceneToModel(scene, []);
+
     expect(model.meshes).toHaveLength(0);
+    expect(model.groups.map((g) => g.name)).toEqual(['chair-1/chair']);
+    // The piece transform places the whole prop; its parts keep local transforms.
+    expect(model.groups[0].position.toArray()).toEqual([2, 0, 0]);
+    expect(model.groups[0].threeObject.children).toHaveLength(6);
   });
 
-  it('leaves opfs:// gltfPath unresolved (no mesh) when userEntries is empty', () => {
+  it('falls back to the placeholder piece for an unknown catalogue id', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const scene = baseScene({
-      set: [{
-        name: 'my-chair',
-        gltfPath: 'opfs://user-entry-abc',
-        geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 },
-        material: { color: 0x000000, metalness: 0, roughness: 1 },
-      }],
+      set: [{ name: 'ghost', catalogueId: 'no-such-entry', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0x888888 } }],
     });
-    // No userEntries — the opfs:// reference cannot be resolved; falls back to mesh.
-    const model = storedSceneToModel(scene, [], []);
-    expect(model.gltfs).toHaveLength(0);
-    expect(model.meshes).toHaveLength(1);
+    const model = storedSceneToModel(scene, []);
+
+    expect(model.groups).toHaveLength(0);
+    expect(model.meshes.map((m) => m.name)).toEqual(['ghost']);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no-such-entry'));
+    warn.mockRestore();
   });
 });
-
-// ── Staged actors ─────────────────────────────────────────────────────────────
 
 describe('storedSceneToModel – staged actors', () => {
   it('produces one GLTF per staged actor', () => {
@@ -182,18 +175,6 @@ describe('storedSceneToModel – staged actors', () => {
 // ── Instance (ref) expansion ──────────────────────────────────────────────────
 
 describe('storedSceneToModel – ref instances', () => {
-  it('expands a set piece with a ref against the bundled catalogue into its composite meshes', () => {
-    const scene = baseScene({
-      set: [
-        { name: 'chair-1', ref: 'chair', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 }, position: [2, 0, 0] },
-      ],
-    });
-    const model = storedSceneToModel(scene, []);
-    const names = model.meshes.map((m) => m.name);
-    expect(names.length).toBeGreaterThan(1);
-    expect(names.every((n) => n.startsWith('chair-1/'))).toBe(true);
-  });
-
   it('leaves a plain (non-ref) set piece unaffected', () => {
     const scene = baseScene({
       set: [{ name: 'ground', geometry: { type: 'plane', width: 10, height: 10 }, material: { color: 0x888888 } }],
@@ -331,7 +312,7 @@ describe('storedSceneToModel – document-backed set pieces', () => {
 
   it('realises the entry document into a group instead of a mesh', () => {
     const scene = baseScene({ set: [documentPiece({ position: [0, 1, 0] })] });
-    const model = storedSceneToModel(scene, [], [{ id: 'classroom', hasDocument: true, document }]);
+    const model = storedSceneToModel(scene, [], [{ kind: 'set-piece', id: 'classroom', hasDocument: true, document }]);
 
     expect(model.meshes).toHaveLength(0);
     expect(model.groups).toHaveLength(1);
@@ -349,7 +330,7 @@ describe('storedSceneToModel – document-backed set pieces', () => {
         { name: 'ground', geometry: { type: 'plane', width: 10, height: 10 }, material: { color: 0x888888 } },
       ],
     });
-    const model = storedSceneToModel(scene, [], [{ id: 'classroom', hasDocument: true, document }]);
+    const model = storedSceneToModel(scene, [], [{ kind: 'set-piece', id: 'classroom', hasDocument: true, document }]);
 
     expect(model.groups.map((g) => g.name)).toEqual(['classroom']);
     expect(model.meshes.map((m) => m.name)).toEqual(['ground']);
@@ -358,7 +339,7 @@ describe('storedSceneToModel – document-backed set pieces', () => {
   it('falls back to the placeholder piece when no document was materialised', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const scene = baseScene({ set: [documentPiece()] });
-    const model = storedSceneToModel(scene, [], [{ id: 'classroom', hasDocument: true }]);
+    const model = storedSceneToModel(scene, [], [{ kind: 'set-piece', id: 'classroom', hasDocument: true }]);
 
     expect(model.groups).toHaveLength(0);
     expect(model.meshes.map((m) => m.name)).toEqual(['classroom']);
@@ -368,7 +349,7 @@ describe('storedSceneToModel – document-backed set pieces', () => {
 
   it('leaves a piece without a catalogueId on the mesh path', () => {
     const scene = baseScene({ set: [{ name: 'loose', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0 } }] });
-    const model = storedSceneToModel(scene, [], [{ id: 'classroom', hasDocument: true, document }]);
+    const model = storedSceneToModel(scene, [], [{ kind: 'set-piece', id: 'classroom', hasDocument: true, document }]);
 
     expect(model.groups).toHaveLength(0);
     expect(model.meshes.map((m) => m.name)).toEqual(['loose']);

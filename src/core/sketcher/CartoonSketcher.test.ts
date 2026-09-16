@@ -3,9 +3,31 @@ import * as THREE from 'three';
 import { CartoonSketcher } from './CartoonSketcher.js';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
-import { exportGLB, exportDraftGLB } from './exportGLB.js';
-import type { SketcherDraft, SketcherSession } from './types.js';
+import { exportGLB } from './exportGLB.js';
+import type { PartDraft, SketcherDraft, SketcherSession } from './types.js';
+import { documentFromParts } from './documentTree.js';
 import type { SetPieceEntry } from '../catalogue/types.js';
+import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
+
+/** A catalogue part, as a bundled set-piece document holds them. */
+function cataloguePart(
+  id: string,
+  geometry: GeometryConfig,
+  material: MaterialConfig,
+  position?: Vec3,
+): PartDraft {
+  return {
+    id,
+    kind: 'catalogue',
+    name: 'Box',
+    geometry,
+    material,
+    position: position ?? [0, 0, 0],
+    quaternion: [0, 0, 0, 1],
+    scale: [1, 1, 1],
+    color: material.color,
+  };
+}
 
 // GLTFExporter uses FileReader internally which is not available in the Node
 // test environment. Mock the module so exportGLB tests are self-contained.
@@ -259,50 +281,88 @@ describe('CartoonSketcher', () => {
 
   // ── Catalogue insertion (Track SET, N3) ───────────────────────────────────
 
-  it('insertCatalogueEntry() on a leaf entry inserts a single ungrouped part', () => {
+  it('insertCatalogueEntry() inserts a single-part entry as one ungrouped part', () => {
     const leaf: SetPieceEntry = {
       kind: 'set-piece',
       id: 'box',
       label: 'Box',
-      geometry: { type: 'box', width: 2, height: 3, depth: 4 },
-      material: { color: 0x8844aa },
+      document: documentFromParts([
+        cataloguePart('box', { type: 'box', width: 2, height: 3, depth: 4 }, { color: 0x8844aa }),
+      ]),
     };
-    const { parts, group } = sketcher.insertCatalogueEntry(leaf, [leaf]);
+    const { parts, group } = sketcher.insertCatalogueEntry(leaf);
     expect(parts).toHaveLength(1);
     expect(group).toBeNull();
-    expect(parts[0].name).toBe('box');
+    expect(parts[0].name).toBe('Box');
     expect(parts[0].shapePoints).toBeNull();
+    expect(parts[0].geometry).toMatchObject({ type: 'box', width: 2 });
     expect(sketcher.getSession().parts).toHaveLength(1);
   });
 
-  it('insertCatalogueEntry() on a composite entry groups the expanded parts into one assembly', () => {
+  it('insertCatalogueEntry() keeps a part-local rotation, so a floor lies flat', () => {
+    const floor: SetPieceEntry = {
+      kind: 'set-piece',
+      id: 'wood-floor',
+      label: 'Wood Floor',
+      document: documentFromParts([
+        { ...cataloguePart('floor', { type: 'plane', width: 8, height: 8 }, { color: 0xffffff }), quaternion: [-Math.SQRT1_2, 0, 0, Math.SQRT1_2] },
+      ]),
+    };
+    const { parts } = sketcher.insertCatalogueEntry(floor);
+    expect(parts[0].mesh.quaternion.x).toBeCloseTo(-Math.SQRT1_2);
+    expect(parts[0].mesh.quaternion.w).toBeCloseTo(Math.SQRT1_2);
+  });
+
+  it('insertCatalogueEntry() groups a multi-part entry into one assembly', () => {
     const composite: SetPieceEntry = {
       kind: 'set-piece',
       id: 'chair-test',
       label: 'Chair Test',
-      compose: [
-        { name: 'seat', geometry: { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, material: { color: 0x663311 }, position: [0, 0.45, 0] },
-        { name: 'back', geometry: { type: 'box', width: 0.5, height: 0.5, depth: 0.1 }, material: { color: 0x663311 }, position: [0, 0.7, -0.2] },
-      ],
+      document: documentFromParts([
+        cataloguePart('seat', { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, { color: 0x663311 }, [0, 0.45, 0]),
+        cataloguePart('back', { type: 'box', width: 0.5, height: 0.5, depth: 0.1 }, { color: 0x663311 }, [0, 0.7, -0.2]),
+      ]),
     };
-    const { parts, group } = sketcher.insertCatalogueEntry(composite, [composite]);
+    const { parts, group } = sketcher.insertCatalogueEntry(composite);
     expect(parts).toHaveLength(2);
     expect(group).not.toBeNull();
     expect(group!.partIds).toHaveLength(2);
+    // The assembly is re-localised around its centroid, so the members keep their
+    // world transforms: the prop stays where the definition put it.
+    expect(parts[0].mesh.getWorldPosition(new THREE.Vector3()).y).toBeCloseTo(0.45);
     // Both parts report the same assembly group → move as one unit.
     for (const p of parts) {
       expect(sketcher.attachManager.groupForPart(p.id)?.id).toBe(group!.id);
     }
   });
 
-  it('insertCatalogueEntry() skips GLB-backed pieces (no editable geometry)', () => {
-    const glbLeaf: SetPieceEntry = {
+  it('inserted catalogue parts survive a later tree edit', () => {
+    const leaf: SetPieceEntry = {
       kind: 'set-piece',
-      id: 'exported-chair',
-      label: 'Exported Chair',
-      gltfPath: 'blob:http://localhost/chair.glb',
+      id: 'wall-flat',
+      label: 'Wall Flat',
+      document: documentFromParts([
+        cataloguePart('wall', { type: 'box', width: 4, height: 3, depth: 0.15 }, { color: 0xddd8c4 }),
+      ]),
     };
-    const { parts, group } = sketcher.insertCatalogueEntry(glbLeaf, [glbLeaf]);
+    const { parts } = sketcher.insertCatalogueEntry(leaf);
+    // Any edit re-derives the scene from the tree — a catalogue part must be
+    // rebuildable from its draft (it carries geometry + material, not just a name).
+    sketcher.setPartColor(parts[0].id, 0x112233);
+    const partsAfter = sketcher.getSession().parts;
+    expect(partsAfter).toHaveLength(1);
+    expect(partsAfter[0].geometry).toMatchObject({ type: 'box', width: 4 });
+    expect(partsAfter[0].color).toBe(0x112233);
+  });
+
+  it('insertCatalogueEntry() inserts nothing for a saved set (no inline document)', () => {
+    const savedSet: SetPieceEntry = {
+      kind: 'set-piece',
+      id: 'exported-classroom',
+      label: 'Exported Classroom',
+      hasDocument: true,
+    };
+    const { parts, group } = sketcher.insertCatalogueEntry(savedSet);
     expect(parts).toHaveLength(0);
     expect(group).toBeNull();
   });
@@ -315,9 +375,13 @@ describe('CartoonSketcher', () => {
       [3, 1, 2],
       [0, Math.PI / 2, 0],
       [2, 2, 2],
-    );
+    )!;
     expect(part.mesh.position).toMatchObject({ x: 3, y: 1, z: 2 });
     expect(part.mesh.scale).toMatchObject({ x: 2, y: 2, z: 2 });
+    // Euler rotation is stored as a quaternion on the draft.
+    expect(new THREE.Euler().setFromQuaternion(part.mesh.quaternion).y).toBeCloseTo(Math.PI / 2);
+    expect(part.geometry).toMatchObject({ type: 'box', width: 1 });
+    expect(part.material).toMatchObject({ color: 0x224466 });
     expect(part.faceColors).toHaveLength(1);
     expect(part.faceTextures).toEqual([null]);
     expect(sketcher.getSession().parts).toContain(part);
@@ -657,23 +721,6 @@ describe('exportGLB', () => {
     expect(blob.size).toBeGreaterThan(0); // GLTF header is always present
   });
 
-  it('exportDraftGLB() bakes a primitive draft headlessly', async () => {
-    const draft: SketcherDraft = {
-      version: 2,
-      parts: [{
-        id: 'import-0',
-        kind: 'primitive',
-        name: 'Box',
-        position: [0, 0, 0],
-        quaternion: [0, 0, 0, 1],
-        scale: [1, 1, 1],
-        color: 0x8888cc,
-      }],
-      joints: [],
-    };
-    const blob = await exportDraftGLB(draft);
-    expect(blob.size).toBeGreaterThan(0);
-  });
 });
 
 // ---------------------------------------------------------------------------

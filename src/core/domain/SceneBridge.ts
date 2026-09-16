@@ -143,13 +143,14 @@ export function sceneToModel(
     if (light) lights.push(light);
   }
 
-  // Set pieces → MeshAssets, GLTFAssets or pre-built object trees
+  // Set pieces → MeshAssets or pre-built object trees
   const meshes: MeshAsset[] = [];
   const gltfs: GLTFAsset[] = [];
   const groups: Object3DAsset[] = [];
   for (const piece of scene.set) {
-    // A document-backed piece renders from its realised tree; the placeholder
-    // geometry/material the resolver gave it is never built.
+    // A set piece is its tree document (ROADMAP_CATALOGUE step 8), so it renders
+    // from its realised tree; the placeholder geometry/material the resolver gave
+    // it is never built.
     const realised = piece.catalogueId ? realisedSets?.get(piece.name) : undefined;
     if (realised) {
       const asset = new Object3DAsset(piece.name, realised);
@@ -160,21 +161,12 @@ export function sceneToModel(
       groups.push(asset);
       continue;
     }
-    if (piece.gltfPath) {
-      const gltf = new GLTFAsset(piece.name, piece.gltfPath);
-      if (piece.position) gltf.position = new THREE.Vector3(...piece.position);
-      if (piece.rotation) gltf.rotation = new THREE.Euler(...piece.rotation);
-      if (piece.scale)    gltf.scale    = new THREE.Vector3(...piece.scale);
-      if (piece.parent)   gltf.parent   = piece.parent;
-      gltfs.push(gltf);
-    } else {
-      const mesh = new MeshAsset(piece.name, buildGeometry(piece.geometry), buildMaterial(piece.material));
-      if (piece.position) mesh.position = new THREE.Vector3(...piece.position);
-      if (piece.rotation) mesh.rotation = new THREE.Euler(...piece.rotation);
-      if (piece.scale)    mesh.scale    = new THREE.Vector3(...piece.scale);
-      if (piece.parent)   mesh.parent   = piece.parent;
-      meshes.push(mesh);
-    }
+    const mesh = new MeshAsset(piece.name, buildGeometry(piece.geometry), buildMaterial(piece.material));
+    if (piece.position) mesh.position = new THREE.Vector3(...piece.position);
+    if (piece.rotation) mesh.rotation = new THREE.Euler(...piece.rotation);
+    if (piece.scale)    mesh.scale    = new THREE.Vector3(...piece.scale);
+    if (piece.parent)   mesh.parent   = piece.parent;
+    meshes.push(mesh);
   }
 
   // Staged actors → MeshAssets or GLTFAssets

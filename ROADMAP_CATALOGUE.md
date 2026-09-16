@@ -247,14 +247,14 @@ transform, sketch/extrude) with their existing tests before touching them.
   (collapsible from the toolbar): **+ New set**, **inline rename**, **duplicate**, **delete**,
   **click-to-open**. Name-on-create (a new or duplicated set opens its name field), and every rename
   goes to the entry via `updateSetPieceMeta`, so the column and the store never disagree.
-- [ ] **8. Bundled library → documents** (adds custom-geometry `PartDraft` support — unblocks step 9)
+- [x] **8. Bundled library → documents** — every set piece is a tree document, custom geometry is a
+  `PartDraft` kind, and the GLB sidecar is gone. Unblocks step 9.
 - [ ] **9. Finish the tree runtime** — migrate the catalogue insert + attach flow onto the tree, then the persistent-tree/transform-write-back, then delete the flat `SketcherDraft`.
 - [ ] **10. (Later) `ref` + `overrides` + layering**
 
 **Notes:** the live scene is still the transform/gizmo source of truth (the "transient tree" model —
-`toDocument()` re-derives from the mesh). Promoting the tree to the *persistent* source (step 9) is
-deliberately deferred until after step 8, because the catalogue commit path uses custom geometry that
-`PartDraft` can't yet express.
+`toDocument()` re-derives from the mesh). Step 8 gave `PartDraft` the custom-geometry kind that path
+needed, so promoting the tree to the *persistent* source (step 9) is unblocked.
 
 1. **Extract the Realiser.** Factor the geometry-building out of `CartoonSketcher.loadDraft` into
    `realise(document): THREE.Group` (pure, headless). Sketch view calls it. No behaviour change.
@@ -283,10 +283,9 @@ deliberately deferred until after step 8, because the catalogue commit path uses
    `catalogueId` (never its GLB) when the entry has a document; `storedSceneToModelAsync` loads that
    document from OPFS, `realiseDocument` builds the tree, and the result reaches the renderer as a
    pre-built object tree (`Model.groups` → `buildSceneGraph`, selectable by piece name). A piece whose
-   document is missing falls back to its placeholder geometry — never to a stale bake. Still to come:
-   the `gltfPath`/`compose` *representations* are AI (`make`) + bundled authoring (steps 6/8), and the
-   GLB the Sketcher bakes on publish stays the catalogue's publish signal + export artefact until
-   step 8 deletes that sidecar.
+   document is missing falls back to its placeholder geometry — never to a stale bake. The
+   `gltfPath`/`compose` representations were the AI (`make`) + bundled authoring surfaces, retired in
+   steps 6 and 8; the baked GLB stood in as the publish signal until step 8 deleted it.
 
 6. **Collapse the AI + save surfaces.** One create verb: an AI Draft goes in, a document-backed
    entry comes out (`createSetPiece`, `setting/authoringApi.ts`), and the settings LLM step
@@ -306,21 +305,33 @@ deliberately deferred until after step 8, because the catalogue commit path uses
    preselected. Every rename and reclassification writes the entry
    (`OPFSCatalogueStore.updateSetPieceMeta`), never the page, which keeps no name of its own.
    The row's *scenery / prop* tag is where a human sets `isSetting` (a new set starts as scenery — a
-   venue, matching `createSetPiece`'s default), and **Publish** is the one remaining save surface:
-   it bakes the GLB, captures the session's baseline lighting/environment and part count, and leaves
-   the classification alone. The column re-measures the viewport when it is collapsed or expanded.
+   venue, matching `createSetPiece`'s default). **Publish** was the one remaining save surface at
+   that point — it baked the GLB and captured the session's baseline lighting/environment and part
+   count; step 8 deleted it, because an autosave now writes that metadata with the document. The column re-measures the viewport when it is collapsed or expanded.
 
-8. **Bundled library → documents.** Convert bundled set-piece props (`CATALOGUE_ENTRIES` +
-   generators) to `SetDocument`s so there is one set-piece representation. This also gives `PartDraft`
-   a custom-geometry kind (so `insertCataloguePiece` can go through the tree). Lights/environments
-   remain their own kinds. Delete the sidecar machinery.
+8. **Bundled library → documents.** `bundledSets.ts` defines every bundled set piece as a
+   `SetDocument` of catalogue parts (`kind: 'catalogue'`, realised through `buildCatalogueGeometry` +
+   `buildCatalogueMaterial`), so a bundled prop and a sketcher-authored set have one representation and
+   one render path: `expandEntry` emits a `catalogueId` piece and `storedSceneToModel` realises the
+   entry's document — inline for bundled definitions, from OPFS for saved sets. `SetPieceEntry` lost
+   `geometry`/`material`/`compose`/`gltfPath` and its `defaultRotation` (a plane's orientation is a
+   part-local rotation inside its document), the catalogue builders moved from `CartoonSketcher` into
+   `geometry.ts`, and `insertCatalogueEntry` now copies a document's parts into the session's tree —
+   fresh runtime ids, one assembly group when the prop is multi-part — so an inserted prop survives
+   every later edit (previously a tree re-derive dropped it, since its name was not a primitive
+   preset). Lights/environments remain their own kinds. The sidecar went with it: no per-set GLB bake,
+   no `opfs://` gltfPath, no `exportDraftGLB`, no **Publish** — the document *is* the published
+   artefact (`isPublishedEntry` reads `hasDocument`), and `update()` is the character bake only. An
+   autosave writes the document and its metadata (name, classification, environment, lights, part
+   count) in one pass via `saveDocument`, and **Export GLB** is a download. The dead scene generators
+   (`storage/generators/`) were deleted rather than converted: nothing but their own tests used them.
 
-9. **Finish the tree runtime (persistent tree).** With custom geometry in `PartDraft` (step 8), make
-   the tree the *persistent* source of truth rather than a re-derived projection:
-   1. migrate `insertCataloguePiece`/`insertCatalogueEntry` onto the tree;
-   2. migrate the attach flow (`commitAttach`/`createGroup`/`detachAll`) onto the tree;
-   3. add the persistent `document` + gizmo transform write-back (`toDocument()` reads the tree);
-   4. delete the flat `SketcherDraft` and the flat `realise()`.
+9. **Finish the tree runtime (persistent tree).** With custom geometry in `PartDraft` and the
+   catalogue insert already on the tree (step 8), make the tree the *persistent* source of truth
+   rather than a re-derived projection:
+   1. migrate the attach flow (`commitAttach`/`createGroup`/`detachAll`) onto the tree;
+   2. add the persistent `document` + gizmo transform write-back (`toDocument()` reads the tree);
+   3. delete the flat `SketcherDraft` and the flat `realise()`.
    Guard: the existing `CartoonSketcher`/`SketcherDocument`/`AttachManager` round-trip suites.
 
 10. **(Later) `ref` + `overrides` + layering.** Implement instance resolution and venue/dressing
@@ -336,9 +347,9 @@ deliberately deferred until after step 8, because the catalogue commit path uses
 - Assemblies are gone: a saved set *is* its catalogue entry, and its draft lives in the entry's
   `<id>.document.json` sibling (step 4). No data migration was written — there are no users, so
   stale assembly/draft files are simply abandoned.
-- Existing GLB-backed set-pieces keep rendering (their GLB is a throwaway cache until step 5
-  replaces it with direct draft rendering), then the GLB sidecar is deleted (step 8).
-- Bundled `compose` props are converted to documents (step 8).
+- GLB-backed set-pieces rendered from their bake while step 5 was in flight; step 8 deleted the
+  sidecar, so a set piece is only ever its document.
+- Bundled `compose` props are documents now (`bundledSets.ts`) — the compose representation is gone.
 
 ### Deletion list
 
@@ -354,11 +365,13 @@ Done in step 7: the sketch toolbar's "Save as Item"/"Save as Setting"/"New"/"Sav
 buttons and the "Untitled" name field; the `Open…` panel; the page's `setName` state and
 `saveSetAs`/`renameCurrentSet` (the entry carries the name now, via `updateSetPieceMeta`).
 
-Still to come in step 8 (it owns everything compose-shaped): `assignLocalIds`/`localId` (dead since
-the compose authoring path went, but the field is stitched through `PlacedProp`), the `compose` branch
-of `expandEntry`, `compose`/`geometry`/`material` as user-set representations, and the GLB sidecar
-(`exportDraftGLB` as a stored step — keep `exportGLB` for download). Step 9 still owns the flat
-`SketcherDraft` and flat `realise()`.
+Done in step 8 (it owned everything compose-shaped): `assignLocalIds`/`localId` and
+`PlacedProp.localId`; `SetPieceEntry`'s `geometry`/`material`/`compose`/`gltfPath`/`defaultRotation`
+and the `compose` branch of `expandEntry` (with `offsetPiece` and `MAX_COMPOSITE_DEPTH`);
+`SetPiece.gltfPath` and the scene-level `opfs://` resolution (`resolveOpfsGltfPath`); the per-set GLB
+bake (the set-piece path of `OPFSCatalogueStore.update`, and the store's placeholder
+geometry/material), `exportDraftGLB`, the **Publish** button, and the dead `storage/generators/`
+scene generators. Step 9 still owns the flat `SketcherDraft` and flat `realise()`.
 
 ### Relationship to Part 1 (identity vs storage)
 
