@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { AttachManager, faceGroupFromNormal, faceGroupLabel } from './AttachManager.js';
-import type { SketcherPart } from './types.js';
+import type { AssemblyGroup, AttachJoint, JointSnapshot, SketcherPart } from './types.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -10,6 +10,7 @@ function makeScene(): THREE.Scene {
 }
 
 let _idSeq = 1;
+let _groupSeq = 1;
 
 function makePart(scene: THREE.Scene, position = new THREE.Vector3()): SketcherPart {
   const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -34,249 +35,254 @@ function makePart(scene: THREE.Scene, position = new THREE.Vector3()): SketcherP
   };
 }
 
-// ── commitAttach ──────────────────────────────────────────────────────────────────
+/** The part ids covered by `partId`'s mirrored group, or just the part. */
+function membersOf(am: AttachManager, partId: string): string[] {
+  return am.groupForPart(partId)?.partIds ?? [partId];
+}
 
-describe('AttachManager.commitAttach', () => {
-  let scene: THREE.Scene;
-  let am: AttachManager;
-  let partA: SketcherPart;
-  let partB: SketcherPart;
+function snapshotOf(joint: AttachJoint): JointSnapshot {
+  return {
+    type: joint.type,
+    partAId: joint.partAId,
+    localPointA: joint.localPointA.toArray() as [number, number, number],
+    localNormalA: joint.localNormalA.toArray() as [number, number, number],
+    partBId: joint.partBId,
+    localPointB: joint.localPointB.toArray() as [number, number, number],
+    localNormalB: joint.localNormalB.toArray() as [number, number, number],
+  };
+}
 
-  beforeEach(() => {
-    scene = makeScene();
-    am = new AttachManager(scene);
-    partA = makePart(scene, new THREE.Vector3(0, 0, 0));
-    partB = makePart(scene, new THREE.Vector3(5, 0, 0));
-  });
+function jointSnapshot(
+  partA: SketcherPart, ptA: THREE.Vector3, nA: THREE.Vector3,
+  partB: SketcherPart, ptB: THREE.Vector3, nB: THREE.Vector3,
+): JointSnapshot {
+  return {
+    type: 'snap',
+    partAId: partA.id,
+    localPointA: ptA.toArray() as [number, number, number],
+    localNormalA: nA.toArray() as [number, number, number],
+    partBId: partB.id,
+    localPointB: ptB.toArray() as [number, number, number],
+    localNormalB: nB.toArray() as [number, number, number],
+  };
+}
 
-  it('creates an AssemblyGroup for the two attached parts', () => {
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
-    expect(am.getAssemblyGroups()).toHaveLength(1);
-    const ag = am.getAssemblyGroups()[0];
-    expect(ag.partIds).toContain(partA.id);
-    expect(ag.partIds).toContain(partB.id);
-  });
+/**
+ * Mirror a pure group — what the Sketcher's tree `group()` command ends up as.
+ * World positions are preserved, as the tree's centroid re-localisation does.
+ */
+function mirrorGroup(am: AttachManager, scene: THREE.Scene, parts: SketcherPart[], name?: string): AssemblyGroup {
+  const group = new THREE.Group();
+  scene.add(group);
+  for (const p of parts) group.attach(p.mesh);
+  return am.adoptGroup(`group-${_groupSeq++}`, group, parts.map((p) => p.id), name, true);
+}
 
-  it('adds one new group object to the scene', () => {
-    const childCount = scene.children.length;
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
-    // The scene gains the group; the two meshes are re-parented inside it.
-    expect(scene.children.length).toBe(childCount - 2 + 1);
-  });
+/**
+ * Mirror an attach the way the Sketcher does: snap partB onto partA's face, then
+ * record the joint and rebuild the connected component as one assembly group.
+ */
+function attach(
+  am: AttachManager,
+  scene: THREE.Scene,
+  partA: SketcherPart, ptA: THREE.Vector3, nA: THREE.Vector3,
+  partB: SketcherPart, ptB: THREE.Vector3, nB: THREE.Vector3,
+  all: SketcherPart[] = [partA, partB],
+): void {
+  am.applyJoint(partA, ptA, nA, partB, ptB, nB);
+  const members = [...new Set([...membersOf(am, partA.id), ...membersOf(am, partB.id)])];
+  const joints = [...am.getJoints().map(snapshotOf), jointSnapshot(partA, ptA, nA, partB, ptB, nB)];
 
-  it('repositions partB so it is flush with partA face', () => {
-    // partA box at origin: top face contact at local (0, 0.5, 0) = world y = 0.5
-    // partB contact is its bottom face at local (0, -0.5, 0); after snap world centre y = 1.0
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
-    const wp = new THREE.Vector3();
-    partB.mesh.getWorldPosition(wp);
-    expect(wp.y).toBeCloseTo(1.0, 3);
-  });
+  am.resetGroups();
+  const group = new THREE.Group();
+  scene.add(group);
+  for (const id of members) {
+    const member = all.find((p) => p.id === id);
+    if (member) group.attach(member.mesh);
+  }
+  am.adoptGroup(`assembly-${_groupSeq++}`, group, members, undefined, false);
+  am.setJoints(joints);
+}
 
-  it('records a joint with correct part ids', () => {
-    const joint = am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
-    expect(joint.partAId).toBe(partA.id);
-    expect(joint.partBId).toBe(partB.id);
-  });
+// ── Mirror ────────────────────────────────────────────────────────────────────
 
-  it('stores the joint in getJoints()', () => {
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+describe('AttachManager mirror', () => {
+  it('setJoints() mirrors the document joints', () => {
+    const scene = makeScene();
+    const am = new AttachManager(scene);
+    const partA = makePart(scene);
+    const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
+
+    am.setJoints([
+      {
+        ...jointSnapshot(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0)),
+        type: 'rigid' as const,
+      },
+    ]);
+
     expect(am.getJoints()).toHaveLength(1);
-  });
+    expect(am.getJoints()[0].partAId).toBe(partA.id);
+    expect(am.getJoints()[0].partBId).toBe(partB.id);
+    expect(am.getJoints()[0].type).toBe('rigid');
+    expect(am.getJoints()[0].localPointA.y).toBeCloseTo(0.5);
 
-  it('gluing a third part into the same component merges into one group', () => {
-    const partC = makePart(scene, new THREE.Vector3(-5, 0, 0));
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
-    am.commitAttach(partA, new THREE.Vector3(0.5, 0, 0), new THREE.Vector3(1, 0, 0), partC, new THREE.Vector3(-0.5, 0, 0), new THREE.Vector3(-1, 0, 0), [partA, partB, partC]);
-    expect(am.getJoints()).toHaveLength(2);
-    expect(am.getAssemblyGroups()).toHaveLength(1);
-    expect(am.getAssemblyGroups()[0].partIds).toHaveLength(3);
-  });
-});
-
-// ── getConnectedIds ───────────────────────────────────────────────────────────
-
-describe('AttachManager.getConnectedIds', () => {
-  it('returns only the start id when no joints exist', () => {
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const partA = makePart(scene);
-    const ids = am.getConnectedIds(partA.id);
-    expect(ids).toEqual([partA.id]);
-  });
-
-  it('traverses transitive connections', () => {
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const partA = makePart(scene);
-    const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
-    const partC = makePart(scene, new THREE.Vector3(4, 0, 0));
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
-    am.commitAttach(partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB, partC]);
-    const ids = am.getConnectedIds(partA.id);
-    expect(ids.sort()).toEqual([partA.id, partB.id, partC.id].sort());
-  });
-});
-
-// ── groupForPart ─────────────────────────────────────────────────────────────
-
-describe('AttachManager.groupForPart', () => {
-  it('returns undefined for a standalone part', () => {
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const partA = makePart(scene);
-    expect(am.groupForPart(partA.id)).toBeUndefined();
-  });
-
-  it('returns the attach group after attaching', () => {
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const partA = makePart(scene);
-    const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
-    expect(am.groupForPart(partA.id)).toBeDefined();
-    expect(am.groupForPart(partB.id)).toBeDefined();
-    expect(am.groupForPart(partA.id)!.id).toBe(am.groupForPart(partB.id)!.id);
-  });
-});
-
-// ── detach + dissolve ─────────────────────────────────────────────────────────
-
-describe('AttachManager.detach', () => {
-  it('removes the joint', () => {
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const partA = makePart(scene);
-    const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
-    const joint = am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
-    am.detach(joint.id, [partA, partB]);
+    am.setJoints([]);
     expect(am.getJoints()).toHaveLength(0);
   });
 
-  it('dissolves the group after detach: both parts return to standalone', () => {
+  it('adoptGroup() registers a group under its node id', () => {
     const scene = makeScene();
     const am = new AttachManager(scene);
     const partA = makePart(scene);
-    const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
-    const joint = am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
-    am.detach(joint.id, [partA, partB]);
-    expect(am.getAssemblyGroups()).toHaveLength(0);
-    expect(partA.mesh.parent).toBe(scene);
-    expect(partB.mesh.parent).toBe(scene);
-  });
+    const partB = makePart(scene, new THREE.Vector3(1, 0, 0));
 
-  it('removing one joint from a 3-part chain splits into two groups', () => {
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const partA = makePart(scene);
-    const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
-    const partC = makePart(scene, new THREE.Vector3(4, 0, 0));
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
-    am.commitAttach(partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB, partC]);
-    // Remove A-B joint: A becomes standalone, B-C stay in their own group.
-    am.detach(am.getJoints()[0].id, [partA, partB, partC]);
-    expect(am.getJoints()).toHaveLength(1);
-    expect(am.getJoints()[0].partAId).toBe(partB.id);
+    const ag = mirrorGroup(am, scene, [partA, partB], 'leg');
+
+    expect(ag.id).toBe('group-1');
+    expect(ag.group.name).toBe('group-1');
+    expect(ag.name).toBe('leg');
     expect(am.getAssemblyGroups()).toHaveLength(1);
-    expect(am.groupForPart(partA.id)).toBeUndefined();
-    expect(am.groupForPart(partB.id)).toBeDefined();
-    expect(am.groupForPart(partC.id)).toBeDefined();
-  });
-});
-
-// ── detachAll ────────────────────────────────────────────────────────────────
-
-describe('AttachManager.detachAll', () => {
-  it('5-cube line: removing the middle cube splits into two groups', () => {
-    // A–B–C–D–E; remove C → groups {A,B} and {D,E} survive, C is standalone.
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const [pA, pB, pC, pD, pE] = [0, 2, 4, 6, 8].map(
-      (x) => makePart(scene, new THREE.Vector3(x, 0, 0)),
-    );
-    const n = new THREE.Vector3(0, 1, 0);
-    const nN = new THREE.Vector3(0, -1, 0);
-    const pt = new THREE.Vector3(0, 0.5, 0);
-    const pb = new THREE.Vector3(0, -0.5, 0);
-    const all = [pA, pB, pC, pD, pE];
-    am.commitAttach(pA, pt, n, pB, pb, nN, all);
-    am.commitAttach(pB, pt, n, pC, pb, nN, all);
-    am.commitAttach(pC, pt, n, pD, pb, nN, all);
-    am.commitAttach(pD, pt, n, pE, pb, nN, all);
-
-    am.detachAll(pC.id, all);
-
-    expect(am.getJoints()).toHaveLength(2);
-    expect(am.getAssemblyGroups()).toHaveLength(2);
-    expect(am.groupForPart(pC.id)).toBeUndefined();
-    // Remaining joints must be A-B and D-E.
-    const remainIds = am.getJoints().map((j) => `${j.partAId}-${j.partBId}`);
-    expect(remainIds).toContain(`${pA.id}-${pB.id}`);
-    expect(remainIds).toContain(`${pD.id}-${pE.id}`);
+    expect(am.groupForPart(partA.id)?.id).toBe(ag.id);
+    expect(am.groupForPart(partB.id)?.id).toBe(ag.id);
+    expect(am.groupForPart('nope')).toBeUndefined();
   });
 
-  it('3-cube line: removing the middle cube dissolves the group entirely', () => {
-    // A–B–C; remove B → A and C standalone, 0 assembly groups.
+  it('isGroup() reports pure groups only', () => {
     const scene = makeScene();
     const am = new AttachManager(scene);
-    const [pA, pB, pC] = [0, 2, 4].map(
-      (x) => makePart(scene, new THREE.Vector3(x, 0, 0)),
-    );
-    const n = new THREE.Vector3(0, 1, 0);
-    const nN = new THREE.Vector3(0, -1, 0);
-    const pt = new THREE.Vector3(0, 0.5, 0);
-    const pb = new THREE.Vector3(0, -0.5, 0);
-    const all = [pA, pB, pC];
-    am.commitAttach(pA, pt, n, pB, pb, nN, all);
-    am.commitAttach(pB, pt, n, pC, pb, nN, all);
+    const [partA, partB, partC] = [0, 1, 2].map((x) => makePart(scene, new THREE.Vector3(x, 0, 0)));
 
-    am.detachAll(pB.id, all);
+    mirrorGroup(am, scene, [partA, partB]);
+    expect(am.isGroup(partA.id)).toBe(true);
+    expect(am.isGroup(partC.id)).toBe(false);
+
+    // An attach assembly is a group but not a pure one.
+    attach(am, scene, partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB, partC]);
+    expect(am.isGroup(partA.id)).toBe(false);
+    expect(am.groupForPart(partA.id)).toBeDefined();
+  });
+
+  it('setBonds() drives isInGroupComponent()', () => {
+    const scene = makeScene();
+    const am = new AttachManager(scene);
+
+    am.setBonds([['a', 'b']]);
+    expect(am.isInGroupComponent('a')).toBe(true);
+    expect(am.isInGroupComponent('c')).toBe(false);
+
+    am.setBonds([]);
+    expect(am.isInGroupComponent('a')).toBe(false);
+  });
+
+  it('resetGroups() returns members to the scene root and clears the mirror', () => {
+    const scene = makeScene();
+    const am = new AttachManager(scene);
+    const partA = makePart(scene);
+    const partB = makePart(scene, new THREE.Vector3(1, 0, 0));
+    attach(am, scene, partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
+    const worldBefore = partB.mesh.getWorldPosition(new THREE.Vector3());
+
+    am.resetGroups();
 
     expect(am.getAssemblyGroups()).toHaveLength(0);
-    expect(pA.mesh.parent).toBe(scene);
-    expect(pB.mesh.parent).toBe(scene);
-    expect(pC.mesh.parent).toBe(scene);
+    expect(am.getJoints()).toHaveLength(0);
+    expect(partB.mesh.parent).toBe(scene);
+    // World positions survive the return to the root.
+    expect(partB.mesh.getWorldPosition(new THREE.Vector3()).y).toBeCloseTo(worldBefore.y, 5);
+  });
+
+  it('dispose() removes group objects from the scene and clears the mirror', () => {
+    const scene = makeScene();
+    const am = new AttachManager(scene);
+    const partA = makePart(scene);
+    const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
+    const ag = mirrorGroup(am, scene, [partA, partB]);
+
+    am.dispose();
+
+    expect(am.getJoints()).toHaveLength(0);
+    expect(am.getAssemblyGroups()).toHaveLength(0);
+    expect(scene.getObjectByName(ag.id)).toBeUndefined();
   });
 });
 
-// ── replayJoints ─────────────────────────────────────────────────────────────
+// ── applyJoint ────────────────────────────────────────────────────────────────
 
-describe('AttachManager.replayJoints — mover follows when anchor is moved', () => {
-  it('produces correct world position when anchor is translated and replayJoints called', () => {
+describe('AttachManager.applyJoint', () => {
+  it('snaps partB flush against partA’s face', () => {
+    // partA box at origin: top face contact at local (0, 0.5, 0) = world y = 0.5
+    // partB contact is its bottom face at local (0, -0.5, 0); after snap world centre y = 1.0
     const scene = makeScene();
     const am = new AttachManager(scene);
     const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
     const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
 
-    // Move partA up by 3 units via its group, then replay.
-    const ag = am.groupForPart(partA.id)!;
-    ag.group.position.y += 3;
-    ag.group.updateMatrixWorld(true);
-
-    am.replayJoints(partA, [partA, partB]);
+    attach(am, scene, partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
 
     const wp = new THREE.Vector3();
     partB.mesh.getWorldPosition(wp);
-    expect(wp.y).toBeCloseTo(4.0, 3);
+    expect(wp.y).toBeCloseTo(1.0, 3);
+    expect(am.getJoints()).toHaveLength(1);
   });
-});
 
-// ── dispose ───────────────────────────────────────────────────────────────────
-
-describe('AttachManager.dispose', () => {
-  it('clears all joints and groups and removes group objects from scene', () => {
+  it('rotates partB so its face normal opposes partA’s before snapping', () => {
     const scene = makeScene();
     const am = new AttachManager(scene);
-    const partA = makePart(scene);
+    const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
     const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
-    // Use a group so there is a scene object to remove.
-    const ag = am.createGroup([partA, partB]);
-    const groupName = ag.group.name;
-    am.dispose();
-    expect(am.getJoints()).toHaveLength(0);
-    expect(am.getAssemblyGroups()).toHaveLength(0);
-    expect(scene.getObjectByName(groupName)).toBeUndefined();
+    // Tilt partB so its bottom face no longer points down.
+    partB.mesh.rotation.x = Math.PI / 2;
+    partB.mesh.updateMatrixWorld(true);
+
+    attach(am, scene, partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
+
+    const wpB = new THREE.Vector3();
+    partB.mesh.getWorldPosition(wpB);
+    expect(wpB.y).toBeCloseTo(1.0, 3);
+    const bottomNormal = new THREE.Vector3(0, -1, 0).transformDirection(partB.mesh.matrixWorld);
+    expect(bottomNormal.y).toBeCloseTo(-1, 3);
+  });
+
+  it('moves the whole group when the two parts sit in different groups', () => {
+    const scene = makeScene();
+    const am = new AttachManager(scene);
+    const partA = makePart(scene, new THREE.Vector3(0, 0, 0)); // standalone anchor
+    const partB = makePart(scene, new THREE.Vector3(5, 0, 0)); // in a group, will be repositioned
+    const partC = makePart(scene, new THREE.Vector3(5, 1, 0)); // grouped with partB, must follow
+
+    mirrorGroup(am, scene, [partB, partC]);
+    expect(am.groupForPart(partB.id)!.partIds).toContain(partC.id);
+
+    attach(am, scene, partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB, partC]);
+
+    const wpB = new THREE.Vector3(); partB.mesh.getWorldPosition(wpB);
+    const wpC = new THREE.Vector3(); partC.mesh.getWorldPosition(wpC);
+    expect(wpB.y).toBeCloseTo(1.0, 3);
+    // partC was 1 unit above partB (world), and travelled with it.
+    expect(wpC.y).toBeCloseTo(2.0, 3);
+  });
+
+  it('moves only the mesh when both parts are in the same group', () => {
+    const scene = makeScene();
+    const am = new AttachManager(scene);
+    const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
+    const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
+    const partD = makePart(scene, new THREE.Vector3(1, 0, 0));
+
+    mirrorGroup(am, scene, [partA, partD]);
+    attach(am, scene, partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB, partD]);
+    const wpDBefore = partD.mesh.getWorldPosition(new THREE.Vector3());
+
+    // Displace partA within the group (member-edit) and re-solve: partB follows,
+    // partD — grouped but not jointed to either — stays put.
+    partA.mesh.position.y += 3;
+    partA.mesh.updateMatrixWorld(true);
+    am.resolveConstraints([partA.id], [partA, partB, partD]);
+
+    const wpA = new THREE.Vector3(); partA.mesh.getWorldPosition(wpA);
+    const wpB = new THREE.Vector3(); partB.mesh.getWorldPosition(wpB);
+    expect(wpB.y).toBeCloseTo(wpA.y + 1.0, 2);
+    expect(partD.mesh.getWorldPosition(new THREE.Vector3()).y).toBeCloseTo(wpDBefore.y, 5);
   });
 });
 
@@ -288,7 +294,7 @@ describe('AttachManager.resolveConstraints', () => {
     const am = new AttachManager(scene);
     const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
     const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    attach(am, scene, partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
 
     const ag = am.groupForPart(partA.id)!;
     ag.group.position.y += 5;
@@ -308,7 +314,7 @@ describe('AttachManager.resolveConstraints', () => {
     const am = new AttachManager(scene);
     const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
     const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    attach(am, scene, partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
 
     // Displace partB in group-local space (simulates member-edit drag).
     partB.mesh.position.y += 10;
@@ -331,7 +337,7 @@ describe('AttachManager.resolveConstraints', () => {
     const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
     const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
     const partC = makePart(scene, new THREE.Vector3(10, 0, 0));
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
+    attach(am, scene, partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0));
 
     const settled = new THREE.Vector3();
     partB.mesh.getWorldPosition(settled);
@@ -351,114 +357,22 @@ describe('AttachManager.resolveConstraints', () => {
     const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
     const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
     const partC = makePart(scene, new THREE.Vector3(10, 0, 0));
+    const all = [partA, partB, partC];
 
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
-    am.commitAttach(partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB, partC]);
+    attach(am, scene, partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), all);
+    attach(am, scene, partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), all);
 
     // Member-edit: displace partA within the combined group.
     partA.mesh.position.y += 5;
     partA.mesh.updateMatrixWorld(true);
 
-    am.resolveConstraints([partA.id], [partA, partB, partC]);
+    am.resolveConstraints([partA.id], all);
 
     const wpA = new THREE.Vector3(); partA.mesh.getWorldPosition(wpA);
     const wpB = new THREE.Vector3(); partB.mesh.getWorldPosition(wpB);
     const wpC = new THREE.Vector3(); partC.mesh.getWorldPosition(wpC);
     expect(wpB.y).toBeCloseTo(wpA.y + 1.0, 2); // partB snapped above partA
     expect(wpC.y).toBeCloseTo(wpB.y + 1.0, 2); // partC snapped above partB
-  });
-});
-
-// ── replayJoints — snap-back and group-move behaviour ────────────────────────
-
-describe('AttachManager.replayJoints — democratic: anchor follows the displaced partner', () => {
-  it('partA follows when partB (joint partner) is displaced in member-edit', () => {
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
-    const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
-
-    // Both are in the same group. Displace partB in group-local space.
-    partB.mesh.position.y = 10;
-    partB.mesh.updateMatrixWorld(true);
-
-    am.replayJoints(partB, [partA, partB]);
-
-    const wpA = new THREE.Vector3();
-    const wpB = new THREE.Vector3();
-    partA.mesh.getWorldPosition(wpA);
-    partB.mesh.getWorldPosition(wpB);
-    expect(wpA.y).toBeCloseTo(wpB.y - 1.0, 2);
-  });
-});
-
-describe('AttachManager.replayJoints — group moves as a whole when anchor is in group', () => {
-  it('member-edit on grouped partA snaps attached partB via the joint', () => {
-    // partA and partD are grouped: moving partA in member-edit should snap
-    // partB (am joint A-B) to follow, while partD stays in place.
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
-    const partB = makePart(scene, new THREE.Vector3(5, 0, 0));
-    const partD = makePart(scene, new THREE.Vector3(1, 0, 0));
-
-    am.createGroup([partA, partD]);
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB, partD]);
-
-    const wpBefore = new THREE.Vector3();
-    partB.mesh.getWorldPosition(wpBefore);
-
-    // Member-edit: displace partA within the merged group.
-    partA.mesh.position.y += 3;
-    partA.mesh.updateMatrixWorld(true);
-
-    am.replayJoints(partA, [partA, partB, partD]);
-
-    const wpA = new THREE.Vector3(); partA.mesh.getWorldPosition(wpA);
-    const wpB = new THREE.Vector3(); partB.mesh.getWorldPosition(wpB);
-    expect(wpB.y).toBeCloseTo(wpBefore.y + 3, 3); // partB followed partA via am joint
-  });
-});
-
-// ── _applyJointPosition moves the whole group ───────────────────────────────
-
-describe('AttachManager._applyJointPosition — group members travel together', () => {
-  it('when partB is grouped with partC, partC follows when the attach constraint repositions partB', () => {
-    // Setup: partB and partC are first grouped into a rigid group.
-    // Then partA (standalone) attaches to the bottom of partB.
-    // The constraint must move the whole group (carrying partC).
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-
-    const partA = makePart(scene, new THREE.Vector3(0, 0, 0));  // standalone anchor
-    const partB = makePart(scene, new THREE.Vector3(5, 0, 0));  // in group, will be repositioned
-    const partC = makePart(scene, new THREE.Vector3(5, 1, 0));  // grouped with partB, should follow
-
-    // Group partB and partC into a rigid group (B is centre, C is 1 unit above).
-    am.createGroup([partB, partC]);
-
-    // Sanity: partB and partC should be in the same group now.
-    const groupB = am.groupForPart(partB.id);
-    expect(groupB).toBeDefined();
-    expect(groupB!.partIds).toContain(partC.id);
-
-    // Get partC world position before am constraint fires.
-    const wpCBefore = new THREE.Vector3();
-    partC.mesh.getWorldPosition(wpCBefore);
-
-    // Attach partA-top to partB-bottom. partB's whole group must move to snap flush.
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB, partC]);
-
-    const wpB = new THREE.Vector3();
-    const wpC = new THREE.Vector3();
-    partB.mesh.getWorldPosition(wpB);
-    partC.mesh.getWorldPosition(wpC);
-
-    // partB bottom now at partA top (y=0.5) → partB world centre y = 1.0.
-    expect(wpB.y).toBeCloseTo(1.0, 3);
-    // partC was 1 unit above partB (world), so partC world y = 2.0.
-    expect(wpC.y).toBeCloseTo(2.0, 3);
   });
 });
 
@@ -541,215 +455,3 @@ describe('faceGroupLabel', () => {
     expect(faceGroupLabel(new THREE.BufferGeometry(), 0)).toBe('?');
   });
 });
-
-// ── T11-6: group bond survives detach of an attached part ─────────────────────
-
-describe('AttachManager group bond survives attach-then-detach (T11-6)', () => {
-  it('detaching C from [A,B group + C attached] restores the group for A and B', () => {
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
-    const partB = makePart(scene, new THREE.Vector3(1, 0, 0));
-    const partC = makePart(scene, new THREE.Vector3(0, 5, 0));
-
-    // Group A and B together.
-    am.createGroup([partA, partB]);
-    expect(am.isGroup(partA.id)).toBe(true);
-
-    // Attach C to B — this merges everything into one assembly (no longer a pure group).
-    am.commitAttach(
-      partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
-      partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
-      [partA, partB, partC],
-    );
-    expect(am.getAssemblyGroups()).toHaveLength(1);
-    expect(am.isGroup(partA.id)).toBe(false); // merged group is not pure group
-    expect(am.isInGroupComponent(partA.id)).toBe(true); // but bond still tracked
-
-    // Detach C.
-    am.detachAll(partC.id, [partA, partB, partC]);
-
-    // A and B should be back in a group; C should be standalone.
-    expect(am.getAssemblyGroups()).toHaveLength(1);
-    expect(am.isGroup(partA.id)).toBe(true);
-    expect(am.isGroup(partB.id)).toBe(true);
-    expect(am.groupForPart(partC.id)).toBeUndefined();
-    expect(partC.mesh.parent).toBe(scene);
-  });
-
-  it('explicit ungroup then detach does NOT restore the group', () => {
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
-    const partB = makePart(scene, new THREE.Vector3(1, 0, 0));
-    const partC = makePart(scene, new THREE.Vector3(0, 5, 0));
-
-    am.createGroup([partA, partB]);
-    am.commitAttach(
-      partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
-      partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
-      [partA, partB, partC],
-    );
-
-    // There's no pure group to ungroup right now (it's merged). But suppose
-    // the user undoes the attach (snapshot restore) and then ungrouped — simulate
-    // that by dissolving group component directly via dissolveGroup on the
-    // original group's parts. We can test by verifying isInGroupComponent after
-    // a dissolveGroup would clear the bond.
-    // Instead, test the simpler case: group A-B, immediately dissolveGroup, then
-    // confirm ungluing a hypothetical C would not restore the bond.
-    const scene2 = makeScene();
-    const g2 = new AttachManager(scene2);
-    const a2 = makePart(scene2, new THREE.Vector3(0, 0, 0));
-    const b2 = makePart(scene2, new THREE.Vector3(1, 0, 0));
-    const c2 = makePart(scene2, new THREE.Vector3(0, 5, 0));
-    const wg = g2.createGroup([a2, b2]);
-    g2.dissolveGroup(wg.id);
-    // Bond removed: isInGroupComponent should be false.
-    expect(g2.isInGroupComponent(a2.id)).toBe(false);
-    // Attach c2 to a2 (no group bond in scope).
-    g2.commitAttach(
-      a2, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
-      c2, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
-      [a2, b2, c2],
-    );
-    g2.detachAll(c2.id, [a2, b2, c2]);
-    // Without a group bond, a2 and b2 must be standalone after detach.
-    expect(g2.groupForPart(a2.id)).toBeUndefined();
-    expect(g2.groupForPart(b2.id)).toBeUndefined();
-  });
-
-  it('getGroupComponents returns serializable arrays and rebuildGroupsFromSnapshot restores them', () => {
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
-    const partB = makePart(scene, new THREE.Vector3(1, 0, 0));
-    const partC = makePart(scene, new THREE.Vector3(0, 5, 0));
-
-    am.createGroup([partA, partB]);
-    am.commitAttach(
-      partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
-      partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
-      [partA, partB, partC],
-    );
-
-    // Serialize the group components.
-    const serialized = am.getGroupComponents();
-    expect(serialized).toHaveLength(1);
-    expect(serialized[0].sort()).toEqual([partA.id, partB.id].sort());
-
-    // Restore into a fresh AttachManager (simulates undo/redo snapshot restore).
-    const scene2 = makeScene();
-    const am2 = new AttachManager(scene2);
-    const a2 = { ...partA, mesh: partA.mesh };
-    const b2 = { ...partB, mesh: partB.mesh };
-    const c2 = { ...partC, mesh: partC.mesh };
-    scene2.add(a2.mesh, b2.mesh, c2.mesh);
-
-    // Simulate: merged attach group [A,B,C] (isGroup=false) in snapshot, plus group components [[A,B]].
-    am2.rebuildGroupsFromSnapshot(
-      [{ partIds: [partA.id, partB.id, partC.id], isGroup: false }],
-      [a2, b2, c2],
-      serialized,
-    );
-    // group bond restored via group components param.
-    expect(am2.isInGroupComponent(partA.id)).toBe(true);
-    expect(am2.isInGroupComponent(partB.id)).toBe(true);
-    expect(am2.isInGroupComponent(partC.id)).toBe(false);
-  });
-});
-
-// ── dissolveGroupComponent ────────────────────────────────────────────────────
-
-describe('AttachManager.dissolveGroupComponent', () => {
-  it('ungrouping a grouped member in a mixed assembly separates non-jointed members', () => {
-    // A+B group, C attached to B. After dissolveGroupComponent(A):
-    // A has no am joints → standalone. B+C still am-jointed → am group.
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const partA = makePart(scene, new THREE.Vector3(0, 0, 0));
-    const partB = makePart(scene, new THREE.Vector3(1, 0, 0));
-    const partC = makePart(scene, new THREE.Vector3(0, 5, 0));
-
-    am.createGroup([partA, partB]);
-    am.commitAttach(
-      partB, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
-      partC, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
-      [partA, partB, partC],
-    );
-
-    am.dissolveGroupComponent(partA.id, [partA, partB, partC]);
-
-    expect(am.isInGroupComponent(partA.id)).toBe(false);
-    expect(am.groupForPart(partA.id)).toBeUndefined();
-    expect(partA.mesh.parent).toBe(scene);
-
-    const bcGroup = am.groupForPart(partB.id);
-    expect(bcGroup).toBeDefined();
-    expect(bcGroup!.partIds).toContain(partC.id);
-    expect(am.isGroup(partB.id)).toBe(false); // it's an attach group, not a pure group
-  });
-
-  it('no-op when partId is not in any group component', () => {
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const partA = makePart(scene);
-    const partB = makePart(scene, new THREE.Vector3(2, 0, 0));
-    am.commitAttach(partA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0), partB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0), [partA, partB]);
-
-    // partA is in an attach group, not a group component — dissolveGroupComponent should no-op.
-    am.dissolveGroupComponent(partA.id, [partA, partB]);
-
-    expect(am.getAssemblyGroups()).toHaveLength(1); // am group unchanged
-    expect(am.getJoints()).toHaveLength(1);
-  });
-});
-
-// ── createGroup — group merging ──────────────────────────────────────────────
-
-describe('AttachManager.createGroup — group merging', () => {
-  it('merges a standalone part into an existing group', () => {
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const a = makePart(scene);
-    const b = makePart(scene, new THREE.Vector3(1, 0, 0));
-    const d = makePart(scene, new THREE.Vector3(2, 0, 0));
-
-    am.createGroup([a, b]);
-    // Merge D into A+B.
-    am.createGroup([a, b, d]);
-
-    const ag = am.groupForPart(a.id);
-    expect(ag).toBeDefined();
-    expect(ag!.partIds).toHaveLength(3);
-    expect(ag!.partIds).toContain(d.id);
-    // Only one assembly group should exist (old one dissolved).
-    expect(am.getAssemblyGroups()).toHaveLength(1);
-    // One merged group component covering all three.
-    expect(am.getGroupComponents()).toHaveLength(1);
-    expect(am.getGroupComponents()[0].sort()).toEqual([a.id, b.id, d.id].sort());
-  });
-
-  it('merges two independent groups into one', () => {
-    const scene = makeScene();
-    const am = new AttachManager(scene);
-    const a = makePart(scene);
-    const b = makePart(scene, new THREE.Vector3(1, 0, 0));
-    const c = makePart(scene, new THREE.Vector3(2, 0, 0));
-    const d = makePart(scene, new THREE.Vector3(3, 0, 0));
-
-    am.createGroup([a, b]);
-    am.createGroup([c, d]);
-    // Group all four together (caller has expanded both groups to their full member lists).
-    am.createGroup([a, b, c, d]);
-
-    // All four should be in one group.
-    const ag = am.groupForPart(a.id);
-    expect(ag).toBeDefined();
-    expect(ag!.partIds).toHaveLength(4);
-    expect(am.getAssemblyGroups()).toHaveLength(1);
-    expect(am.getGroupComponents()).toHaveLength(1);
-    expect(am.getGroupComponents()[0].sort()).toEqual([a.id, b.id, c.id, d.id].sort());
-  });
-});
-

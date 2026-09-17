@@ -4,9 +4,32 @@ import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { AttachManager } from './AttachManager.js';
 import { PRIMITIVE_PRESETS, PRESET_BY_NAME, buildLatheGeometry } from './geometry.js';
 import { buildPartMesh } from './realise.js';
-import type { JointSnapshot, GroupSnapshot, PartDraft, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
-import { draftToDocument, documentToDraft, insertPart, groupParts, ungroupPart, removePart as removeTreePart, setPartColor as setTreePartColor, setFaceColor as setTreeFaceColor, setFaceTexture as setTreeFaceTexture, setPartLabel as setTreePartLabel, findGroupOfPartId } from './documentTree.js';
-import type { SetDocument, SetNode, SetSnapshot } from './documentTree.js';
+import type { JointSnapshot, PartDraft, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
+import {
+  draftToDocument,
+  documentToDraft,
+  emptyDocument,
+  cloneDocument,
+  insertPart,
+  groupParts,
+  ungroupPart,
+  mergeIntoGroup,
+  rebuildGroups,
+  addJoint,
+  removeJointsTouching,
+  addGroupBond,
+  removeGroupBondContaining,
+  evictFromGroupBonds,
+  groupMembersOf,
+  findGroupNodeById,
+  findGroupOfPartId,
+  removePart as removeTreePart,
+  setPartColor as setTreePartColor,
+  setFaceColor as setTreeFaceColor,
+  setFaceTexture as setTreeFaceTexture,
+  setPartLabel as setTreePartLabel,
+} from './documentTree.js';
+import type { SetDocument, SetNode } from './documentTree.js';
 import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 import type { SetPieceEntry } from '../catalogue/types.js';
 
@@ -49,6 +72,11 @@ function eulerToQuaternion(euler: Vec3): [number, number, number, number] {
   return [q.x, q.y, q.z, q.w];
 }
 
+/** Plain-data form of a vector, as a document stores it. */
+function toTuple(v: THREE.Vector3): [number, number, number] {
+  return [v.x, v.y, v.z];
+}
+
 type Phase = 'idle' | 'drawing' | 'pending-holes' | 'hole-drawing' | 'extruding' | 'revolve-drawing' | 'pending-revolve';
 
 /**
@@ -88,6 +116,14 @@ export class CartoonSketcher {
   private _environmentMap: string | undefined;
   /** THREE light objects added to the scene, keyed by LightConfig.id, for removeLight/dispose. */
   private readonly lightObjects = new Map<string, THREE.Light>();
+  /**
+   * The tree document — the set's stored form and the structural source of truth.
+   * Meshes are realised from it and transforms are written back into it, so every
+   * edit is a document edit (see editDocument).
+   */
+  private document: SetDocument = emptyDocument();
+  /** The THREE.Group realised for each group node, by node id — rebuilt on every sync. */
+  private readonly groupObjects = new Map<string, THREE.Group>();
 
   /** Called whenever the extrusion depth changes during a drag (phase === 'extruding'). */
   onExtrusionDepthChanged?: (depth: number) => void;
@@ -301,6 +337,8 @@ export class CartoonSketcher {
       (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m) => { m.map?.dispose(); m.dispose(); });
     }
     this.allParts.clear();
+    this.groupObjects.clear();
+    this.document = emptyDocument();
     for (const light of this.lightObjects.values()) {
       this.scene.remove(light);
     }
@@ -440,7 +478,10 @@ export class CartoonSketcher {
     }));
     this.editDocument((doc) => {
       for (const draft of drafts) insertPart(doc, draft);
-      if (drafts.length > 1) groupParts(doc, drafts.map((d) => d.id), entry.label);
+      if (drafts.length > 1) {
+        groupParts(doc, drafts.map((d) => d.id), entry.label);
+        addGroupBond(doc, drafts.map((d) => d.id));
+      }
     });
 
     const parts = drafts
@@ -462,9 +503,14 @@ export class CartoonSketcher {
 
   /** Set (or clear, with undefined) a group's semantic name. No-op for unknown group. */
   setGroupName(groupId: string, name: string | undefined): void {
-    const ag = this.attach.getAssemblyGroups().find((g) => g.id === groupId);
-    if (!ag) return;
-    ag.name = name;
+    // The mirror's group id is the group node's own id, so it addresses the document directly.
+    if (!this.attach.getAssemblyGroups().some((g) => g.id === groupId)) return;
+    this.editDocument((doc) => {
+      const node = findGroupNodeById(doc.root, groupId);
+      if (!node) return;
+      if (name === undefined) delete node.name;
+      else node.name = name;
+    });
   }
 
   /** Update the colour of a single draw group. Does not change part.color. */
@@ -488,7 +534,7 @@ export class CartoonSketcher {
     const src = this.parts.find((p) => p.id === id);
     if (!src) return null;
     const newId = `part-${this.nextId++}`;
-    const draft = this.partToDraft(src);
+    const draft = this.partToLeaf(src);
     draft.id = newId;
     // Offset by +1 on local X, mirroring the old mesh-clone behaviour.
     draft.position = [src.mesh.position.x + 1, src.mesh.position.y, src.mesh.position.z];
@@ -497,14 +543,15 @@ export class CartoonSketcher {
   }
 
   /**
-   * Remove a single part by id. Its joints are dropped; if it was in a group
-   * that now has only one member, that group is dissolved.
+   * Remove a single part by id. Its joints and group bonds are dropped; if it was
+   * in a group that now has only one member, that group is dissolved.
    */
   removePart(id: string): void {
     this.editDocument((doc) => {
-      doc.joints = doc.joints.filter((j) => j.partAId !== id && j.partBId !== id);
+      removeJointsTouching(doc, id);
       const group = findGroupOfPartId(doc, id);
       removeTreePart(doc, id);
+      evictFromGroupBonds(doc, id);
       if (group && group.children.length === 1 && group.children[0].kind === 'part') {
         ungroupPart(doc, group.children[0].part.id);
       }
@@ -560,19 +607,74 @@ export class CartoonSketcher {
         if (findGroupOfPartId(doc, id)) ungroupPart(doc, id);
       }
       groupParts(doc, expandedIds, name);
+      addGroupBond(doc, expandedIds);
     });
     return this.attach.groupForPart(expandedIds[0]) ?? null;
   }
 
   /**
    * Dissolve the group that contains the given part, returning all members
-   * to the scene root at their current world positions.
+   * to the scene root at their current world positions. Its group bond goes too,
+   * so a later detach cannot reform it.
    * No-op if the part is not in a group.
    */
   ungroup(partId: string): void {
     this.editDocument((doc) => {
       if (findGroupOfPartId(doc, partId)) ungroupPart(doc, partId);
+      removeGroupBondContaining(doc, partId);
     });
+  }
+
+  /**
+   * Attach partB to partA: rotate and translate partB — or its whole group, when the
+   * parts sit in different groups — so partB's contact point and normal meet partA's,
+   * record the joint, then merge every part in the connected component into one
+   * assembly group.
+   *
+   * Neither side is "parent": re-evaluating the recipe repositions whichever side
+   * moved relative to the other. All four vectors are in the respective mesh's LOCAL
+   * space — typically a raycast hit's face.normal and matrixWorldInverse.
+   */
+  commitAttach(
+    partA: SketcherPart,
+    localPointA: THREE.Vector3,
+    localNormalA: THREE.Vector3,
+    partB: SketcherPart,
+    localPointB: THREE.Vector3,
+    localNormalB: THREE.Vector3,
+  ): void {
+    this.attach.applyJoint(partA, localPointA, localNormalA, partB, localPointB, localNormalB);
+    this.editDocument((doc) => {
+      const members = [...new Set([...groupMembersOf(doc, partA.id), ...groupMembersOf(doc, partB.id)])];
+      addJoint(doc, {
+        type: 'snap',
+        partAId: partA.id,
+        localPointA: toTuple(localPointA),
+        localNormalA: toTuple(localNormalA),
+        partBId: partB.id,
+        localPointB: toTuple(localPointB),
+        localNormalB: toTuple(localNormalB),
+      });
+      mergeIntoGroup(doc, members);
+    });
+  }
+
+  /**
+   * Remove every joint touching a part, then rebuild its component's group topology:
+   * parts still connected by joints or by a durable group bond reform as groups, the
+   * rest return to the scene root.
+   */
+  detachAll(partId: string): void {
+    this.editDocument((doc) => {
+      const affected = groupMembersOf(doc, partId);
+      removeJointsTouching(doc, partId);
+      rebuildGroups(doc, affected);
+    });
+  }
+
+  /** Current attach joints, in document order. */
+  getJoints(): readonly JointSnapshot[] {
+    return this.document.joints;
   }
 
   /** Return a snapshot of the current session. */
@@ -691,71 +793,82 @@ export class CartoonSketcher {
   }
 
   /**
-   * Capture a plain-data tree snapshot of the current session.
-   * Uses local transforms (relative to the parent group, or world when ungrouped),
-   * so member transforms are stable regardless of group motion. Joints are recorded
-   * in local space (unchanged by group transforms). Groups are captured as tree nodes
-   * (part leaves nested under their group) with their world transform so they can be
-   * re-created on restore.
+   * The current session as a plain-data document — a detached copy, so a caller can
+   * persist or diff it without touching live state. Live transforms are written back
+   * first (the gizmo mutates meshes, not the document).
    */
-  takeSnapshot(): SetSnapshot {
-    const { root, joints, lights, environmentMap } = this.toDocument();
-    return {
-      root,
-      joints,
-      ...(lights !== undefined ? { lights } : {}),
-      ...(environmentMap !== undefined ? { environmentMap } : {}),
-      groupComponents: this.attach.getGroupComponents(),
-    };
+  toDocument(): SetDocument {
+    this.writeBack();
+    return cloneDocument(this.document);
+  }
+
+  /** A plain-data snapshot of the current session, for undo/redo and drag bookkeeping. */
+  takeSnapshot(): SetDocument {
+    return this.toDocument();
   }
 
   /**
-   * Rebuild the Three.js scene to match a plain-data tree snapshot.
-   * All currently-present meshes are removed; the correct subset from allParts
-   * is re-added at their snapshotted LOCAL transforms (re-parented into groups
-   * below); joints are re-registered (no repositioning — positions already
-   * reflect the attached state).
+   * Replace the session with a snapshot. Every mesh is reused by part id where the
+   * snapshot still holds it, so selection and gizmo identity survive undo/redo;
+   * geometry of parts the snapshot does not know is disposed.
    */
-  restoreSnapshot(snap: SetSnapshot): void {
-    this.syncFromDocument(snap);
-    this.attach.setGroupComponents(snap.groupComponents ?? []);
+  restoreSnapshot(snapshot: SetDocument): void {
+    this.document = cloneDocument(snapshot);
+    this.syncFromDocument(this.document);
+  }
+
+  /** Rebuild the Three.js scene from a tree document (the inverse of toDocument). */
+  loadDocument(doc: SetDocument): void {
+    this.document = cloneDocument(doc);
+    this.syncFromDocument(this.document);
   }
 
   /**
-   * Serialise the current session to a plain-data JSON-safe draft.
-   * Call on every mutation (debounced) and write to localStorage to survive page refresh.
+   * Apply a mutation to the document tree and re-derive the scene from it. Live
+   * transforms are written back first, so a mutation that follows a gizmo drag sees
+   * the dragged positions; the tree — not the mesh — is what the edit changes.
    */
-  toDraft(): SketcherDraft {
-    const parts: PartDraft[] = this.parts.map((p) => this.partToDraft(p));
-    const joints: JointSnapshot[] = this.attach.getJoints().map((j) => ({
-      type: j.type,
-      partAId: j.partAId,
-      localPointA: [j.localPointA.x, j.localPointA.y, j.localPointA.z],
-      localNormalA: [j.localNormalA.x, j.localNormalA.y, j.localNormalA.z],
-      partBId: j.partBId,
-      localPointB: [j.localPointB.x, j.localPointB.y, j.localPointB.z],
-      localNormalB: [j.localNormalB.x, j.localNormalB.y, j.localNormalB.z],
-    }));
-    const groups: GroupSnapshot[] = this.attach.getAssemblyGroups().map((ag) => ({
-      partIds: [...ag.partIds],
-      ...(ag.name !== undefined ? { name: ag.name } : {}),
-      position: [ag.group.position.x, ag.group.position.y, ag.group.position.z],
-      quaternion: [ag.group.quaternion.x, ag.group.quaternion.y, ag.group.quaternion.z, ag.group.quaternion.w],
-      scale: [ag.group.scale.x, ag.group.scale.y, ag.group.scale.z],
-      isGroup: this.attach.isGroup(ag.partIds[0]),
-    }));
-    return {
-      version: 2,
-      parts,
-      joints,
-      groups,
-      ...(this.lights.length > 0 ? { lights: [...this.lights] } : {}),
-      ...(this._environmentMap ? { environmentMap: this._environmentMap } : {}),
-    };
+  private editDocument(edit: (doc: SetDocument) => void): void {
+    this.writeBack();
+    edit(this.document);
+    this.syncFromDocument(this.document);
   }
 
-  private partToDraft(p: SketcherPart): PartDraft {
-    const draft: PartDraft = {
+  /**
+   * Adopt live object state into the document: each part leaf's transform and body
+   * from its mesh, each group node's transform from its THREE.Group, and the placed
+   * lights + environment. Structure — membership, joints, bonds — is already
+   * document-owned and is not re-derived.
+   */
+  private writeBack(): void {
+    const walk = (nodes: SetNode[]) => {
+      for (const node of nodes) {
+        if (node.kind === 'part') {
+          const live = this.allParts.get(node.part.id);
+          if (live) node.part = this.partToLeaf(live);
+        } else {
+          const group = this.groupObjects.get(node.id);
+          if (group) {
+            group.updateMatrix();
+            node.position = [group.position.x, group.position.y, group.position.z];
+            node.quaternion = [group.quaternion.x, group.quaternion.y, group.quaternion.z, group.quaternion.w];
+            node.scale = [group.scale.x, group.scale.y, group.scale.z];
+          }
+          walk(node.children);
+        }
+      }
+    };
+    walk(this.document.root);
+
+    if (this.lights.length > 0) this.document.lights = [...this.lights];
+    else delete this.document.lights;
+    if (this._environmentMap !== undefined) this.document.environmentMap = this._environmentMap;
+    else delete this.document.environmentMap;
+  }
+
+  /** Serialise one live part into a document leaf. */
+  private partToLeaf(p: SketcherPart): PartDraft {
+    const leaf: PartDraft = {
       id: p.id,
       kind: p.shapePoints !== null
         ? 'sketch'
@@ -776,36 +889,31 @@ export class CartoonSketcher {
       faceTextures: [...p.faceTextures],
     };
     if (p.shapePoints !== null) {
-      draft.shapePoints = p.shapePoints;
-      draft.depth = p.depth;
-      if (p.holes && p.holes.length > 0) draft.holes = p.holes;
+      leaf.shapePoints = p.shapePoints;
+      leaf.depth = p.depth;
+      if (p.holes && p.holes.length > 0) leaf.holes = p.holes;
     }
     if (p.lathePoints !== null) {
-      draft.lathePoints = p.lathePoints;
+      leaf.lathePoints = p.lathePoints;
       if (p.lathePhiLength !== null && p.lathePhiLength < Math.PI * 2 - 1e-6) {
-        draft.phiLength = p.lathePhiLength;
+        leaf.phiLength = p.lathePhiLength;
       }
     }
-    return draft;
+    return leaf;
   }
 
-  /** Serialise the session as its tree document (the increment-2 canonical form). */
-  toDocument(): SetDocument {
-    return draftToDocument(this.toDraft());
-  }
-
-  /** Rebuild the Three.js scene from a tree document (the inverse of toDocument). */
-  loadDocument(doc: SetDocument): void {
-    this.syncFromDocument(doc);
-  }
-
-  /** Re-derive the scene from the tree, reusing live meshes by guid (identity-preserving). */
-  private syncFromDocument(doc: SetSnapshot): void {
+  /**
+   * Rebuild the Three.js scene to match the document. All currently-present meshes are
+   * removed; the subset the document still holds is re-added at their LOCAL transforms,
+   * re-parented into a THREE.Group per group node; joints, groups and bonds are mirrored
+   * into the AttachManager (no repositioning — positions already reflect the attached state).
+   */
+  private syncFromDocument(doc: SetDocument): void {
     // Collect PartDrafts by guid from the tree.
-    const partDrafts = new Map<string, PartDraft>();
+    const partLeaves = new Map<string, PartDraft>();
     const collectParts = (nodes: SetNode[]) => {
       for (const n of nodes) {
-        if (n.kind === 'part') partDrafts.set(n.part.id, n.part);
+        if (n.kind === 'part') partLeaves.set(n.part.id, n.part);
         else collectParts(n.children);
       }
     };
@@ -813,11 +921,12 @@ export class CartoonSketcher {
 
     // Dissolve current groups (return members to scene root) + clear joint/group state.
     this.attach.resetGroups();
+    this.groupObjects.clear();
 
     // Dispose meshes no longer in the tree.
     for (let i = this.parts.length - 1; i >= 0; i--) {
       const p = this.parts[i];
-      if (!partDrafts.has(p.id)) {
+      if (!partLeaves.has(p.id)) {
         p.mesh.removeFromParent();
         p.mesh.geometry.dispose();
         (p.mesh.material as THREE.MeshStandardMaterial[]).forEach((m) => { m.map?.dispose(); m.dispose(); });
@@ -925,48 +1034,16 @@ export class CartoonSketcher {
             if (part) group.add(part.mesh);
           }
           this.scene.add(group);
-          this.attach.adoptGroup(group, memberIds, node.name, node.isGroup);
+          this.groupObjects.set(node.id, group);
+          this.attach.adoptGroup(node.id, group, memberIds, node.name, node.isGroup);
         }
       }
     };
     walkTree(doc.root);
 
-    // Rebuild durable group bond components from the tree's pure groups.
-    const components: string[][] = [];
-    const collectComponents = (nodes: SetNode[]) => {
-      for (const n of nodes) {
-        if (n.kind === 'group') {
-          if (n.isGroup !== false) {
-            const ids: string[] = [];
-            const collectIds = (x: SetNode) => {
-              if (x.kind === 'part') ids.push(x.part.id);
-              else x.children.forEach(collectIds);
-            };
-            n.children.forEach(collectIds);
-            components.push(ids);
-          }
-          collectComponents(n.children);
-        }
-      }
-    };
-    collectComponents(doc.root);
-    this.attach.setGroupComponents(components);
-
-    for (const js of doc.joints) {
-      const partA = this.parts.find((p) => p.id === js.partAId);
-      const partB = this.parts.find((p) => p.id === js.partBId);
-      if (partA && partB) {
-        this.attach.registerJoint(
-          partA,
-          new THREE.Vector3(js.localPointA[0], js.localPointA[1], js.localPointA[2]),
-          new THREE.Vector3(js.localNormalA[0], js.localNormalA[1], js.localNormalA[2]),
-          partB,
-          new THREE.Vector3(js.localPointB[0], js.localPointB[1], js.localPointB[2]),
-          new THREE.Vector3(js.localNormalB[0], js.localNormalB[1], js.localNormalB[2]),
-          js.type,
-        );
-      }
-    }
+    // Mirror the attach topology: joints and the durable group bonds.
+    this.attach.setJoints(doc.joints.filter((js) => partLeaves.has(js.partAId) && partLeaves.has(js.partBId)));
+    this.attach.setBonds(doc.groupComponents ?? []);
 
     // Clear + re-add lights.
     for (const light of this.lightObjects.values()) this.scene.remove(light);
@@ -977,22 +1054,16 @@ export class CartoonSketcher {
   }
 
   /**
-   * Apply a mutation to the document tree and re-derive the scene from it.
-   * The tree is read fresh from the live scene on entry, so mixed mutation paths
-   * (tree-backed and mesh-backed) stay consistent during the migration.
-   */
-  private editDocument(edit: (doc: SetDocument) => void): void {
-    const doc = this.toDocument();
-    edit(doc);
-    this.syncFromDocument(doc);
-  }
-
-  /**
-   * Reconstruct the Three.js scene from a plain-data draft (the inverse of toDraft).
-   * Delegates to the tree path so the persistent document is populated.
+   * Reconstruct the Three.js scene from a flat draft. Delegates to the tree path, so
+   * the session always ends up as a document.
    */
   loadDraft(draft: SketcherDraft): void {
     this.loadDocument(draftToDocument(draft));
+  }
+
+  /** The session as a flat draft — a projection of its tree document. */
+  toDraft(): SketcherDraft {
+    return documentToDraft(this.toDocument());
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────

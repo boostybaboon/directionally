@@ -48,10 +48,9 @@ function makeStubCmd(label = 'Stub'): SketcherCommand & { executeCalls: number }
 }
 
 function attachAB(sketcher: CartoonSketcher, pA: NonNullable<ReturnType<CartoonSketcher['insertPrimitive']>>, pB: NonNullable<ReturnType<CartoonSketcher['insertPrimitive']>>) {
-  return sketcher.attachManager.commitAttach(
+  sketcher.commitAttach(
     pA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
     pB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
-    [pA, pB],
   );
 }
 
@@ -394,9 +393,9 @@ describe('RenameGroupCommand', () => {
     const { sketcher } = makeSketcher();
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
-    const ag = sketcher.attachManager.createGroup([a, b], 'leg');
+    const ag = sketcher.group([a.id, b.id], 'leg')!;
     new RenameGroupCommand(ag.id, 'table-leg', sketcher).execute();
-    expect(ag.name).toBe('table-leg');
+    expect(sketcher.attachManager.groupForPart(a.id)!.name).toBe('table-leg');
   });
 
   it('doc.undo() restores the previous group name', () => {
@@ -404,7 +403,7 @@ describe('RenameGroupCommand', () => {
     const { doc } = makeDoc(sketcher);
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
-    const ag = sketcher.attachManager.createGroup([a, b], 'leg');
+    const ag = sketcher.group([a.id, b.id], 'leg')!;
     doc.execute(new RenameGroupCommand(ag.id, 'table-leg', sketcher));
     doc.undo();
     expect(sketcher.attachManager.getAssemblyGroups()[0].name).toBe('leg');
@@ -415,7 +414,7 @@ describe('RenameGroupCommand', () => {
     const { doc } = makeDoc(sketcher);
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
-    const ag = sketcher.attachManager.createGroup([a, b], 'leg');
+    const ag = sketcher.group([a.id, b.id], 'leg')!;
     doc.execute(new RenameGroupCommand(ag.id, 'table-leg', sketcher));
     doc.undo();
     doc.redo();

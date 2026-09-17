@@ -1,21 +1,21 @@
 import type { CartoonSketcher } from './CartoonSketcher.js';
 import type { SketcherCommand } from './SketcherCommand.js';
 import type { SketcherSession } from './types.js';
-import type { SetSnapshot } from './documentTree.js';
+import type { SetDocument } from './documentTree.js';
 
 type HistoryEntry = {
-  before: SetSnapshot;
-  after: SetSnapshot;
+  before: SetDocument;
+  after: SetDocument;
   label: string;
 };
 
 /**
  * Wraps a CartoonSketcher session with snapshot-based undo/redo.
  *
- * Each mutation records a { before, after } pair of plain-data SetSnapshots.
+ * Each mutation records a { before, after } pair of documents.
  * Undo/redo call sketcher.restoreSnapshot(), which rebuilds the Three.js scene
  * from the snapshot without requiring inverse command logic. This sidesteps
- * bugs caused by stale object references (e.g. dissolved THREE.Group) and
+ * bugs caused by stale object references (e.g. a dissolved THREE.Group) and
  * incorrect intermediate transforms during multi-step undo chains.
  *
  * All mutations must flow through execute(). Callers supply an onChange
@@ -53,7 +53,7 @@ export class SketcherDocument {
    * Call this at drag-start before TransformControls mutates the scene; pass
    * the result to execute() at drag-end.
    */
-  captureSnapshot(): SetSnapshot {
+  captureSnapshot(): SetDocument {
     return this.sketcher.takeSnapshot();
   }
 
@@ -66,7 +66,7 @@ export class SketcherDocument {
    *   drag-start so the pre-drag state is preserved for undo even through
    *   transform-in-progress mutations.
    */
-  execute(cmd: SketcherCommand, priorSnapshot?: SetSnapshot): void {
+  execute(cmd: SketcherCommand, priorSnapshot?: SetDocument): void {
     const before = priorSnapshot ?? this.sketcher.takeSnapshot();
     cmd.execute();
     const after = this.sketcher.takeSnapshot();
@@ -95,7 +95,7 @@ export class SketcherDocument {
    * Record a history entry for a mutation that already happened outside of
    * execute() (e.g. extrusion commit driven by pointer events).
    */
-  record(before: SetSnapshot, after: SetSnapshot, label: string): void {
+  record(before: SetDocument, after: SetDocument, label: string): void {
     this.stack.splice(this.cursor + 1);
     this.stack.push({ before, after, label });
     this.cursor++;
@@ -107,7 +107,7 @@ export class SketcherDocument {
    * pushing a new one. Used by the inspector spinner to merge all auto-repeat
    * steps into a single undoable operation.
    */
-  amendLastEntry(after: SetSnapshot): void {
+  amendLastEntry(after: SetDocument): void {
     if (this.cursor >= 0) {
       this.stack[this.cursor].after = after;
       this.onChange?.();

@@ -620,11 +620,11 @@ describe('CartoonSketcher', () => {
   it('setGroupName() sets and clears a group name', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
-    const ag = sketcher.attachManager.createGroup([a, b], 'leg');
+    const ag = sketcher.group([a.id, b.id], 'leg')!;
     sketcher.setGroupName(ag.id, 'table-leg');
-    expect(ag.name).toBe('table-leg');
+    expect(sketcher.attachManager.groupForPart(a.id)!.name).toBe('table-leg');
     sketcher.setGroupName(ag.id, undefined);
-    expect(ag.name).toBeUndefined();
+    expect(sketcher.attachManager.groupForPart(a.id)!.name).toBeUndefined();
   });
 
   it('setGroupName() is a no-op for unknown group', () => {
@@ -799,7 +799,7 @@ describe('toDraft / loadDraft', () => {
     const b = sketcher.insertPrimitive('box')!;
     a.mesh.position.set(0, 0, 0);
     b.mesh.position.set(1, 0, 0);
-    const ag = sketcher.attachManager.createGroup([a, b], 'leg');
+    const ag = sketcher.group([a.id, b.id], 'leg')!;
     ag.group.position.set(5, 2, -3);
     ag.group.updateMatrixWorld(true);
 
@@ -829,7 +829,7 @@ describe('toDraft / loadDraft', () => {
     const b = sketcher.insertPrimitive('box')!;
     a.mesh.position.set(0, 0, 0);
     b.mesh.position.set(1, 0, 0);
-    const ag = sketcher.attachManager.createGroup([a, b], 'leg');
+    const ag = sketcher.group([a.id, b.id], 'leg')!;
     ag.group.position.set(5, 2, -3);
     ag.group.updateMatrixWorld(true);
 
@@ -917,10 +917,9 @@ describe('toDraft / loadDraft', () => {
     pB.mesh.position.set(2, 0, 0);
     pB.mesh.updateWorldMatrix(false, true);
 
-    sketcher.attachManager.commitAttach(
+    sketcher.commitAttach(
       pA, new THREE.Vector3(0.5, 0, 0), new THREE.Vector3(1, 0, 0),
       pB, new THREE.Vector3(-0.5, 0, 0), new THREE.Vector3(-1, 0, 0),
-      [pA, pB],
     );
     expect(sketcher.getSession().joints).toHaveLength(1);
     expect(sketcher.getSession().joints[0].type).toBe('snap');
@@ -1060,14 +1059,13 @@ describe('snapToFloor', () => {
   it('moves the entire assembly group when the part is attached', () => {
     const partA = sketcher.insertPrimitive('box')!;
     const partB = sketcher.insertPrimitive('box')!;
-    sketcher.attachManager.commitAttach(
+    sketcher.commitAttach(
       partA,
       new THREE.Vector3(0, 0.5, 0),
       new THREE.Vector3(0, 1, 0),
       partB,
       new THREE.Vector3(0, -0.5, 0),
       new THREE.Vector3(0, -1, 0),
-      [partA, partB],
     );
 
     // Lift the attach group and snap the whole assembly to the floor.
@@ -1178,8 +1176,8 @@ describe('group / ungroup', () => {
       expect(sketcher.attachManager.isGroup(p.id)).toBe(true);
     });
     // Single merged group component.
-    expect(sketcher.attachManager.getGroupComponents()).toHaveLength(1);
-    expect(sketcher.attachManager.getGroupComponents()[0].sort()).toEqual(
+    expect(sketcher.toDocument().groupComponents).toHaveLength(1);
+    expect(sketcher.toDocument().groupComponents![0].sort()).toEqual(
       [a.id, b.id, c.id, d.id].sort(),
     );
   });
@@ -1202,6 +1200,147 @@ describe('group / ungroup', () => {
   it('ungroup is a no-op for a part not in a group', () => {
     const a = sketcher.insertPrimitive('box')!;
     expect(() => sketcher.ungroup(a.id)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// attach / detach — the attach flow expressed as tree edits
+// ---------------------------------------------------------------------------
+describe('attach / detach', () => {
+  let scene: THREE.Scene;
+  let sketcher: CartoonSketcher;
+
+  beforeEach(() => {
+    scene = makeScene();
+    sketcher = new CartoonSketcher(scene, makePerspectiveCamera());
+  });
+
+  const UP = new THREE.Vector3(0, 1, 0);
+  const DOWN = new THREE.Vector3(0, -1, 0);
+  const TOP = new THREE.Vector3(0, 0.5, 0);
+  const BOTTOM = new THREE.Vector3(0, -0.5, 0);
+
+  it('commitAttach() records the joint and merges both parts into one assembly', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    b.mesh.position.set(2, 0, 0);
+    b.mesh.updateWorldMatrix(false, true);
+
+    sketcher.commitAttach(a, TOP, UP, b, BOTTOM, DOWN);
+
+    expect(sketcher.getJoints()).toHaveLength(1);
+    expect(sketcher.getJoints()[0].partAId).toBe(a.id);
+    expect(sketcher.getJoints()[0].partBId).toBe(b.id);
+    const ag = sketcher.attachManager.groupForPart(a.id);
+    expect(ag).toBeDefined();
+    expect(ag!.partIds.sort()).toEqual([a.id, b.id].sort());
+    expect(sketcher.attachManager.groupForPart(b.id)?.id).toBe(ag!.id);
+    // Prests sit on the floor, so partA's centre is at 0.5 and its top at 1.0:
+    // partB lands with its centre half a unit above that.
+    expect(b.mesh.getWorldPosition(new THREE.Vector3()).y).toBeCloseTo(1.5, 3);
+    // An attach assembly is not a pure group.
+    expect(sketcher.attachManager.isGroup(a.id)).toBe(false);
+  });
+
+  it('commitAttach() pulls an existing group into the assembly', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    const c = sketcher.insertPrimitive('box')!;
+    b.mesh.position.set(1, 0, 0);
+    c.mesh.position.set(3, 0, 0);
+    sketcher.group([b.id, c.id]);
+
+    sketcher.commitAttach(a, TOP, UP, b, BOTTOM, DOWN);
+
+    const ag = sketcher.attachManager.groupForPart(a.id);
+    expect(ag).toBeDefined();
+    expect(ag!.partIds.sort()).toEqual([a.id, b.id, c.id].sort());
+    // The old group is gone: one assembly now holds all three.
+    expect(sketcher.attachManager.getAssemblyGroups()).toHaveLength(1);
+    expect(sketcher.attachManager.isGroup(a.id)).toBe(false);
+  });
+
+  it('detachAll() removes the joints and dissolves a two-part assembly', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    sketcher.commitAttach(a, TOP, UP, b, BOTTOM, DOWN);
+
+    sketcher.detachAll(a.id);
+
+    expect(sketcher.getJoints()).toHaveLength(0);
+    expect(sketcher.attachManager.getAssemblyGroups()).toHaveLength(0);
+    expect(a.mesh.parent).toBe(scene);
+    expect(b.mesh.parent).toBe(scene);
+  });
+
+  it('detachAll() splits a chain into its still-jointed groups', () => {
+    const [a, b, c] = [0, 2, 4].map((x) => {
+      const part = sketcher.insertPrimitive('box')!;
+      part.mesh.position.set(x, 0, 0);
+      part.mesh.updateWorldMatrix(false, true);
+      return part;
+    });
+    sketcher.commitAttach(a, TOP, UP, b, BOTTOM, DOWN);
+    sketcher.commitAttach(b, TOP, UP, c, BOTTOM, DOWN);
+
+    sketcher.detachAll(b.id);
+
+    expect(sketcher.getJoints()).toHaveLength(0);
+    expect(sketcher.attachManager.groupForPart(a.id)).toBeUndefined();
+    expect(sketcher.attachManager.groupForPart(c.id)).toBeUndefined();
+  });
+
+  it('detachAll() restores a group that was bonded before the attach', () => {
+    // A+B are a group; attaching C merges everything into one assembly. The bond
+    // survives that merge, so detaching C brings the A+B group back.
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    const c = sketcher.insertPrimitive('box')!;
+    b.mesh.position.set(1, 0, 0);
+    c.mesh.position.set(0, 5, 0);
+    sketcher.group([a.id, b.id]);
+
+    sketcher.commitAttach(b, TOP, UP, c, BOTTOM, DOWN);
+    expect(sketcher.attachManager.isGroup(a.id)).toBe(false); // merged assembly
+    expect(sketcher.attachManager.isInGroupComponent(a.id)).toBe(true);
+
+    sketcher.detachAll(c.id);
+
+    expect(sketcher.attachManager.isGroup(a.id)).toBe(true);
+    expect(sketcher.attachManager.isGroup(b.id)).toBe(true);
+    expect(sketcher.attachManager.groupForPart(c.id)).toBeUndefined();
+    expect(c.mesh.parent).toBe(scene);
+  });
+
+  it('ungrouping before the detach drops the bond, so no group comes back', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    const c = sketcher.insertPrimitive('box')!;
+    b.mesh.position.set(1, 0, 0);
+    c.mesh.position.set(0, 5, 0);
+    sketcher.group([a.id, b.id]);
+    sketcher.ungroup(a.id);
+    expect(sketcher.attachManager.isInGroupComponent(a.id)).toBe(false);
+
+    sketcher.commitAttach(b, TOP, UP, c, BOTTOM, DOWN);
+    sketcher.detachAll(c.id);
+
+    expect(sketcher.attachManager.groupForPart(a.id)).toBeUndefined();
+    expect(sketcher.attachManager.groupForPart(b.id)).toBeUndefined();
+  });
+
+  it('removing a part drops its joints and its group bonds', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    sketcher.group([a.id, b.id]);
+    const doc = sketcher.toDocument();
+    expect(doc.groupComponents).toHaveLength(1);
+
+    sketcher.removePart(a.id);
+
+    expect(sketcher.attachManager.groupForPart(b.id)).toBeUndefined();
+    expect(sketcher.attachManager.isInGroupComponent(b.id)).toBe(false);
+    expect(sketcher.toDocument().groupComponents).toBeUndefined();
   });
 });
 

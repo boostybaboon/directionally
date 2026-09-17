@@ -198,11 +198,9 @@ export class CommitAttachCommand implements SketcherCommand {
   ) {}
 
   execute(): void {
-    const allParts = this.sketcher.getSession().parts;
-    this.sketcher.attachManager.commitAttach(
+    this.sketcher.commitAttach(
       this.partA, this.localPointA, this.localNormalA,
       this.partB, this.localPointB, this.localNormalB,
-      allParts,
     );
   }
 }
@@ -218,7 +216,7 @@ export class DetachAllCommand implements SketcherCommand {
   ) {}
 
   execute(): void {
-    this.sketcher.attachManager.detachAll(this.partId, this.sketcher.getSession().parts);
+    this.sketcher.detachAll(this.partId);
   }
 }
 

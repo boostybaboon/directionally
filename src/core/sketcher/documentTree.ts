@@ -5,15 +5,15 @@ import { IDENTITY_TRANSFORM, localToWorld, worldToLocal } from './transform.js';
 import type { Transform } from './transform.js';
 
 /**
- * The tree-shaped set document — the increment-2 target. A `part` is a leaf; a
- * `group` nests children. This module converts between the flat `SketcherDraft`
- * (still the canonical persisted form today) and the tree, so the runtime can
- * migrate to the tree without a lossy jump.
+ * The tree-shaped set document — the persistent form of a set. A `part` is a leaf;
+ * a `group` nests children. The runtime holds a `SetDocument` and rebuilds the
+ * scene from it (`CartoonSketcher`), so this module owns every structural edit:
+ * parts, groups, attach joints and the durable group bonds.
  *
  * Node `id`s are parent-unique name segments — the "stable path segment" of
- * set-staging-architecture.md. The flat draft's `part.id` guid stays as the runtime
- * identity (preserved on the `part` leaf), while the tree adds the segment for
- * path addressing (`group-id/part-id`).
+ * set-staging-architecture.md. A part leaf keeps its runtime guid (`part.id`),
+ * so mesh identity survives a re-derivation, while the node id adds the segment
+ * for path addressing (`group-id/part-id`).
  */
 export type SetNode =
   | { kind: 'part'; id: string; role: 'prop'; part: PartDraft }
@@ -25,26 +25,24 @@ export type SetDocument = {
   joints: JointSnapshot[];
   lights?: LightConfig[];
   environmentMap?: string;
-};
-
-/**
- * Tree-shaped undo snapshot — the same tree shape as `SetDocument` (full `PartDraft`
- * leaves, so restore can re-realise geometry from scratch), plus the durable
- * group-bond topology (`groupComponents`) that the draft intentionally omits.
- */
-export type SetSnapshot = {
-  root: SetNode[];
-  joints: JointSnapshot[];
-  lights?: LightConfig[];
-  environmentMap?: string;
   /**
    * Durable group bond components: each entry is the set of part IDs that form
-   * one group unit. Unlike groups, these survive attach merges — when an attach
-   * op collapses a group into a larger assembly, the bond topology is
+   * one group unit. Unlike group nodes, these survive attach merges — when an
+   * attach op collapses a group into a larger assembly, the bond topology is
    * preserved here so that detaching restores the group correctly.
    */
   groupComponents?: string[][];
 };
+
+/** A document with nothing in it. */
+export function emptyDocument(): SetDocument {
+  return { version: 2, root: [], joints: [] };
+}
+
+/** A detached copy of a document — snapshots and loads never alias live state. */
+export function cloneDocument(doc: SetDocument): SetDocument {
+  return JSON.parse(JSON.stringify(doc)) as SetDocument;
+}
 
 /** Assign a parent-unique name segment for `wanted`, deduping against `taken`. */
 function nameSegment(wanted: string, taken: Set<string>): string {
@@ -147,15 +145,20 @@ export function documentToDraft(doc: SetDocument): SketcherDraft {
 
 /** Number of part leaves in a document, nested groups included. */
 export function countParts(doc: SetDocument): number {
-  let count = 0;
+  return collectParts(doc).length;
+}
+
+/** Every part leaf in the document, in tree order. */
+export function collectParts(doc: SetDocument): PartDraft[] {
+  const parts: PartDraft[] = [];
   const walk = (nodes: SetNode[]) => {
     for (const node of nodes) {
-      if (node.kind === 'part') count++;
+      if (node.kind === 'part') parts.push(node.part);
       else walk(node.children);
     }
   };
   walk(doc.root);
-  return count;
+  return parts;
 }
 
 /**
@@ -236,8 +239,11 @@ export function removePart(doc: SetDocument, partId: string): boolean {
 /**
  * Wrap a set of sibling parts into a new group node placed at their world centroid.
  * Members are re-localised to the new group (world positions preserved).
+ *
+ * `isGroup` distinguishes a pure group (true) from an attach assembly (false),
+ * which is bond-backed only when the group is a whole `groupComponents` entry.
  */
-export function groupParts(doc: SetDocument, partIds: string[], name?: string): boolean {
+export function groupParts(doc: SetDocument, partIds: string[], name?: string, isGroup?: boolean): boolean {
   const first = findPartLocation(doc.root, partIds[0], IDENTITY_TRANSFORM);
   if (!first) return false;
 
@@ -276,6 +282,7 @@ export function groupParts(doc: SetDocument, partIds: string[], name?: string): 
     id: nameSegment(name ?? 'group', segmentsOf(first.nodes)),
     role: 'structure',
     ...(name !== undefined ? { name } : {}),
+    ...(isGroup !== undefined ? { isGroup } : {}),
     position: centroid,
     children: ascending.map((x) => x.node),
   };
@@ -365,4 +372,145 @@ export function setPartLabel(doc: SetDocument, partId: string, label: string | u
   if (label === undefined) delete node.part.label;
   else node.part.label = label;
   return true;
+}
+
+// ── Attach topology (joints, group nodes, durable bonds) ─────────────────────
+
+/** The group node carrying `id`, searching nested groups. */
+export function findGroupNodeById(nodes: SetNode[], id: string): Extract<SetNode, { kind: 'group' }> | null {
+  for (const node of nodes) {
+    if (node.kind !== 'group') continue;
+    if (node.id === id) return node;
+    const nested = findGroupNodeById(node.children, id);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+/**
+ * The part ids of the group node that contains `partId` — the part itself when it
+ * is ungrouped. An attach merge covers every member of both sides' groups.
+ */
+export function groupMembersOf(doc: SetDocument, partId: string): string[] {
+  const group = findGroupOfPartId(doc, partId);
+  if (!group) return [partId];
+  const ids: string[] = [];
+  const collect = (nodes: SetNode[]) => {
+    for (const node of nodes) {
+      if (node.kind === 'part') ids.push(node.part.id);
+      else collect(node.children);
+    }
+  };
+  collect(group.children);
+  return ids;
+}
+
+/** Append an attach joint to the document. */
+export function addJoint(doc: SetDocument, joint: JointSnapshot): void {
+  doc.joints.push(joint);
+}
+
+/** Remove every joint that touches `partId`. */
+export function removeJointsTouching(doc: SetDocument, partId: string): void {
+  doc.joints = doc.joints.filter((j) => j.partAId !== partId && j.partBId !== partId);
+}
+
+/** The durable group bonds, as plain arrays. */
+export function groupBonds(doc: SetDocument): string[][] {
+  return doc.groupComponents ?? [];
+}
+
+/**
+ * Fold `partIds` — plus every bond that overlaps them — into one pure group bond.
+ * Callers pass the full expanded member list, so grouping one member of an existing
+ * group re-bonds the whole group.
+ */
+export function addGroupBond(doc: SetDocument, partIds: string[]): void {
+  const members = new Set(partIds);
+  const kept: string[][] = [];
+  for (const bond of groupBonds(doc)) {
+    if (bond.some((id) => members.has(id))) for (const id of bond) members.add(id);
+    else kept.push(bond);
+  }
+  kept.push([...members]);
+  doc.groupComponents = kept;
+}
+
+/** Drop the bond that contains `partId` — an explicit ungroup. */
+export function removeGroupBondContaining(doc: SetDocument, partId: string): void {
+  const kept = groupBonds(doc).filter((bond) => !bond.includes(partId));
+  if (kept.length === 0) delete doc.groupComponents;
+  else doc.groupComponents = kept;
+}
+
+/** Evict a deleted part from every bond, pruning bonds that shrink below two members. */
+export function evictFromGroupBonds(doc: SetDocument, partId: string): void {
+  const kept = groupBonds(doc)
+    .map((bond) => bond.filter((id) => id !== partId))
+    .filter((bond) => bond.length >= 2);
+  if (kept.length === 0) delete doc.groupComponents;
+  else doc.groupComponents = kept;
+}
+
+/**
+ * Collapse `partIds` into one group node — an attach assembly, so it carries no
+ * bond and dissolves when its last joint goes. Existing groups the members belong
+ * to are dissolved first; world positions are preserved throughout.
+ */
+export function mergeIntoGroup(doc: SetDocument, partIds: string[], name?: string): boolean {
+  if (partIds.length < 2) return false;
+  for (const id of partIds) promoteToRoot(doc, id);
+  return groupParts(doc, partIds, name, false);
+}
+
+/**
+ * Rebuild group topology for `partIds` after joints were removed: parts still
+ * connected by joints or by a durable bond reform as groups, the rest return to
+ * the document root. A component that is one whole bond with no attach joint
+ * inside it comes back as a pure group.
+ */
+export function rebuildGroups(doc: SetDocument, partIds: string[]): void {
+  for (const id of partIds) promoteToRoot(doc, id);
+  for (const component of connectedComponents(doc, partIds)) {
+    if (component.length < 2) continue;
+    const hasAttachJoint = doc.joints.some(
+      (j) => component.includes(j.partAId) && component.includes(j.partBId),
+    );
+    const bonded = groupBonds(doc).some((bond) => component.every((id) => bond.includes(id)));
+    groupParts(doc, component, undefined, !hasAttachJoint && bonded);
+  }
+}
+
+/** Dissolve every group containing `partId`, promoting its members to the document root. */
+function promoteToRoot(doc: SetDocument, partId: string): void {
+  while (findGroupOfPart(doc.root, partId, IDENTITY_TRANSFORM)) ungroupPart(doc, partId);
+}
+
+/** Connected components of `partIds` over attach joints and durable bonds. */
+function connectedComponents(doc: SetDocument, partIds: string[]): string[][] {
+  const remaining = new Set(partIds);
+  const visited = new Set<string>();
+  const components: string[][] = [];
+  for (const startId of remaining) {
+    if (visited.has(startId)) continue;
+    const component: string[] = [];
+    const queue = [startId];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      component.push(current);
+      for (const joint of doc.joints) {
+        if (joint.partAId === current && remaining.has(joint.partBId) && !visited.has(joint.partBId)) queue.push(joint.partBId);
+        else if (joint.partBId === current && remaining.has(joint.partAId) && !visited.has(joint.partAId)) queue.push(joint.partAId);
+      }
+      for (const bond of groupBonds(doc)) {
+        if (bond.includes(current)) {
+          for (const id of bond) if (remaining.has(id) && !visited.has(id)) queue.push(id);
+        }
+      }
+    }
+    components.push(component);
+  }
+  return components;
 }
