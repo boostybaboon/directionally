@@ -8,31 +8,17 @@ import {
   buildMaterials,
   withSingleFaceGroup,
 } from './geometry.js';
-import type { PartDraft, SketcherDraft } from './types.js';
+import type { PartDraft } from './types.js';
 import type { SetNode } from './documentTree.js';
 
 /**
- * Build a THREE.Group of meshes from a SketcherDraft — pure, headless, no Sketcher
- * state. One mesh per draft part (in order), each carrying `userData.sketcherPartId`
- * + `depth`. Geometry and materials (including face colours/textures) are realised
- * here; group re-parenting and attach joints live in the interactive Sketcher.
- */
-export function realise(draft: SketcherDraft): THREE.Group {
-  const group = new THREE.Group();
-  group.name = 'realised-set';
-  for (const pd of draft.parts) {
-    const mesh = buildPartMesh(pd);
-    if (mesh) group.add(mesh);
-  }
-  return group;
-}
-
-/**
- * Build a nested THREE scene from the tree document — the increment-2 target
- * realiser. Each `group` node becomes a THREE.Group placed at its stored transform,
+ * Build a nested THREE scene from a tree document — pure, headless, no Sketcher
+ * state. Each `group` node becomes a THREE.Group placed at its stored transform,
  * and each `part` leaf becomes a mesh carrying its local transform (so the group's
- * transform composes with the leaf's, reproducing world space). Pure and headless:
- * no Sketcher state, no attach/joint bookkeeping.
+ * transform composes with the leaf's, reproducing world space) plus
+ * `userData.sketcherPartId`. Geometry and materials (including face colours and
+ * textures) are realised here; group re-parenting and attach joints live in the
+ * interactive Sketcher.
  */
 export function realiseDocument(doc: { root: SetNode[] }): THREE.Group {
   const root = new THREE.Group();

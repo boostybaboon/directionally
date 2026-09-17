@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { getCharacters, getSetPieces, getById, isSettingEntry } from './catalogue';
 import { CATALOGUE_ENTRIES } from './entries';
-import { documentFromParts, documentToDraft } from '../sketcher/documentTree';
+import { documentFromParts, collectParts } from '../sketcher/documentTree';
 import type { CatalogueEntry, CharacterEntry, SetPieceEntry } from './types';
 import type { PartDraft } from '../sketcher/types';
 import type { GeometryConfig } from '../domain/types';
@@ -9,7 +9,7 @@ import type { GeometryConfig } from '../domain/types';
 /** First part of a bundled set-piece entry's document. */
 function bundledPart(id: string): PartDraft {
   const entry = getById(id, CATALOGUE_ENTRIES) as SetPieceEntry | undefined;
-  return documentToDraft(entry?.document ?? { version: 2, root: [], joints: [] }).parts[0];
+  return collectParts(entry?.document ?? { version: 2, root: [], joints: [] })[0];
 }
 
 // Controlled fixture — tests must not depend on real seed data so they
@@ -142,7 +142,7 @@ describe('CATALOGUE_ENTRIES seed data — Phase 9.B set pieces', () => {
   it('every set piece carries its body as a tree document', () => {
     for (const p of pieces) {
       expect(p.document, p.id).toBeDefined();
-      expect(documentToDraft(p.document!).parts.length).toBeGreaterThan(0);
+      expect(collectParts(p.document!).length).toBeGreaterThan(0);
       expect(p.document!.root.every((n) => n.kind === 'part')).toBe(true);
     }
   });

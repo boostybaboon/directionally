@@ -4,10 +4,8 @@ import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { AttachManager } from './AttachManager.js';
 import { PRIMITIVE_PRESETS, PRESET_BY_NAME, buildLatheGeometry } from './geometry.js';
 import { buildPartMesh } from './realise.js';
-import type { JointSnapshot, PartDraft, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
+import type { JointSnapshot, PartDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
 import {
-  draftToDocument,
-  documentToDraft,
   emptyDocument,
   cloneDocument,
   insertPart,
@@ -21,6 +19,7 @@ import {
   removeGroupBondContaining,
   evictFromGroupBonds,
   groupMembersOf,
+  collectParts,
   findGroupNodeById,
   findGroupOfPartId,
   removePart as removeTreePart,
@@ -413,8 +412,8 @@ export class CartoonSketcher {
    * Record the applied HDRI environment (catalogue EnvironmentEntry id).
    * The Sketcher itself has no renderer instance, so it does not load the HDRI
    * texture — the page's onMount effect does that (mirroring Presenter.svelte's
-   * RGBELoader + PMREMGenerator pattern) and calls this only to persist the
-   * choice for save-as-setting / toDraft.
+   * RGBELoader + PMREMGenerator pattern) and calls this only to persist the choice
+   * in the document.
    */
   setEnvironmentMap(id: string | undefined): void {
     this._environmentMap = id;
@@ -472,7 +471,7 @@ export class CartoonSketcher {
   ): { parts: SketcherPart[]; group: AssemblyGroup | null } {
     if (!entry.document) return { parts: [], group: null };
 
-    const drafts: PartDraft[] = documentToDraft(entry.document).parts.map((pd) => ({
+    const drafts: PartDraft[] = collectParts(entry.document).map((pd) => ({
       ...pd,
       id: `part-${this.nextId++}`,
     }));
@@ -689,8 +688,9 @@ export class CartoonSketcher {
   }
 
   /**
-   * Expose the AttachManager so the page can call commitAttach, replayJoints,
-   * detach, getConnectedIds, and groupForPart directly.
+   * Expose the AttachManager so the page can read attach topology (groupForPart,
+   * getAssemblyGroups, isGroup, isInGroupComponent, getJoints) and drive the joint
+   * solver (resolveConstraints) directly.
    */
   get attachManager(): AttachManager {
     return this.attach;
@@ -911,13 +911,13 @@ export class CartoonSketcher {
   private syncFromDocument(doc: SetDocument): void {
     // Collect PartDrafts by guid from the tree.
     const partLeaves = new Map<string, PartDraft>();
-    const collectParts = (nodes: SetNode[]) => {
+    const collectLeaves = (nodes: SetNode[]) => {
       for (const n of nodes) {
         if (n.kind === 'part') partLeaves.set(n.part.id, n.part);
-        else collectParts(n.children);
+        else collectLeaves(n.children);
       }
     };
-    collectParts(doc.root);
+    collectLeaves(doc.root);
 
     // Dissolve current groups (return members to scene root) + clear joint/group state.
     this.attach.resetGroups();
@@ -1051,19 +1051,6 @@ export class CartoonSketcher {
     this.lights.length = 0;
     for (const config of doc.lights ?? []) this.addLight(config);
     this._environmentMap = doc.environmentMap;
-  }
-
-  /**
-   * Reconstruct the Three.js scene from a flat draft. Delegates to the tree path, so
-   * the session always ends up as a document.
-   */
-  loadDraft(draft: SketcherDraft): void {
-    this.loadDocument(draftToDocument(draft));
-  }
-
-  /** The session as a flat draft — a projection of its tree document. */
-  toDraft(): SketcherDraft {
-    return documentToDraft(this.toDocument());
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────

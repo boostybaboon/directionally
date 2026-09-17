@@ -1,12 +1,15 @@
 import type { Object3D } from 'three';
 import type { CartoonSketcher } from './CartoonSketcher.js';
 import type { SketcherCommand } from './SketcherCommand.js';
-import type { PartDraft, SketcherDraft } from './types.js';
+import { collectParts } from './documentTree.js';
+import type { SetDocument } from './documentTree.js';
+import type { PartDraft } from './types.js';
 
 /**
  * applyDraft — the app-side id-diff + apply step of an AI edit (ROADMAP_API.md
- * P0). The AI returns a whole new draft; this diffs it against the live session
- * by stable part id and applies only what changed, as one undoable command.
+ * P0). The AI returns a whole new document; this diffs it against the live
+ * session's document by stable part id and applies only what changed, as one
+ * undoable command.
  *
  * v1 applies primitives only for *added* parts; unchanged sketch/lathe parts are
  * left untouched by the diff (same id + same data → no-op). Transforms are local
@@ -14,7 +17,7 @@ import type { PartDraft, SketcherDraft } from './types.js';
  * happens in `fromAIDraft` before this diff runs.
  */
 
-export type DraftDiff = {
+export type DocumentDiff = {
   add: PartDraft[];
   remove: string[];
   update: PartDraft[];
@@ -38,20 +41,20 @@ function partEquals(a: PartDraft, b: PartDraft): boolean {
     && vecEquals(a.scale, b.scale);
 }
 
-/** Diff two drafts by stable part id. Pure — no Three.js runtime. */
-export function diffDraft(current: SketcherDraft, target: SketcherDraft): DraftDiff {
-  const currentById = new Map(current.parts.map((p) => [p.id, p]));
-  const targetById = new Map(target.parts.map((p) => [p.id, p]));
+/** Diff two documents by stable part id. Pure — no Three.js runtime. */
+export function diffDocument(current: SetDocument, target: SetDocument): DocumentDiff {
+  const currentById = new Map(collectParts(current).map((p) => [p.id, p]));
+  const targetById = new Map(collectParts(target).map((p) => [p.id, p]));
   const add: PartDraft[] = [];
   const update: PartDraft[] = [];
   const remove: string[] = [];
 
-  for (const t of target.parts) {
+  for (const t of targetById.values()) {
     const c = currentById.get(t.id);
     if (!c) add.push(t);
     else if (!partEquals(c, t)) update.push(t);
   }
-  for (const c of current.parts) {
+  for (const c of currentById.values()) {
     if (!targetById.has(c.id)) remove.push(c.id);
   }
   return { add, remove, update };
@@ -67,8 +70,8 @@ function setTransform(mesh: Object3D, p: PartDraft): void {
  * Build a command that reconciles the live session with `target`. Execute it via
  * `SketcherDocument.execute()` so the whole AI turn is one undoable step.
  */
-export function applyDraftCommand(sketcher: CartoonSketcher, target: SketcherDraft): SketcherCommand {
-  const diff = diffDraft(sketcher.toDraft(), target);
+export function applyDocumentCommand(sketcher: CartoonSketcher, target: SetDocument): SketcherCommand {
+  const diff = diffDocument(sketcher.toDocument(), target);
   return {
     label: `AI edit (${diff.add.length} add, ${diff.update.length} update, ${diff.remove.length} remove)`,
     execute() {

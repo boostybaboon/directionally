@@ -1,6 +1,6 @@
 import { normalizeAIDraft } from '../sketcher/aiDraftSchema.js';
 import { fromAIDraft } from '../sketcher/aiDraft.js';
-import { draftToDocument } from '../sketcher/documentTree.js';
+import { countParts } from '../sketcher/documentTree.js';
 import * as OPFSCatalogueStore from '../storage/OPFSCatalogueStore.js';
 import type { UserCatalogueEntry } from '../storage/OPFSCatalogueStore.js';
 
@@ -33,9 +33,8 @@ export async function createSetPiece(
   opts: { isSetting?: boolean; resumeEntryId?: string; fallbackLabel?: string } = {},
 ): Promise<CreatedSetPiece> {
   const aiDraft = normalizeAIDraft(input);
-  const draft = fromAIDraft(aiDraft);
   const label = aiDraft.label?.trim() || opts.fallbackLabel?.trim() || 'Untitled Set';
-  const document = draftToDocument(draft);
+  const document = fromAIDraft(aiDraft);
 
   const existingId = opts.resumeEntryId ?? (await OPFSCatalogueStore.findByLabel(label))?.id;
   if (existingId) {
@@ -43,7 +42,7 @@ export async function createSetPiece(
       label,
       environmentId: aiDraft.environmentMap,
       lights: aiDraft.lights,
-      partCount: draft.parts.length,
+      partCount: countParts(document),
     });
     if (updated) return { entry: updated, created: false };
   }
@@ -51,7 +50,7 @@ export async function createSetPiece(
   const entry = await OPFSCatalogueStore.createSetPieceDocument(label, {
     document,
     isSetting: opts.isSetting ?? true,
-    partCount: draft.parts.length,
+    partCount: countParts(document),
     ...(aiDraft.environmentMap ? { environmentId: aiDraft.environmentMap } : {}),
     ...(aiDraft.lights && aiDraft.lights.length > 0 ? { lights: aiDraft.lights } : {}),
   });

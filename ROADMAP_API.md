@@ -7,14 +7,17 @@ declarative-create API in [ROADMAP_API_ARCHIVE.md](ROADMAP_API_ARCHIVE.md).
 
 ## Core idea: one canonical draft, a sympathetic AI Draft
 
-- The canonical, persisted design is the **`SketcherDraft`** — what the Sketcher's command UI
-  writes via `toDraft()` and reconstructs via `loadDraft()`. It is flat: each part carries a
-  world-space `position`/`quaternion`/`scale` and a guid, plus joints and flat group membership.
-- The AI **never reads or writes `SketcherDraft` directly.** It reads/writes an **AI Draft** — a
+- The canonical, persisted design is the **`SetDocument`** — the tree the Sketcher edits and
+  autosaves. Each part leaf carries a *local* `position`/`quaternion`/`scale` and a guid; group
+  nodes nest, and joints + durable group bonds travel with the document. (`toDocument()` is the
+  live session as a document, `loadDocument()` realises one.)
+- The AI **never reads or writes a `SetDocument` directly.** It reads/writes an **AI Draft** — a
   sympathetic projection of the same document: Euler rotation, semantic names + handles, named
   groups, and an explicit coordinate convention (`units`, `up`, `groundY`, `forward`).
-- The **projection pair** `toAIDraft()` / `fromAIDraft()` bridges the two. `SketcherDraft` stays
-  the single source of truth; the AI Draft is derived, never persisted as a second format.
+- The **projection pair** `toAIDraft()` / `fromAIDraft()` bridges the two, projecting world
+  transforms (the AI grammar is flat, so nested groups flatten to their outermost group).
+  `SetDocument` stays the single source of truth; the AI Draft is derived, never persisted as a
+  second format.
 
 **Whole-document, not command-level.** A human edits via the command/undo stack; an AI (like a
 coding agent) thinks in documents — read the draft, write a new one. So the AI's unit of
@@ -38,8 +41,7 @@ not touched), and (b) **review + undo** (the turn is one labelled, undoable step
   absolute `size`, Euler `rotation`, named `groups`, and a `convention` block. The editable
   generate path (`generateEditableSetting`) fills it; `normalizeAIDraft` validates it;
   `fromAIDraft` rebuilds the canonical draft. (`core/sketcher/aiDraftSchema.ts`.)
-- **`SketcherDraft`** (canonical, existing) — enriched: semantic part names, group `id`+`name`,
-  primitive `size` (replacing `scale`).
+- **`SetDocument`** (canonical) — the tree the Sketcher edits; the AI Draft is its projection.
 - **`CHARACTER_JSON_SCHEMA`** (retained) — the semantic-slider surface for characters.
 - **`SET_PIECE_JSON_SCHEMA`** (retained) — the procedural `compose` contract for the headless
   `make`/`create_setting` verb (a lightweight, non-editable catalogue entry); no longer the
@@ -47,16 +49,15 @@ not touched), and (b) **review + undo** (the turn is one labelled, undoable step
 
 ## The id-diff contract (app-side)
 
-Given the returned draft vs the live session, by stable id: same id + same data → no-op; new id →
-add; missing id → remove; same id + changed data → update.
+Given the returned document vs the live session's document, by stable part id: same id + same data
+→ no-op; new id → add; missing id → remove; same id + changed data → update.
 
 ## Relationship to the set-staging Node model
 
 The AI Draft is the **stable abstraction**; the projection pair is the **adapter** that changes.
-Today it bridges AI Draft ↔ flat `SketcherDraft`. When the core migrates to the Node model
-(`set-staging-architecture*.md`; Track SET in `SKETCHER_ROADMAP.md`), `toAIDraft`/`fromAIDraft`
-are re-implemented against the Node tree — but the AI Draft (Euler, names, groups) stays
-identical, so the AI and its prompts survive the migration untouched.
+It bridges AI Draft ↔ `SetDocument`, the Node tree itself (`set-staging-architecture*.md`; Track SET
+in `SKETCHER_ROADMAP.md`) — the pair was re-based on the tree without touching the AI Draft, so the
+AI grammar (Euler, names, groups) and its prompts survived the migration unchanged.
 
 **Render-time structure.** The production renderer must materialise the *same* hierarchy the
 editor holds — groups (and groups-of-groups) as `THREE.Group`s with stable paths — not a
@@ -67,8 +68,8 @@ change, not an AI-surface change.
 ## Phases
 
 - **P0 — AI Draft grammar + projection (no LLM).** ✅ Done — `AI_DRAFT_JSON_SCHEMA` +
-  `normalizeAIDraft`, `toAIDraft`/`fromAIDraft`, `applyDraft`, and the `SketcherDraft`
-  enrichment (part names, group id/name, primitive `size`) are all landed and tested.
+  `normalizeAIDraft`, `toAIDraft`/`fromAIDraft`, `applyDraft`, and the document enrichment
+  (part names, group id/name, primitive `size`) are all landed and tested.
 - **P1 — bridge to catalogue.** ✅ Done — `generateEditableSetting` builds a draft → assembly →
   GLB bake → catalogue entry carrying `sourceAssemblyId`, using the same publish path a human
   "Save as Setting" uses; resume-by-name and `partCount` stop the catalogue from duplicating.

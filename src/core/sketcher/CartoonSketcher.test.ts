@@ -4,7 +4,7 @@ import { CartoonSketcher } from './CartoonSketcher.js';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { exportGLB } from './exportGLB.js';
-import type { PartDraft, SketcherDraft, SketcherSession } from './types.js';
+import type { PartDraft, SketcherSession } from './types.js';
 import { documentFromParts } from './documentTree.js';
 import type { SetPieceEntry } from '../catalogue/types.js';
 import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
@@ -508,7 +508,7 @@ describe('CartoonSketcher', () => {
     expect(sketcher.getSession().parts[0].holes!.length).toBe(1);
   });
 
-  it('toDraft() round-trip preserves holes', () => {
+  it('toDocument() round-trip preserves holes', () => {
     sketcher.startNewSketch();
     sketcher.onClick(-0.5, -0.5);
     sketcher.onClick(0.5, -0.5);
@@ -524,11 +524,12 @@ describe('CartoonSketcher', () => {
     sketcher.onPointerDown(0, 0);
     sketcher.onPointerUp();
 
-    const draft = sketcher.toDraft();
-    expect(draft.parts[0].holes).toBeDefined();
-    expect(draft.parts[0].holes!.length).toBe(1);
+    const doc = sketcher.toDocument();
+    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
+    expect(doc.root[0].part.holes).toBeDefined();
+    expect(doc.root[0].part.holes!.length).toBe(1);
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];
     expect(restored.holes).not.toBeNull();
     expect(restored.holes!.length).toBe(1);
@@ -724,10 +725,10 @@ describe('exportGLB', () => {
 });
 
 // ---------------------------------------------------------------------------
-// toDraft / loadDraft round-trip tests
+// toDocument / loadDocument round-trip tests
 // ---------------------------------------------------------------------------
 
-describe('toDraft / loadDraft', () => {
+describe('toDocument / loadDocument', () => {
   let scene: THREE.Scene;
   let camera: THREE.PerspectiveCamera;
   let sketcher: CartoonSketcher;
@@ -738,43 +739,47 @@ describe('toDraft / loadDraft', () => {
     sketcher = new CartoonSketcher(scene, camera);
   });
 
-  it('toDraft() on an empty session produces a valid draft with no parts', () => {
-    const draft = sketcher.toDraft();
-    expect(draft.version).toBe(2);
-    expect(draft.parts).toHaveLength(0);
-    expect(draft.joints).toHaveLength(0);
-    expect(draft.lights).toBeUndefined();
-    expect(draft.environmentMap).toBeUndefined();
+  it('toDocument() on an empty session produces an empty document', () => {
+    const doc = sketcher.toDocument();
+    expect(doc.version).toBe(2);
+    expect(doc.root).toHaveLength(0);
+    expect(doc.joints).toHaveLength(0);
+    expect(doc.lights).toBeUndefined();
+    expect(doc.environmentMap).toBeUndefined();
   });
 
-  it('toDraft() / loadDraft() round-trip preserves lights and environmentMap', () => {
+  it('toDocument() / loadDocument() round-trip preserves lights and environmentMap', () => {
     sketcher.addLight({ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] });
     sketcher.setEnvironmentMap('studio-neutral');
 
-    const draft = sketcher.toDraft();
-    expect(draft.lights).toHaveLength(1);
-    expect(draft.environmentMap).toBe('studio-neutral');
+    const doc = sketcher.toDocument();
+    expect(doc.lights).toHaveLength(1);
+    expect(doc.environmentMap).toBe('studio-neutral');
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
     expect(sketcher.getLights()).toHaveLength(1);
     expect(sketcher.getLights()[0].id).toBe('sun');
     expect(sketcher.environmentMap).toBe('studio-neutral');
   });
 
-  it('loadDraft() on a legacy draft with no lights/environmentMap fields leaves them empty', () => {
-    sketcher.loadDraft({ version: 2, parts: [], joints: [], groups: [] });
+  it('loadDocument() on a document with no lights/environmentMap leaves them empty', () => {
+    sketcher.loadDocument({ version: 2, root: [], joints: [] });
     expect(sketcher.getLights()).toHaveLength(0);
     expect(sketcher.environmentMap).toBeUndefined();
   });
 
-  it('toDraft() round-trip preserves primitive position and color', () => {
+  it('toDocument() round-trip preserves primitive position and color', () => {
     const part = sketcher.insertPrimitive('box')!;
     part.mesh.position.set(3, 1, 2);
     part.mesh.updateWorldMatrix(false, true);
     sketcher.setPartColor(part.id, 0xff0000);
 
-    const draft = sketcher.toDraft();
-    sketcher.loadDraft(draft);
+    const doc = sketcher.toDocument();
+    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
+    expect(doc.root[0].part.position).toEqual([3, 1, 2]);
+    expect(doc.root[0].part.color).toBe(0xff0000);
+
+    sketcher.loadDocument(doc);
 
     const restored = sketcher.getSession().parts[0];
     expect(restored.mesh.position).toMatchObject({ x: expect.closeTo(3, 3), y: expect.closeTo(1, 3), z: expect.closeTo(2, 3) });
@@ -783,48 +788,20 @@ describe('toDraft / loadDraft', () => {
     expect(restored.shapePoints).toBeNull();
   });
 
-  it('toDraft() round-trip preserves multiple primitives', () => {
+  it('toDocument() round-trip preserves multiple primitives', () => {
     sketcher.insertPrimitive('box');
     sketcher.insertPrimitive('sphere');
     sketcher.insertPrimitive('cylinder');
 
-    const draft = sketcher.toDraft();
-    sketcher.loadDraft(draft);
+    const doc = sketcher.toDocument();
+    expect(doc.root).toHaveLength(3);
+
+    sketcher.loadDocument(doc);
 
     expect(sketcher.getSession().parts).toHaveLength(3);
   });
 
-  it('toDraft()/loadDraft() round-trip persists the group transform and local member transforms', () => {
-    const a = sketcher.insertPrimitive('box')!;
-    const b = sketcher.insertPrimitive('box')!;
-    a.mesh.position.set(0, 0, 0);
-    b.mesh.position.set(1, 0, 0);
-    const ag = sketcher.group([a.id, b.id], 'leg')!;
-    ag.group.position.set(5, 2, -3);
-    ag.group.updateMatrixWorld(true);
-
-    const worldA = new THREE.Vector3();
-    a.mesh.getWorldPosition(worldA);
-
-    const draft = sketcher.toDraft();
-    expect(draft.groups).toHaveLength(1);
-    expect(draft.groups![0].position).toEqual([5, 2, -3]);
-    // Members are serialised in local space (relative to the group).
-    expect(draft.parts.find((p) => p.id === a.id)!.position).not.toEqual([0, 0, 0]);
-
-    sketcher.loadDraft(draft);
-
-    const restoredGroup = sketcher.attachManager.getAssemblyGroups()[0];
-    expect(restoredGroup.group.position.toArray()).toEqual([5, 2, -3]);
-    const restoredA = sketcher.getSession().parts.find((p) => p.id === a.id)!;
-    const restoredWorldA = new THREE.Vector3();
-    restoredA.mesh.getWorldPosition(restoredWorldA);
-    expect(restoredWorldA.x).toBeCloseTo(worldA.x, 5);
-    expect(restoredWorldA.y).toBeCloseTo(worldA.y, 5);
-    expect(restoredWorldA.z).toBeCloseTo(worldA.z, 5);
-  });
-
-  it('toDocument()/loadDocument() round-trips the tree document (group node + local transforms)', () => {
+  it('toDocument()/loadDocument() round-trips group and member transforms', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
     a.mesh.position.set(0, 0, 0);
@@ -838,10 +815,14 @@ describe('toDraft / loadDraft', () => {
 
     const doc = sketcher.toDocument();
     const groupNode = doc.root.find((n) => n.kind === 'group');
-    expect(groupNode).toBeDefined();
     if (groupNode?.kind !== 'group') throw new Error('expected a group node');
     expect(groupNode.position).toEqual([5, 2, -3]);
+    expect(groupNode.name).toBe('leg');
     expect(groupNode.children).toHaveLength(2);
+    // Members are stored in local space (relative to the group).
+    const leafA = groupNode.children.find((n) => n.kind === 'part' && n.part.id === a.id);
+    if (leafA?.kind !== 'part') throw new Error('expected a part leaf');
+    expect(leafA.part.position).not.toEqual([0, 0, 0]);
 
     sketcher.loadDocument(doc);
 
@@ -855,12 +836,12 @@ describe('toDraft / loadDraft', () => {
     expect(restoredWorldA.z).toBeCloseTo(worldA.z, 5);
   });
 
-  it('loadDraft() restores part ids so future inserts do not collide', () => {
+  it('loadDocument() restores part ids so future inserts do not collide', () => {
     sketcher.insertPrimitive('box'); // part-1
     sketcher.insertPrimitive('box'); // part-2
 
-    const draft = sketcher.toDraft();
-    sketcher.loadDraft(draft);
+    const doc = sketcher.toDocument();
+    sketcher.loadDocument(doc);
 
     const newPart = sketcher.insertPrimitive('sphere')!;
     const ids = sketcher.getSession().parts.map((p) => p.id);
@@ -868,7 +849,7 @@ describe('toDraft / loadDraft', () => {
     expect(ids).toContain(newPart.id);
   });
 
-  it('toDraft() round-trip preserves a sketch part with shapePoints and depth', () => {
+  it('toDocument() round-trip preserves a sketch part with shapePoints and depth', () => {
     // Drive the sketcher to produce a committed extrusion part.
     sketcher.startNewSketch();
     sketcher.onClick(0, 0);
@@ -884,11 +865,12 @@ describe('toDraft / loadDraft', () => {
     expect(original.shapePoints).not.toBeNull();
     expect(original.shapePoints!.length).toBeGreaterThan(2);
 
-    const draft = sketcher.toDraft();
-    expect(draft.parts[0].kind).toBe('sketch');
-    expect(draft.parts[0].shapePoints).toBeDefined();
+    const doc = sketcher.toDocument();
+    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
+    expect(doc.root[0].part.kind).toBe('sketch');
+    expect(doc.root[0].part.shapePoints).toBeDefined();
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
 
     const restored = sketcher.getSession().parts[0];
     expect(restored.name).toBe('Shape');
@@ -896,22 +878,23 @@ describe('toDraft / loadDraft', () => {
     expect(restored.mesh.geometry.attributes.position.count).toBeGreaterThan(0);
   });
 
-  it('toDraft() round-trip preserves face texture data URLs', () => {
+  it('toDocument() round-trip preserves face texture data URLs', () => {
     const part = sketcher.insertPrimitive('box')!;
     const dataUrl = 'data:image/png;base64,abc123';
     sketcher.setFaceTexture(part.id, 0, dataUrl);
 
-    const draft = sketcher.toDraft();
-    expect(draft.parts[0].faceTextures?.[0]).toBe(dataUrl);
-    expect(draft.parts[0].faceTextures?.[1]).toBeNull();
+    const doc = sketcher.toDocument();
+    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
+    expect(doc.root[0].part.faceTextures?.[0]).toBe(dataUrl);
+    expect(doc.root[0].part.faceTextures?.[1]).toBeNull();
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];
     expect(restored.faceTextures[0]).toBe(dataUrl);
     expect(restored.faceTextures[1]).toBeNull();
   });
 
-  it('toDraft() round-trip preserves an attach joint', () => {
+  it('toDocument() round-trip preserves an attach joint', () => {
     const pA = sketcher.insertPrimitive('box')!;
     const pB = sketcher.insertPrimitive('box')!;
     pB.mesh.position.set(2, 0, 0);
@@ -921,26 +904,26 @@ describe('toDraft / loadDraft', () => {
       pA, new THREE.Vector3(0.5, 0, 0), new THREE.Vector3(1, 0, 0),
       pB, new THREE.Vector3(-0.5, 0, 0), new THREE.Vector3(-1, 0, 0),
     );
-    expect(sketcher.getSession().joints).toHaveLength(1);
-    expect(sketcher.getSession().joints[0].type).toBe('snap');
+    expect(sketcher.getJoints()).toHaveLength(1);
+    expect(sketcher.getJoints()[0].type).toBe('snap');
 
-    const draft = sketcher.toDraft();
-    expect(draft.joints).toHaveLength(1);
-    expect(draft.joints[0].type).toBe('snap');
+    const doc = sketcher.toDocument();
+    expect(doc.joints).toHaveLength(1);
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
 
     expect(sketcher.getSession().joints).toHaveLength(1);
     expect(sketcher.getSession().joints[0].type).toBe('snap');
     expect(sketcher.getSession().parts).toHaveLength(2);
-    // Attach creates a group; after draft round-trip the group is restored.
+    // Attach creates an assembly; the round-trip restores it.
     const ag = sketcher.attachManager.groupForPart(sketcher.getSession().parts[0].id);
     expect(ag).toBeDefined();
+    expect(ag!.partIds).toHaveLength(2);
   });
 
-  it('loadDraft() on empty draft produces an empty session', () => {
+  it('loadDocument() on an empty document produces an empty session', () => {
     sketcher.insertPrimitive('box');
-    sketcher.loadDraft({ version: 2, parts: [], joints: [] });
+    sketcher.loadDocument({ version: 2, root: [], joints: [] });
     expect(sketcher.getSession().parts).toHaveLength(0);
   });
 });
@@ -1515,15 +1498,16 @@ describe('CartoonSketcher lathe / revolve (SA18a)', () => {
     expect(clone.lathePoints).toEqual(part.lathePoints);
   });
 
-  it('toDraft / loadDraft round-trip preserves kind=lathed and lathePoints', () => {
+  it('toDocument / loadDocument round-trip preserves kind=lathed and lathePoints', () => {
     drawAndCloseProfile();
     sketcher.confirmLathe();
-    const draft = sketcher.toDraft();
-    expect(draft.parts[0].kind).toBe('lathed');
-    expect(draft.parts[0].lathePoints).toBeDefined();
-    expect(draft.parts[0].lathePoints!.length).toBeGreaterThan(0);
+    const doc = sketcher.toDocument();
+    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
+    expect(doc.root[0].part.kind).toBe('lathed');
+    expect(doc.root[0].part.lathePoints).toBeDefined();
+    expect(doc.root[0].part.lathePoints!.length).toBeGreaterThan(0);
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];
     expect(restored.lathePoints).not.toBeNull();
     expect(restored.lathePoints!.length).toBeGreaterThan(0);
@@ -1590,36 +1574,39 @@ describe('CartoonSketcher partial-angle revolve (SA18b)', () => {
     expect(part.lathePhiLength).toBeCloseTo(Math.PI * 2);
   });
 
-  it('toDraft writes phiLength for partial sweep, omits it for full', () => {
+  it('toDocument() writes phiLength for partial sweep, omits it for full', () => {
     drawAndCloseProfile();
     sketcher.confirmLathe(90);
-    const draft = sketcher.toDraft();
-    expect(draft.parts[0].phiLength).toBeCloseTo(Math.PI / 2);
+    const doc = sketcher.toDocument();
+    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
+    expect(doc.root[0].part.phiLength).toBeCloseTo(Math.PI / 2);
 
     drawAndCloseProfile();
     sketcher.confirmLathe(360);
-    const draft2 = sketcher.toDraft();
-    expect(draft2.parts[1].phiLength).toBeUndefined();
+    const doc2 = sketcher.toDocument();
+    if (doc2.root[1].kind !== 'part') throw new Error('expected a part node');
+    expect(doc2.root[1].part.phiLength).toBeUndefined();
   });
 
-  it('loadDraft round-trip preserves partial phiLength and group count', () => {
+  it('loadDocument() round-trip preserves partial phiLength and group count', () => {
     drawAndCloseProfile();
     sketcher.confirmLathe(90);
-    const draft = sketcher.toDraft();
+    const doc = sketcher.toDocument();
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];
     expect(restored.lathePhiLength).toBeCloseTo(Math.PI / 2);
     expect(restored.mesh.geometry.groups.length).toBe(3);
   });
 
-  it('loadDraft round-trip defaults to full revolution when phiLength absent', () => {
+  it('loadDocument() round-trip defaults to full revolution when phiLength absent', () => {
     drawAndCloseProfile();
     sketcher.confirmLathe(360);
-    const draft = sketcher.toDraft();
-    expect(draft.parts[0].phiLength).toBeUndefined();
+    const doc = sketcher.toDocument();
+    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
+    expect(doc.root[0].part.phiLength).toBeUndefined();
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];
     expect(restored.lathePhiLength).toBeCloseTo(Math.PI * 2);
     expect(restored.mesh.geometry.groups.length).toBe(1);

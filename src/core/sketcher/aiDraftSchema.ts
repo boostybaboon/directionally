@@ -7,7 +7,7 @@ import type { LightConfig } from '../domain/types.js';
  * LLM output into a well-formed `AIDraft`. This is the *only* contract the scenery
  * generate path fills (characters keep their own schema); `createSetPiece`
  * (setting/authoringApi.ts) turns a validated draft into a catalogue entry's tree
- * document, so the canonical `SketcherDraft`/`SetDocument` remains the single
+ * document, so the canonical `SetDocument` remains the single
  * source of truth.
  */
 

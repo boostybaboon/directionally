@@ -14,8 +14,7 @@ export type SketcherPart = {
   color: number;
   /**
    * XZ shape points for sketch parts (from THREE.Shape.getPoints()), null for
-   * primitives. Required by loadDraft() to reconstruct ExtrudeGeometry after
-   * a page reload.
+   * primitives. Required to reconstruct an ExtrudeGeometry from its document leaf.
    */
   shapePoints: [number, number][] | null;
   /**
@@ -127,34 +126,8 @@ export type JointSnapshot = {
 };
 
 /**
- * Plain-data snapshot of an entire session, used by SketcherDocument for
- * undo/redo. Mesh geometry and material are NOT cloned — the mesh objects
- * stay alive in CartoonSketcher's allParts pool and are reused on restore.
- * Only currently-present parts are listed; absent (soft-removed) parts are
- * omitted and restored from the pool by id on demand.
- */
-export type GroupSnapshot = {
-  /** Ordered list of part ids that form the assembly group. */
-  partIds: string[];
-  /** Optional semantic name (e.g. "table"); absent until named. */
-  name?: string;
-  /** World-space transform of the group container. Absent in legacy drafts. */
-  position?: [number, number, number];
-  quaternion?: [number, number, number, number];
-  scale?: [number, number, number];
-  /**
-   * True when the group was created by a Group command (pure rigid container,
-   * no attach joints between members). False (or absent in legacy snapshots) means
-   * the group was created by an attach operation.
-   */
-  isGroup?: boolean;
-};
-
-// ── Draft types (used by CartoonSketcher.toDraft / loadDraft for persistence) ─
-
-/**
- * JSON-serializable description of a single part. Geometry is stored as a
- * primitive name ('Box', 'Cylinder', …), the XZ shape points + depth for
+ * JSON-serializable description of a single part — a document leaf. Geometry is
+ * stored as a primitive name ('Box', 'Cylinder', …), the XZ shape points + depth for
  * sketch-extruded parts, a revolve profile for lathed parts, or the procedural
  * geometry/material of a catalogue part. Transforms are local to the parent group
  * (world when the part is ungrouped).
@@ -180,17 +153,6 @@ export type PartDraft = {
   color: number;
   faceColors?: number[];
   faceTextures?: (string | null)[];
-};
-
-export type SketcherDraft = {
-  version: 2;
-  parts: PartDraft[];
-  joints: JointSnapshot[];
-  groups?: GroupSnapshot[];
-  /** Placed lights (Track SET, N3). Absent/omitted on legacy drafts — treated as empty. */
-  lights?: LightConfig[];
-  /** Applied HDRI environment id (Track SET, N3). Absent on legacy drafts. */
-  environmentMap?: string;
 };
 
 /** Drawing mode for the polygon sketcher. */

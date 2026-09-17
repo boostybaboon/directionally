@@ -2,8 +2,10 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import * as THREE from 'three';
 import { CartoonSketcher } from './CartoonSketcher.js';
 import { SketcherDocument } from './SketcherDocument.js';
-import { diffDraft, applyDraftCommand } from './applyDraft.js';
-import type { PartDraft, SketcherDraft } from './types.js';
+import { diffDocument, applyDocumentCommand } from './applyDraft.js';
+import { documentFromParts } from './documentTree.js';
+import type { SetDocument } from './documentTree.js';
+import type { PartDraft } from './types.js';
 
 beforeAll(() => {
   vi.spyOn(THREE.TextureLoader.prototype, 'load').mockImplementation(() => new THREE.Texture());
@@ -16,15 +18,15 @@ function part(id: string, overrides: Partial<PartDraft> = {}): PartDraft {
   };
 }
 
-function draft(parts: PartDraft[]): SketcherDraft {
-  return { version: 2, parts, joints: [] };
+function doc(parts: PartDraft[]): SetDocument {
+  return documentFromParts(parts);
 }
 
-describe('diffDraft', () => {
+describe('diffDocument', () => {
   it('detects adds, updates, and removals', () => {
-    const d = diffDraft(
-      draft([part('a'), part('b', { position: [1, 0, 0] })]),
-      draft([part('a'), part('b', { position: [2, 0, 0] }), part('c')]),
+    const d = diffDocument(
+      doc([part('a'), part('b', { position: [1, 0, 0] })]),
+      doc([part('a'), part('b', { position: [2, 0, 0] }), part('c')]),
     );
     expect(d.add.map((p) => p.id)).toEqual(['c']);
     expect(d.update.map((p) => p.id)).toEqual(['b']);
@@ -32,9 +34,9 @@ describe('diffDraft', () => {
   });
 
   it('treats unchanged parts as no-ops, tolerating float noise', () => {
-    const d = diffDraft(
-      draft([part('a', { quaternion: [0, Math.SQRT1_2, 0, Math.SQRT1_2] })]),
-      draft([part('a', { quaternion: [0, Math.SQRT1_2 + 1e-9, 0, Math.SQRT1_2] })]),
+    const d = diffDocument(
+      doc([part('a', { quaternion: [0, Math.SQRT1_2, 0, Math.SQRT1_2] })]),
+      doc([part('a', { quaternion: [0, Math.SQRT1_2 + 1e-9, 0, Math.SQRT1_2] })]),
     );
     expect(d.update).toEqual([]);
     expect(d.add).toEqual([]);
@@ -42,12 +44,12 @@ describe('diffDraft', () => {
   });
 
   it('flags a part absent from the target as a removal', () => {
-    const d = diffDraft(draft([part('a'), part('b')]), draft([part('a')]));
+    const d = diffDocument(doc([part('a'), part('b')]), doc([part('a')]));
     expect(d.remove).toEqual(['b']);
   });
 });
 
-describe('applyDraftCommand', () => {
+describe('applyDocumentCommand', () => {
   it('applies add/update as one undoable step', () => {
     const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
     const doc = new SketcherDocument(sketcher);
@@ -56,12 +58,12 @@ describe('applyDraftCommand', () => {
     seed.mesh.position.set(0, 0.5, 0);
     const seedId = seed.id;
 
-    const target = draft([
+    const target = documentFromParts([
       part(seedId, { position: [5, 0.5, 0], color: seed.color }),
       part('new-box', { position: [1, 0.5, 0], color: seed.color }),
     ]);
 
-    doc.execute(applyDraftCommand(sketcher, target));
+    doc.execute(applyDocumentCommand(sketcher, target));
 
     const parts = sketcher.getSession().parts;
     expect(parts).toHaveLength(2);

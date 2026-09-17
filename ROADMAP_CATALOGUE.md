@@ -193,7 +193,7 @@ SetDocument {
   (`ref` to another Definition + `overrides`). `gltf` is just the opaque leaf; `ref` is the
   general, editable, override-able case.
 - **Reuse-with-variation** (`ref` + `overrides`) and **layering** (venue vs dressing vs shot) are
-  supported by the schema now, but their *resolution* is a later increment (see step 9) — the
+  supported by the schema now, but their *resolution* is a later increment (see step 10) — the
   single-store/Document foundation lands first.
 
 ### Realiser (one render path)
@@ -249,12 +249,16 @@ transform, sketch/extrude) with their existing tests before touching them.
   goes to the entry via `updateSetPieceMeta`, so the column and the store never disagree.
 - [x] **8. Bundled library → documents** — every set piece is a tree document, custom geometry is a
   `PartDraft` kind, and the GLB sidecar is gone. Unblocks step 9.
-- [ ] **9. Finish the tree runtime** — migrate the catalogue insert + attach flow onto the tree, then the persistent-tree/transform-write-back, then delete the flat `SketcherDraft`.
+- [x] **9. Finish the tree runtime** — the tree document is the set's persistent state: the attach flow
+  (`commitAttach`/`group`/`ungroup`/`detachAll`/`removePart`/`setGroupName`) edits the tree, live mesh
+  transforms are written back into it, undo/redo snapshots *are* documents, and the flat
+  `SketcherDraft` + flat `realise()` are gone.
 - [ ] **10. (Later) `ref` + `overrides` + layering**
 
-**Notes:** the live scene is still the transform/gizmo source of truth (the "transient tree" model —
-`toDocument()` re-derives from the mesh). Step 8 gave `PartDraft` the custom-geometry kind that path
-needed, so promoting the tree to the *persistent* source (step 9) is unblocked.
+**Notes:** the tree is the persistent source now; the scene is a realisation of it. A gizmo drag is
+written back into the document on the next sync (`writeBack()`), so the one place a transform lives
+outside the tree is a drag in flight. The AI-facing projection (`toAIDraft` / `fromAIDraft`) and the
+AI id-diff (`applyDraft.ts`) read and produce documents.
 
 1. **Extract the Realiser.** Factor the geometry-building out of `CartoonSketcher.loadDraft` into
    `realise(document): THREE.Group` (pure, headless). Sketch view calls it. No behaviour change.
@@ -327,11 +331,22 @@ needed, so promoting the tree to the *persistent* source (step 9) is unblocked.
    (`storage/generators/`) were deleted rather than converted: nothing but their own tests used them.
 
 9. **Finish the tree runtime (persistent tree).** With custom geometry in `PartDraft` and the
-   catalogue insert already on the tree (step 8), make the tree the *persistent* source of truth
+   catalogue insert already on the tree (step 8), the tree became the *persistent* source of truth
    rather than a re-derived projection:
-   1. migrate the attach flow (`commitAttach`/`createGroup`/`detachAll`) onto the tree;
-   2. add the persistent `document` + gizmo transform write-back (`toDocument()` reads the tree);
-   3. delete the flat `SketcherDraft` and the flat `realise()`.
+   1. the attach flow is tree edits — `CartoonSketcher.commitAttach()` records the joint in the
+      document and merges the connected component into one group node; `detachAll()` drops the part's
+      joints and re-partitions the component from the remaining joints and durable bonds;
+      `group`/`ungroup`/`removePart`/`setGroupName` likewise. `documentTree` gained the vocabulary
+      (`addJoint`, `mergeIntoGroup`, `rebuildGroups`, the bond helpers), and `AttachManager` shrank
+      to the joint solver over live meshes plus a mirror of the document's topology.
+   2. the document persists on the Sketcher, and `writeBack()` adopts live mesh/group transforms into
+      it before every edit and snapshot, so a gizmo drag lands in the tree. Undo/redo snapshots are
+      documents (`SetSnapshot` is gone), which makes undo of an attach restore its joints, groups and
+      bonds in one step; `groupComponents` now travels in the document, so a bond survives both a
+      later edit and a save/reload.
+   3. the flat `SketcherDraft` and the flat `realise()` are gone. The AI-facing pair
+      (`toAIDraft`/`fromAIDraft`) and the AI id-diff (`applyDraft.ts`) work on documents — the
+      document stays the single source of truth.
    Guard: the existing `CartoonSketcher`/`SketcherDocument`/`AttachManager` round-trip suites.
 
 10. **(Later) `ref` + `overrides` + layering.** Implement instance resolution and venue/dressing
@@ -371,7 +386,15 @@ and the `compose` branch of `expandEntry` (with `offsetPiece` and `MAX_COMPOSITE
 `SetPiece.gltfPath` and the scene-level `opfs://` resolution (`resolveOpfsGltfPath`); the per-set GLB
 bake (the set-piece path of `OPFSCatalogueStore.update`, and the store's placeholder
 geometry/material), `exportDraftGLB`, the **Publish** button, and the dead `storage/generators/`
-scene generators. Step 9 still owns the flat `SketcherDraft` and flat `realise()`.
+scene generators.
+
+Done in step 9: the flat `SketcherDraft` and `GroupSnapshot`; `SetSnapshot` (a document *is* the
+snapshot); `CartoonSketcher.toDraft()`/`loadDraft()` and the `draftToDocument`/`documentToDraft`
+bridges; the flat `realise()`; and `AttachManager`'s store-and-topology API — `commitAttach`,
+`createGroup`, `detach`, `detachAll`, `getConnectedIds`, `registerJoint`, `rebuildGroupsFromSnapshot`,
+`dissolveGroupComponent`, `evictFromGroup`, `getGroupComponents`, `_createGroup`, `_dissolveGroup`
+(they were public but only their own tests used them) — together with the `fromAIDraft`-to-flat-draft
+path, which now produces a document directly.
 
 ### Relationship to Part 1 (identity vs storage)
 

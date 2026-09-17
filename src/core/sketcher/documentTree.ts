@@ -1,4 +1,4 @@
-import type { GroupSnapshot, JointSnapshot, PartDraft, SketcherDraft } from './types.js';
+import type { JointSnapshot, PartDraft } from './types.js';
 import type { LightConfig } from '../domain/types.js';
 import { slug } from './aiDraft.js';
 import { IDENTITY_TRANSFORM, localToWorld, worldToLocal } from './transform.js';
@@ -52,93 +52,6 @@ function nameSegment(wanted: string, taken: Set<string>): string {
   while (taken.has(candidate)) candidate = `${base}-${i++}`;
   taken.add(candidate);
   return candidate;
-}
-
-/** Group each part under its owning group; ungrouped parts become root nodes. Node `id`s are parent-unique name segments. */
-export function draftToDocument(draft: SketcherDraft): SetDocument {
-  const groups = draft.groups ?? [];
-  const groupOfPart = new Map<string, number>();
-  groups.forEach((g, i) => {
-    for (const pid of g.partIds) groupOfPart.set(pid, i);
-  });
-
-  // Name segments are unique among siblings: root nodes share one set, each group has its own.
-  const rootTaken = new Set<string>();
-  const groupTaken = groups.map(() => new Set<string>());
-
-  // Root parts first (matching the final root order), then group members.
-  const root: SetNode[] = [];
-  const groupChildren: SetNode[][] = groups.map(() => []);
-  for (const pd of draft.parts) {
-    const gi = groupOfPart.get(pd.id);
-    const taken = gi === undefined ? rootTaken : groupTaken[gi];
-    const node: SetNode = { kind: 'part', id: nameSegment(pd.label ?? pd.name, taken), role: 'prop', part: pd };
-    if (gi === undefined) root.push(node);
-    else groupChildren[gi].push(node);
-  }
-
-  const groupNodes: SetNode[] = groups.map((g, i) => ({
-    kind: 'group' as const,
-    id: nameSegment(g.name ?? 'group', rootTaken),
-    role: 'structure' as const,
-    ...(g.name !== undefined ? { name: g.name } : {}),
-    ...(g.isGroup !== undefined ? { isGroup: g.isGroup } : {}),
-    ...(g.position !== undefined ? { position: g.position } : {}),
-    ...(g.quaternion !== undefined ? { quaternion: g.quaternion } : {}),
-    ...(g.scale !== undefined ? { scale: g.scale } : {}),
-    children: groupChildren[i],
-  }));
-
-  return {
-    version: 2,
-    root: [...root, ...groupNodes],
-    joints: draft.joints,
-    ...(draft.lights !== undefined ? { lights: draft.lights } : {}),
-    ...(draft.environmentMap !== undefined ? { environmentMap: draft.environmentMap } : {}),
-  };
-}
-
-/** Rebuild the flat draft from the tree (group members flattened back into `groups`). */
-export function documentToDraft(doc: SetDocument): SketcherDraft {
-  const parts: PartDraft[] = [];
-  const groups: GroupSnapshot[] = [];
-
-  const walk = (nodes: SetNode[]) => {
-    for (const node of nodes) {
-      if (node.kind === 'part') {
-        parts.push(node.part);
-      } else {
-        const partIds: string[] = [];
-        const collect = (n: SetNode) => {
-          if (n.kind === 'part') {
-            partIds.push(n.part.id);
-            parts.push(n.part);
-          } else {
-            n.children.forEach(collect);
-          }
-        };
-        node.children.forEach(collect);
-        groups.push({
-          partIds,
-          ...(node.name !== undefined ? { name: node.name } : {}),
-          ...(node.position !== undefined ? { position: node.position } : {}),
-          ...(node.quaternion !== undefined ? { quaternion: node.quaternion } : {}),
-          ...(node.scale !== undefined ? { scale: node.scale } : {}),
-          ...(node.isGroup !== undefined ? { isGroup: node.isGroup } : {}),
-        });
-      }
-    }
-  };
-  walk(doc.root);
-
-  return {
-    version: 2,
-    parts,
-    joints: doc.joints,
-    ...(groups.length > 0 ? { groups } : {}),
-    ...(doc.lights !== undefined ? { lights: doc.lights } : {}),
-    ...(doc.environmentMap !== undefined ? { environmentMap: doc.environmentMap } : {}),
-  };
 }
 
 // ── Tree mutation operations (the live model's edit surface) ─────────────────

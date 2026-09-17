@@ -1,15 +1,19 @@
 import * as THREE from 'three';
 import type { LightConfig } from '../domain/types.js';
-import type { PartDraft, SketcherDraft } from './types.js';
+import type { PartDraft } from './types.js';
+import { documentFromParts, groupParts } from './documentTree.js';
+import type { SetDocument, SetNode } from './documentTree.js';
 
 /**
- * The AI Draft — a sympathetic, AI-facing projection of a `SketcherDraft`.
+ * The AI Draft — a sympathetic, AI-facing projection of a `SetDocument`.
  *
- * The canonical draft stores quaternions, guids, and flat group membership; the
- * AI Draft exposes Euler degrees, readable handles, and named groups, plus an
- * explicit coordinate convention. `toAIDraft` / `fromAIDraft` bridge the two;
- * `SketcherDraft` stays the single source of truth and the AI Draft is never
- * persisted.
+ * The document stores quaternions, guids, and a nested tree; the AI Draft exposes
+ * Euler degrees, readable handles, and named groups, plus an explicit coordinate
+ * convention. `toAIDraft` / `fromAIDraft` bridge the two; the document stays the
+ * single source of truth and the AI Draft is never persisted.
+ *
+ * The AI grammar is flat — groups hold parts, never other groups — so the
+ * projection flattens nested groups into their outermost group.
  *
  * Not carried (v1): joints (attach contact points aren't AI-editable — the AI
  * works with groups), and primitive `size` (the core stores `scale` of a preset
@@ -148,95 +152,106 @@ function sizeToScale(shape: string, size: number[]): [number, number, number] {
   return out;
 }
 
-// The draft stores LOCAL transforms; the AI Draft exposes WORLD transforms. Groups carry
-// their own world transform so the conversion is lossless in both directions.
-import type { Transform } from './transform.js';
-import { IDENTITY_TRANSFORM, localToWorld, worldToLocal } from './transform.js';
+// The document stores LOCAL transforms; the AI Draft exposes WORLD transforms. Group
+// nodes carry their own transform so the conversion is lossless in both directions.
 
-/** Project the canonical draft into its AI-facing form. */
-export function toAIDraft(draft: SketcherDraft): AIDraftProjection {
+import type { Transform } from './transform.js';
+import { IDENTITY_TRANSFORM, localToWorld } from './transform.js';
+
+function partTransform(pd: PartDraft): Transform {
+  return { position: pd.position, quaternion: pd.quaternion, scale: pd.scale };
+}
+
+function groupTransform(node: Extract<SetNode, { kind: 'group' }>): Transform {
+  return {
+    position: node.position ?? [0, 0, 0],
+    quaternion: node.quaternion ?? [0, 0, 0, 1],
+    scale: node.scale ?? [1, 1, 1],
+  };
+}
+
+/** Project a set document into its AI-facing form. */
+export function toAIDraft(doc: SetDocument): AIDraftProjection {
   const taken = new Set<string>();
   const idMap: Record<string, string> = {};
-  const handleOfGuid = new Map<string, string>();
+  const parts: AIPart[] = [];
+  const groups: AIGroup[] = [];
+  /** Part handles claimed by each top-level group, by that group's handle. */
+  const childrenOfGroup = new Map<string, string[]>();
 
-  // Reserve group handles first so part handles never collide with them.
-  const groupHandles = (draft.groups ?? []).map((g, i) => {
-    const h = uniqueHandle(slug(g.name ?? `group-${i + 1}`), taken);
-    taken.add(h);
-    return h;
-  });
-
-  const groupHandleOfGuid = new Map<string, string>();
-  const groupTransformOfGuid = new Map<string, Transform>();
-  (draft.groups ?? []).forEach((g, i) => {
-    const transform: Transform = {
-      position: g.position ?? [0, 0, 0],
-      quaternion: g.quaternion ?? [0, 0, 0, 1],
-      scale: g.scale ?? [1, 1, 1],
-    };
-    for (const pid of g.partIds) {
-      groupHandleOfGuid.set(pid, groupHandles[i]);
-      groupTransformOfGuid.set(pid, transform);
+  const walk = (nodes: SetNode[], parent: Transform, groupHandle: string | undefined) => {
+    for (const node of nodes) {
+      if (node.kind === 'part') {
+        const pd = node.part;
+        const handle = uniqueHandle(slug(pd.label ?? pd.name), taken);
+        taken.add(handle);
+        idMap[handle] = pd.id;
+        if (groupHandle !== undefined) childrenOfGroup.get(groupHandle)!.push(handle);
+        const isPrimitive = pd.kind === 'primitive';
+        const world = localToWorld(partTransform(pd), parent);
+        parts.push({
+          id: handle,
+          name: pd.label ?? pd.name,
+          kind: pd.kind,
+          ...(isPrimitive
+            ? { shape: pd.name.toLowerCase(), size: scaleToSize(pd.name.toLowerCase(), world.scale) }
+            : { scale: world.scale }),
+          position: world.position,
+          rotation: toEulerDeg(world.quaternion),
+          color: pd.color,
+          ...(pd.faceColors !== undefined ? { faceColors: pd.faceColors } : {}),
+          ...(pd.faceTextures !== undefined ? { faceTextures: pd.faceTextures } : {}),
+          ...(pd.shapePoints !== undefined ? { shapePoints: pd.shapePoints } : {}),
+          ...(pd.holes !== undefined ? { holes: pd.holes } : {}),
+          ...(pd.lathePoints !== undefined ? { lathePoints: pd.lathePoints } : {}),
+          ...(pd.phiLength !== undefined ? { phiLength: pd.phiLength } : {}),
+          ...(pd.depth !== undefined ? { depth: pd.depth } : {}),
+          ...(groupHandle !== undefined ? { group: groupHandle } : {}),
+        });
+      } else {
+        const world = localToWorld(groupTransform(node), parent);
+        // A nested group is flattened into its outermost group: the AI grammar has no
+        // way to express one group inside another.
+        let handle = groupHandle;
+        if (handle === undefined) {
+          handle = uniqueHandle(slug(node.name ?? `group-${groups.length + 1}`), taken);
+          taken.add(handle);
+          childrenOfGroup.set(handle, []);
+          groups.push({
+            id: handle,
+            ...(node.name !== undefined ? { name: node.name } : {}),
+            children: [],
+            position: world.position,
+            quaternion: world.quaternion,
+            scale: world.scale,
+          });
+        }
+        walk(node.children, world, handle);
+      }
     }
-  });
+  };
+  walk(doc.root, IDENTITY_TRANSFORM, undefined);
 
-  const parts: AIPart[] = draft.parts.map((p) => {
-    const handle = uniqueHandle(slug(p.label ?? p.name), taken);
-    taken.add(handle);
-    idMap[handle] = p.id;
-    handleOfGuid.set(p.id, handle);
-    const groupHandle = groupHandleOfGuid.get(p.id);
-    const isPrimitive = p.kind === 'primitive';
-    const world = localToWorld(
-      { position: p.position, quaternion: p.quaternion, scale: p.scale },
-      groupTransformOfGuid.get(p.id) ?? IDENTITY_TRANSFORM,
-    );
-    return {
-      id: handle,
-      name: p.label ?? p.name,
-      kind: p.kind,
-      ...(isPrimitive
-        ? { shape: p.name.toLowerCase(), size: scaleToSize(p.name.toLowerCase(), world.scale) }
-        : { scale: world.scale }),
-      position: world.position,
-      rotation: toEulerDeg(world.quaternion),
-      color: p.color,
-      ...(p.faceColors !== undefined ? { faceColors: p.faceColors } : {}),
-      ...(p.faceTextures !== undefined ? { faceTextures: p.faceTextures } : {}),
-      ...(p.shapePoints !== undefined ? { shapePoints: p.shapePoints } : {}),
-      ...(p.holes !== undefined ? { holes: p.holes } : {}),
-      ...(p.lathePoints !== undefined ? { lathePoints: p.lathePoints } : {}),
-      ...(p.phiLength !== undefined ? { phiLength: p.phiLength } : {}),
-      ...(p.depth !== undefined ? { depth: p.depth } : {}),
-      ...(groupHandle !== undefined ? { group: groupHandle } : {}),
-    };
-  });
-
-  const groups: AIGroup[] = (draft.groups ?? []).map((g, i) => ({
-    id: groupHandles[i],
-    ...(g.name !== undefined ? { name: g.name } : {}),
-    ...(g.position !== undefined ? { position: g.position } : {}),
-    ...(g.quaternion !== undefined ? { quaternion: g.quaternion } : {}),
-    ...(g.scale !== undefined ? { scale: g.scale } : {}),
-    children: g.partIds
-      .map((pid) => handleOfGuid.get(pid))
-      .filter((h): h is string => h !== undefined),
-  }));
+  for (const group of groups) group.children = childrenOfGroup.get(group.id) ?? [];
 
   return {
     aiDraft: {
       convention: AI_CONVENTION,
       parts,
       groups,
-      ...(draft.lights !== undefined ? { lights: draft.lights } : {}),
-      ...(draft.environmentMap !== undefined ? { environmentMap: draft.environmentMap } : {}),
+      ...(doc.lights !== undefined ? { lights: doc.lights } : {}),
+      ...(doc.environmentMap !== undefined ? { environmentMap: doc.environmentMap } : {}),
     },
     idMap,
   };
 }
 
-/** Rebuild the canonical draft from the AI's (edited) projection. */
-export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}): SketcherDraft {
+/**
+ * Rebuild the document from the AI's (edited) projection. Handles map back to their
+ * guids through `idMap`, so a part the AI left alone keeps its identity — and every
+ * named group becomes a group node over its members.
+ */
+export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}): SetDocument {
   const used = new Set<string>();
   const guidOfHandle = new Map<string, string>();
 
@@ -271,49 +286,18 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
     };
   });
 
-  const partsById = new Map(parts.map((pd) => [pd.id, pd]));
-
-  const groups = aiDraft.groups.length > 0
-    ? aiDraft.groups.map((g) => {
-        const partIds = g.children
-          .map((h) => guidOfHandle.get(h))
-          .filter((x): x is string => x !== undefined);
-        const hasTransform = g.position !== undefined || g.quaternion !== undefined || g.scale !== undefined;
-        if (hasTransform) {
-          // The AI returned an explicit group transform: localise members relative to it.
-          const groupTransform: Transform = {
-            position: g.position ?? [0, 0, 0],
-            quaternion: g.quaternion ?? [0, 0, 0, 1],
-            scale: g.scale ?? [1, 1, 1],
-          };
-          for (const pid of partIds) {
-            const pd = partsById.get(pid);
-            if (!pd) continue;
-            const local = worldToLocal({ position: pd.position, quaternion: pd.quaternion, scale: pd.scale }, groupTransform);
-            pd.position = local.position;
-            pd.quaternion = local.quaternion;
-            pd.scale = local.scale;
-          }
-          return {
-            partIds,
-            ...(g.name !== undefined ? { name: g.name } : {}),
-            ...(g.position !== undefined ? { position: g.position } : {}),
-            ...(g.quaternion !== undefined ? { quaternion: g.quaternion } : {}),
-            ...(g.scale !== undefined ? { scale: g.scale } : {}),
-          };
-        }
-        return {
-          partIds,
-          ...(g.name !== undefined ? { name: g.name } : {}),
-        };
-      })
-    : undefined;
+  const doc = documentFromParts(parts);
+  // AI parts carry WORLD transforms, so each group wraps its members where they already
+  // stand: the node lands at their centroid and the members localise to it.
+  for (const group of aiDraft.groups) {
+    const memberIds = group.children
+      .map((handle) => guidOfHandle.get(handle))
+      .filter((id): id is string => id !== undefined);
+    if (memberIds.length > 0) groupParts(doc, memberIds, group.name);
+  }
 
   return {
-    version: 2,
-    parts,
-    joints: [],
-    ...(groups !== undefined ? { groups } : {}),
+    ...doc,
     ...(aiDraft.lights !== undefined ? { lights: aiDraft.lights } : {}),
     ...(aiDraft.environmentMap !== undefined ? { environmentMap: aiDraft.environmentMap } : {}),
   };
