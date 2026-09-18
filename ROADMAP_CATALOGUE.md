@@ -385,12 +385,16 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       AI group), so those branches are role-based now; and a setting's lighting is resolved by the
       *model boundary* rather than the realiser, because a model's lights are `LightAsset[]` and a
       light buried in a realised group would be invisible to light animation.
-    - **10.2 — Nested groups in the session (group-of-groups).** The schema recurses already; the
-      *session* is what is flat. `group()`/`ungroup()` become depth-aware, and `syncFromDocument`
-      recurses instead of walking `doc.root` only — today a nested group node gets no live
-      `THREE.Group` (so no transform write-back, nothing to select or gizmo) while its children are
-      swallowed into the outer group. Depth is a prerequisite for 10.3, not an optional extra:
-      instances are addressed by path. The Outliner (N9) earns its place here.
+    - **10.2 — Nested groups in the session (group-of-groups).** ✅ Landed: `syncFromDocument` walks
+      the whole tree, so a nested group gets its own live `THREE.Group` — parented into its parent's
+      object — and `writeBack` threads the same path, which is what keeps the live-object map
+      unambiguous once node ids repeat across depths. `group()` nests (a selected part stands for the
+      group that owns it, siblings wrap where they stand, and only members from different branches are
+      promoted to the root first), `ungroup()` promotes one level rather than always to the root, and
+      the attach mirror resolves a part to its innermost group. Depth is a prerequisite for 10.3, not
+      an optional extra: instances are addressed by path. The Outliner (N9) stays deferred — nesting
+      is reachable by selecting a member and grouping it, and an indented tree is a navigation
+      affordance rather than a requirement.
     - **10.3 — `ref` + tree-preserving resolution.** "Promote to Definition" (solidify) writes a
       subtree to the catalogue and replaces it with a `ref` node; inserting an entry produces a `ref`
       instead of copying leaves. `resolveInstances` stops flattening at resolve time and realises the
@@ -400,8 +404,10 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       `toAIDraft` projects back — so the AI composes a setting from catalogue items it already sees via
       `describe_catalogue` instead of reinventing them; the round trip ends in a reference, never a
       copy.
-      Path addressing arrives here too: two instances of one Definition collide on part id, which is
-      what the id-diff, joints and animation addressing all key off, so N8 moves up or folds in here.
+      10.2 already introduced paths internally (`pathOfPart`, path-keyed live objects, node-addressed
+      grouping); this is where they become the addressing scheme callers use, because two instances of
+      one Definition collide on part id — which is what the id-diff, joints and animation addressing
+      all key off. N8 moves up or folds in here.
     - **10.4 — `overrides` + Apply/Revert.** Instances carry the flat, path-addressed override list
       (Unity's model — the simplest that works); resolution is `deep-copy(Definition)`, then replay
       the overrides in list order. Apply (push to Definition) / Revert affordances, and orphaned
