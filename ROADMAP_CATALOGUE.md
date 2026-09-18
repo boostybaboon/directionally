@@ -367,11 +367,13 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       (`role: 'light'`) rather than the `document.lights` side list — the cheaper order, because their
       shape has to change in the same pass over `documentTree`/`realise`/`syncFromDocument`/
       `writeBack`, whereas a role added later (`camera`, `rig`) is an additive enum member needing no
-      migration. `document.lights` and the duplicate `SetPieceEntry.lights`/`environmentId` collapse
-      onto `collectLights(document)` / `document.environmentMap`; the entry keeps a copy only as the
-      index-time cache the synchronous compiler reads. The vestigial `SetDocument.version` is already
-      deleted (written by three builders, read by nothing) — `normalizeDocument()` is the load-time
-      guard.
+      migration. `document.lights` goes, and `SetPieceEntry.lights`/`environmentId` with it: a setting's
+      lighting is content of its document and travels with it exactly as its geometry already does,
+      which ends the copies the compiler needed only because lights were not nodes. `scene.lights`
+      shrinks to the lights the scene itself authors (the shot layer of 10.5), and classification is the
+      explicit `isSetting` flag rather than a lighting heuristic. The vestigial `SetDocument.version` is
+      already deleted (written by three builders, read by nothing) — `normalizeDocument()` is the
+      load-time guard.
       Guard: the `documentTree`/`realise`/`CartoonSketcher` leaf-and-group round-trip suites.
     - **10.2 — Nested groups in the session (group-of-groups).** The schema recurses already; the
       *session* is what is flat. `group()`/`ungroup()` become depth-aware, and `syncFromDocument`
@@ -392,7 +394,9 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       composed per scene, last-write-wins — USD's LIVRPS *benefit* without its generality. This is
       where per-shot light tweaks and `role: 'camera' | 'rig'` nodes (additive, no migration) earn
       their place, and where `StoredScene.lights`/`camera` stay the renderer contract while the
-      document holds nodes.
+      document holds nodes. The one value both tiers legitimately declare — the environment — gets its
+      precedence rule here too: the setting's document supplies the default, an explicit scene value
+      wins.
 
 11. **(Later) One store for characters.** `CharacterDesignStore` is still a second editable-source
     store behind `sourceDesignId`, exactly as `SketcherAssemblyStore` was for sets. Step 4 only

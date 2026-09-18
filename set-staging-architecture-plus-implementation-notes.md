@@ -462,11 +462,12 @@ override, and a light that moves with its group:
 | Node shape | one flat type with a `role` tag plus a load-time `normalizeDocument()`, not a TypeScript discriminated union | `ref`, `overrides`, the id-diff and any patch operate on arbitrary nodes; a union forces a `role` narrow at every patch site — the un-generic tax. Cost: TS cannot prove payload-vs-role agreement; paid once, at load, where reporting beats throwing |
 | Transform | on the node, required | leaves and groups then read, realise and write back identically; `writeBack`/`syncFromDocument` lose their `kind` branches |
 | `children` | always present | one walker; no `'children' in node` guards |
-| Lights | `role: 'light'` nodes in 10.1 | their shape changes in the same pass regardless; the *renderer* contract stays `LightConfig[]` via `collectLights(doc)`, so `StoredScene`, the compiler and light actions do not move |
+| Lights | `role: 'light'` nodes in 10.1 | their shape changes in the same pass regardless; the *renderer* contract stays `LightConfig[]` via `collectLights(doc)`, so `StoredScene` and the light actions keep their shape — what ends is the compiler seeding the scene's lights from an entry, because a setting's lights now arrive with its document at realisation |
 | `camera` / `rig` | additive roles later (10.5) | a new enum member plus an optional payload needs no document migration — nothing is gained by pre-adding them |
-| Environment | stays `document.environmentMap` | a whole-scene background is not a placed, transformable object |
+| Environment | stays `document.environmentMap` | a whole-scene background is not a placed, transformable object. The scene's own `environmentMap` is the author's value; the setting's document supplies the default at load, and the precedence is formalised in 10.5 |
+| `SetPieceEntry.partCount` | kept | the one derived value with a reader that cannot load documents: the catalogue list shows a part count per row |
 | Joints | stay a flat document list keyed by part id | attach is leaf-level; nesting does not change it (a joint *across* two instances needs paths — a 10.3 question, not a 10.1 field) |
-| `SetPieceEntry.lights` / `environmentId` | kept, as an index-time cache | `fountainCompiler` resolves a setting's lights and environment synchronously from the entry without loading its document (`fountainCompiler.ts:437`), and a saved set's document is a separate OPFS file. With light nodes, `collectLights(document)` becomes the source and these become derived — deleting them would push setting resolution async. A recorded duplication with a reason, not an inherited accident |
+| `SetPieceEntry.lights` / `environmentId` | deleted | they were a covering-index copy so the sync compiler could seed `scene.lights`/`scene.environmentMap` from an entry without loading its document (`fountainCompiler.ts:437`). With lights as nodes the copy has no reader: geometry already arrives from the document at realisation, the async tier is where documents get materialised anyway (`storedSceneToModelAsync`), and light-block intensity inference can read the realised lights. Keeping it would leave one setting's lighting in three places at once — its document, its entry, and the compiled scene |
 | Addressing | unchanged in 10.1: parts by guid, groups by node id | selection and the gizmo are guid-based; path addressing is N8's work, not a rider on this rework |
 | Document `version` | dropped (deleted ahead of 10.1) | `version: 2` was written by `emptyDocument()`, `documentFromParts()` and `OPFSCatalogueStore`'s `EMPTY_DOCUMENT` and read by nothing — no check, no upgrader, no compatibility branch. A version field implies a promise we are not keeping, and a stale document is simply abandoned. `normalizeDocument()` is the load-time guard instead: it reads what it recognises and reports what it does not, which catches any stale or malformed file rather than only a version mismatch |
 
@@ -500,10 +501,15 @@ Ordered and mechanical — one pass touches every file below.
 6. `src/core/catalogue/bundledSets.ts` — its `part()` helper returns a seed.
 7. `src/core/sketcher/aiDraft.ts` / `applyDraft.ts` — read and write `node.transform`; the diff
    carries seeds rather than bare drafts.
-8. `src/routes/sketch/+page.svelte` — `persistSet`'s metadata keeps its shape (the lights copy stays
-   as the index cache); otherwise typing only.
-9. Tests — `documentTree`, `realise`, `CartoonSketcher`, `applyDraft`, `aiDraft`, `aiDraftSchema`,
-   `catalogue`.
+8. `src/routes/sketch/+page.svelte` — `persistSet`'s metadata loses `lights`/`environmentId` (item 9),
+   `getLights()` reads the document, `duplicateSet` stops copying them; otherwise typing only.
+9. The entry cache — drop `SetPieceEntry.lights`/`environmentId` and their plumbing (`StoredEntry`,
+   `SetPieceMeta`, `toUserEntry`, `createSetPieceDocument`), `persistSet`'s two meta fields,
+   `duplicateSet`'s two copies, and the compiler's `scene.environmentMap`/`scene.lights` seeding.
+   Light-block intensity inference (`storedSceneToModel.ts:183`) reads the realised lights instead.
+   `isSettingEntry` keeps only the explicit flag.
+10. Tests — `documentTree`, `realise`, `CartoonSketcher`, `applyDraft`, `aiDraft`, `aiDraftSchema`,
+    `catalogue` (the two `isSettingEntry` lighting-heuristic assertions go).
 
 ## Open questions for 10.3+
 
