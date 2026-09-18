@@ -1271,7 +1271,7 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
 
   const mergedCatalogueEntries = $derived<CatalogueEntry[]>([...CATALOGUE_ENTRIES, ...userCatalogueEntries]);
 
-  function handleCatalogueAdd(kind: 'character' | 'setpiece' | 'light', id: string) {
+  async function handleCatalogueAdd(kind: 'character' | 'setpiece' | 'light', id: string) {
     if (kind === 'character') {
       statusMessage = 'Characters are staged in the script view.';
       return;
@@ -1286,19 +1286,37 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
     }
     const entry = getById(id, mergedCatalogueEntries);
     if (entry?.kind !== 'set-piece') return;
-    const { parts, group } = sketcher.insertCatalogueEntry(entry);
-    if (parts.length === 0) {
-      statusMessage = `"${entry.label}" is a saved set — open it from the Sets column to edit or build on it.`;
+
+    // An entry arrives as an instance, so the Sketcher has to know the Definition before the
+    // insert expands it — bundled entries carry their document inline, saved ones come from OPFS.
+    const definition = refDocuments.get(entry.id) ?? await loadDefinition(entry.id);
+    if (!definition) {
+      statusMessage = `"${entry.label}" has no document to reference.`;
       return;
     }
-    const first = parts[0];
-    if (group) {
-      selection.selectGroup(first.mesh, group.group);
-      tc.attach(group.group);
-    } else {
-      selection.select(first.mesh);
+    refDocuments.set(entry.id, definition);
+    sketcher.setRefResolver((ref) => refDocuments.get(ref) ?? null);
+
+    const before = sketcherDoc.captureSnapshot();
+    const { path, object } = sketcher.insertCatalogueEntry(entry);
+    if (!path) return;
+    sketcherDoc.record(before, sketcherDoc.captureSnapshot(), `Add ${entry.label}`);
+
+    const mesh = object ? firstMesh(object) : null;
+    if (object && mesh) {
+      selection.selectGroup(mesh, object);
+      tc.attach(object);
     }
-    statusMessage = `Added ${entry.label}.`;
+    statusMessage = `Added ${entry.label} as a reference.`;
+  }
+
+  /** The first mesh in an object tree — a selection outline needs one to hold. */
+  function firstMesh(object: THREE.Object3D): THREE.Mesh | null {
+    let found: THREE.Mesh | null = null;
+    object.traverse((child) => {
+      if (!found && (child as THREE.Mesh).isMesh) found = child as THREE.Mesh;
+    });
+    return found;
   }
 
   async function handleApplyEnvironment(environmentId: string | undefined) {

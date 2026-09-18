@@ -276,40 +276,8 @@ describe('CartoonSketcher', () => {
 
   // ── Catalogue insertion (Track SET, N3) ───────────────────────────────────
 
-  it('insertCatalogueEntry() inserts a single-part entry as one ungrouped part', () => {
-    const leaf: SetPieceEntry = {
-      kind: 'set-piece',
-      id: 'box',
-      label: 'Box',
-      document: documentFromParts([
-        cataloguePart('box', { type: 'box', width: 2, height: 3, depth: 4 }, { color: 0x8844aa }),
-      ]),
-    };
-    const { parts, group } = sketcher.insertCatalogueEntry(leaf);
-    expect(parts).toHaveLength(1);
-    expect(group).toBeNull();
-    expect(parts[0].name).toBe('Box');
-    expect(parts[0].shapePoints).toBeNull();
-    expect(parts[0].geometry).toMatchObject({ type: 'box', width: 2 });
-    expect(sketcher.getSession().parts).toHaveLength(1);
-  });
-
-  it('insertCatalogueEntry() keeps a part-local rotation, so a floor lies flat', () => {
-    const floor: SetPieceEntry = {
-      kind: 'set-piece',
-      id: 'wood-floor',
-      label: 'Wood Floor',
-      document: documentFromParts([
-        cataloguePart('floor', { type: 'plane', width: 8, height: 8 }, { color: 0xffffff }, undefined, [-Math.SQRT1_2, 0, 0, Math.SQRT1_2]),
-      ]),
-    };
-    const { parts } = sketcher.insertCatalogueEntry(floor);
-    expect(parts[0].mesh.quaternion.x).toBeCloseTo(-Math.SQRT1_2);
-    expect(parts[0].mesh.quaternion.w).toBeCloseTo(Math.SQRT1_2);
-  });
-
-  it('insertCatalogueEntry() groups a multi-part entry into one assembly', () => {
-    const composite: SetPieceEntry = {
+  it('insertCatalogueEntry() places a reference, not a copy of the leaves', () => {
+    const chair: SetPieceEntry = {
       kind: 'set-piece',
       id: 'chair-test',
       label: 'Chair Test',
@@ -318,48 +286,73 @@ describe('CartoonSketcher', () => {
         cataloguePart('back', { type: 'box', width: 0.5, height: 0.5, depth: 0.1 }, { color: 0x663311 }, [0, 0.7, -0.2]),
       ]),
     };
-    const { parts, group } = sketcher.insertCatalogueEntry(composite);
-    expect(parts).toHaveLength(2);
-    expect(group).not.toBeNull();
-    expect(group!.partIds).toHaveLength(2);
-    // The assembly is re-localised around its centroid, so the members keep their
-    // world transforms: the prop stays where the definition put it.
-    expect(parts[0].mesh.getWorldPosition(new THREE.Vector3()).y).toBeCloseTo(0.45);
-    // Both parts report the same assembly group → move as one unit.
-    for (const p of parts) {
-      expect(sketcher.attachManager.groupForPart(p.id)?.id).toBe(group!.id);
-    }
+    sketcher.setRefResolver((ref) => (ref === 'chair-test' ? chair.document! : null));
+
+    const { path, object } = sketcher.insertCatalogueEntry(chair);
+
+    // The placement is a node holding a reference; the geometry stays the Definition's.
+    expect(path).toBe('chair-test');
+    expect(sketcher.getSession().parts).toHaveLength(0);
+    expect(object?.children).toHaveLength(2);
+    const doc = sketcher.toDocument();
+    expect(doc.root).toHaveLength(1);
+    expect(doc.root[0].ref).toBe('chair-test');
+    expect(doc.root[0].id).toBe('chair-test');
+    expect(doc.root[0].role).toBe('prop');
   });
 
-  it('inserted catalogue parts survive a later tree edit', () => {
+  it('insertCatalogueEntry() places each instance on its own node', () => {
     const leaf: SetPieceEntry = {
       kind: 'set-piece',
-      id: 'wall-flat',
-      label: 'Wall Flat',
+      id: 'box',
+      label: 'Box',
       document: documentFromParts([
-        cataloguePart('wall', { type: 'box', width: 4, height: 3, depth: 0.15 }, { color: 0xddd8c4 }),
+        cataloguePart('box', { type: 'box', width: 2, height: 3, depth: 4 }, { color: 0x8844aa }),
       ]),
     };
-    const { parts } = sketcher.insertCatalogueEntry(leaf);
-    // Any edit re-derives the scene from the tree — a catalogue part must be
-    // rebuildable from its draft (it carries geometry + material, not just a name).
-    sketcher.setPartColor(parts[0].id, 0x112233);
-    const partsAfter = sketcher.getSession().parts;
-    expect(partsAfter).toHaveLength(1);
-    expect(partsAfter[0].geometry).toMatchObject({ type: 'box', width: 4 });
-    expect(partsAfter[0].color).toBe(0x112233);
+
+    const first = sketcher.insertCatalogueEntry(leaf);
+    const second = sketcher.insertCatalogueEntry(leaf);
+
+    expect(first.path).not.toBe(second.path);
+    const roots = sketcher.toDocument().root;
+    expect(roots.map((node) => node.ref)).toEqual(['box', 'box']);
+    expect(roots[0].id).not.toBe(roots[1].id);
   });
 
-  it('insertCatalogueEntry() inserts nothing for a saved set (no inline document)', () => {
+  it('insertCatalogueEntry() places a saved set as a setting', () => {
     const savedSet: SetPieceEntry = {
       kind: 'set-piece',
       id: 'exported-classroom',
       label: 'Exported Classroom',
       hasDocument: true,
+      isSetting: true,
     };
-    const { parts, group } = sketcher.insertCatalogueEntry(savedSet);
-    expect(parts).toHaveLength(0);
-    expect(group).toBeNull();
+
+    const { path } = sketcher.insertCatalogueEntry(savedSet);
+
+    // A saved set has no inline document, but a reference needs only its id — and a
+    // setting contributes structure, so its node takes the structure role.
+    expect(path).toBe('exported-classroom');
+    expect(sketcher.toDocument().root[0].role).toBe('structure');
+  });
+
+  it('an unresolved Definition still inserts its reference', () => {
+    sketcher.setRefResolver(() => null);
+    const leaf: SetPieceEntry = {
+      kind: 'set-piece',
+      id: 'unknown',
+      label: 'Unknown',
+      document: documentFromParts([
+        cataloguePart('box', { type: 'box', width: 1, height: 1, depth: 1 }, { color: 0x8844aa }),
+      ]),
+    };
+
+    const { path, object } = sketcher.insertCatalogueEntry(leaf);
+
+    expect(path).toBe('unknown');
+    expect(object?.children).toHaveLength(0);
+    expect(sketcher.toDocument().root[0].ref).toBe('unknown');
   });
 
   it('insertCataloguePiece() applies position/rotation/scale and a single face group', () => {

@@ -10,6 +10,7 @@ import {
   emptyDocument,
   cloneDocument,
   insertPart,
+  insertRef,
   groupNodes,
   ungroupNode,
   mergeIntoGroup,
@@ -518,41 +519,26 @@ export class CartoonSketcher {
   }
 
   /**
-   * Insert a bundled catalogue entry (Track SET, N3). A bundled entry *is* its
-   * document, so this copies the document's part leaves into the session — at their
-   * own local transforms, under one group when the prop is an assembly (so it still
-   * moves as one unit). Runtime ids are reassigned per insert: two instances of the
-   * same definition are independent parts.
+   * Insert a catalogue entry as an instance (Track SET, N3). The document holds a reference,
+   * so the item is never copied and editing its Definition reaches every place it is used; the
+   * session expands it for display, and the instance is edited as one unit.
    *
-   * A saved set (`hasDocument`) is not a component: it is opened from the Sets
-   * column, so nothing is inserted for one here.
+   * A Definition the Sketcher cannot resolve is still inserted: the reference is the
+   * document's, and the geometry appears as soon as the resolver knows the entry.
    */
-  insertCatalogueEntry(
-    entry: SetPieceEntry,
-  ): { parts: SketcherPart[]; group: AssemblyGroup | null } {
-    if (!entry.document) return { parts: [], group: null };
-
-    // The entry's leaves are copied at their own transforms and re-grouped as one
-    // placement. That is a flat copy: a nested definition's inner groups are not
-    // preserved until 10.3 inserts a `ref` node instead.
-    const seeds: PartSeed[] = collectPartNodes(entry.document).map((node) => ({
-      content: { ...node.content, id: `part-${this.nextId++}` },
-      transform: node.transform,
-    }));
+  insertCatalogueEntry(entry: SetPieceEntry): { path: string | null; object: THREE.Group | null } {
+    let path: string | null = null;
     this.editDocument((doc) => {
-      for (const seed of seeds) insertPart(doc, seed);
-      if (seeds.length > 1) {
-        const ids = seeds.map((seed) => seed.content.id);
-        groupNodes(doc, ids, entry.label);
-        addGroupBond(doc, ids);
-      }
+      const node = insertRef(doc, {
+        ref: entry.id,
+        name: entry.label,
+        role: entry.isSetting === true ? 'structure' : 'prop',
+      });
+      path = pathOfNode(doc, node);
     });
-
-    const parts = seeds
-      .map((seed) => this.parts.find((p) => p.id === seed.content.id))
-      .filter((p): p is SketcherPart => p !== undefined);
-    const group = parts.length > 1 ? this.attach.groupForPart(parts[0].id) ?? null : null;
-    return { parts, group };
+    if (path === null) return { path: null, object: null };
+    const object = this.nodeObjects.get(path);
+    return { path, object: object instanceof THREE.Group ? object : null };
   }
 
   /** Update a part's colour, resetting all face colours to a uniform value. */
