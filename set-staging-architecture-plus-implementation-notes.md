@@ -399,7 +399,9 @@ codebase's lowercase style; `camera`/`rig` are added when 10.5 has something to 
 `lathed` / `catalogue`) plus the appearance fields — and there is no `gltf` leaf, because a pre-made
 body is a `catalogue` part or a `ref`.
 
-**As built so far.** The node and the transform hoist landed first (`1ee06e5`):
+**As built.** All of 10.1 landed (`1ee06e5`, `d79e8a1`, `6cfb891`) — the node type, the transform
+hoist, lights as nodes and the entry-cache removal; only `ref`/`overrides`/`tags` wait for 10.3, with
+their producers:
 
 - the type is `id`, `role`, `transform`, `children`, `content?`, `name?`, `isGroup?`. `ref`,
   `overrides` and `tags` are **not** on it yet — they arrive in 10.3 with their producers, because a
@@ -411,7 +413,15 @@ body is a `catalogue` part or a `ref`.
   (`loadDocument` / `restoreSnapshot`);
 - the payoff is visible as deletions: `partTransform()`/`groupTransform()` are gone, `writeBack` and
   `syncFromDocument` each lost their per-kind transform branch, and `ungroupPart` promotes every child
-  in one line.
+  in one line;
+- adding a third role found a latent fault worth remembering for 10.2/10.3: "not a part" was silently
+  read as "a group" in two walkers, so a light node became an empty `THREE.Group` — added to the
+  scene, adopted as an assembly group, never removed — and a phantom group in the AI draft. Every
+  such branch is role-based now;
+- a setting's lights are resolved at the *model boundary*, not by the realiser: a model's lights come
+  from its `LightAsset[]` (built from the scene's `LightConfig[]`), so a `THREE.Light` inside a
+  realised group would be invisible to light animation. `collectLights()` is the single reader of a
+  document's lights — the Sketcher and the model boundary both call it.
 
 ## What the one type buys
 
@@ -544,29 +554,29 @@ Ordered and mechanical — one pass touches every file below.
 2. ✅ `documentTree` — one node type, `isPartNode()`/`PartNode` for typed payload access, `PartSeed`,
    `PlacedPart`, `collectPartNodes()`, `insertPart(doc, seed)`, `documentFromParts(seeds)`,
    `normalizeDocument()`. `ref`/`overrides`/`tags` stay out until 10.3.
-3. `documentTree` lights — `role: 'light'` with a `light` payload (the node id *is* the light id and
-   the node transform *is* its position); `addLightNode` / `removeLightNode` / `findLightNode` /
-   `collectLights`; `SetDocument.lights` deleted. `DistributiveOmit` moves from `catalogue/types.ts`
-   to `domain/types.ts`, shared with `LightEntry.config`.
-4. `CartoonSketcher` — the four construction sites and `partToLeaf` ✅; `addLight`/`removeLight` become
-   node edits, `getLights()` becomes `collectLights(this.document)`, `writeBack` stops writing
-   `document.lights`, and `syncFromDocument` rebuilds the live lights from the tree.
-5. `bundledSets.ts` — `part()` returns a seed ✅.
-6. `aiDraft.ts` / `applyDraft.ts` — `node.transform` ✅; `toAIDraft` derives `lights` from the tree and
-   `fromAIDraft` writes light nodes instead of a document field.
-7. `src/routes/sketch/+page.svelte` — `persistSet` still reads `getLights()` (now derived) and keeps
-   writing `lights`/`environmentId` metadata; item 9 removes them.
-8. `realise.ts` — light nodes stay a deliberate no-op until item 9. The compiler still seeds
-   `scene.lights` from the entry's cached copy, so a realiser that emitted the setting's lights now
-   would render every document-backed setting's lighting twice. They land together.
-9. The entry cache — drop `SetPieceEntry.lights`/`environmentId` and their plumbing (`StoredEntry`,
-   `SetPieceMeta`, `toUserEntry`, `createSetPieceDocument`), `persistSet`'s two meta fields,
-   `duplicateSet`'s two copies, and the compiler's `scene.environmentMap`/`scene.lights` seeding.
-   Light-block intensity inference (`storedSceneToModel.ts:183`) reads the realised lights instead.
-   `isSettingEntry` keeps only the explicit flag. `realise.ts` emits light nodes in the same change
-   (item 8), which is what makes a setting's lighting travel with its geometry.
-10. Tests — `documentTree`, `realise`, `CartoonSketcher`, `applyDraft`, `aiDraft`, `aiDraftSchema`,
-    `catalogue` (the two `isSettingEntry` lighting-heuristic assertions go).
+3. ✅ `documentTree` lights — `role: 'light'` with a `light` payload (the node id *is* the light id
+   and the node transform *is* its position); `addLightNode` / `removeLightNode` / `collectLights`;
+   `SetDocument.lights` deleted. `DistributiveOmit` moved from `catalogue/types.ts` to
+   `domain/types.ts`, shared with `LightEntry.config`.
+4. ✅ `CartoonSketcher` — `addLight`/`removeLight` are node edits, the live THREE light is built from
+   the node during a sync (`placeLight`), and `getLights()` derives from the tree.
+5. ✅ `bundledSets.ts` — `part()` returns a seed.
+6. ✅ `aiDraft.ts` / `applyDraft.ts` — `node.transform`; `toAIDraft` derives `lights` from the tree and
+   `fromAIDraft` writes light nodes.
+7. ✅ `realise.ts` — geometry only, and permanently: a model's lights come from `LightAsset[]`, so a
+   `THREE.Light` inside a realised group would be invisible to light animation. A document's lights
+   are read in one place — `collectLights()` — by the Sketcher and by the model boundary.
+8. ✅ The model boundary owns a setting's lighting: `storedSceneToModel` resolves each
+   document-backed piece's entry, adds `collectLights(document)` beside the scene's own lights (which
+   is also what the light-block intensity inference reads), and takes the setting's `environmentMap`
+   as the default — an explicit scene value still wins.
+9. ✅ The entry cache — `SetPieceEntry.lights`/`environmentId` and their plumbing (`StoredEntry`,
+   `SetPieceMeta`, `toUserEntry`, `createSetPieceDocument`, `persistSet`'s meta fields,
+   `duplicateSet`'s copies, the compiler's seeding) are gone; `isSettingEntry` is the authored flag
+   alone.
+10. ✅ Tests — coverage moved rather than vanished: `storedSceneToModel` pins that a setting's document
+    supplies its lights and environment (and that the scene's environment wins), the compiler pins
+    that it references rather than copies, and `documentTree` covers the light node itself.
 
 ## Open questions for 10.3+
 
