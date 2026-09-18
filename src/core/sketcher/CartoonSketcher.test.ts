@@ -5,7 +5,7 @@ import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { exportGLB } from './exportGLB.js';
 import type { SketcherSession } from './types.js';
-import { documentFromParts, isPartNode } from './documentTree.js';
+import { collectLights, documentFromParts, isPartNode } from './documentTree.js';
 import type { PartSeed } from './documentTree.js';
 import type { SetPieceEntry } from '../catalogue/types.js';
 import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
@@ -738,7 +738,7 @@ describe('toDocument / loadDocument', () => {
     const doc = sketcher.toDocument();
     expect(doc.root).toHaveLength(0);
     expect(doc.joints).toHaveLength(0);
-    expect(doc.lights).toBeUndefined();
+    expect(collectLights(doc)).toHaveLength(0);
     expect(doc.environmentMap).toBeUndefined();
   });
 
@@ -747,7 +747,9 @@ describe('toDocument / loadDocument', () => {
     sketcher.setEnvironmentMap('studio-neutral');
 
     const doc = sketcher.toDocument();
-    expect(doc.lights).toHaveLength(1);
+    // The light is a node, not a document field — see `documentTree`'s `addLightNode`.
+    expect(doc.root.some((n) => n.role === 'light')).toBe(true);
+    expect(collectLights(doc)).toHaveLength(1);
     expect(doc.environmentMap).toBe('studio-neutral');
 
     sketcher.loadDocument(doc);

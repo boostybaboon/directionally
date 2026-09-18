@@ -1,5 +1,5 @@
 import type { JointSnapshot, PartDraft } from './types.js';
-import type { LightConfig } from '../domain/types.js';
+import type { DistributiveOmit, LightConfig } from '../domain/types.js';
 import { slug } from './aiDraft.js';
 import { IDENTITY_TRANSFORM, localToWorld, worldToLocal } from './transform.js';
 import type { Transform } from './transform.js';
@@ -17,7 +17,7 @@ import type { Transform } from './transform.js';
  * mesh identity survives a re-derivation, while the node id adds the segment for path
  * addressing (`group-id/part-id`).
  */
-export type NodeRole = 'prop' | 'structure';
+export type NodeRole = 'prop' | 'structure' | 'light';
 
 export type SetNode = {
   id: string;
@@ -28,11 +28,20 @@ export type SetNode = {
   children: SetNode[];
   /** A `prop` leaf's body. */
   content?: PartDraft;
+  /**
+   * A `light` node's configuration. The node id *is* the light id and the node
+   * transform *is* its position, so neither is repeated here; a spot's `target` stays,
+   * being a second point rather than the node's own placement.
+   */
+  light?: LightBody;
   /** A group's semantic name. */
   name?: string;
   /** `true` for a pure group; absent or `false` for an attach assembly. */
   isGroup?: boolean;
 };
+
+/** A light's payload: its config minus the identity and placement the node owns. */
+export type LightBody = DistributiveOmit<LightConfig, 'id' | 'position'>;
 
 /** A part leaf. `normalizeDocument()` guarantees a `prop` node carries `content`. */
 export type PartNode = SetNode & { role: 'prop'; content: PartDraft };
@@ -43,9 +52,14 @@ export type PartSeed = { content: PartDraft; transform?: Transform };
 /** A part leaf's body and transform, both present — what `collectPartNodes` yields. */
 export type PlacedPart = { content: PartDraft; transform: Transform };
 
-/** True when `node` is a part leaf rather than a group. */
+/** True when `node` is a part leaf rather than a group or a light. */
 export function isPartNode(node: SetNode): node is PartNode {
   return node.role === 'prop' && node.content !== undefined;
+}
+
+/** True when `node` is a light. */
+export function isLightNode(node: SetNode): node is SetNode & { role: 'light'; light: LightBody } {
+  return node.role === 'light' && node.light !== undefined;
 }
 
 /** A node transform, detached from any shared default. */
@@ -57,7 +71,6 @@ function nodeTransform(t: Transform | undefined): Transform {
 export type SetDocument = {
   root: SetNode[];
   joints: JointSnapshot[];
-  lights?: LightConfig[];
   environmentMap?: string;
   /**
    * Durable group bond components: each entry is the set of part IDs that form
@@ -96,7 +109,6 @@ export function normalizeDocument(input: unknown): SetDocument {
     root: normalizeNodes(Array.isArray(source.root) ? source.root : [], 'root', issues),
     joints: Array.isArray(source.joints) ? source.joints : [],
   };
-  if (source.lights !== undefined) doc.lights = source.lights;
   if (source.environmentMap !== undefined) doc.environmentMap = source.environmentMap;
   if (source.groupComponents !== undefined) doc.groupComponents = source.groupComponents;
   if (issues.length > 0) console.warn(`normalizeDocument: ${issues.join('; ')}`);
@@ -122,12 +134,16 @@ function normalizeNode(raw: unknown, path: string, issues: string[]): SetNode | 
     issues.push(`${path} has no id`);
     return null;
   }
-  if (n.role !== 'prop' && n.role !== 'structure') {
+  if (n.role !== 'prop' && n.role !== 'structure' && n.role !== 'light') {
     issues.push(`${path} (${n.id}) has unknown role "${String(n.role)}"`);
     return null;
   }
   if (n.role === 'prop' && (typeof n.content !== 'object' || n.content === null)) {
     issues.push(`${path} (${n.id}) is a prop with no content`);
+    return null;
+  }
+  if (n.role === 'light' && (typeof n.light !== 'object' || n.light === null)) {
+    issues.push(`${path} (${n.id}) is a light with no configuration`);
     return null;
   }
   return {
@@ -136,6 +152,7 @@ function normalizeNode(raw: unknown, path: string, issues: string[]): SetNode | 
     transform: nodeTransform(n.transform),
     children: normalizeNodes(Array.isArray(n.children) ? n.children : [], `${path}.children`, issues),
     ...(n.content !== undefined ? { content: n.content } : {}),
+    ...(n.light !== undefined ? { light: n.light } : {}),
     ...(n.name !== undefined ? { name: n.name } : {}),
     ...(n.isGroup !== undefined ? { isGroup: n.isGroup } : {}),
   };
@@ -364,6 +381,69 @@ export function setPartLabel(doc: SetDocument, partId: string, label: string | u
   if (label === undefined) delete node.content.label;
   else node.content.label = label;
   return true;
+}
+
+// ── Lights ───────────────────────────────────────────────────────────────────
+
+/** `wanted` if free among `nodes`, else `wanted-2`, `wanted-3`, … */
+function uniqueNodeId(wanted: string, nodes: SetNode[]): string {
+  const taken = segmentsOf(nodes);
+  if (!taken.has(wanted)) return wanted;
+  let i = 2;
+  while (taken.has(`${wanted}-${i}`)) i++;
+  return `${wanted}-${i}`;
+}
+
+/**
+ * Add a light at the document root — a node like any other, so it undoes and
+ * round-trips with the set. The config's `id` becomes the node id and its `position`
+ * becomes the node transform.
+ */
+export function addLightNode(doc: SetDocument, config: LightConfig): void {
+  const { id: wanted, position, ...light } = config;
+  doc.root.push({
+    id: uniqueNodeId(wanted || 'light', doc.root),
+    role: 'light',
+    transform: { position: position ?? [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+    children: [],
+    light,
+  });
+}
+
+function findLightLocation(nodes: SetNode[], id: string): { nodes: SetNode[]; index: number } | null {
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
+    if (node.role === 'light' && node.id === id) return { nodes, index: i };
+    const nested = findLightLocation(node.children, id);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+/** Remove the light node carrying `id`, searching nested nodes. */
+export function removeLightNode(doc: SetDocument, id: string): boolean {
+  const loc = findLightLocation(doc.root, id);
+  if (!loc) return false;
+  loc.nodes.splice(loc.index, 1);
+  return true;
+}
+
+/**
+ * The document's lights in the renderer's shape, in tree order. Identity and position
+ * come back from the node, which owns them.
+ */
+export function collectLights(doc: SetDocument): LightConfig[] {
+  const lights: LightConfig[] = [];
+  const walk = (nodes: SetNode[]) => {
+    for (const node of nodes) {
+      if (isLightNode(node)) {
+        lights.push({ ...node.light, id: node.id, position: node.transform.position } as LightConfig);
+      }
+      walk(node.children);
+    }
+  };
+  walk(doc.root);
+  return lights;
 }
 
 // ── Attach topology (joints, group nodes, durable bonds) ─────────────────────

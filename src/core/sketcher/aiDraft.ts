@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { LightConfig } from '../domain/types.js';
 import type { PartDraft } from './types.js';
-import { documentFromParts, groupParts, isPartNode } from './documentTree.js';
+import { addLightNode, collectLights, documentFromParts, groupParts, isPartNode } from './documentTree.js';
 import type { PartSeed, SetDocument, SetNode } from './documentTree.js';
 
 /**
@@ -169,6 +169,9 @@ export function toAIDraft(doc: SetDocument): AIDraftProjection {
 
   const walk = (nodes: SetNode[], parent: Transform, groupHandle: string | undefined) => {
     for (const node of nodes) {
+      // Lights are carried by the draft's flat `lights` list, so they are not projected
+      // as parts or as groups here.
+      if (node.role === 'light') continue;
       if (isPartNode(node)) {
         const pd = node.content;
         const handle = uniqueHandle(slug(pd.label ?? pd.name), taken);
@@ -222,12 +225,13 @@ export function toAIDraft(doc: SetDocument): AIDraftProjection {
 
   for (const group of groups) group.children = childrenOfGroup.get(group.id) ?? [];
 
+  const lights = collectLights(doc);
   return {
     aiDraft: {
       convention: AI_CONVENTION,
       parts,
       groups,
-      ...(doc.lights !== undefined ? { lights: doc.lights } : {}),
+      ...(lights.length > 0 ? { lights } : {}),
       ...(doc.environmentMap !== undefined ? { environmentMap: doc.environmentMap } : {}),
     },
     idMap,
@@ -288,9 +292,14 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
     if (memberIds.length > 0) groupParts(doc, memberIds, group.name);
   }
 
+  // Lights arrive flat, so each becomes a root node; the AI's own id is kept (an
+  // untrusted draft may omit it, hence the fallback).
+  for (const [i, config] of (aiDraft.lights ?? []).entries()) {
+    addLightNode(doc, { ...config, id: config.id || `light-${i + 1}` });
+  }
+
   return {
     ...doc,
-    ...(aiDraft.lights !== undefined ? { lights: aiDraft.lights } : {}),
     ...(aiDraft.environmentMap !== undefined ? { environmentMap: aiDraft.environmentMap } : {}),
   };
 }

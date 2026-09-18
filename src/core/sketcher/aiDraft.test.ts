@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { toAIDraft, fromAIDraft, AI_CONVENTION } from './aiDraft.js';
-import { collectPartNodes, collectParts, documentFromParts, groupParts, isPartNode } from './documentTree.js';
+import { addLightNode, collectPartNodes, collectParts, documentFromParts, groupParts, isPartNode } from './documentTree.js';
 import type { PartSeed, SetDocument } from './documentTree.js';
 import type { PartDraft } from './types.js';
 import type { AIPart } from './aiDraft.js';
@@ -80,7 +80,7 @@ describe('toAIDraft', () => {
   it('carries the convention, lights and environment verbatim', () => {
     const d = doc();
     d.environmentMap = 'studio';
-    d.lights = [{ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [0, 10, 0] }];
+    addLightNode(d, { type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [0, 10, 0] });
     const { aiDraft } = toAIDraft(d);
     expect(aiDraft.convention).toEqual(AI_CONVENTION);
     expect(aiDraft.environmentMap).toBe('studio');

@@ -34,6 +34,10 @@ export function realiseDocument(doc: { root: SetNode[] }): THREE.Group {
 
 function realiseNode(node: SetNode): THREE.Object3D | null {
   if (isPartNode(node)) return buildPartMesh(node.content, node.transform);
+  // A light is not geometry: a scene takes a setting's lighting from its own light
+  // list until the entry's cached copy goes (step 10.1, item 9). Emitting a THREE.Light
+  // here before that would light every document-backed setting twice.
+  if (node.role === 'light') return null;
 
   const group = new THREE.Group();
   group.name = node.name ?? 'group';

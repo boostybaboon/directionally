@@ -29,6 +29,9 @@ import {
   setFaceColor as setTreeFaceColor,
   setFaceTexture as setTreeFaceTexture,
   setPartLabel as setTreePartLabel,
+  addLightNode,
+  removeLightNode,
+  collectLights,
 } from './documentTree.js';
 import type { PartNode, PartSeed, SetDocument, SetNode } from './documentTree.js';
 import type { Transform } from './transform.js';
@@ -387,12 +390,25 @@ export class CartoonSketcher {
   }
 
   /**
-   * Add a light to the scene (Track SET, N3 — catalogue panel "Add" action).
-   * Builds the THREE light directly from the config (mirrors SceneBridge's
-   * buildLight, kept local so the Sketcher has no dependency on the domain
-   * SceneBridge module) and tracks it in `lights` for save-as-setting.
+   * Add a light (Track SET, N3 — catalogue panel "Add" action). A light is a document
+   * node, so it undoes, saves and round-trips with the rest of the set; the live THREE
+   * light is built from the node on the next sync.
    */
   addLight(config: LightConfig): void {
+    this.editDocument((doc) => addLightNode(doc, config));
+  }
+
+  /** Remove a light by its id. No-op if not found; a document node, so it undoes. */
+  removeLight(id: string): void {
+    this.editDocument((doc) => removeLightNode(doc, id));
+  }
+
+  /**
+   * Build the live THREE light for a config and track it (mirrors SceneBridge's
+   * buildLight, kept local so the Sketcher has no dependency on the domain
+   * SceneBridge module).
+   */
+  private placeLight(config: LightConfig): void {
     const light = buildThreeLight(config);
     if (!light) return;
     this.scene.add(light);
@@ -400,17 +416,7 @@ export class CartoonSketcher {
     this.lights.push(config);
   }
 
-  /** Remove a previously added light by its LightConfig.id. No-op if not found. */
-  removeLight(id: string): void {
-    const light = this.lightObjects.get(id);
-    if (!light) return;
-    this.scene.remove(light);
-    this.lightObjects.delete(id);
-    const idx = this.lights.findIndex((l) => l.id === id);
-    if (idx !== -1) this.lights.splice(idx, 1);
-  }
-
-  /** Currently placed lights, in insertion order. */
+  /** Currently placed lights, in tree order. */
   getLights(): readonly LightConfig[] {
     return this.lights;
   }
@@ -855,8 +861,8 @@ export class CartoonSketcher {
 
   /**
    * Adopt live object state into the document: each part leaf's transform and body
-   * from its mesh, each group node's transform from its THREE.Group, and the placed
-   * lights + environment. Structure — membership, joints, bonds — is already
+   * from its mesh, each group node's transform from its THREE.Group, and the
+   * environment. Structure — membership, joints, bonds, lights — is already
    * document-owned and is not re-derived.
    */
   private writeBack(): void {
@@ -880,8 +886,6 @@ export class CartoonSketcher {
     };
     walk(this.document.root);
 
-    if (this.lights.length > 0) this.document.lights = [...this.lights];
-    else delete this.document.lights;
     if (this._environmentMap !== undefined) this.document.environmentMap = this._environmentMap;
     else delete this.document.environmentMap;
   }
@@ -1031,7 +1035,7 @@ export class CartoonSketcher {
         if (isPartNode(node)) {
           const part = buildPart(node);
           if (part) this.scene.add(part.mesh);
-        } else {
+        } else if (node.role === 'structure') {
           const t = node.transform;
           const group = new THREE.Group();
           group.position.set(t.position[0], t.position[1], t.position[2]);
@@ -1059,11 +1063,11 @@ export class CartoonSketcher {
     this.attach.setJoints(doc.joints.filter((js) => partLeaves.has(js.partAId) && partLeaves.has(js.partBId)));
     this.attach.setBonds(doc.groupComponents ?? []);
 
-    // Clear + re-add lights.
+    // Clear + re-add lights from the tree.
     for (const light of this.lightObjects.values()) this.scene.remove(light);
     this.lightObjects.clear();
     this.lights.length = 0;
-    for (const config of doc.lights ?? []) this.addLight(config);
+    for (const config of collectLights(doc)) this.placeLight(config);
     this._environmentMap = doc.environmentMap;
   }
 

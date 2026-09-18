@@ -1,4 +1,4 @@
-import type { LightConfig, Vec3 } from '../domain/types.js';
+import type { DistributiveOmit, LightConfig, Vec3 } from '../domain/types.js';
 import type { CharacterSpec } from '../character/characterSpec.js';
 import type { SetDocument } from '../sketcher/documentTree.js';
 
@@ -63,9 +63,6 @@ export interface SetPieceEntry {
    */
   isSetting?: boolean;
 }
-
-/** Distributive Omit: correctly removes a key from each member of a union type. */
-type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
 
 export interface LightEntry {
   kind: 'light';

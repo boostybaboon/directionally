@@ -14,11 +14,15 @@ import {
   groupMembersOf,
   mergeIntoGroup,
   rebuildGroups,
+  addLightNode,
+  removeLightNode,
+  collectLights,
 } from './documentTree.js';
 import { isPartNode } from './documentTree.js';
 import { localToWorld } from './transform.js';
 import type { PartSeed, SetDocument } from './documentTree.js';
 import type { JointSnapshot } from './types.js';
+import type { LightConfig } from '../domain/types.js';
 
 describe('tree mutation operations', () => {
   function empty(): SetDocument {
@@ -213,5 +217,42 @@ describe('attach topology', () => {
     if (!group) throw new Error('expected a group node');
     expect(group.isGroup).toBe(false);
     expect(group.children.map((child) => (isPartNode(child) ? child.content.id : ''))).toEqual(['a', 'b']);
+  });
+});
+
+describe('lights', () => {
+  const sun: LightConfig = {
+    type: 'directional', id: 'sun', color: 0xffffff, intensity: 2, position: [5, 10, 5],
+  };
+
+  it('addLightNode() stores a light as a node that owns its id and position', () => {
+    const doc: SetDocument = { root: [], joints: [] };
+    addLightNode(doc, sun);
+
+    const node = doc.root[0];
+    expect(node.role).toBe('light');
+    expect(node.id).toBe('sun');
+    expect(node.transform.position).toEqual([5, 10, 5]);
+    expect(node.light).toMatchObject({ type: 'directional', intensity: 2, color: 0xffffff });
+    // Identity and placement live on the node, so the payload repeats neither.
+    expect(node.light && 'id' in node.light).toBe(false);
+    expect(node.light && 'position' in node.light).toBe(false);
+  });
+
+  it('collectLights() rebuilds the renderer configs, and a removed light drops out', () => {
+    const doc: SetDocument = { root: [], joints: [] };
+    addLightNode(doc, sun);
+    expect(collectLights(doc)).toEqual([sun]);
+
+    expect(removeLightNode(doc, 'sun')).toBe(true);
+    expect(collectLights(doc)).toEqual([]);
+    expect(removeLightNode(doc, 'sun')).toBe(false);
+  });
+
+  it('keeps a taken light id by suffixing it', () => {
+    const doc: SetDocument = { root: [], joints: [] };
+    addLightNode(doc, sun);
+    addLightNode(doc, { ...sun, position: [0, 0, 0] });
+    expect(doc.root.map((n) => n.id)).toEqual(['sun', 'sun-2']);
   });
 });

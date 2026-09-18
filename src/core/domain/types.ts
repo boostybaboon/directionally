@@ -61,6 +61,13 @@ export type PlacedProp =
 /** A placement transform (no prop body) — used by `expandEntry` to place an entry. */
 export type Placement = { position?: Vec3; rotation?: Vec3; scale?: Vec3 };
 
+/**
+ * Distributive Omit: removes a key from each *member* of a union, not just from the
+ * union — `Omit<A | B, K>` collapses to the shared keys, which is not what a payload
+ * type wants.
+ */
+export type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
+
 export type ActorAsset =
   | { type: 'gltf'; url: string }
   | { type: 'mesh'; geometry: GeometryConfig; material: MaterialConfig };
