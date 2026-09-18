@@ -353,8 +353,11 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
 
 10. **(Later) The Node model: one node type, then `ref` + `overrides` + layering.** Implement instance
     resolution and venue/dressing layer composition — the doc's reuse-with-variation story — on top of
-    the foundation. Split into sub-steps because everything after 10.1 depends on one unified node
-    type; the concrete type, its decisions and the per-file migration checklist are drafted in
+    the foundation. Together the sub-steps cover the four problems `set-staging-architecture.md` names,
+    as one recursive primitive at four scales: part-of hierarchy (10.1–10.2), catalogue-vs-placement
+    (10.3), reuse-with-variation (10.4), layering (10.5). Split into sub-steps because everything after
+    10.1 depends on one unified node type; the concrete type, its decisions and the per-file migration
+    checklist are drafted in
     [set-staging-architecture-plus-implementation-notes.md](set-staging-architecture-plus-implementation-notes.md)
     **Part 3**.
     - **10.1 — One node type (the data-model rework).** `SetNode` becomes *the* node — `id`, `role`,
