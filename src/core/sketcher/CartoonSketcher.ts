@@ -405,6 +405,29 @@ export class CartoonSketcher {
     return PRIMITIVE_PRESETS.map((p) => p.name);
   }
 
+  /**
+   * The instance a mesh belongs to, walking up from the hit — an instance is one unit, so a
+   * click anywhere inside its expansion addresses the instance itself.
+   */
+  instanceFor(object: THREE.Object3D): { path: string; group: THREE.Group } | null {
+    for (let node: THREE.Object3D | null = object; node; node = node.parent) {
+      const path = node.userData?.sketcherInstancePath as string | undefined;
+      if (path !== undefined) return { path, group: node as THREE.Group };
+    }
+    return null;
+  }
+
+  /** The expansions' meshes, for hit-testing alongside the session's own parts. */
+  get instanceMeshes(): THREE.Mesh[] {
+    const meshes: THREE.Mesh[] = [];
+    for (const root of this.instanceRoots) {
+      root.traverse((object) => {
+        if ((object as THREE.Mesh).isMesh) meshes.push(object as THREE.Mesh);
+      });
+    }
+    return meshes;
+  }
+
   /** Inject the resolver an instance is expanded with (see `realiseDocument`). */
   setRefResolver(resolve?: RefResolver): void {
     this.refResolver = resolve;
@@ -642,8 +665,8 @@ export class CartoonSketcher {
     const targets = [...new Set(partIds.flatMap((id) => {
       const ag = this.attach.groupForPart(id);
       if (ag) return [ag.id];
-      const path = pathOfPart(this.document, id);
-      return path ? [path] : [];
+      // A part's guid, or the path of a node that has no part of its own — an instance.
+      return pathOfPart(this.document, id) || nodeAt(this.document, id) ? [id] : [];
     }))];
     if (targets.length < 2) return null;
 

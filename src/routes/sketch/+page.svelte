@@ -260,6 +260,12 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
             (j) => j.partAId === part.id || j.partBId === part.id,
           );
           refreshInspector();
+        } else {
+          // A mesh that is no session part is an instance's geometry, which belongs to its
+          // Definition. Clear the part-derived state so nothing shows a stale part.
+          selectedPartId = null;
+          selectedGroupIsGrouped = false;
+          selectedPartIsAttached = false;
         }
       } else {
         // Deselection — if in group edit mode, clean up dimming before TC detaches.
@@ -744,7 +750,9 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
     // Idle phase: click → try to select a part (or paint a face in face-paint mode).
     if (sketcher.currentPhase === 'idle') {
       const session = sketcher.getSession();
-      const meshes = session.parts.map((p) => p.mesh);
+      // Instance geometry is hit-testable as well, so an instance can be grabbed by clicking
+      // any part of it.
+      const meshes = [...session.parts.map((p) => p.mesh), ...sketcher.instanceMeshes];
 
       // Shift-click: toggle parts or whole assembly groups in the multi-selection.
       // When the primary selection or the clicked item is in a group, the group is
@@ -819,6 +827,16 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
 
       // ── Normal click (not in group edit mode) ─────────────────────────────
       if (hit) {
+        // An instance is one unit: its internals belong to its Definition, so a click
+        // anywhere inside the expansion grabs the instance itself.
+        const instance = sketcher.instanceFor(hit);
+        if (instance) {
+          selection.selectGroup(hit, instance.group);
+          tc.attach(instance.group);
+          statusMessage = 'Instance selected. W/E/R transform · open its source to change what it is made of';
+          return;
+        }
+
         // In normal mode, selecting any mesh in a group selects the whole group.
         const hitPart = session.parts.find((p) => p.mesh === hit);
         const ag = hitPart ? sketcher.attachManager.groupForPart(hitPart.id) : undefined;
