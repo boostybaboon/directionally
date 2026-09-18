@@ -323,3 +323,196 @@ localId is deleted), scan every Instance's override list for orphaned `path`s an
 the UI rather than silently dropping them — Blender's pain point is a preview of yours if this
 step is skipped.
 
+---
+
+# Part 3 — The unified Node model (the step-10 draft)
+
+The concrete model behind ROADMAP_CATALOGUE step 10: one node type for a part leaf, a group, a light,
+and an instance of a catalogue Definition. The sequence lives in that roadmap (10.1–10.5); the type,
+the decisions and the migration checklist live here.
+
+## One node type, used fractally
+
+```ts
+import type { DistributiveOmit, LightConfig } from '../domain/types.js';
+import type { PartDraft, JointSnapshot } from './types.js';
+import type { Transform } from './transform.js';
+
+/** What a node is; decides which payload field is meaningful. */
+export type NodeRole = 'prop' | 'structure' | 'light';
+
+/**
+ * One node type, used fractally: a part leaf, a group, a light, or an instance of a
+ * catalogue Definition. A group is a node with children; an instance is a node with a
+ * `ref`; a group-of-groups is a node whose child is another node. Every node owns a
+ * local transform, so leaves and groups are read, realised and written back the same
+ * way — one walker, one realiser, one write-back.
+ */
+export type SetNode = {
+  /** Stable, parent-unique name segment — the animation-facing path segment ('lamp-03'). */
+  id: string;
+  role: NodeRole;
+  /** Local, relative to the parent node (world at the document root). */
+  transform: Transform;
+  /** Child nodes; always present, empty on a leaf. */
+  children: SetNode[];
+  /** Catalogue Definition this node is an instance of (entry id). */
+  ref?: string;
+  /** Sparse patches over the referenced Definition, applied in list order. */
+  overrides?: NodeOverride[];
+  tags?: string[];
+  /** role: 'prop' — the leaf's body. */
+  content?: PartDraft;
+  /**
+   * role: 'light' — the light's configuration. The node `id` *is* the light id and the
+   * node transform is its position; a spot's `target` stays here, since it is a second
+   * point rather than the node's own placement.
+   */
+  light?: DistributiveOmit<LightConfig, 'id' | 'position'>;
+  /** Named groups: the semantic name, and pure group vs attach assembly. */
+  name?: string;
+  isGroup?: boolean;
+};
+
+export type NodeOverride = {
+  /** Path into the referenced Definition, from this node: 'row-2/chair-3/lamp'. */
+  path: string;
+  op: 'remove' | 'swap_ref' | 'set';
+  /** 'swap_ref': the replacement entry id. 'set': the field patch. */
+  value?: string | Record<string, unknown>;
+};
+
+export type SetDocument = {
+  root: SetNode[];
+  /** Attach joints between part leaves, by part id — flat, independent of nesting. */
+  joints: JointSnapshot[];
+  /** HDRI catalogue id — a whole-scene property, not a placed, transformable node. */
+  environmentMap?: string;
+  /** Durable group bonds (step 9). */
+  groupComponents?: string[][];
+};
+```
+
+`role` names map 1:1 onto this doc's `Prop | Light | Camera | Structure | RigAnchor` in the
+codebase's lowercase style; `camera`/`rig` are added when 10.5 has something to place. The doc's
+`content: PropContent` is this codebase's `PartDraft` — the same tag set (`primitive` / `sketch` /
+`lathed` / `catalogue`) plus the appearance fields — and there is no `gltf` leaf, because a pre-made
+body is a `catalogue` part or a `ref`.
+
+## What the one type buys
+
+A schoolroom with a row of chairs and a desk lamp — group-of-groups, an instance carrying an
+override, and a light that moves with its group:
+
+```json
+{
+  "root": [
+    {
+      "id": "schoolroom",
+      "role": "structure",
+      "name": "Schoolroom",
+      "transform": { "position": [0, 0, 0], "quaternion": [0, 0, 0, 1], "scale": [1, 1, 1] },
+      "children": [
+        {
+          "id": "row-2",
+          "role": "structure",
+          "name": "Row 2",
+          "transform": { "position": [0, 0, 3.2], "quaternion": [0, 0, 0, 1], "scale": [1, 1, 1] },
+          "children": [
+            {
+              "id": "chair-3",
+              "role": "prop",
+              "ref": "chair",
+              "overrides": [{ "path": "cushion", "op": "remove" }],
+              "transform": { "position": [1.2, 0, 0], "quaternion": [0, 0, 0, 1], "scale": [1, 1, 1] },
+              "children": []
+            }
+          ]
+        },
+        {
+          "id": "desk-lamp",
+          "role": "light",
+          "transform": { "position": [0.4, 1.1, 0], "quaternion": [0, 0, 0, 1], "scale": [1, 1, 1] },
+          "light": { "type": "point", "color": 16764006, "intensity": 2, "distance": 6, "decay": 2 },
+          "children": []
+        }
+      ]
+    }
+  ],
+  "joints": []
+}
+```
+
+- **Group** — any `structure` node. **Group-of-groups** — a `structure` node whose child is another
+  `structure` node. No new concept and no new code: the Group action wraps the selected nodes in a
+  node, whichever level they sit at.
+- **Solidify** ("Save as Item") — write the subtree to the catalogue, replace the node in place with
+  `ref: <entry id>`. The modelling UI does not change; only where the data ends up.
+- **Instance** — `ref` + `transform` + `overrides`. **Definition-of-definition** — a Definition whose
+  child carries a `ref`, which is how chair → table-and-chairs → schoolroom needs no special case.
+- **One walker** serves `collectParts`, `countParts`, the realiser, `writeBack`, the AI projection and
+  any future outliner, because `children` and `transform` are on every node.
+- **Lights become placeable, nestable, addressable** with a stable path, moving with the group that
+  owns them, instead of a document-level list of world positions.
+
+## Decisions
+
+| Decision | Choice | Why |
+|---|---|---|
+| Node shape | one flat type with a `role` tag plus a load-time `normalizeDocument()`, not a TypeScript discriminated union | `ref`, `overrides`, the id-diff and any patch operate on arbitrary nodes; a union forces a `role` narrow at every patch site — the un-generic tax. Cost: TS cannot prove payload-vs-role agreement; paid once, at load, where reporting beats throwing |
+| Transform | on the node, required | leaves and groups then read, realise and write back identically; `writeBack`/`syncFromDocument` lose their `kind` branches |
+| `children` | always present | one walker; no `'children' in node` guards |
+| Lights | `role: 'light'` nodes in 10.1 | their shape changes in the same pass regardless; the *renderer* contract stays `LightConfig[]` via `collectLights(doc)`, so `StoredScene`, the compiler and light actions do not move |
+| `camera` / `rig` | additive roles later (10.5) | a new enum member plus an optional payload needs no document migration — nothing is gained by pre-adding them |
+| Environment | stays `document.environmentMap` | a whole-scene background is not a placed, transformable object |
+| Joints | stay a flat document list keyed by part id | attach is leaf-level; nesting does not change it (a joint *across* two instances needs paths — a 10.3 question, not a 10.1 field) |
+| `SetPieceEntry.lights` / `environmentId` | kept, as an index-time cache | `fountainCompiler` resolves a setting's lights and environment synchronously from the entry without loading its document (`fountainCompiler.ts:437`), and a saved set's document is a separate OPFS file. With light nodes, `collectLights(document)` becomes the source and these become derived — deleting them would push setting resolution async. A recorded duplication with a reason, not an inherited accident |
+| Addressing | unchanged in 10.1: parts by guid, groups by node id | selection and the gizmo are guid-based; path addressing is N8's work, not a rider on this rework |
+| Document `version` | dropped (deleted ahead of 10.1) | `version: 2` was written by `emptyDocument()`, `documentFromParts()` and `OPFSCatalogueStore`'s `EMPTY_DOCUMENT` and read by nothing — no check, no upgrader, no compatibility branch. A version field implies a promise we are not keeping, and a stale document is simply abandoned. `normalizeDocument()` is the load-time guard instead: it reads what it recognises and reports what it does not, which catches any stale or malformed file rather than only a version mismatch |
+
+**Not in 10.1** — the address scheme (guid → path) and animation addressing (N8); joint semantics;
+the renderer's `StoredScene`/`SetPiece` contract, where `SetPiece` stays the scene *slot* type (10.1
+deletes its dead `parent` field; the flat slot list becomes a tree in 10.3, when resolution stops
+flattening); and the AI draft grammar, which stays a flat projection that simply reads
+`node.transform`.
+
+## Migration checklist
+
+Ordered and mechanical — one pass touches every file below.
+
+1. `src/core/sketcher/types.ts` — `PartDraft` drops `position`/`quaternion`/`scale`; they belong to
+   the node now.
+2. `src/core/domain/types.ts` — export `DistributiveOmit` (moved out of `catalogue/types.ts`, where
+   only `LightEntry.config` uses it); delete `SetPiece.parent`.
+3. `src/core/sketcher/documentTree.ts` — the node type, `NodeRole`, `NodeOverride`, `version: 3`;
+   delete `partTransform()`; `insertPart(doc, content, transform?)` plus a
+   `PartSeed = { content: PartDraft; transform?: Transform }` for `documentFromParts`; `groupParts`,
+   `ungroupPart` and `promoteToRoot` re-localise `node.transform`; `setPartTransform` writes
+   `node.transform`; the light ops `addLightNode` / `removeLightNode` / `findLightNode` /
+   `collectLights`; `normalizeDocument()`.
+4. `src/core/sketcher/realise.ts` — `realiseNode` reads `node.transform`; `buildPartMesh(content,
+   transform)`; light nodes realise here too (`buildLight`), so the headless realiser covers a whole
+   document rather than geometry only.
+5. `src/core/sketcher/CartoonSketcher.ts` — the four `PartDraft` construction sites and `partToLeaf`
+   lose their transform fields; `syncFromDocument` sets transforms from nodes; `writeBack` collapses
+   to one transform branch plus a payload refresh; `addLight`/`removeLight` become node ops and
+   `getLights()` becomes `collectLights(this.document)`; `document.lights` is gone.
+6. `src/core/catalogue/bundledSets.ts` — its `part()` helper returns a seed.
+7. `src/core/sketcher/aiDraft.ts` / `applyDraft.ts` — read and write `node.transform`; the diff
+   carries seeds rather than bare drafts.
+8. `src/routes/sketch/+page.svelte` — `persistSet`'s metadata keeps its shape (the lights copy stays
+   as the index cache); otherwise typing only.
+9. Tests — `documentTree`, `realise`, `CartoonSketcher`, `applyDraft`, `aiDraft`, `aiDraftSchema`,
+   `catalogue`.
+
+## Open questions for 10.3+
+
+Deliberately unanswered here, so 10.1 stays bounded:
+
+- **Joints across an instance boundary** — a joint between two parts that live inside different
+  Definitions needs a path, not a part id.
+- **Override granularity** — may `op: 'set'` patch only the transform, or any field (colour, light
+  payload, geometry)?
+- **Resolution timing** — resolve `ref`s lazily per node, or eagerly per document at load?
+- **AI projection of instances** — flatten them (today) or expose an instance as an opaque handle?
+

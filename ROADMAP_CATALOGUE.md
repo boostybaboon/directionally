@@ -187,13 +187,15 @@ SetDocument {
 
 - **Lights and cameras are nodes** (`role: Light` / `role: Camera`) with a role payload + a local
   transform — not fields, not a separate "stage settings" object (set-staging-architecture.md).
+  Lights land with the node unification (10.1); `camera`/`rig` are additive role members that need
+  no document migration, so they land when layering (10.5) has something to place.
 - **Environment (HDRI)** stays a document field: it's a whole-scene background, not a placed,
   transformable object, and the role enum has no Environment role.
 - A `Prop` is either a **leaf** (`content`: primitive / sketch / lathe / gltf) or an **instance**
   (`ref` to another Definition + `overrides`). `gltf` is just the opaque leaf; `ref` is the
   general, editable, override-able case.
 - **Reuse-with-variation** (`ref` + `overrides`) and **layering** (venue vs dressing vs shot) are
-  supported by the schema now, but their *resolution* is a later increment (see step 10) — the
+  supported by the schema now, but their *resolution* is a later increment (see steps 10.3–10.5) — the
   single-store/Document foundation lands first.
 
 ### Realiser (one render path)
@@ -349,9 +351,48 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       document stays the single source of truth.
    Guard: the existing `CartoonSketcher`/`SketcherDocument`/`AttachManager` round-trip suites.
 
-10. **(Later) `ref` + `overrides` + layering.** Implement instance resolution and venue/dressing
-    layer composition — the doc's reuse-with-variation story — on top of the foundation. The schema
-    already supports it; this is where it becomes behaviour.
+10. **(Later) The Node model: one node type, then `ref` + `overrides` + layering.** Implement instance
+    resolution and venue/dressing layer composition — the doc's reuse-with-variation story — on top of
+    the foundation. Split into sub-steps because everything after 10.1 depends on one unified node
+    type; the concrete type, its decisions and the per-file migration checklist are drafted in
+    [set-staging-architecture-plus-implementation-notes.md](set-staging-architecture-plus-implementation-notes.md)
+    **Part 3**.
+    - **10.1 — One node type (the data-model rework).** `SetNode` becomes *the* node — `id`, `role`,
+      `transform`, `children`, plus optional `ref`/`overrides`/`tags` and a role payload — and the two
+      neighbouring shapes converge on it: `SetPiece`'s flat list (with its dead name-string `parent`)
+      and `SetPieceEntry`'s entry-shaped duplicate. Two decisions are taken here. **The transform
+      moves out of `PartDraft` onto the node**: parts and groups are then read, realised and written
+      back identically, which is what lets one walker/realiser/write-back serve both (today `writeBack`
+      and `syncFromDocument` branch on `kind` purely to move transforms). **Lights become nodes**
+      (`role: 'light'`) rather than the `document.lights` side list — the cheaper order, because their
+      shape has to change in the same pass over `documentTree`/`realise`/`syncFromDocument`/
+      `writeBack`, whereas a role added later (`camera`, `rig`) is an additive enum member needing no
+      migration. `document.lights` and the duplicate `SetPieceEntry.lights`/`environmentId` collapse
+      onto `collectLights(document)` / `document.environmentMap`; the entry keeps a copy only as the
+      index-time cache the synchronous compiler reads. The vestigial `SetDocument.version` is already
+      deleted (written by three builders, read by nothing) — `normalizeDocument()` is the load-time
+      guard.
+      Guard: the `documentTree`/`realise`/`CartoonSketcher` leaf-and-group round-trip suites.
+    - **10.2 — Nested groups in the session (group-of-groups).** The schema recurses already; the
+      *session* is what is flat. `group()`/`ungroup()` become depth-aware, and `syncFromDocument`
+      recurses instead of walking `doc.root` only — today a nested group node gets no live
+      `THREE.Group` (so no transform write-back, nothing to select or gizmo) while its children are
+      swallowed into the outer group. Depth is a prerequisite for 10.3, not an optional extra:
+      instances are addressed by path. The Outliner (N9) earns its place here.
+    - **10.3 — `ref` + tree-preserving resolution.** "Promote to Definition" (solidify) writes a
+      subtree to the catalogue and replaces it with a `ref` node; inserting an entry produces a `ref`
+      instead of copying leaves. `resolveInstances` stops flattening at resolve time and realises the
+      referenced tree (`realiseDocument` already recurses), so path and identity survive to the
+      renderer. Includes the isolated Edit Source context (N5).
+    - **10.4 — `overrides` + Apply/Revert.** Instances carry the flat, path-addressed override list
+      (Unity's model — the simplest that works); resolution is `deep-copy(Definition)`, then replay
+      the overrides in list order. Apply (push to Definition) / Revert affordances, and orphaned
+      `path`s are reported on resync rather than silently dropped (Blender's lesson).
+    - **10.5 — Layering (venue / dressing / shot).** Two or three fixed, ordered override-sets
+      composed per scene, last-write-wins — USD's LIVRPS *benefit* without its generality. This is
+      where per-shot light tweaks and `role: 'camera' | 'rig'` nodes (additive, no migration) earn
+      their place, and where `StoredScene.lights`/`camera` stay the renderer contract while the
+      document holds nodes.
 
 11. **(Later) One store for characters.** `CharacterDesignStore` is still a second editable-source
     store behind `sourceDesignId`, exactly as `SketcherAssemblyStore` was for sets. Step 4 only
@@ -365,6 +406,11 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
 - GLB-backed set-pieces rendered from their bake while step 5 was in flight; step 8 deleted the
   sidecar, so a set piece is only ever its document.
 - Bundled `compose` props are documents now (`bundledSets.ts`) — the compose representation is gone.
+- Step 10.1 has no migration story to write, and does not invent one: `SetDocument.version` was deleted
+  rather than bumped (it was written by three builders and read by nothing — no check, no upgrader, no
+  compatibility branch), and a document that predates the model is simply abandoned, as the
+  assembly/draft files were. `normalizeDocument()` is the load-time guard: it reads what it recognises
+  and reports what it does not.
 
 ### Deletion list
 
@@ -414,5 +460,8 @@ No conflict.
   produced, not how they are identified.
 - [set-staging-architecture.md](set-staging-architecture.md) — the Node/Definition/Instance/override
   and layering model that Part 2 realises.
+- [set-staging-architecture-plus-implementation-notes.md](set-staging-architecture-plus-implementation-notes.md)
+  — Part 2 (how USD/Unity/Blender do it) and Part 3 (the concrete node type, decisions and migration
+  checklist for step 10).
 - [SKETCHER_ROADMAP.md](SKETCHER_ROADMAP.md) — the editor (Track SET) that Part 2 collapses to one
   tool; the sketcher phases this refactor touches.
