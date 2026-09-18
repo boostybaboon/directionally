@@ -331,6 +331,20 @@ describe('nesting and paths', () => {
     expect(doc.root[0].children.map((c) => c.id).sort()).toEqual(['box', 'box-2', 'box-3']);
   });
 
+  it('groupNodes() refuses to group a node with its own ancestor', () => {
+    const doc = empty();
+    insertPart(doc, box('top'));
+    insertPart(doc, box('leg'));
+    insertPart(doc, box('loose'));
+    groupNodes(doc, ['top', 'leg'], 'table');
+    const tablePath = pathOfPart(doc, 'top')!.split('/')[0];
+
+    // `table` holds `top`, so the pair collapses to `top` alone: nothing to group, and the
+    // table group is left intact rather than dissolved on the way to a common parent.
+    expect(groupNodes(doc, [tablePath, 'top'], 'nope')).toBeNull();
+    expect(doc.root.map((n) => n.id)).toEqual(['table', 'box-3']);
+  });
+
   it('addresses a group by its absolute path, which a re-parent changes', () => {
     const doc = empty();
     insertPart(doc, box('top'));

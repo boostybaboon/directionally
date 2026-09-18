@@ -298,6 +298,16 @@ function findGroupOfNode(nodes: SetNode[], node: SetNode, parent: Transform, pre
   return null;
 }
 
+/** True when `ancestor` is one of the groups holding `node`, at any depth. */
+function isInside(doc: SetDocument, node: SetNode, ancestor: SetNode): boolean {
+  let containing = findGroupOfNode(doc.root, node, IDENTITY_TRANSFORM, '');
+  while (containing) {
+    if (containing.node === ancestor) return true;
+    containing = findGroupOfNode(doc.root, containing.node, IDENTITY_TRANSFORM, '');
+  }
+  return false;
+}
+
 /** The group node that directly contains the part `partId`, or null. */
 export function findGroupOfPartId(doc: SetDocument, partId: string): SetNode | null {
   const loc = findNodeLocation(doc, partId);
@@ -350,10 +360,18 @@ export function groupNodes(doc: SetDocument, members: NodeRef[], name?: string, 
     if (!loc) return null;
     locations.push(loc);
   }
-  const siblings = locations[0].nodes;
-  if (!locations.every((loc) => loc.nodes === siblings)) return null; // members must be siblings
+  // A node cannot be grouped with its own ancestor: keep the innermost of such a pair, or the
+  // request would dissolve the ancestor on its way to a common sibling array. A request that
+  // collapses to a single node is refused, there being nothing to group.
+  const kept = locations.filter(
+    (loc) => !locations.some((other) => other !== loc && isInside(doc, loc.node, other.node)),
+  );
+  if (kept.length < locations.length && kept.length < 2) return null;
 
-  const placed = locations.map((loc) => ({ loc, world: localToWorld(loc.node.transform, loc.parent) }));
+  const siblings = kept[0].nodes;
+  if (!kept.every((loc) => loc.nodes === siblings)) return null; // members must be siblings
+
+  const placed = kept.map((loc) => ({ loc, world: localToWorld(loc.node.transform, loc.parent) }));
   const centroid: [number, number, number] = [0, 0, 0];
   for (const m of placed) {
     centroid[0] += m.world.position[0];
