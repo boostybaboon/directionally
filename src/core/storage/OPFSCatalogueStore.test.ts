@@ -266,7 +266,7 @@ describe('OPFSCatalogueStore – update (character bake)', () => {
 
   it('saveDocument() persists environmentId and lights for a re-saved setting', async () => {
     const entry = await createSetPieceDocument('Garden');
-    await saveDocument(entry.id, { version: 2, root: [], joints: [] }, {
+    await saveDocument(entry.id, { root: [], joints: [] }, {
       environmentId: 'env-exterior',
       lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
     });
@@ -285,7 +285,7 @@ describe('OPFSCatalogueStore – update (character bake)', () => {
       lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
     });
 
-    await saveDocument(entry.id, { version: 2, root: [], joints: [] }, { environmentId: undefined, lights: undefined });
+    await saveDocument(entry.id, { root: [], joints: [] }, { environmentId: undefined, lights: undefined });
     const listed = await list();
     const piece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
     expect(piece.environmentId).toBeUndefined();
@@ -294,7 +294,7 @@ describe('OPFSCatalogueStore – update (character bake)', () => {
 
   it('saveDocument() writes metadata with the document in one pass', async () => {
     const entry = await createSetPieceDocument('AI Chair');
-    const document: SetDocument = { version: 2, root: [], joints: [] };
+    const document: SetDocument = { root: [], joints: [] };
 
     const updated = await saveDocument(entry.id, document, { partCount: 1 });
     expect(updated).not.toBeNull();
@@ -311,7 +311,7 @@ describe('OPFSCatalogueStore – update (character bake)', () => {
 
 describe('OPFSCatalogueStore – updateSetPieceMeta', () => {
   it('renames a set without touching its document', async () => {
-    const document: SetDocument = { version: 2, root: [], joints: [] };
+    const document: SetDocument = { root: [], joints: [] };
     const entry = await createSetPieceDocument('Draft');
     await saveDocument(entry.id, document);
 

@@ -76,7 +76,6 @@ describe('storedSceneToModelAsync', () => {
 
 describe('storedSceneToModelAsync – document-backed sets (step 5)', () => {
   const document: SetDocument = {
-    version: 2,
     root: [
       {
         kind: 'part',

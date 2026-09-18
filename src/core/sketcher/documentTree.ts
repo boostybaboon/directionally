@@ -20,7 +20,6 @@ export type SetNode =
   | { kind: 'group'; id: string; role: 'structure'; name?: string; isGroup?: boolean; position?: [number, number, number]; quaternion?: [number, number, number, number]; scale?: [number, number, number]; children: SetNode[] };
 
 export type SetDocument = {
-  version: 2;
   root: SetNode[];
   joints: JointSnapshot[];
   lights?: LightConfig[];
@@ -36,7 +35,7 @@ export type SetDocument = {
 
 /** A document with nothing in it. */
 export function emptyDocument(): SetDocument {
-  return { version: 2, root: [], joints: [] };
+  return { root: [], joints: [] };
 }
 
 /** A detached copy of a document — snapshots and loads never alias live state. */
@@ -80,7 +79,7 @@ export function collectParts(doc: SetDocument): PartDraft[] {
  * hand-written definition and an edited one address their nodes identically.
  */
 export function documentFromParts(parts: PartDraft[]): SetDocument {
-  const doc: SetDocument = { version: 2, root: [], joints: [] };
+  const doc: SetDocument = { root: [], joints: [] };
   for (const part of parts) insertPart(doc, part);
   return doc;
 }

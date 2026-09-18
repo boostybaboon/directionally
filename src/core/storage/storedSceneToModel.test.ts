@@ -280,7 +280,6 @@ describe('storedSceneToModel – placeholder setting', () => {
 
 describe('storedSceneToModel – document-backed set pieces', () => {
   const document: SetDocument = {
-    version: 2,
     root: [
       {
         kind: 'part',

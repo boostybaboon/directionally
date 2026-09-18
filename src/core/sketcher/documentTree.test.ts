@@ -21,7 +21,7 @@ import type { JointSnapshot, PartDraft } from './types.js';
 
 describe('tree mutation operations', () => {
   function empty(): SetDocument {
-    return { version: 2, root: [], joints: [] };
+    return { root: [], joints: [] };
   }
   function box(id: string, pos: [number, number, number] = [0, 0, 0]): PartDraft {
     return { id, kind: 'primitive', name: 'Box', position: pos, quaternion: [0, 0, 0, 1], scale: [1, 1, 1], color: 0x8888cc };
@@ -78,7 +78,7 @@ describe('tree mutation operations', () => {
 
 describe('attach topology', () => {
   function empty(): SetDocument {
-    return { version: 2, root: [], joints: [] };
+    return { root: [], joints: [] };
   }
   function box(id: string, pos: [number, number, number] = [0, 0, 0]): PartDraft {
     return { id, kind: 'primitive', name: 'Box', position: pos, quaternion: [0, 0, 0, 1], scale: [1, 1, 1], color: 0x8888cc };

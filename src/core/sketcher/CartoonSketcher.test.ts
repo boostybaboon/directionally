@@ -741,7 +741,6 @@ describe('toDocument / loadDocument', () => {
 
   it('toDocument() on an empty session produces an empty document', () => {
     const doc = sketcher.toDocument();
-    expect(doc.version).toBe(2);
     expect(doc.root).toHaveLength(0);
     expect(doc.joints).toHaveLength(0);
     expect(doc.lights).toBeUndefined();
@@ -763,7 +762,7 @@ describe('toDocument / loadDocument', () => {
   });
 
   it('loadDocument() on a document with no lights/environmentMap leaves them empty', () => {
-    sketcher.loadDocument({ version: 2, root: [], joints: [] });
+    sketcher.loadDocument({ root: [], joints: [] });
     expect(sketcher.getLights()).toHaveLength(0);
     expect(sketcher.environmentMap).toBeUndefined();
   });
@@ -923,7 +922,7 @@ describe('toDocument / loadDocument', () => {
 
   it('loadDocument() on an empty document produces an empty session', () => {
     sketcher.insertPrimitive('box');
-    sketcher.loadDocument({ version: 2, root: [], joints: [] });
+    sketcher.loadDocument({ root: [], joints: [] });
     expect(sketcher.getSession().parts).toHaveLength(0);
   });
 });

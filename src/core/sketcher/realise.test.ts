@@ -14,7 +14,7 @@ function part(id: string, overrides: Partial<PartDraft> = {}): PartDraft {
 
 describe('realiseDocument', () => {
   it('skips parts it cannot build (unknown preset, sketch without depth)', () => {
-    const doc: SetDocument = { version: 2, root: [], joints: [] };
+    const doc: SetDocument = { root: [], joints: [] };
     insertPart(doc, part('bad', { name: 'Pyramid' }));
     insertPart(doc, part('no-depth', { kind: 'sketch', name: 'Shape', shapePoints: [[0, 0], [1, 0], [1, 1]] }));
 
@@ -22,7 +22,7 @@ describe('realiseDocument', () => {
   });
 
   it('tags each mesh with its part id and local transform', () => {
-    const doc: SetDocument = { version: 2, root: [], joints: [] };
+    const doc: SetDocument = { root: [], joints: [] };
     insertPart(doc, part('a', { position: [1, 2, 3], scale: [2, 2, 2] }));
 
     const [mesh] = realiseDocument(doc).children as THREE.Mesh[];
@@ -32,7 +32,7 @@ describe('realiseDocument', () => {
   });
 
   it('builds a nested scene — group nodes become THREE.Groups, parts stay local', () => {
-    const doc: SetDocument = { version: 2, root: [], joints: [] };
+    const doc: SetDocument = { root: [], joints: [] };
     insertPart(doc, part('top'));
     insertPart(doc, part('leg-a', { position: [5, 2, -3] }));
     insertPart(doc, part('leg-b', { position: [6, 2, -3] }));

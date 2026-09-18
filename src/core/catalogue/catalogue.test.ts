@@ -9,7 +9,7 @@ import type { GeometryConfig } from '../domain/types';
 /** First part of a bundled set-piece entry's document. */
 function bundledPart(id: string): PartDraft {
   const entry = getById(id, CATALOGUE_ENTRIES) as SetPieceEntry | undefined;
-  return collectParts(entry?.document ?? { version: 2, root: [], joints: [] })[0];
+  return collectParts(entry?.document ?? { root: [], joints: [] })[0];
 }
 
 // Controlled fixture — tests must not depend on real seed data so they

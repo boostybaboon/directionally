@@ -432,7 +432,7 @@ function documentFileName(id: string): string {
   return `${id}.document.json`;
 }
 
-const EMPTY_DOCUMENT: SetDocument = { version: 2, root: [], joints: [] };
+const EMPTY_DOCUMENT: SetDocument = { root: [], joints: [] };
 
 /**
  * Create a set-piece entry backed by an editable document (a sketcher-authored set).
