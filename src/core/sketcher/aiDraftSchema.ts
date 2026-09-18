@@ -60,6 +60,24 @@ const PART_VARIANTS: Record<string, unknown>[] = Object.entries(SIZE_LENGTHS).ma
   },
 }));
 
+/**
+ * A part that places a catalogue Definition instead of describing a body: the AI composes
+ * from what `describe_catalogue` shows it, and the reference survives into the document.
+ */
+const REF_VARIANT: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['id', 'name', 'ref'],
+  properties: {
+    id: { type: 'string' },
+    name: { type: 'string' },
+    ref: { type: 'string' },
+    position: VEC3_SCHEMA,
+    rotation: VEC3_SCHEMA,
+    group: { type: 'string' },
+  },
+};
+
 const GROUP_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
@@ -90,7 +108,7 @@ export const AI_DRAFT_JSON_SCHEMA: Record<string, unknown> = {
         forward: { const: '-Z' },
       },
     },
-    parts: { type: 'array', minItems: 1, items: { oneOf: PART_VARIANTS } },
+    parts: { type: 'array', minItems: 1, items: { oneOf: [...PART_VARIANTS, REF_VARIANT] } },
     groups: { type: 'array', items: GROUP_SCHEMA },
     label: { type: 'string' },
     lights: { type: 'array', items: LIGHT_SCHEMA },
@@ -129,13 +147,21 @@ function normalizePart(v: unknown, field: string): AIPart {
 
   const id = asString(v.id, `${field}.id`);
   const name = asString(v.name, `${field}.name`);
+  const position: [number, number, number] = v.position !== undefined ? asVec3(v.position, `${field}.position`) : [0, 0, 0];
+  const rotation: [number, number, number] = v.rotation !== undefined ? asVec3(v.rotation, `${field}.rotation`) : [0, 0, 0];
+
+  // A reference part carries no body: the Definition it names supplies one.
+  if (v.ref !== undefined) {
+    const part: AIPart = { id, name, ref: asString(v.ref, `${field}.ref`), position, rotation };
+    if (v.group !== undefined) part.group = asString(v.group, `${field}.group`);
+    return part;
+  }
+
   const kind = v.kind === undefined ? 'primitive' : asString(v.kind, `${field}.kind`);
   if (kind !== 'primitive' && kind !== 'sketch' && kind !== 'lathed') {
     throw new Error(`${field}.kind must be 'primitive', 'sketch', or 'lathed'`);
   }
 
-  const position: [number, number, number] = v.position !== undefined ? asVec3(v.position, `${field}.position`) : [0, 0, 0];
-  const rotation: [number, number, number] = v.rotation !== undefined ? asVec3(v.rotation, `${field}.rotation`) : [0, 0, 0];
   const color = v.color !== undefined ? asNumber(v.color, `${field}.color`) : 0x8888cc;
 
   const part: AIPart = { id, name, kind, position, rotation, color };

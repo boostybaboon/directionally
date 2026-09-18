@@ -68,3 +68,19 @@ describe('normalizeAIDraft', () => {
       .toThrow('size must be 1 number');
   });
 });
+
+describe('reference parts', () => {
+  it('accepts a reference part, which needs no body', () => {
+    const aiDraft = normalizeAIDraft({
+      parts: [{ id: 'chair', name: 'chair', ref: 'chair-def', position: [1, 0, 0] }],
+    });
+
+    expect(aiDraft.parts).toHaveLength(1);
+    expect(aiDraft.parts[0]).toMatchObject({ ref: 'chair-def', position: [1, 0, 0] });
+    expect(aiDraft.parts[0].shape).toBeUndefined();
+  });
+
+  it('rejects a reference that is not a string', () => {
+    expect(() => normalizeAIDraft({ parts: [{ id: 'a', name: 'a', ref: 7 }] })).toThrow(/ref/);
+  });
+});

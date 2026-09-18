@@ -18,10 +18,13 @@ import {
   removeLightNode,
   collectLights,
   pathOfPart,
+  collectRefs,
+  normalizeDocument,
 } from './documentTree.js';
 import { isPartNode } from './documentTree.js';
 import { localToWorld } from './transform.js';
-import type { PartSeed, SetDocument } from './documentTree.js';
+import type { Transform } from './transform.js';
+import type { PartSeed, SetDocument, SetNode } from './documentTree.js';
 import type { JointSnapshot } from './types.js';
 import type { LightConfig } from '../domain/types.js';
 
@@ -360,5 +363,35 @@ describe('nesting and paths', () => {
     expect(nested).toBe('room/table');
     expect(ungroupNode(doc, nested)).toBe(true);
     expect(doc.root[0].children.map((c) => c.id).sort()).toEqual(['box', 'box-2', 'box-3']);
+  });
+});
+
+describe('instances', () => {
+  const identity: Transform = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
+  const instance = (id: string, ref: string, children: SetNode[] = []): SetNode =>
+    ({ id, role: 'prop', ref, transform: { ...identity }, children });
+
+  it('collectRefs() reports the distinct Definitions, in tree order', () => {
+    const doc: SetDocument = {
+      root: [instance('a', 'chair'), instance('b', 'table', [instance('inner', 'lamp')]), instance('c', 'chair')],
+      joints: [],
+    };
+    expect(collectRefs(doc)).toEqual(['chair', 'table', 'lamp']);
+    expect(collectRefs({ root: [], joints: [] })).toEqual([]);
+  });
+
+  it('normalizeDocument() keeps an instance, which carries no payload', () => {
+    const doc = normalizeDocument({
+      root: [{ id: 'a', role: 'prop', ref: 'chair', transform: identity, children: [] }],
+      joints: [],
+    });
+    expect(doc.root).toHaveLength(1);
+    expect(doc.root[0].ref).toBe('chair');
+    expect(doc.root[0].transform.position).toEqual([0, 0, 0]);
+  });
+
+  it('normalizeDocument() still drops a prop with neither content nor ref', () => {
+    const doc = normalizeDocument({ root: [{ id: 'a', role: 'prop', children: [] }], joints: [] });
+    expect(doc.root).toHaveLength(0);
   });
 });

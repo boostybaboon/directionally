@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { toAIDraft, fromAIDraft, AI_CONVENTION } from './aiDraft.js';
-import { addLightNode, collectPartNodes, collectParts, documentFromParts, groupNodes, isPartNode } from './documentTree.js';
+import { addLightNode, collectPartNodes, collectParts, collectRefs, documentFromParts, groupNodes, insertRef, isPartNode } from './documentTree.js';
 import type { PartSeed, SetDocument } from './documentTree.js';
 import type { PartDraft } from './types.js';
 import type { AIPart } from './aiDraft.js';
@@ -193,5 +193,53 @@ describe('size and semantic names', () => {
     if (!group) throw new Error('expected a group node');
     expect(group.name).toBe('table');
     expect(group.children.map((c) => (isPartNode(c) ? c.content.id : ''))).toEqual(['top', 'leg']);
+  });
+});
+
+describe('reference parts', () => {
+  const identity: Transform = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
+
+  it('projects an instance as a ref part, at its world position', () => {
+    const d = doc();
+    insertRef(d, { ref: 'chair', name: 'chair', transform: { ...identity, position: [2, 0, 0] } });
+
+    const { aiDraft, idMap } = toAIDraft(d);
+    expect(aiDraft.parts).toHaveLength(1);
+    expect(aiDraft.parts[0]).toMatchObject({ name: 'chair', ref: 'chair', position: [2, 0, 0] });
+    // No body is described: the Definition supplies it.
+    expect(aiDraft.parts[0].shape).toBeUndefined();
+    expect(aiDraft.parts[0].color).toBeUndefined();
+    expect(idMap).toEqual({ chair: 'chair' });
+  });
+
+  it('fromAIDraft places a reference instead of copying a body', () => {
+    const out = fromAIDraft({
+      convention: AI_CONVENTION,
+      parts: [{ id: 'desk', name: 'desk', ref: 'school-desk', position: [1, 0, 0], rotation: [0, 90, 0] }],
+      groups: [],
+    });
+
+    expect(collectParts(out)).toHaveLength(0);
+    expect(out.root).toHaveLength(1);
+    expect(out.root[0].ref).toBe('school-desk');
+    expect(out.root[0].children).toEqual([]);
+    expect(out.root[0].transform.position).toEqual([1, 0, 0]);
+    expect(collectRefs(out)).toEqual(['school-desk']);
+  });
+
+  it('groups a reference with a part', () => {
+    const out = fromAIDraft({
+      convention: AI_CONVENTION,
+      parts: [
+        { id: 'chair', name: 'chair', ref: 'chair-def', position: [0, 0, 0], rotation: [0, 0, 0] },
+        { id: 'box', name: 'box', kind: 'primitive', shape: 'box', size: [1, 1, 1], position: [1, 0, 0], rotation: [0, 0, 0], color: 0xffffff },
+      ],
+      groups: [{ id: 'row', name: 'row', children: ['chair', 'box'] }],
+    });
+
+    const group = out.root.find((node) => node.role === 'structure')!;
+    expect(group.id).toBe('row');
+    expect(group.children).toHaveLength(2);
+    expect(group.children.some((child) => child.ref === 'chair-def')).toBe(true);
   });
 });

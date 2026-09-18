@@ -24,8 +24,16 @@ export type SetNode = {
   role: NodeRole;
   /** Local, relative to the parent node (world at the document root). */
   transform: Transform;
-  /** Child nodes; empty on a leaf. */
+  /** Child nodes; empty on a leaf — and on an instance, whose children come from its
+   *  Definition. */
   children: SetNode[];
+  /**
+   * Catalogue Definition this node is an instance of. `ref` supersedes the payload: the
+   * instance's body, and any nesting it has, come from the Definition, while `role` says what
+   * the instance stands for in the scene — 'prop' for a single object, 'structure' for an
+   * assembly or a venue.
+   */
+  ref?: string;
   /** A `prop` leaf's body. */
   content?: PartDraft;
   /**
@@ -43,11 +51,17 @@ export type SetNode = {
 /** A light's payload: its config minus the identity and placement the node owns. */
 export type LightBody = DistributiveOmit<LightConfig, 'id' | 'position'>;
 
+/** An instance: a node that names a Definition instead of carrying a payload. */
+export type RefNode = SetNode & { ref: string };
+
 /** A part leaf. `normalizeDocument()` guarantees a `prop` node carries `content`. */
 export type PartNode = SetNode & { role: 'prop'; content: PartDraft };
 
 /** A part before it is a node: its body plus the transform it will own. */
 export type PartSeed = { content: PartDraft; transform?: Transform };
+
+/** An instance before it is a node: the Definition to place, plus its placement. */
+export type RefSeed = { ref: string; name?: string; role?: NodeRole; transform?: Transform };
 
 /** A part leaf's body and transform, both present — what `collectPartNodes` yields. */
 export type PlacedPart = { content: PartDraft; transform: Transform };
@@ -60,6 +74,11 @@ export function isPartNode(node: SetNode): node is PartNode {
 /** True when `node` is a light. */
 export function isLightNode(node: SetNode): node is SetNode & { role: 'light'; light: LightBody } {
   return node.role === 'light' && node.light !== undefined;
+}
+
+/** True when `node` is an instance of a catalogue Definition. */
+export function isRefNode(node: SetNode): node is RefNode {
+  return typeof node.ref === 'string' && node.ref !== '';
 }
 
 /** A node transform, detached from any shared default. */
@@ -138,8 +157,9 @@ function normalizeNode(raw: unknown, path: string, issues: string[]): SetNode | 
     issues.push(`${path} (${n.id}) has unknown role "${String(n.role)}"`);
     return null;
   }
-  if (n.role === 'prop' && (typeof n.content !== 'object' || n.content === null)) {
-    issues.push(`${path} (${n.id}) is a prop with no content`);
+  const ref = typeof n.ref === 'string' && n.ref !== '' ? n.ref : undefined;
+  if (n.role === 'prop' && (typeof n.content !== 'object' || n.content === null) && ref === undefined) {
+    issues.push(`${path} (${n.id}) is a prop with no content or ref`);
     return null;
   }
   if (n.role === 'light' && (typeof n.light !== 'object' || n.light === null)) {
@@ -153,6 +173,7 @@ function normalizeNode(raw: unknown, path: string, issues: string[]): SetNode | 
     children: normalizeNodes(Array.isArray(n.children) ? n.children : [], `${path}.children`, issues),
     ...(n.content !== undefined ? { content: n.content } : {}),
     ...(n.light !== undefined ? { light: n.light } : {}),
+    ...(ref !== undefined ? { ref } : {}),
     ...(n.name !== undefined ? { name: n.name } : {}),
     ...(n.isGroup !== undefined ? { isGroup: n.isGroup } : {}),
   };
@@ -178,6 +199,19 @@ export function countParts(doc: SetDocument): number {
 /** Every part leaf in the document, in tree order — node form, transform included. */
 export function collectPartNodes(doc: SetDocument): PartNode[] {
   return collectPartNodesIn(doc.root);
+}
+
+/** The distinct Definition ids this document's nodes refer to, in tree order. */
+export function collectRefs(doc: SetDocument): string[] {
+  const refs: string[] = [];
+  const walk = (nodes: SetNode[]) => {
+    for (const node of nodes) {
+      if (isRefNode(node) && !refs.includes(node.ref)) refs.push(node.ref);
+      walk(node.children);
+    }
+  };
+  walk(doc.root);
+  return refs;
 }
 
 /** Every part leaf under `nodes`, in tree order. */
@@ -319,6 +353,22 @@ export function findGroupOfPartId(doc: SetDocument, partId: string): SetNode | n
 export function findGroupByPath(doc: SetDocument, path: string): SetNode | null {
   const loc = findNodeLocation(doc, path);
   return loc && loc.node.role === 'structure' ? loc.node : null;
+}
+
+/**
+ * Add an instance of a catalogue Definition to the document root. The Definition keeps its own
+ * geometry, names and paths: the node holds a reference plus its placement, never a copy.
+ */
+export function insertRef(doc: SetDocument, seed: RefSeed): SetNode {
+  const node: SetNode = {
+    id: nameSegment(seed.name ?? seed.ref, segmentsOf(doc.root)),
+    role: seed.role ?? 'prop',
+    transform: nodeTransform(seed.transform),
+    children: [],
+    ref: seed.ref,
+  };
+  doc.root.push(node);
+  return node;
 }
 
 /** Add a part leaf to the document root. */

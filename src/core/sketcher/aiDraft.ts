@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import type { LightConfig } from '../domain/types.js';
 import type { PartDraft } from './types.js';
-import { addLightNode, collectLights, documentFromParts, groupNodes, isPartNode } from './documentTree.js';
-import type { PartSeed, SetDocument, SetNode } from './documentTree.js';
+import { addLightNode, collectLights, emptyDocument, groupNodes, insertPart, insertRef, isPartNode, isRefNode } from './documentTree.js';
+import type { SetDocument, SetNode } from './documentTree.js';
 
 /**
  * The AI Draft — a sympathetic, AI-facing projection of a `SetDocument`.
@@ -39,7 +39,13 @@ export type AIPart = {
   id: string;
   /** Semantic name (the part's `label`, or its preset name when unlabelled). */
   name: string;
-  kind: PartDraft['kind'];
+  /**
+   * Catalogue Definition to place - an *instance*, so the draft carries a reference and a
+   * placement rather than a body. `describe_catalogue` is where the AI learns the ids.
+   */
+  ref?: string;
+  /** Body kind; absent on a reference part, where the Definition supplies it. */
+  kind?: PartDraft['kind'];
   /** Lowercase primitive preset ('box', 'sphere', …) — primitives only. */
   shape?: string;
   /** Absolute dimensions, per `shape` — primitives only. */
@@ -49,7 +55,7 @@ export type AIPart = {
   position: [number, number, number];
   /** Euler rotation in degrees, XYZ order. */
   rotation: [number, number, number];
-  color: number;
+  color?: number;
   faceColors?: number[];
   faceTextures?: (string | null)[];
   shapePoints?: [number, number][];
@@ -172,6 +178,22 @@ export function toAIDraft(doc: SetDocument): AIDraftProjection {
       // Lights are carried by the draft's flat `lights` list, so they are not projected
       // as parts or as groups here.
       if (node.role === 'light') continue;
+      if (isRefNode(node)) {
+        const handle = uniqueHandle(slug(node.name ?? node.ref), taken);
+        taken.add(handle);
+        idMap[handle] = node.id;
+        if (groupHandle !== undefined) childrenOfGroup.get(groupHandle)!.push(handle);
+        const world = localToWorld(node.transform, parent);
+        parts.push({
+          id: handle,
+          name: node.name ?? node.ref,
+          ref: node.ref,
+          position: world.position,
+          rotation: toEulerDeg(world.quaternion),
+          ...(groupHandle !== undefined ? { group: groupHandle } : {}),
+        });
+        continue;
+      }
       if (isPartNode(node)) {
         const pd = node.content;
         const handle = uniqueHandle(slug(pd.label ?? pd.name), taken);
@@ -247,7 +269,21 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
   const used = new Set<string>();
   const guidOfHandle = new Map<string, string>();
 
-  const seeds: PartSeed[] = aiDraft.parts.map((p) => {
+  const doc = emptyDocument();
+  for (const p of aiDraft.parts) {
+    const transform: Transform = {
+      position: p.position,
+      quaternion: toQuaternion(p.rotation),
+      scale: p.shape !== undefined && p.size !== undefined ? sizeToScale(p.shape, p.size) : (p.scale ?? [1, 1, 1]),
+    };
+
+    // A reference part places a Definition instead of describing geometry: the document holds
+    // an instance, so the item keeps its own names and paths and is never copied.
+    if (p.ref !== undefined) {
+      guidOfHandle.set(p.id, insertRef(doc, { ref: p.ref, name: p.name, transform }).id);
+      continue;
+    }
+
     let guid = idMap[p.id] ?? guidOfHandle.get(p.id);
     if (guid === undefined) guid = crypto.randomUUID();
     let unique = guid;
@@ -259,13 +295,13 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
     const isPrimitive = p.shape !== undefined && p.size !== undefined;
     const presetName = isPrimitive ? capitalize(p.shape!) : p.name;
 
-    return {
+    insertPart(doc, {
       content: {
         id: unique,
-        kind: p.kind,
+        kind: p.kind ?? 'primitive',
         name: presetName,
         ...(isPrimitive && p.name !== presetName ? { label: p.name } : {}),
-        color: p.color,
+        color: p.color ?? 0x8888cc,
         ...(p.faceColors !== undefined ? { faceColors: p.faceColors } : {}),
         ...(p.faceTextures !== undefined ? { faceTextures: p.faceTextures } : {}),
         ...(p.shapePoints !== undefined ? { shapePoints: p.shapePoints } : {}),
@@ -274,15 +310,9 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
         ...(p.phiLength !== undefined ? { phiLength: p.phiLength } : {}),
         ...(p.depth !== undefined ? { depth: p.depth } : {}),
       },
-      transform: {
-        position: p.position,
-        quaternion: toQuaternion(p.rotation),
-        scale: isPrimitive ? sizeToScale(p.shape!, p.size!) : (p.scale ?? [1, 1, 1]),
-      },
-    };
-  });
-
-  const doc = documentFromParts(seeds);
+      transform,
+    });
+  }
   // AI parts carry WORLD transforms, so each group wraps its members where they already
   // stand: the node lands at their centroid and the members localise to it.
   for (const group of aiDraft.groups) {
