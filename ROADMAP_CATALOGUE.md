@@ -378,6 +378,10 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       already deleted (written by three builders, read by nothing) — `normalizeDocument()` is the
       load-time guard.
       Guard: the `documentTree`/`realise`/`CartoonSketcher` leaf-and-group round-trip suites.
+      Landed so far: the node type with the transform on it, `normalizeDocument()` as the load
+      boundary, and `ref`/`overrides`/`tags` deliberately left to 10.3. Lights come next, then the
+      entry cache — in that order, because the compiler's cached copy of a setting's lights has to go
+      before the realiser can emit them without double-lighting a document-backed setting.
     - **10.2 — Nested groups in the session (group-of-groups).** The schema recurses already; the
       *session* is what is flat. `group()`/`ungroup()` become depth-aware, and `syncFromDocument`
       recurses instead of walking `doc.root` only — today a nested group node gets no live

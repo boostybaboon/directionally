@@ -399,6 +399,20 @@ codebase's lowercase style; `camera`/`rig` are added when 10.5 has something to 
 `lathed` / `catalogue`) plus the appearance fields — and there is no `gltf` leaf, because a pre-made
 body is a `catalogue` part or a `ref`.
 
+**As built so far.** The node and the transform hoist landed first (`1ee06e5`):
+
+- the type is `id`, `role`, `transform`, `children`, `content?`, `name?`, `isGroup?`. `ref`,
+  `overrides` and `tags` are **not** on it yet — they arrive in 10.3 with their producers, because a
+  field with no reader and no writer is speculation;
+- `insertPart(doc, seed)` and `documentFromParts(seeds)` take a `PartSeed = { content, transform? }`,
+  and `collectPartNodes()` yields a `PlacedPart = { content, transform }` — one authoring shape, so
+  test and definition helpers changed in one place rather than at every call site;
+- `normalizeDocument(input: unknown): SetDocument` is the guard, called at the runtime load boundary
+  (`loadDocument` / `restoreSnapshot`);
+- the payoff is visible as deletions: `partTransform()`/`groupTransform()` are gone, `writeBack` and
+  `syncFromDocument` each lost their per-kind transform branch, and `ungroupPart` promotes every child
+  in one line.
+
 ## What the one type buys
 
 A schoolroom with a row of chairs and a desk lamp — group-of-groups, an instance carrying an
@@ -526,33 +540,31 @@ overrides intelligently — not needed to place an item, only to vary it.
 
 Ordered and mechanical — one pass touches every file below.
 
-1. `src/core/sketcher/types.ts` — `PartDraft` drops `position`/`quaternion`/`scale`; they belong to
-   the node now.
-2. `src/core/domain/types.ts` — export `DistributiveOmit` (moved out of `catalogue/types.ts`, where
-   only `LightEntry.config` uses it); delete `SetPiece.parent`.
-3. `src/core/sketcher/documentTree.ts` — the node type, `NodeRole`, `NodeOverride`, `version: 3`;
-   delete `partTransform()`; `insertPart(doc, content, transform?)` plus a
-   `PartSeed = { content: PartDraft; transform?: Transform }` for `documentFromParts`; `groupParts`,
-   `ungroupPart` and `promoteToRoot` re-localise `node.transform`; `setPartTransform` writes
-   `node.transform`; the light ops `addLightNode` / `removeLightNode` / `findLightNode` /
-   `collectLights`; `normalizeDocument()`.
-4. `src/core/sketcher/realise.ts` — `realiseNode` reads `node.transform`; `buildPartMesh(content,
-   transform)`; light nodes realise here too (`buildLight`), so the headless realiser covers a whole
-   document rather than geometry only.
-5. `src/core/sketcher/CartoonSketcher.ts` — the four `PartDraft` construction sites and `partToLeaf`
-   lose their transform fields; `syncFromDocument` sets transforms from nodes; `writeBack` collapses
-   to one transform branch plus a payload refresh; `addLight`/`removeLight` become node ops and
-   `getLights()` becomes `collectLights(this.document)`; `document.lights` is gone.
-6. `src/core/catalogue/bundledSets.ts` — its `part()` helper returns a seed.
-7. `src/core/sketcher/aiDraft.ts` / `applyDraft.ts` — read and write `node.transform`; the diff
-   carries seeds rather than bare drafts.
-8. `src/routes/sketch/+page.svelte` — `persistSet`'s metadata loses `lights`/`environmentId` (item 9),
-   `getLights()` reads the document, `duplicateSet` stops copying them; otherwise typing only.
+1. ✅ `src/core/sketcher/types.ts` — `PartDraft` is the body alone.
+2. ✅ `documentTree` — one node type, `isPartNode()`/`PartNode` for typed payload access, `PartSeed`,
+   `PlacedPart`, `collectPartNodes()`, `insertPart(doc, seed)`, `documentFromParts(seeds)`,
+   `normalizeDocument()`. `ref`/`overrides`/`tags` stay out until 10.3.
+3. `documentTree` lights — `role: 'light'` with a `light` payload (the node id *is* the light id and
+   the node transform *is* its position); `addLightNode` / `removeLightNode` / `findLightNode` /
+   `collectLights`; `SetDocument.lights` deleted. `DistributiveOmit` moves from `catalogue/types.ts`
+   to `domain/types.ts`, shared with `LightEntry.config`.
+4. `CartoonSketcher` — the four construction sites and `partToLeaf` ✅; `addLight`/`removeLight` become
+   node edits, `getLights()` becomes `collectLights(this.document)`, `writeBack` stops writing
+   `document.lights`, and `syncFromDocument` rebuilds the live lights from the tree.
+5. `bundledSets.ts` — `part()` returns a seed ✅.
+6. `aiDraft.ts` / `applyDraft.ts` — `node.transform` ✅; `toAIDraft` derives `lights` from the tree and
+   `fromAIDraft` writes light nodes instead of a document field.
+7. `src/routes/sketch/+page.svelte` — `persistSet` still reads `getLights()` (now derived) and keeps
+   writing `lights`/`environmentId` metadata; item 9 removes them.
+8. `realise.ts` — light nodes stay a deliberate no-op until item 9. The compiler still seeds
+   `scene.lights` from the entry's cached copy, so a realiser that emitted the setting's lights now
+   would render every document-backed setting's lighting twice. They land together.
 9. The entry cache — drop `SetPieceEntry.lights`/`environmentId` and their plumbing (`StoredEntry`,
    `SetPieceMeta`, `toUserEntry`, `createSetPieceDocument`), `persistSet`'s two meta fields,
    `duplicateSet`'s two copies, and the compiler's `scene.environmentMap`/`scene.lights` seeding.
    Light-block intensity inference (`storedSceneToModel.ts:183`) reads the realised lights instead.
-   `isSettingEntry` keeps only the explicit flag.
+   `isSettingEntry` keeps only the explicit flag. `realise.ts` emits light nodes in the same change
+   (item 8), which is what makes a setting's lighting travel with its geometry.
 10. Tests — `documentTree`, `realise`, `CartoonSketcher`, `applyDraft`, `aiDraft`, `aiDraftSchema`,
     `catalogue` (the two `isSettingEntry` lighting-heuristic assertions go).
 
