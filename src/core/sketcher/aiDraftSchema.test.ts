@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { normalizeAIDraft, AI_DRAFT_JSON_SCHEMA } from './aiDraftSchema.js';
 import { fromAIDraft } from './aiDraft.js';
-import { collectParts } from './documentTree.js';
+import { collectPartNodes, collectParts, isPartNode } from './documentTree.js';
 
 const validDocument = {
   label: 'Classroom',
@@ -31,13 +31,14 @@ describe('normalizeAIDraft', () => {
     const doc = fromAIDraft(aiDraft);
     const parts = collectParts(doc);
     expect(parts).toHaveLength(2);
-    const floor = parts.find((p) => p.label === 'floor')!;
-    expect(floor).toMatchObject({ name: 'Box', label: 'floor', scale: [6, 0.2, 8] });
+    const floor = collectPartNodes(doc).find((n) => n.content.label === 'floor')!;
+    expect(floor.content).toMatchObject({ name: 'Box', label: 'floor' });
+    expect(floor.transform.scale).toEqual([6, 0.2, 8]);
 
-    const group = doc.root.find((n) => n.kind === 'group');
-    if (group?.kind !== 'group') throw new Error('expected a group node');
+    const group = doc.root.find((n) => n.role === 'structure');
+    if (!group) throw new Error('expected a group node');
     expect(group.name).toBe('classroom furniture');
-    expect(group.children.map((c) => (c.kind === 'part' ? c.part.id : ''))).toEqual([parts.find((p) => p.label === 'desk')!.id]);
+    expect(group.children.map((c) => (isPartNode(c) ? c.content.id : ''))).toEqual([parts.find((p) => p.label === 'desk')!.id]);
   });
 
   it('defaults missing position/rotation/color and kind', () => {

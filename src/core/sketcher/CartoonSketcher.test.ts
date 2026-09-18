@@ -4,8 +4,9 @@ import { CartoonSketcher } from './CartoonSketcher.js';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { exportGLB } from './exportGLB.js';
-import type { PartDraft, SketcherSession } from './types.js';
-import { documentFromParts } from './documentTree.js';
+import type { SketcherSession } from './types.js';
+import { documentFromParts, isPartNode } from './documentTree.js';
+import type { PartSeed } from './documentTree.js';
 import type { SetPieceEntry } from '../catalogue/types.js';
 import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 
@@ -15,17 +16,11 @@ function cataloguePart(
   geometry: GeometryConfig,
   material: MaterialConfig,
   position?: Vec3,
-): PartDraft {
+  quaternion: [number, number, number, number] = [0, 0, 0, 1],
+): PartSeed {
   return {
-    id,
-    kind: 'catalogue',
-    name: 'Box',
-    geometry,
-    material,
-    position: position ?? [0, 0, 0],
-    quaternion: [0, 0, 0, 1],
-    scale: [1, 1, 1],
-    color: material.color,
+    content: { id, kind: 'catalogue', name: 'Box', geometry, material, color: material.color },
+    transform: { position: position ?? [0, 0, 0], quaternion, scale: [1, 1, 1] },
   };
 }
 
@@ -305,7 +300,7 @@ describe('CartoonSketcher', () => {
       id: 'wood-floor',
       label: 'Wood Floor',
       document: documentFromParts([
-        { ...cataloguePart('floor', { type: 'plane', width: 8, height: 8 }, { color: 0xffffff }), quaternion: [-Math.SQRT1_2, 0, 0, Math.SQRT1_2] },
+        cataloguePart('floor', { type: 'plane', width: 8, height: 8 }, { color: 0xffffff }, undefined, [-Math.SQRT1_2, 0, 0, Math.SQRT1_2]),
       ]),
     };
     const { parts } = sketcher.insertCatalogueEntry(floor);
@@ -525,9 +520,9 @@ describe('CartoonSketcher', () => {
     sketcher.onPointerUp();
 
     const doc = sketcher.toDocument();
-    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
-    expect(doc.root[0].part.holes).toBeDefined();
-    expect(doc.root[0].part.holes!.length).toBe(1);
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].content.holes).toBeDefined();
+    expect(doc.root[0].content.holes!.length).toBe(1);
 
     sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];
@@ -774,9 +769,9 @@ describe('toDocument / loadDocument', () => {
     sketcher.setPartColor(part.id, 0xff0000);
 
     const doc = sketcher.toDocument();
-    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
-    expect(doc.root[0].part.position).toEqual([3, 1, 2]);
-    expect(doc.root[0].part.color).toBe(0xff0000);
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].transform.position).toEqual([3, 1, 2]);
+    expect(doc.root[0].content.color).toBe(0xff0000);
 
     sketcher.loadDocument(doc);
 
@@ -813,15 +808,15 @@ describe('toDocument / loadDocument', () => {
     a.mesh.getWorldPosition(worldA);
 
     const doc = sketcher.toDocument();
-    const groupNode = doc.root.find((n) => n.kind === 'group');
-    if (groupNode?.kind !== 'group') throw new Error('expected a group node');
-    expect(groupNode.position).toEqual([5, 2, -3]);
+    const groupNode = doc.root.find((n) => n.role === 'structure');
+    if (!groupNode) throw new Error('expected a group node');
+    expect(groupNode.transform.position).toEqual([5, 2, -3]);
     expect(groupNode.name).toBe('leg');
     expect(groupNode.children).toHaveLength(2);
     // Members are stored in local space (relative to the group).
-    const leafA = groupNode.children.find((n) => n.kind === 'part' && n.part.id === a.id);
-    if (leafA?.kind !== 'part') throw new Error('expected a part leaf');
-    expect(leafA.part.position).not.toEqual([0, 0, 0]);
+    const leafA = groupNode.children.find((n) => isPartNode(n) && n.content.id === a.id);
+    if (!leafA) throw new Error('expected a part leaf');
+    expect(leafA.transform.position).not.toEqual([0, 0, 0]);
 
     sketcher.loadDocument(doc);
 
@@ -865,9 +860,9 @@ describe('toDocument / loadDocument', () => {
     expect(original.shapePoints!.length).toBeGreaterThan(2);
 
     const doc = sketcher.toDocument();
-    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
-    expect(doc.root[0].part.kind).toBe('sketch');
-    expect(doc.root[0].part.shapePoints).toBeDefined();
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].content.kind).toBe('sketch');
+    expect(doc.root[0].content.shapePoints).toBeDefined();
 
     sketcher.loadDocument(doc);
 
@@ -883,9 +878,9 @@ describe('toDocument / loadDocument', () => {
     sketcher.setFaceTexture(part.id, 0, dataUrl);
 
     const doc = sketcher.toDocument();
-    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
-    expect(doc.root[0].part.faceTextures?.[0]).toBe(dataUrl);
-    expect(doc.root[0].part.faceTextures?.[1]).toBeNull();
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].content.faceTextures?.[0]).toBe(dataUrl);
+    expect(doc.root[0].content.faceTextures?.[1]).toBeNull();
 
     sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];
@@ -1343,10 +1338,10 @@ describe('snapshot group round-trip', () => {
 
     const snap = sketcher.takeSnapshot();
 
-    const groupNode = snap.root.find((n) => n.kind === 'group');
+    const groupNode = snap.root.find((n) => n.role === 'structure');
     expect(groupNode).toBeDefined();
-    if (groupNode?.kind !== 'group') throw new Error('expected a group node');
-    const memberIds = groupNode.children.map((c) => (c.kind === 'part' ? c.part.id : null));
+    if (!groupNode) throw new Error('expected a group node');
+    const memberIds = groupNode.children.map((c) => (isPartNode(c) ? c.content.id : null));
     expect(memberIds).toContain(a.id);
     expect(memberIds).toContain(b.id);
   });
@@ -1357,7 +1352,7 @@ describe('snapshot group round-trip', () => {
 
     const snap = sketcher.takeSnapshot();
 
-    expect(snap.root.filter((n) => n.kind === 'group')).toHaveLength(0);
+    expect(snap.root.filter((n) => n.role === 'structure')).toHaveLength(0);
     expect(snap.root).toHaveLength(2);
   });
 
@@ -1392,7 +1387,7 @@ describe('snapshot group round-trip', () => {
     const a = sketcher.insertPrimitive('box')!;
     const snap = sketcher.takeSnapshot();
     expect(snap.root).toHaveLength(1);
-    expect(snap.root[0].kind).toBe('part');
+    expect(snap.root[0].role).toBe('prop');
 
     expect(() => sketcher.restoreSnapshot(snap)).not.toThrow();
     expect(sketcher.getSession().parts).toHaveLength(1);
@@ -1501,10 +1496,10 @@ describe('CartoonSketcher lathe / revolve (SA18a)', () => {
     drawAndCloseProfile();
     sketcher.confirmLathe();
     const doc = sketcher.toDocument();
-    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
-    expect(doc.root[0].part.kind).toBe('lathed');
-    expect(doc.root[0].part.lathePoints).toBeDefined();
-    expect(doc.root[0].part.lathePoints!.length).toBeGreaterThan(0);
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].content.kind).toBe('lathed');
+    expect(doc.root[0].content.lathePoints).toBeDefined();
+    expect(doc.root[0].content.lathePoints!.length).toBeGreaterThan(0);
 
     sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];
@@ -1577,14 +1572,14 @@ describe('CartoonSketcher partial-angle revolve (SA18b)', () => {
     drawAndCloseProfile();
     sketcher.confirmLathe(90);
     const doc = sketcher.toDocument();
-    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
-    expect(doc.root[0].part.phiLength).toBeCloseTo(Math.PI / 2);
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].content.phiLength).toBeCloseTo(Math.PI / 2);
 
     drawAndCloseProfile();
     sketcher.confirmLathe(360);
     const doc2 = sketcher.toDocument();
-    if (doc2.root[1].kind !== 'part') throw new Error('expected a part node');
-    expect(doc2.root[1].part.phiLength).toBeUndefined();
+    if (!isPartNode(doc2.root[1])) throw new Error('expected a part node');
+    expect(doc2.root[1].content.phiLength).toBeUndefined();
   });
 
   it('loadDocument() round-trip preserves partial phiLength and group count', () => {
@@ -1602,8 +1597,8 @@ describe('CartoonSketcher partial-angle revolve (SA18b)', () => {
     drawAndCloseProfile();
     sketcher.confirmLathe(360);
     const doc = sketcher.toDocument();
-    if (doc.root[0].kind !== 'part') throw new Error('expected a part node');
-    expect(doc.root[0].part.phiLength).toBeUndefined();
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].content.phiLength).toBeUndefined();
 
     sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];

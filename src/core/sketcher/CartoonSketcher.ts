@@ -19,7 +19,9 @@ import {
   removeGroupBondContaining,
   evictFromGroupBonds,
   groupMembersOf,
-  collectParts,
+  collectPartNodes,
+  normalizeDocument,
+  isPartNode,
   findGroupNodeById,
   findGroupOfPartId,
   removePart as removeTreePart,
@@ -28,7 +30,8 @@ import {
   setFaceTexture as setTreeFaceTexture,
   setPartLabel as setTreePartLabel,
 } from './documentTree.js';
-import type { SetDocument, SetNode } from './documentTree.js';
+import type { PartNode, PartSeed, SetDocument, SetNode } from './documentTree.js';
+import type { Transform } from './transform.js';
 import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 import type { SetPieceEntry } from '../catalogue/types.js';
 
@@ -65,7 +68,16 @@ function buildThreeLight(config: LightConfig): THREE.Light | null {
   }
 }
 
-/** Euler XYZ (radians) → quaternion, the transform form a `PartDraft` stores. */
+/** A live object's local transform, in plain data. */
+function transformOf(object: THREE.Object3D): Transform {
+  return {
+    position: [object.position.x, object.position.y, object.position.z],
+    quaternion: [object.quaternion.x, object.quaternion.y, object.quaternion.z, object.quaternion.w],
+    scale: [object.scale.x, object.scale.y, object.scale.z],
+  };
+}
+
+/** Euler XYZ (radians) → quaternion, the transform form a part body stores. */
 function eulerToQuaternion(euler: Vec3): [number, number, number, number] {
   const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...euler));
   return [q.x, q.y, q.z, q.w];
@@ -280,18 +292,18 @@ export class CartoonSketcher {
     tmpGeo.dispose();
 
     const id = `part-${this.nextId++}`;
-    const draft: PartDraft = {
-      id,
-      kind: 'lathed',
-      name: 'Lathe',
-      position: [centroid.x, -minY, centroid.z],
-      quaternion: [0, 0, 0, 1],
-      scale: [1, 1, 1],
-      lathePoints: profilePoints,
-      ...(phiLength < Math.PI * 2 - 1e-6 ? { phiLength } : {}),
-      color: DEFAULT_COLOR,
+    const seed: PartSeed = {
+      content: {
+        id,
+        kind: 'lathed',
+        name: 'Lathe',
+        lathePoints: profilePoints,
+        ...(phiLength < Math.PI * 2 - 1e-6 ? { phiLength } : {}),
+        color: DEFAULT_COLOR,
+      },
+      transform: { position: [centroid.x, -minY, centroid.z], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
     };
-    this.editDocument((doc) => insertPart(doc, draft));
+    this.editDocument((doc) => insertPart(doc, seed));
   }
 
   /**
@@ -361,16 +373,11 @@ export class CartoonSketcher {
     const floorY = -(geometry.boundingBox!.min.y);
     geometry.dispose();
     const id = `part-${this.nextId++}`;
-    const draft: PartDraft = {
-      id,
-      kind: 'primitive',
-      name: preset.name,
-      position: [0, floorY, 0],
-      quaternion: [0, 0, 0, 1],
-      scale: [1, 1, 1],
-      color: DEFAULT_COLOR,
+    const seed: PartSeed = {
+      content: { id, kind: 'primitive', name: preset.name, color: DEFAULT_COLOR },
+      transform: { position: [0, floorY, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
     };
-    this.editDocument((doc) => insertPart(doc, draft));
+    this.editDocument((doc) => insertPart(doc, seed));
     return this.parts.find((p) => p.id === id) ?? null;
   }
 
@@ -439,20 +446,24 @@ export class CartoonSketcher {
     scale?: Vec3,
   ): SketcherPart | null {
     const id = `part-${this.nextId++}`;
-    const draft: PartDraft = {
-      id,
-      kind: 'catalogue',
-      name,
-      geometry,
-      material,
-      position: position ?? [0, 0, 0],
-      quaternion: rotation ? eulerToQuaternion(rotation) : [0, 0, 0, 1],
-      scale: scale ?? [1, 1, 1],
-      color: material.color,
-      faceColors: [material.color],
-      faceTextures: [null],
+    const seed: PartSeed = {
+      content: {
+        id,
+        kind: 'catalogue',
+        name,
+        geometry,
+        material,
+        color: material.color,
+        faceColors: [material.color],
+        faceTextures: [null],
+      },
+      transform: {
+        position: position ?? [0, 0, 0],
+        quaternion: rotation ? eulerToQuaternion(rotation) : [0, 0, 0, 1],
+        scale: scale ?? [1, 1, 1],
+      },
     };
-    this.editDocument((doc) => insertPart(doc, draft));
+    this.editDocument((doc) => insertPart(doc, seed));
     return this.parts.find((p) => p.id === id) ?? null;
   }
 
@@ -471,20 +482,24 @@ export class CartoonSketcher {
   ): { parts: SketcherPart[]; group: AssemblyGroup | null } {
     if (!entry.document) return { parts: [], group: null };
 
-    const drafts: PartDraft[] = collectParts(entry.document).map((pd) => ({
-      ...pd,
-      id: `part-${this.nextId++}`,
+    // The entry's leaves are copied at their own transforms and re-grouped as one
+    // placement. That is a flat copy: a nested definition's inner groups are not
+    // preserved until 10.3 inserts a `ref` node instead.
+    const seeds: PartSeed[] = collectPartNodes(entry.document).map((node) => ({
+      content: { ...node.content, id: `part-${this.nextId++}` },
+      transform: node.transform,
     }));
     this.editDocument((doc) => {
-      for (const draft of drafts) insertPart(doc, draft);
-      if (drafts.length > 1) {
-        groupParts(doc, drafts.map((d) => d.id), entry.label);
-        addGroupBond(doc, drafts.map((d) => d.id));
+      for (const seed of seeds) insertPart(doc, seed);
+      if (seeds.length > 1) {
+        const ids = seeds.map((seed) => seed.content.id);
+        groupParts(doc, ids, entry.label);
+        addGroupBond(doc, ids);
       }
     });
 
-    const parts = drafts
-      .map((d) => this.parts.find((p) => p.id === d.id))
+    const parts = seeds
+      .map((seed) => this.parts.find((p) => p.id === seed.content.id))
       .filter((p): p is SketcherPart => p !== undefined);
     const group = parts.length > 1 ? this.attach.groupForPart(parts[0].id) ?? null : null;
     return { parts, group };
@@ -533,11 +548,14 @@ export class CartoonSketcher {
     const src = this.parts.find((p) => p.id === id);
     if (!src) return null;
     const newId = `part-${this.nextId++}`;
-    const draft = this.partToLeaf(src);
-    draft.id = newId;
+    const content = this.partToLeaf(src);
+    content.id = newId;
     // Offset by +1 on local X, mirroring the old mesh-clone behaviour.
-    draft.position = [src.mesh.position.x + 1, src.mesh.position.y, src.mesh.position.z];
-    this.editDocument((doc) => insertPart(doc, draft));
+    const transform: Transform = {
+      ...transformOf(src.mesh),
+      position: [src.mesh.position.x + 1, src.mesh.position.y, src.mesh.position.z],
+    };
+    this.editDocument((doc) => insertPart(doc, { content, transform }));
     return this.parts.find((p) => p.id === newId) ?? null;
   }
 
@@ -551,8 +569,9 @@ export class CartoonSketcher {
       const group = findGroupOfPartId(doc, id);
       removeTreePart(doc, id);
       evictFromGroupBonds(doc, id);
-      if (group && group.children.length === 1 && group.children[0].kind === 'part') {
-        ungroupPart(doc, group.children[0].part.id);
+      const lastChild = group?.children[0];
+      if (group && group.children.length === 1 && lastChild && isPartNode(lastChild)) {
+        ungroupPart(doc, lastChild.content.id);
       }
     });
   }
@@ -813,13 +832,13 @@ export class CartoonSketcher {
    * geometry of parts the snapshot does not know is disposed.
    */
   restoreSnapshot(snapshot: SetDocument): void {
-    this.document = cloneDocument(snapshot);
+    this.document = normalizeDocument(cloneDocument(snapshot));
     this.syncFromDocument(this.document);
   }
 
   /** Rebuild the Three.js scene from a tree document (the inverse of toDocument). */
   loadDocument(doc: SetDocument): void {
-    this.document = cloneDocument(doc);
+    this.document = normalizeDocument(cloneDocument(doc));
     this.syncFromDocument(this.document);
   }
 
@@ -843,16 +862,17 @@ export class CartoonSketcher {
   private writeBack(): void {
     const walk = (nodes: SetNode[]) => {
       for (const node of nodes) {
-        if (node.kind === 'part') {
-          const live = this.allParts.get(node.part.id);
-          if (live) node.part = this.partToLeaf(live);
+        if (isPartNode(node)) {
+          const live = this.allParts.get(node.content.id);
+          if (live) {
+            node.content = this.partToLeaf(live);
+            node.transform = transformOf(live.mesh);
+          }
         } else {
           const group = this.groupObjects.get(node.id);
           if (group) {
             group.updateMatrix();
-            node.position = [group.position.x, group.position.y, group.position.z];
-            node.quaternion = [group.quaternion.x, group.quaternion.y, group.quaternion.z, group.quaternion.w];
-            node.scale = [group.scale.x, group.scale.y, group.scale.z];
+            node.transform = transformOf(group);
           }
           walk(node.children);
         }
@@ -866,7 +886,7 @@ export class CartoonSketcher {
     else delete this.document.environmentMap;
   }
 
-  /** Serialise one live part into a document leaf. */
+  /** Serialise one live part into a part body — its transform lives on the node. */
   private partToLeaf(p: SketcherPart): PartDraft {
     const leaf: PartDraft = {
       id: p.id,
@@ -881,9 +901,6 @@ export class CartoonSketcher {
       ...(p.label !== undefined ? { label: p.label } : {}),
       ...(p.geometry !== undefined ? { geometry: p.geometry } : {}),
       ...(p.material !== undefined ? { material: p.material } : {}),
-      position: [p.mesh.position.x, p.mesh.position.y, p.mesh.position.z],
-      quaternion: [p.mesh.quaternion.x, p.mesh.quaternion.y, p.mesh.quaternion.z, p.mesh.quaternion.w],
-      scale: [p.mesh.scale.x, p.mesh.scale.y, p.mesh.scale.z],
       color: p.color,
       faceColors: [...p.faceColors],
       faceTextures: [...p.faceTextures],
@@ -909,15 +926,9 @@ export class CartoonSketcher {
    * into the AttachManager (no repositioning — positions already reflect the attached state).
    */
   private syncFromDocument(doc: SetDocument): void {
-    // Collect PartDrafts by guid from the tree.
+    // Collect part bodies by guid from the tree.
     const partLeaves = new Map<string, PartDraft>();
-    const collectLeaves = (nodes: SetNode[]) => {
-      for (const n of nodes) {
-        if (n.kind === 'part') partLeaves.set(n.part.id, n.part);
-        else collectLeaves(n.children);
-      }
-    };
-    collectLeaves(doc.root);
+    for (const node of collectPartNodes(doc)) partLeaves.set(node.content.id, node.content);
 
     // Dissolve current groups (return members to scene root) + clear joint/group state.
     this.attach.resetGroups();
@@ -940,13 +951,15 @@ export class CartoonSketcher {
     this.parts.length = 0;
     this.nextId = 1;
 
-    const buildPart = (pd: PartDraft): SketcherPart | null => {
+    const buildPart = (node: PartNode): SketcherPart | null => {
+      const pd = node.content;
+      const t = node.transform;
       const prev = existing.get(pd.id);
       if (prev) {
         const mesh = prev.mesh;
-        mesh.position.set(pd.position[0], pd.position[1], pd.position[2]);
-        mesh.quaternion.set(pd.quaternion[0], pd.quaternion[1], pd.quaternion[2], pd.quaternion[3]);
-        mesh.scale.set(pd.scale[0], pd.scale[1], pd.scale[2]);
+        mesh.position.set(t.position[0], t.position[1], t.position[2]);
+        mesh.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
+        mesh.scale.set(t.scale[0], t.scale[1], t.scale[2]);
         mesh.updateWorldMatrix(false, true);
         // Re-apply colour/faces/textures so undo/redo of colour edits is visual too.
         const mats = mesh.material as THREE.MeshStandardMaterial[];
@@ -983,7 +996,7 @@ export class CartoonSketcher {
         return prev;
       }
 
-      const mesh = buildPartMesh(pd);
+      const mesh = buildPartMesh(pd, t);
       if (!mesh) return null;
       const mats = mesh.material as THREE.MeshStandardMaterial[];
       const faceColors = pd.faceColors ? [...pd.faceColors] : mats.map(() => pd.color);
@@ -1015,17 +1028,18 @@ export class CartoonSketcher {
     // Walk the tree, building parts and adopting groups.
     const walkTree = (nodes: SetNode[]) => {
       for (const node of nodes) {
-        if (node.kind === 'part') {
-          const part = buildPart(node.part);
+        if (isPartNode(node)) {
+          const part = buildPart(node);
           if (part) this.scene.add(part.mesh);
         } else {
+          const t = node.transform;
           const group = new THREE.Group();
-          if (node.position) group.position.set(node.position[0], node.position[1], node.position[2]);
-          if (node.quaternion) group.quaternion.set(node.quaternion[0], node.quaternion[1], node.quaternion[2], node.quaternion[3]);
-          if (node.scale) group.scale.set(node.scale[0], node.scale[1], node.scale[2]);
+          group.position.set(t.position[0], t.position[1], t.position[2]);
+          group.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
+          group.scale.set(t.scale[0], t.scale[1], t.scale[2]);
           const memberIds: string[] = [];
           const collectMembers = (n: SetNode) => {
-            if (n.kind === 'part') { memberIds.push(n.part.id); buildPart(n.part); }
+            if (isPartNode(n)) { memberIds.push(n.content.id); buildPart(n); }
             else n.children.forEach(collectMembers);
           };
           node.children.forEach(collectMembers);
@@ -1098,19 +1112,19 @@ export class CartoonSketcher {
     mesh.geometry.dispose();
     (mesh.material as THREE.MeshStandardMaterial[]).forEach((m) => { m.map?.dispose(); m.dispose(); });
     const id = `part-${this.nextId++}`;
-    const draft: PartDraft = {
-      id,
-      kind: 'sketch',
-      name: 'Shape',
-      position: [mesh.position.x, mesh.position.y, mesh.position.z],
-      quaternion: [mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w],
-      scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
-      shapePoints,
-      depth,
-      ...(holes.length > 0 ? { holes } : {}),
-      color: DEFAULT_COLOR,
+    const seed: PartSeed = {
+      content: {
+        id,
+        kind: 'sketch',
+        name: 'Shape',
+        shapePoints,
+        depth,
+        ...(holes.length > 0 ? { holes } : {}),
+        color: DEFAULT_COLOR,
+      },
+      transform: transformOf(mesh),
     };
-    this.editDocument((doc) => insertPart(doc, draft));
+    this.editDocument((doc) => insertPart(doc, seed));
     this.phase = 'idle';
   }
 

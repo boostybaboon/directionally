@@ -4,39 +4,40 @@ import { CartoonSketcher } from './CartoonSketcher.js';
 import { SketcherDocument } from './SketcherDocument.js';
 import { diffDocument, applyDocumentCommand } from './applyDraft.js';
 import { documentFromParts } from './documentTree.js';
-import type { SetDocument } from './documentTree.js';
+import type { PartSeed, SetDocument } from './documentTree.js';
 import type { PartDraft } from './types.js';
+import type { Transform } from './transform.js';
 
 beforeAll(() => {
   vi.spyOn(THREE.TextureLoader.prototype, 'load').mockImplementation(() => new THREE.Texture());
 });
 
-function part(id: string, overrides: Partial<PartDraft> = {}): PartDraft {
+function part(id: string, content: Partial<PartDraft> = {}, transform: Partial<Transform> = {}): PartSeed {
   return {
-    id, kind: 'primitive', name: 'Box', position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1], color: 0xffffff,
-    ...overrides,
+    content: { id, kind: 'primitive', name: 'Box', color: 0xffffff, ...content },
+    transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1], ...transform },
   };
 }
 
-function doc(parts: PartDraft[]): SetDocument {
-  return documentFromParts(parts);
+function doc(seeds: PartSeed[]): SetDocument {
+  return documentFromParts(seeds);
 }
 
 describe('diffDocument', () => {
   it('detects adds, updates, and removals', () => {
     const d = diffDocument(
-      doc([part('a'), part('b', { position: [1, 0, 0] })]),
-      doc([part('a'), part('b', { position: [2, 0, 0] }), part('c')]),
+      doc([part('a'), part('b', {}, { position: [1, 0, 0] })]),
+      doc([part('a'), part('b', {}, { position: [2, 0, 0] }), part('c')]),
     );
-    expect(d.add.map((p) => p.id)).toEqual(['c']);
-    expect(d.update.map((p) => p.id)).toEqual(['b']);
+    expect(d.add.map((p) => p.content.id)).toEqual(['c']);
+    expect(d.update.map((p) => p.content.id)).toEqual(['b']);
     expect(d.remove).toEqual([]);
   });
 
   it('treats unchanged parts as no-ops, tolerating float noise', () => {
     const d = diffDocument(
-      doc([part('a', { quaternion: [0, Math.SQRT1_2, 0, Math.SQRT1_2] })]),
-      doc([part('a', { quaternion: [0, Math.SQRT1_2 + 1e-9, 0, Math.SQRT1_2] })]),
+      doc([part('a', {}, { quaternion: [0, Math.SQRT1_2, 0, Math.SQRT1_2] })]),
+      doc([part('a', {}, { quaternion: [0, Math.SQRT1_2 + 1e-9, 0, Math.SQRT1_2] })]),
     );
     expect(d.update).toEqual([]);
     expect(d.add).toEqual([]);
@@ -59,8 +60,8 @@ describe('applyDocumentCommand', () => {
     const seedId = seed.id;
 
     const target = documentFromParts([
-      part(seedId, { position: [5, 0.5, 0], color: seed.color }),
-      part('new-box', { position: [1, 0.5, 0], color: seed.color }),
+      part(seedId, { color: seed.color }, { position: [5, 0.5, 0] }),
+      part('new-box', { color: seed.color }, { position: [1, 0.5, 0] }),
     ]);
 
     doc.execute(applyDocumentCommand(sketcher, target));

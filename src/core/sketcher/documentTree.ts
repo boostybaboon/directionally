@@ -5,19 +5,54 @@ import { IDENTITY_TRANSFORM, localToWorld, worldToLocal } from './transform.js';
 import type { Transform } from './transform.js';
 
 /**
- * The tree-shaped set document — the persistent form of a set. A `part` is a leaf;
- * a `group` nests children. The runtime holds a `SetDocument` and rebuilds the
- * scene from it (`CartoonSketcher`), so this module owns every structural edit:
- * parts, groups, attach joints and the durable group bonds.
+ * The tree-shaped set document — the persistent form of a set. One node type is used
+ * fractally: a part leaf carries `content`, a group nests `children`, and every node
+ * owns its local `transform`, so leaves and groups are walked, realised and written
+ * back the same way. The runtime holds a `SetDocument` and rebuilds the scene from it
+ * (`CartoonSketcher`), so this module owns every structural edit: parts, groups,
+ * attach joints and the durable group bonds.
  *
  * Node `id`s are parent-unique name segments — the "stable path segment" of
- * set-staging-architecture.md. A part leaf keeps its runtime guid (`part.id`),
- * so mesh identity survives a re-derivation, while the node id adds the segment
- * for path addressing (`group-id/part-id`).
+ * set-staging-architecture.md. A part leaf keeps its runtime guid (`content.id`), so
+ * mesh identity survives a re-derivation, while the node id adds the segment for path
+ * addressing (`group-id/part-id`).
  */
-export type SetNode =
-  | { kind: 'part'; id: string; role: 'prop'; part: PartDraft }
-  | { kind: 'group'; id: string; role: 'structure'; name?: string; isGroup?: boolean; position?: [number, number, number]; quaternion?: [number, number, number, number]; scale?: [number, number, number]; children: SetNode[] };
+export type NodeRole = 'prop' | 'structure';
+
+export type SetNode = {
+  id: string;
+  role: NodeRole;
+  /** Local, relative to the parent node (world at the document root). */
+  transform: Transform;
+  /** Child nodes; empty on a leaf. */
+  children: SetNode[];
+  /** A `prop` leaf's body. */
+  content?: PartDraft;
+  /** A group's semantic name. */
+  name?: string;
+  /** `true` for a pure group; absent or `false` for an attach assembly. */
+  isGroup?: boolean;
+};
+
+/** A part leaf. `normalizeDocument()` guarantees a `prop` node carries `content`. */
+export type PartNode = SetNode & { role: 'prop'; content: PartDraft };
+
+/** A part before it is a node: its body plus the transform it will own. */
+export type PartSeed = { content: PartDraft; transform?: Transform };
+
+/** A part leaf's body and transform, both present — what `collectPartNodes` yields. */
+export type PlacedPart = { content: PartDraft; transform: Transform };
+
+/** True when `node` is a part leaf rather than a group. */
+export function isPartNode(node: SetNode): node is PartNode {
+  return node.role === 'prop' && node.content !== undefined;
+}
+
+/** A node transform, detached from any shared default. */
+function nodeTransform(t: Transform | undefined): Transform {
+  const source = t ?? IDENTITY_TRANSFORM;
+  return { position: [...source.position], quaternion: [...source.quaternion], scale: [...source.scale] };
+}
 
 export type SetDocument = {
   root: SetNode[];
@@ -43,6 +78,69 @@ export function cloneDocument(doc: SetDocument): SetDocument {
   return JSON.parse(JSON.stringify(doc)) as SetDocument;
 }
 
+/**
+ * The load-time guard for a document of unknown provenance: fill in what may be missing
+ * (`children`, `transform`), drop what cannot be read, and report what changed. There is
+ * no version field to bump — a document that predates this shape is abandoned rather
+ * than migrated — so this is where a stale file is caught instead of silently rendering
+ * its parts at the origin.
+ */
+export function normalizeDocument(input: unknown): SetDocument {
+  if (typeof input !== 'object' || input === null) {
+    console.warn('normalizeDocument: not a document — ignoring');
+    return emptyDocument();
+  }
+  const source = input as Partial<SetDocument>;
+  const issues: string[] = [];
+  const doc: SetDocument = {
+    root: normalizeNodes(Array.isArray(source.root) ? source.root : [], 'root', issues),
+    joints: Array.isArray(source.joints) ? source.joints : [],
+  };
+  if (source.lights !== undefined) doc.lights = source.lights;
+  if (source.environmentMap !== undefined) doc.environmentMap = source.environmentMap;
+  if (source.groupComponents !== undefined) doc.groupComponents = source.groupComponents;
+  if (issues.length > 0) console.warn(`normalizeDocument: ${issues.join('; ')}`);
+  return doc;
+}
+
+function normalizeNodes(nodes: unknown[], path: string, issues: string[]): SetNode[] {
+  const out: SetNode[] = [];
+  nodes.forEach((raw, i) => {
+    const node = normalizeNode(raw, `${path}[${i}]`, issues);
+    if (node) out.push(node);
+  });
+  return out;
+}
+
+function normalizeNode(raw: unknown, path: string, issues: string[]): SetNode | null {
+  if (typeof raw !== 'object' || raw === null) {
+    issues.push(`${path} is not a node`);
+    return null;
+  }
+  const n = raw as Partial<SetNode>;
+  if (typeof n.id !== 'string' || n.id === '') {
+    issues.push(`${path} has no id`);
+    return null;
+  }
+  if (n.role !== 'prop' && n.role !== 'structure') {
+    issues.push(`${path} (${n.id}) has unknown role "${String(n.role)}"`);
+    return null;
+  }
+  if (n.role === 'prop' && (typeof n.content !== 'object' || n.content === null)) {
+    issues.push(`${path} (${n.id}) is a prop with no content`);
+    return null;
+  }
+  return {
+    id: n.id,
+    role: n.role,
+    transform: nodeTransform(n.transform),
+    children: normalizeNodes(Array.isArray(n.children) ? n.children : [], `${path}.children`, issues),
+    ...(n.content !== undefined ? { content: n.content } : {}),
+    ...(n.name !== undefined ? { name: n.name } : {}),
+    ...(n.isGroup !== undefined ? { isGroup: n.isGroup } : {}),
+  };
+}
+
 /** Assign a parent-unique name segment for `wanted`, deduping against `taken`. */
 function nameSegment(wanted: string, taken: Set<string>): string {
   const base = slug(wanted);
@@ -57,15 +155,15 @@ function nameSegment(wanted: string, taken: Set<string>): string {
 
 /** Number of part leaves in a document, nested groups included. */
 export function countParts(doc: SetDocument): number {
-  return collectParts(doc).length;
+  return collectPartNodes(doc).length;
 }
 
-/** Every part leaf in the document, in tree order. */
-export function collectParts(doc: SetDocument): PartDraft[] {
-  const parts: PartDraft[] = [];
+/** Every part leaf in the document, in tree order — node form, transform included. */
+export function collectPartNodes(doc: SetDocument): PartNode[] {
+  const parts: PartNode[] = [];
   const walk = (nodes: SetNode[]) => {
     for (const node of nodes) {
-      if (node.kind === 'part') parts.push(node.part);
+      if (isPartNode(node)) parts.push(node);
       else walk(node.children);
     }
   };
@@ -73,27 +171,20 @@ export function collectParts(doc: SetDocument): PartDraft[] {
   return parts;
 }
 
+/** Every part leaf's body, in tree order. */
+export function collectParts(doc: SetDocument): PartDraft[] {
+  return collectPartNodes(doc).map((node) => node.content);
+}
+
 /**
- * Build a document from a flat list of parts — the bundled library's authoring form.
- * Node ids are the same parent-unique name segments `insertPart` assigns, so a
+ * Build a document from a flat list of part seeds — the bundled library's authoring
+ * form. Node ids are the same parent-unique name segments `insertPart` assigns, so a
  * hand-written definition and an edited one address their nodes identically.
  */
-export function documentFromParts(parts: PartDraft[]): SetDocument {
+export function documentFromParts(seeds: PartSeed[]): SetDocument {
   const doc: SetDocument = { root: [], joints: [] };
-  for (const part of parts) insertPart(doc, part);
+  for (const seed of seeds) insertPart(doc, seed);
   return doc;
-}
-
-function partTransform(part: PartDraft): Transform {
-  return { position: part.position, quaternion: part.quaternion, scale: part.scale };
-}
-
-function groupTransform(node: Extract<SetNode, { kind: 'group' }>): Transform {
-  return {
-    position: node.position ?? [0, 0, 0],
-    quaternion: node.quaternion ?? [0, 0, 0, 1],
-    scale: node.scale ?? [1, 1, 1],
-  };
 }
 
 function segmentsOf(nodes: SetNode[]): Set<string> {
@@ -104,25 +195,33 @@ function segmentsOf(nodes: SetNode[]): Set<string> {
 function findPartLocation(nodes: SetNode[], partId: string, parent: Transform): { nodes: SetNode[]; index: number; parent: Transform } | null {
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
-    if (node.kind === 'part') {
-      if (node.part.id === partId) return { nodes, index: i, parent };
+    if (isPartNode(node)) {
+      if (node.content.id === partId) return { nodes, index: i, parent };
     } else {
-      const found = findPartLocation(node.children, partId, localToWorld(groupTransform(node), parent));
+      const found = findPartLocation(node.children, partId, localToWorld(node.transform, parent));
       if (found) return found;
     }
   }
   return null;
 }
 
+/** The part leaf carrying `partId`, or null. */
+function findPartNode(doc: SetDocument, partId: string): PartNode | null {
+  const loc = findPartLocation(doc.root, partId, IDENTITY_TRANSFORM);
+  if (!loc) return null;
+  const node = loc.nodes[loc.index];
+  return isPartNode(node) ? node : null;
+}
+
 /** Locate the group that directly contains `partId`, with its sibling array + parent world transform. */
-function findGroupOfPart(nodes: SetNode[], partId: string, parent: Transform): { group: Extract<SetNode, { kind: 'group' }>; nodes: SetNode[]; index: number; parent: Transform } | null {
+function findGroupOfPart(nodes: SetNode[], partId: string, parent: Transform): { group: SetNode; nodes: SetNode[]; index: number; parent: Transform } | null {
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
-    if (node.kind === 'group') {
-      if (node.children.some((c) => c.kind === 'part' && c.part.id === partId)) {
+    if (node.role === 'structure') {
+      if (node.children.some((c) => isPartNode(c) && c.content.id === partId)) {
         return { group: node, nodes, index: i, parent };
       }
-      const nested = findGroupOfPart(node.children, partId, localToWorld(groupTransform(node), parent));
+      const nested = findGroupOfPart(node.children, partId, localToWorld(node.transform, parent));
       if (nested) return nested;
     }
   }
@@ -130,14 +229,21 @@ function findGroupOfPart(nodes: SetNode[], partId: string, parent: Transform): {
 }
 
 /** Return the group node that directly contains `partId`, or null. */
-export function findGroupOfPartId(doc: SetDocument, partId: string): Extract<SetNode, { kind: 'group' }> | null {
+export function findGroupOfPartId(doc: SetDocument, partId: string): SetNode | null {
   const found = findGroupOfPart(doc.root, partId, IDENTITY_TRANSFORM);
   return found ? found.group : null;
 }
 
 /** Add a part leaf to the document root. */
-export function insertPart(doc: SetDocument, part: PartDraft): void {
-  doc.root.push({ kind: 'part', id: nameSegment(part.label ?? part.name, segmentsOf(doc.root)), role: 'prop', part });
+export function insertPart(doc: SetDocument, seed: PartSeed): void {
+  const { content } = seed;
+  doc.root.push({
+    id: nameSegment(content.label ?? content.name, segmentsOf(doc.root)),
+    role: 'prop',
+    transform: nodeTransform(seed.transform),
+    children: [],
+    content,
+  });
 }
 
 /** Remove a part leaf (by guid) from the tree. */
@@ -159,13 +265,13 @@ export function groupParts(doc: SetDocument, partIds: string[], name?: string, i
   const first = findPartLocation(doc.root, partIds[0], IDENTITY_TRANSFORM);
   if (!first) return false;
 
-  const members: { node: Extract<SetNode, { kind: 'part' }>; index: number; world: Transform }[] = [];
+  const members: { node: PartNode; index: number; world: Transform }[] = [];
   for (const pid of partIds) {
     const loc = findPartLocation(first.nodes, pid, first.parent);
     if (!loc || loc.nodes !== first.nodes) return false; // members must be siblings
     const node = loc.nodes[loc.index];
-    if (node.kind !== 'part') return false;
-    members.push({ node, index: loc.index, world: localToWorld(partTransform(node.part), first.parent) });
+    if (!isPartNode(node)) return false;
+    members.push({ node, index: loc.index, world: localToWorld(node.transform, first.parent) });
   }
 
   const centroid: [number, number, number] = [0, 0, 0];
@@ -181,22 +287,16 @@ export function groupParts(doc: SetDocument, partIds: string[], name?: string, i
 
   const ascending = [...members].sort((a, b) => a.index - b.index);
   const insertAt = ascending[0].index;
-  for (const m of ascending) {
-    const local = worldToLocal(m.world, groupT);
-    m.node.part.position = local.position;
-    m.node.part.quaternion = local.quaternion;
-    m.node.part.scale = local.scale;
-  }
+  for (const m of ascending) m.node.transform = worldToLocal(m.world, groupT);
   for (const m of [...ascending].reverse()) first.nodes.splice(m.index, 1);
 
   const groupNode: SetNode = {
-    kind: 'group',
     id: nameSegment(name ?? 'group', segmentsOf(first.nodes)),
     role: 'structure',
+    transform: groupT,
+    children: ascending.map((x) => x.node),
     ...(name !== undefined ? { name } : {}),
     ...(isGroup !== undefined ? { isGroup } : {}),
-    position: centroid,
-    children: ascending.map((x) => x.node),
   };
   first.nodes.splice(insertAt, 0, groupNode);
   return true;
@@ -207,20 +307,12 @@ export function ungroupPart(doc: SetDocument, partId: string): boolean {
   const found = findGroupOfPart(doc.root, partId, IDENTITY_TRANSFORM);
   if (!found) return false;
   const { group, nodes, index, parent } = found;
-  const groupWorld = localToWorld(groupTransform(group), parent);
+  const groupWorld = localToWorld(group.transform, parent);
 
+  // Every node kind carries its own transform, so promotion is one line each — the
+  // uniformity the node hoist buys.
   const promoted: SetNode[] = group.children.map((child) => {
-    if (child.kind === 'part') {
-      const local = worldToLocal(localToWorld(partTransform(child.part), groupWorld), parent);
-      child.part.position = local.position;
-      child.part.quaternion = local.quaternion;
-      child.part.scale = local.scale;
-    } else {
-      const local = worldToLocal(localToWorld(groupTransform(child), groupWorld), parent);
-      child.position = local.position;
-      child.quaternion = local.quaternion;
-      child.scale = local.scale;
-    }
+    child.transform = worldToLocal(localToWorld(child.transform, groupWorld), parent);
     return child;
   });
 
@@ -230,34 +322,26 @@ export function ungroupPart(doc: SetDocument, partId: string): boolean {
 
 /** Set a part leaf's local transform. */
 export function setPartTransform(doc: SetDocument, partId: string, transform: Transform): boolean {
-  const loc = findPartLocation(doc.root, partId, IDENTITY_TRANSFORM);
-  if (!loc) return false;
-  const node = loc.nodes[loc.index];
-  if (node.kind !== 'part') return false;
-  node.part.position = transform.position;
-  node.part.quaternion = transform.quaternion;
-  node.part.scale = transform.scale;
+  const node = findPartNode(doc, partId);
+  if (!node) return false;
+  node.transform = transform;
   return true;
 }
 
 /** Set a part leaf's colour (and reset per-face colours to the uniform colour). */
 export function setPartColor(doc: SetDocument, partId: string, color: number): boolean {
-  const loc = findPartLocation(doc.root, partId, IDENTITY_TRANSFORM);
-  if (!loc) return false;
-  const node = loc.nodes[loc.index];
-  if (node.kind !== 'part') return false;
-  node.part.color = color;
-  node.part.faceColors = undefined; // reset per-face colours to the uniform colour
+  const node = findPartNode(doc, partId);
+  if (!node) return false;
+  node.content.color = color;
+  node.content.faceColors = undefined; // reset per-face colours to the uniform colour
   return true;
 }
 
 /** Set a single draw group's colour. */
 export function setFaceColor(doc: SetDocument, partId: string, materialIndex: number, color: number): boolean {
-  const loc = findPartLocation(doc.root, partId, IDENTITY_TRANSFORM);
-  if (!loc) return false;
-  const node = loc.nodes[loc.index];
-  if (node.kind !== 'part') return false;
-  const part = node.part;
+  const node = findPartNode(doc, partId);
+  if (!node) return false;
+  const part = node.content;
   if (!part.faceColors || materialIndex < 0 || materialIndex >= part.faceColors.length) return false;
   part.faceColors[materialIndex] = color;
   return true;
@@ -265,11 +349,9 @@ export function setFaceColor(doc: SetDocument, partId: string, materialIndex: nu
 
 /** Set (or clear, with null) a single draw group's texture data URL. */
 export function setFaceTexture(doc: SetDocument, partId: string, materialIndex: number, dataUrl: string | null): boolean {
-  const loc = findPartLocation(doc.root, partId, IDENTITY_TRANSFORM);
-  if (!loc) return false;
-  const node = loc.nodes[loc.index];
-  if (node.kind !== 'part') return false;
-  const part = node.part;
+  const node = findPartNode(doc, partId);
+  if (!node) return false;
+  const part = node.content;
   if (!part.faceTextures || materialIndex < 0 || materialIndex >= part.faceTextures.length) return false;
   part.faceTextures[materialIndex] = dataUrl;
   return true;
@@ -277,21 +359,19 @@ export function setFaceTexture(doc: SetDocument, partId: string, materialIndex: 
 
 /** Set (or clear, with undefined) a part's semantic label. */
 export function setPartLabel(doc: SetDocument, partId: string, label: string | undefined): boolean {
-  const loc = findPartLocation(doc.root, partId, IDENTITY_TRANSFORM);
-  if (!loc) return false;
-  const node = loc.nodes[loc.index];
-  if (node.kind !== 'part') return false;
-  if (label === undefined) delete node.part.label;
-  else node.part.label = label;
+  const node = findPartNode(doc, partId);
+  if (!node) return false;
+  if (label === undefined) delete node.content.label;
+  else node.content.label = label;
   return true;
 }
 
 // ── Attach topology (joints, group nodes, durable bonds) ─────────────────────
 
 /** The group node carrying `id`, searching nested groups. */
-export function findGroupNodeById(nodes: SetNode[], id: string): Extract<SetNode, { kind: 'group' }> | null {
+export function findGroupNodeById(nodes: SetNode[], id: string): SetNode | null {
   for (const node of nodes) {
-    if (node.kind !== 'group') continue;
+    if (node.role !== 'structure') continue;
     if (node.id === id) return node;
     const nested = findGroupNodeById(node.children, id);
     if (nested) return nested;
@@ -309,7 +389,7 @@ export function groupMembersOf(doc: SetDocument, partId: string): string[] {
   const ids: string[] = [];
   const collect = (nodes: SetNode[]) => {
     for (const node of nodes) {
-      if (node.kind === 'part') ids.push(node.part.id);
+      if (isPartNode(node)) ids.push(node.content.id);
       else collect(node.children);
     }
   };

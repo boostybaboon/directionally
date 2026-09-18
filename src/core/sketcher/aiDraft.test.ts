@@ -1,17 +1,33 @@
 import { describe, it, expect } from 'vitest';
 import { toAIDraft, fromAIDraft, AI_CONVENTION } from './aiDraft.js';
-import { collectParts, documentFromParts, groupParts } from './documentTree.js';
-import type { SetDocument } from './documentTree.js';
+import { collectPartNodes, collectParts, documentFromParts, groupParts, isPartNode } from './documentTree.js';
+import type { PartSeed, SetDocument } from './documentTree.js';
 import type { PartDraft } from './types.js';
+import type { AIPart } from './aiDraft.js';
+import type { Transform } from './transform.js';
 
-function doc(parts: PartDraft[] = []): SetDocument {
-  return documentFromParts(parts);
+function doc(seeds: PartSeed[] = []): SetDocument {
+  return documentFromParts(seeds);
 }
 
-const box = (id: string, name = 'Box'): PartDraft => ({
-  id, kind: 'primitive', name, position: [0, 0, 0],
-  quaternion: [0, 0, 0, 1], scale: [1, 1, 1], color: 0xffffff,
+/** A part seed, with optional body and transform overrides. */
+function part(id: string, content: Partial<PartDraft> = {}, transform: Partial<Transform> = {}): PartSeed {
+  return {
+    content: { id, kind: 'primitive', name: 'Box', color: 0xffffff, ...content },
+    transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1], ...transform },
+  };
+}
+
+const box = (id: string, name = 'Box'): PartSeed => part(id, { name });
+
+/** The same part as the AI grammar states it. */
+const aiBox = (id: string, name = 'Box'): AIPart => ({
+  id, name, kind: 'primitive', shape: 'box', size: [1, 1, 1],
+  position: [0, 0, 0], rotation: [0, 0, 0], color: 0xffffff,
 });
+
+/** Bodies and transforms together — what a whole placement is made of. */
+const placed = (d: SetDocument) => collectPartNodes(d).map((n) => ({ content: n.content, transform: n.transform }));
 
 /** Wrap ids in one group node — the tree's own grouping, world positions preserved. */
 function grouped(d: SetDocument, ids: string[], name?: string): SetDocument {
@@ -21,7 +37,7 @@ function grouped(d: SetDocument, ids: string[], name?: string): SetDocument {
 
 describe('toAIDraft', () => {
   it('projects quaternions to Euler degrees', () => {
-    const d = doc([{ ...box('a'), quaternion: [0, Math.SQRT1_2, 0, Math.SQRT1_2] }]);
+    const d = doc([part('a', {}, { quaternion: [0, Math.SQRT1_2, 0, Math.SQRT1_2] })]);
     const { aiDraft } = toAIDraft(d);
     expect(aiDraft.parts[0].rotation[0]).toBeCloseTo(0);
     expect(aiDraft.parts[0].rotation[1]).toBeCloseTo(90);
@@ -29,7 +45,7 @@ describe('toAIDraft', () => {
   });
 
   it('slugifies names into unique handles and maps them to guids', () => {
-    const d = doc([box('a'), box('b'), { ...box('c', '  Tree Trunk! ') }]);
+    const d = doc([box('a'), box('b'), box('c', '  Tree Trunk! ')]);
     const { aiDraft, idMap } = toAIDraft(d);
     expect(aiDraft.parts.map((p) => p.id)).toEqual(['box', 'box-2', 'tree-trunk']);
     expect(idMap).toEqual({ box: 'a', 'box-2': 'b', 'tree-trunk': 'c' });
@@ -46,12 +62,12 @@ describe('toAIDraft', () => {
 
   it('projects world transforms through the group node', () => {
     const d = doc([box('top'), box('leg')]);
-    for (const p of collectParts(d)) p.position = [p.id === 'top' ? 2 : 0, 0, 0];
+    for (const n of collectPartNodes(d)) n.transform.position = [n.content.id === 'top' ? 2 : 0, 0, 0];
     grouped(d, ['top', 'leg']);
     // Move the group itself: its members travel with it.
-    const group = d.root.find((n) => n.kind === 'group');
-    if (group?.kind !== 'group') throw new Error('expected a group node');
-    group.position = [10, 0, 0];
+    const group = d.root.find((n) => n.role === 'structure');
+    if (!group) throw new Error('expected a group node');
+    group.transform.position = [10, 0, 0];
 
     const { aiDraft } = toAIDraft(d);
 
@@ -76,10 +92,10 @@ describe('fromAIDraft', () => {
   it('converts Euler degrees back to quaternions', () => {
     const out = fromAIDraft({
       convention: AI_CONVENTION,
-      parts: [{ ...box('box'), rotation: [0, 90, 0] }],
+      parts: [{ ...aiBox('box'), rotation: [0, 90, 0] }],
       groups: [],
     });
-    const q = collectParts(out)[0].quaternion;
+    const q = collectPartNodes(out)[0].transform.quaternion;
     expect(q[0]).toBeCloseTo(0);
     expect(q[1]).toBeCloseTo(Math.SQRT1_2);
     expect(q[2]).toBeCloseTo(0);
@@ -89,14 +105,14 @@ describe('fromAIDraft', () => {
   it('reuses guids via the id map and assigns fresh ones to new handles', () => {
     const out = fromAIDraft({
       convention: AI_CONVENTION,
-      parts: [{ ...box('box'), rotation: [0, 0, 0] }],
+      parts: [{ ...aiBox('box'), rotation: [0, 0, 0] }],
       groups: [],
     }, { box: 'existing-guid' });
     expect(collectParts(out)[0].id).toBe('existing-guid');
 
     const fresh = fromAIDraft({
       convention: AI_CONVENTION,
-      parts: [{ ...box('new-thing'), rotation: [0, 0, 0] }],
+      parts: [{ ...aiBox('new-thing'), rotation: [0, 0, 0] }],
       groups: [],
     });
     expect(collectParts(fresh)[0].id).toBeTruthy();
@@ -106,15 +122,15 @@ describe('fromAIDraft', () => {
     const out = fromAIDraft({
       convention: AI_CONVENTION,
       parts: [
-        { ...box('top'), rotation: [0, 0, 0] },
-        { ...box('leg'), rotation: [0, 0, 0] },
+        { ...aiBox('top'), rotation: [0, 0, 0] },
+        { ...aiBox('leg'), rotation: [0, 0, 0] },
       ],
       groups: [{ id: 'group-1', children: ['top', 'leg'] }],
     }, { top: 'g-top', leg: 'g-leg' });
 
-    const group = out.root.find((n) => n.kind === 'group');
-    if (group?.kind !== 'group') throw new Error('expected a group node');
-    expect(group.children.map((c) => (c.kind === 'part' ? c.part.id : ''))).toEqual(['g-top', 'g-leg']);
+    const group = out.root.find((n) => n.role === 'structure');
+    if (!group) throw new Error('expected a group node');
+    expect(group.children.map((c) => (isPartNode(c) ? c.content.id : ''))).toEqual(['g-top', 'g-leg']);
   });
 });
 
@@ -122,9 +138,9 @@ describe('fromAIDraft', () => {
 describe('round trip', () => {
   it('toAIDraft then fromAIDraft reproduces the document (excluding joints)', () => {
     const d = doc([
-      { id: 'top', kind: 'primitive', name: 'Box', position: [0, 0.8, 0], quaternion: [0, 0, 0, 1], scale: [1.2, 0.1, 0.8], color: 0x885544, faceColors: [0x885544, 0x885544, 0x885544] },
-      { id: 'leg', kind: 'primitive', name: 'Box', position: [-0.4, 0.4, 0], quaternion: [0, 0, 0, 1], scale: [0.1, 0.8, 0.1], color: 0x334455 },
-      { id: 'loose', kind: 'primitive', name: 'Sphere', position: [1, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1], color: 0xffffff },
+      part('top', { color: 0x885544, faceColors: [0x885544, 0x885544, 0x885544] }, { position: [0, 0.8, 0], scale: [1.2, 0.1, 0.8] }),
+      part('leg', { color: 0x334455 }, { position: [-0.4, 0.4, 0], scale: [0.1, 0.8, 0.1] }),
+      part('loose', { name: 'Sphere' }, { position: [1, 0, 0] }),
     ]);
     grouped(d, ['top', 'leg']);
     d.environmentMap = 'studio';
@@ -132,11 +148,11 @@ describe('round trip', () => {
     const { aiDraft, idMap } = toAIDraft(d);
     const out = fromAIDraft(aiDraft, idMap);
 
-    expect(collectParts(out)).toEqual(collectParts(d));
+    expect(placed(out)).toEqual(placed(d));
     // The group survives the round trip with its members.
-    const group = out.root.find((n) => n.kind === 'group');
-    if (group?.kind !== 'group') throw new Error('expected a group node');
-    expect(group.children.map((c) => (c.kind === 'part' ? c.part.id : ''))).toEqual(['top', 'leg']);
+    const group = out.root.find((n) => n.role === 'structure');
+    if (!group) throw new Error('expected a group node');
+    expect(group.children.map((c) => (isPartNode(c) ? c.content.id : ''))).toEqual(['top', 'leg']);
     expect(out.environmentMap).toBe('studio');
     expect(out.joints).toEqual([]);
   });
@@ -144,7 +160,7 @@ describe('round trip', () => {
 
 describe('size and semantic names', () => {
   it('exposes absolute size and the semantic name for primitives', () => {
-    const d = doc([{ ...box('a'), label: 'tabletop', scale: [1.2, 0.1, 0.8] }]);
+    const d = doc([part('a', { label: 'tabletop' }, { scale: [1.2, 0.1, 0.8] })]);
     const { aiDraft, idMap } = toAIDraft(d);
     expect(aiDraft.parts[0]).toMatchObject({ shape: 'box', size: [1.2, 0.1, 0.8], name: 'tabletop' });
     expect(idMap).toEqual({ tabletop: 'a' });
@@ -156,14 +172,15 @@ describe('size and semantic names', () => {
       parts: [{ id: 'tabletop', name: 'table top', kind: 'primitive', shape: 'box', size: [1.2, 0.1, 0.8], position: [0, 0, 0], rotation: [0, 0, 0], color: 0xffffff }],
       groups: [],
     }, { tabletop: 'g-1' });
-    expect(collectParts(out)[0]).toMatchObject({ id: 'g-1', name: 'Box', label: 'table top', scale: [1.2, 0.1, 0.8] });
+        expect(collectParts(out)[0]).toMatchObject({ id: 'g-1', name: 'Box', label: 'table top' });
+    expect(collectPartNodes(out)[0].transform.scale).toEqual([1.2, 0.1, 0.8]);
   });
 
   it('round-trips a uniformly scaled sphere through size', () => {
-    const d = doc([{ ...box('a'), name: 'Sphere', scale: [1, 1, 1] }]);
+    const d = doc([part('a', { name: 'Sphere' }, { scale: [1, 1, 1] })]);
     const { aiDraft, idMap } = toAIDraft(d);
     expect(aiDraft.parts[0]).toMatchObject({ shape: 'sphere', size: [0.75] }); // 0.75 radius base
-    expect(collectParts(fromAIDraft(aiDraft, idMap))[0].scale).toEqual([1, 1, 1]);
+    expect(collectPartNodes(fromAIDraft(aiDraft, idMap))[0].transform.scale).toEqual([1, 1, 1]);
   });
 
   it('round-trips a semantic group name', () => {
@@ -172,9 +189,9 @@ describe('size and semantic names', () => {
     expect(aiDraft.groups[0]).toMatchObject({ id: 'table', name: 'table' });
 
     const out = fromAIDraft(aiDraft, idMap);
-    const group = out.root.find((n) => n.kind === 'group');
-    if (group?.kind !== 'group') throw new Error('expected a group node');
+    const group = out.root.find((n) => n.role === 'structure');
+    if (!group) throw new Error('expected a group node');
     expect(group.name).toBe('table');
-    expect(group.children.map((c) => (c.kind === 'part' ? c.part.id : ''))).toEqual(['top', 'leg']);
+    expect(group.children.map((c) => (isPartNode(c) ? c.content.id : ''))).toEqual(['top', 'leg']);
   });
 });

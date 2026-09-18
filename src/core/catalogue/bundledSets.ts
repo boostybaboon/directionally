@@ -1,6 +1,6 @@
 import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
-import type { PartDraft } from '../sketcher/types.js';
 import { documentFromParts } from '../sketcher/documentTree.js';
+import type { PartSeed } from '../sketcher/documentTree.js';
 import type { SetPieceEntry } from './types.js';
 
 /**
@@ -46,18 +46,18 @@ function part(
   material: MaterialConfig,
   position?: Vec3,
   quaternion: [number, number, number, number] = IDENTITY_QUATERNION,
-): PartDraft {
+): PartSeed {
   return {
-    id: label,
-    kind: 'catalogue',
-    name: NAME_BY_TYPE[geometry.type],
-    label,
-    geometry,
-    material,
-    position: position ?? [0, 0, 0],
-    quaternion,
-    scale: [1, 1, 1],
-    color: material.color,
+    content: {
+      id: label,
+      kind: 'catalogue',
+      name: NAME_BY_TYPE[geometry.type],
+      label,
+      geometry,
+      material,
+      color: material.color,
+    },
+    transform: { position: position ?? [0, 0, 0], quaternion, scale: [1, 1, 1] },
   };
 }
 

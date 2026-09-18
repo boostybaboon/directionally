@@ -1,9 +1,9 @@
 import type { Object3D } from 'three';
 import type { CartoonSketcher } from './CartoonSketcher.js';
 import type { SketcherCommand } from './SketcherCommand.js';
-import { collectParts } from './documentTree.js';
-import type { SetDocument } from './documentTree.js';
-import type { PartDraft } from './types.js';
+import { collectPartNodes } from './documentTree.js';
+import type { PlacedPart, SetDocument } from './documentTree.js';
+import type { Transform } from './transform.js';
 
 /**
  * applyDraft — the app-side id-diff + apply step of an AI edit (ROADMAP_API.md
@@ -18,9 +18,9 @@ import type { PartDraft } from './types.js';
  */
 
 export type DocumentDiff = {
-  add: PartDraft[];
+  add: PlacedPart[];
   remove: string[];
-  update: PartDraft[];
+  update: PlacedPart[];
 };
 
 const EPS = 1e-6;
@@ -31,39 +31,50 @@ function vecEquals(a: number[], b: number[]): boolean {
   return true;
 }
 
-function partEquals(a: PartDraft, b: PartDraft): boolean {
-  return a.kind === b.kind
-    && a.name === b.name
-    && (a.label ?? null) === (b.label ?? null)
-    && a.color === b.color
-    && vecEquals(a.position, b.position)
+function transformEquals(a: Transform, b: Transform): boolean {
+  return vecEquals(a.position, b.position)
     && vecEquals(a.quaternion, b.quaternion)
     && vecEquals(a.scale, b.scale);
 }
 
+function partEquals(a: PlacedPart, b: PlacedPart): boolean {
+  const ac = a.content;
+  const bc = b.content;
+  return ac.kind === bc.kind
+    && ac.name === bc.name
+    && (ac.label ?? null) === (bc.label ?? null)
+    && ac.color === bc.color
+    && transformEquals(a.transform, b.transform);
+}
+
+/** Every part leaf as a body + transform pair, in tree order. */
+function placedParts(doc: SetDocument): PlacedPart[] {
+  return collectPartNodes(doc).map((node) => ({ content: node.content, transform: node.transform }));
+}
+
 /** Diff two documents by stable part id. Pure — no Three.js runtime. */
 export function diffDocument(current: SetDocument, target: SetDocument): DocumentDiff {
-  const currentById = new Map(collectParts(current).map((p) => [p.id, p]));
-  const targetById = new Map(collectParts(target).map((p) => [p.id, p]));
-  const add: PartDraft[] = [];
-  const update: PartDraft[] = [];
+  const currentById = new Map(placedParts(current).map((p) => [p.content.id, p]));
+  const targetById = new Map(placedParts(target).map((p) => [p.content.id, p]));
+  const add: PlacedPart[] = [];
+  const update: PlacedPart[] = [];
   const remove: string[] = [];
 
   for (const t of targetById.values()) {
-    const c = currentById.get(t.id);
+    const c = currentById.get(t.content.id);
     if (!c) add.push(t);
     else if (!partEquals(c, t)) update.push(t);
   }
   for (const c of currentById.values()) {
-    if (!targetById.has(c.id)) remove.push(c.id);
+    if (!targetById.has(c.content.id)) remove.push(c.content.id);
   }
   return { add, remove, update };
 }
 
-function setTransform(mesh: Object3D, p: PartDraft): void {
-  mesh.position.set(p.position[0], p.position[1], p.position[2]);
-  mesh.quaternion.set(p.quaternion[0], p.quaternion[1], p.quaternion[2], p.quaternion[3]);
-  mesh.scale.set(p.scale[0], p.scale[1], p.scale[2]);
+function setTransform(mesh: Object3D, t: Transform): void {
+  mesh.position.set(t.position[0], t.position[1], t.position[2]);
+  mesh.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
+  mesh.scale.set(t.scale[0], t.scale[1], t.scale[2]);
 }
 
 /**
@@ -78,20 +89,20 @@ export function applyDocumentCommand(sketcher: CartoonSketcher, target: SetDocum
       for (const id of diff.remove) sketcher.removePart(id);
 
       for (const p of diff.update) {
-        const part = sketcher.getSession().parts.find((x) => x.id === p.id);
+        const part = sketcher.getSession().parts.find((x) => x.id === p.content.id);
         if (!part) continue;
-        setTransform(part.mesh, p);
-        part.label = p.label;
-        sketcher.setPartColor(p.id, p.color);
+        setTransform(part.mesh, p.transform);
+        part.label = p.content.label;
+        sketcher.setPartColor(p.content.id, p.content.color);
       }
 
       for (const p of diff.add) {
-        if (p.kind !== 'primitive') continue; // sketch/lathe add deferred
-        const part = sketcher.insertPrimitive(p.name);
+        if (p.content.kind !== 'primitive') continue; // sketch/lathe add deferred
+        const part = sketcher.insertPrimitive(p.content.name);
         if (!part) continue;
-        setTransform(part.mesh, p);
-        part.label = p.label;
-        sketcher.setPartColor(part.id, p.color);
+        setTransform(part.mesh, p.transform);
+        part.label = p.content.label;
+        sketcher.setPartColor(part.id, p.content.color);
       }
     },
   };

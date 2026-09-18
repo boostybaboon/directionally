@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { realiseDocument } from './realise.js';
 import { insertPart, groupParts } from './documentTree.js';
-import type { SetDocument } from './documentTree.js';
+import type { PartSeed, SetDocument } from './documentTree.js';
 import type { PartDraft } from './types.js';
+import type { Transform } from './transform.js';
 
-function part(id: string, overrides: Partial<PartDraft> = {}): PartDraft {
+function part(id: string, content: Partial<PartDraft> = {}, transform: Partial<Transform> = {}): PartSeed {
   return {
-    id, kind: 'primitive', name: 'Box', position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1], color: 0xffffff,
-    ...overrides,
+    content: { id, kind: 'primitive', name: 'Box', color: 0xffffff, ...content },
+    transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1], ...transform },
   };
 }
 
@@ -23,7 +24,7 @@ describe('realiseDocument', () => {
 
   it('tags each mesh with its part id and local transform', () => {
     const doc: SetDocument = { root: [], joints: [] };
-    insertPart(doc, part('a', { position: [1, 2, 3], scale: [2, 2, 2] }));
+    insertPart(doc, part('a', {}, { position: [1, 2, 3], scale: [2, 2, 2] }));
 
     const [mesh] = realiseDocument(doc).children as THREE.Mesh[];
     expect(mesh.userData.sketcherPartId).toBe('a');
@@ -34,18 +35,18 @@ describe('realiseDocument', () => {
   it('builds a nested scene — group nodes become THREE.Groups, parts stay local', () => {
     const doc: SetDocument = { root: [], joints: [] };
     insertPart(doc, part('top'));
-    insertPart(doc, part('leg-a', { position: [5, 2, -3] }));
-    insertPart(doc, part('leg-b', { position: [6, 2, -3] }));
+    insertPart(doc, part('leg-a', {}, { position: [5, 2, -3] }));
+    insertPart(doc, part('leg-b', {}, { position: [6, 2, -3] }));
     groupParts(doc, ['leg-a', 'leg-b'], 'table', true);
-    const groupNode = doc.root.find((n) => n.kind === 'group');
-    if (groupNode?.kind !== 'group') throw new Error('expected a group node');
+    const groupNode = doc.root.find((n) => n.role === 'structure');
+    if (!groupNode) throw new Error('expected a group node');
 
     const root = realiseDocument(doc);
     expect(root.children).toHaveLength(2); // one ungrouped part + one group
 
     const realisedGroup = root.children.find((c) => (c as THREE.Group).isGroup) as THREE.Group;
     expect(realisedGroup).toBeDefined();
-    expect(realisedGroup.position.toArray()).toEqual(groupNode.position);
+    expect(realisedGroup.position.toArray()).toEqual(groupNode.transform.position);
     expect(realisedGroup.children).toHaveLength(2);
 
     // A member's world position composes the group transform with its local transform:

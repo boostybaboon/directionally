@@ -282,18 +282,11 @@ describe('storedSceneToModel – document-backed set pieces', () => {
   const document: SetDocument = {
     root: [
       {
-        kind: 'part',
         id: 'cube',
         role: 'prop',
-        part: {
-          id: 'part-cube',
-          kind: 'primitive',
-          name: 'Box',
-          position: [0, 0.5, 0],
-          quaternion: [0, 0, 0, 1],
-          scale: [1, 1, 1],
-          color: 0x8844aa,
-        },
+        transform: { position: [0, 0.5, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+        children: [],
+        content: { id: 'part-cube', kind: 'primitive', name: 'Box', color: 0x8844aa },
       },
     ],
     joints: [],

@@ -9,16 +9,18 @@ import {
   withSingleFaceGroup,
 } from './geometry.js';
 import type { PartDraft } from './types.js';
+import { isPartNode } from './documentTree.js';
 import type { SetNode } from './documentTree.js';
+import type { Transform } from './transform.js';
 
 /**
  * Build a nested THREE scene from a tree document — pure, headless, no Sketcher
- * state. Each `group` node becomes a THREE.Group placed at its stored transform,
- * and each `part` leaf becomes a mesh carrying its local transform (so the group's
- * transform composes with the leaf's, reproducing world space) plus
- * `userData.sketcherPartId`. Geometry and materials (including face colours and
- * textures) are realised here; group re-parenting and attach joints live in the
- * interactive Sketcher.
+ * state. Every node carries its own local transform, so a group node becomes a
+ * THREE.Group placed at its transform and a part leaf becomes a mesh placed at its
+ * own (the group's transform then composes with the leaf's, reproducing world
+ * space) — plus `userData.sketcherPartId`. Geometry and materials (including face
+ * colours and textures) are realised here; group re-parenting and attach joints live
+ * in the interactive Sketcher.
  */
 export function realiseDocument(doc: { root: SetNode[] }): THREE.Group {
   const root = new THREE.Group();
@@ -31,16 +33,14 @@ export function realiseDocument(doc: { root: SetNode[] }): THREE.Group {
 }
 
 function realiseNode(node: SetNode): THREE.Object3D | null {
-  if (node.kind === 'part') return buildPartMesh(node.part);
+  if (isPartNode(node)) return buildPartMesh(node.content, node.transform);
 
   const group = new THREE.Group();
   group.name = node.name ?? 'group';
   // Tag group nodes so the runtime can map them back to the tree when building
   // SketcherParts + AssemblyGroups from the realised scene.
   group.userData = { isGroupNode: true, groupName: node.name, groupIsGroup: node.isGroup === true };
-  if (node.position) group.position.set(node.position[0], node.position[1], node.position[2]);
-  if (node.quaternion) group.quaternion.set(node.quaternion[0], node.quaternion[1], node.quaternion[2], node.quaternion[3]);
-  if (node.scale) group.scale.set(node.scale[0], node.scale[1], node.scale[2]);
+  applyTransform(group, node.transform);
   for (const child of node.children) {
     const object = realiseNode(child);
     if (object) group.add(object);
@@ -48,7 +48,14 @@ function realiseNode(node: SetNode): THREE.Object3D | null {
   return group;
 }
 
-export function buildPartMesh(pd: PartDraft): THREE.Mesh | null {
+/** Place a realised object at a node's local transform. */
+function applyTransform(object: THREE.Object3D, t: Transform): void {
+  object.position.set(t.position[0], t.position[1], t.position[2]);
+  object.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
+  object.scale.set(t.scale[0], t.scale[1], t.scale[2]);
+}
+
+export function buildPartMesh(pd: PartDraft, transform: Transform): THREE.Mesh | null {
   let geometry: THREE.BufferGeometry;
   let lathePoints: [number, number][] | null = null;
   let depth = 0;
@@ -92,9 +99,7 @@ export function buildPartMesh(pd: PartDraft): THREE.Mesh | null {
     }
   });
   const mesh = new THREE.Mesh(geometry, materials);
-  mesh.position.set(pd.position[0], pd.position[1], pd.position[2]);
-  mesh.quaternion.set(pd.quaternion[0], pd.quaternion[1], pd.quaternion[2], pd.quaternion[3]);
-  mesh.scale.set(pd.scale[0], pd.scale[1], pd.scale[2]);
+  applyTransform(mesh, transform);
   mesh.updateWorldMatrix(false, true);
   mesh.userData = { sketcherPartId: pd.id, depth };
   return mesh;

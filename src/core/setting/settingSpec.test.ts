@@ -14,22 +14,15 @@ import {
 } from './settingSpec.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
 import { documentFromParts } from '../sketcher/documentTree.js';
-import type { PartDraft } from '../sketcher/types.js';
+import type { PartSeed } from '../sketcher/documentTree.js';
 import type { StoredScene } from '../storage/types.js';
 import type { GeometryConfig, MaterialConfig, Vec3, SetPiece as SetPieceParam } from '../domain/types.js';
 
 /** A catalogue part: procedural geometry + material at a local transform. */
-function part(id: string, geometry: GeometryConfig, material: MaterialConfig, position?: Vec3): PartDraft {
+function part(id: string, geometry: GeometryConfig, material: MaterialConfig, position?: Vec3): PartSeed {
   return {
-    id,
-    kind: 'catalogue',
-    name: 'Box',
-    geometry,
-    material,
-    position: position ?? [0, 0, 0],
-    quaternion: [0, 0, 0, 1],
-    scale: [1, 1, 1],
-    color: material.color,
+    content: { id, kind: 'catalogue', name: 'Box', geometry, material, color: material.color },
+    transform: { position: position ?? [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
   };
 }
 

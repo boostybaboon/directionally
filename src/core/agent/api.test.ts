@@ -12,15 +12,15 @@ const setPiece = (id: string, label: string, extra: Omit<Partial<SetPieceEntry>,
 /** A one-part set-piece document — the bundled library's authoring form. */
 function testSetDocument(): SetDocument {
   return documentFromParts([{
-    id: 'box',
-    kind: 'catalogue',
-    name: 'Box',
-    geometry: { type: 'box', width: 1, height: 1, depth: 1 },
-    material: { color: 0x11aa22 },
-    position: [0, 0, 0],
-    quaternion: [0, 0, 0, 1],
-    scale: [1, 1, 1],
-    color: 0x11aa22,
+    content: {
+      id: 'box',
+      kind: 'catalogue',
+      name: 'Box',
+      geometry: { type: 'box', width: 1, height: 1, depth: 1 },
+      material: { color: 0x11aa22 },
+      color: 0x11aa22,
+    },
+    transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
   }]);
 }
 const environment = (id: string, label: string): CatalogueEntry => ({ kind: 'environment', id, label, hdriPath: `/env/${id}.hdr` });

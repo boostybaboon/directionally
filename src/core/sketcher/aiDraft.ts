@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import type { LightConfig } from '../domain/types.js';
 import type { PartDraft } from './types.js';
-import { documentFromParts, groupParts } from './documentTree.js';
-import type { SetDocument, SetNode } from './documentTree.js';
+import { documentFromParts, groupParts, isPartNode } from './documentTree.js';
+import type { PartSeed, SetDocument, SetNode } from './documentTree.js';
 
 /**
  * The AI Draft — a sympathetic, AI-facing projection of a `SetDocument`.
@@ -158,18 +158,6 @@ function sizeToScale(shape: string, size: number[]): [number, number, number] {
 import type { Transform } from './transform.js';
 import { IDENTITY_TRANSFORM, localToWorld } from './transform.js';
 
-function partTransform(pd: PartDraft): Transform {
-  return { position: pd.position, quaternion: pd.quaternion, scale: pd.scale };
-}
-
-function groupTransform(node: Extract<SetNode, { kind: 'group' }>): Transform {
-  return {
-    position: node.position ?? [0, 0, 0],
-    quaternion: node.quaternion ?? [0, 0, 0, 1],
-    scale: node.scale ?? [1, 1, 1],
-  };
-}
-
 /** Project a set document into its AI-facing form. */
 export function toAIDraft(doc: SetDocument): AIDraftProjection {
   const taken = new Set<string>();
@@ -181,14 +169,14 @@ export function toAIDraft(doc: SetDocument): AIDraftProjection {
 
   const walk = (nodes: SetNode[], parent: Transform, groupHandle: string | undefined) => {
     for (const node of nodes) {
-      if (node.kind === 'part') {
-        const pd = node.part;
+      if (isPartNode(node)) {
+        const pd = node.content;
         const handle = uniqueHandle(slug(pd.label ?? pd.name), taken);
         taken.add(handle);
         idMap[handle] = pd.id;
         if (groupHandle !== undefined) childrenOfGroup.get(groupHandle)!.push(handle);
         const isPrimitive = pd.kind === 'primitive';
-        const world = localToWorld(partTransform(pd), parent);
+        const world = localToWorld(node.transform, parent);
         parts.push({
           id: handle,
           name: pd.label ?? pd.name,
@@ -209,7 +197,7 @@ export function toAIDraft(doc: SetDocument): AIDraftProjection {
           ...(groupHandle !== undefined ? { group: groupHandle } : {}),
         });
       } else {
-        const world = localToWorld(groupTransform(node), parent);
+        const world = localToWorld(node.transform, parent);
         // A nested group is flattened into its outermost group: the AI grammar has no
         // way to express one group inside another.
         let handle = groupHandle;
@@ -255,7 +243,7 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
   const used = new Set<string>();
   const guidOfHandle = new Map<string, string>();
 
-  const parts: PartDraft[] = aiDraft.parts.map((p) => {
+  const seeds: PartSeed[] = aiDraft.parts.map((p) => {
     let guid = idMap[p.id] ?? guidOfHandle.get(p.id);
     if (guid === undefined) guid = crypto.randomUUID();
     let unique = guid;
@@ -268,25 +256,29 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
     const presetName = isPrimitive ? capitalize(p.shape!) : p.name;
 
     return {
-      id: unique,
-      kind: p.kind,
-      name: presetName,
-      ...(isPrimitive && p.name !== presetName ? { label: p.name } : {}),
-      position: p.position,
-      quaternion: toQuaternion(p.rotation),
-      scale: isPrimitive ? sizeToScale(p.shape!, p.size!) : (p.scale ?? [1, 1, 1]),
-      color: p.color,
-      ...(p.faceColors !== undefined ? { faceColors: p.faceColors } : {}),
-      ...(p.faceTextures !== undefined ? { faceTextures: p.faceTextures } : {}),
-      ...(p.shapePoints !== undefined ? { shapePoints: p.shapePoints } : {}),
-      ...(p.holes !== undefined ? { holes: p.holes } : {}),
-      ...(p.lathePoints !== undefined ? { lathePoints: p.lathePoints } : {}),
-      ...(p.phiLength !== undefined ? { phiLength: p.phiLength } : {}),
-      ...(p.depth !== undefined ? { depth: p.depth } : {}),
+      content: {
+        id: unique,
+        kind: p.kind,
+        name: presetName,
+        ...(isPrimitive && p.name !== presetName ? { label: p.name } : {}),
+        color: p.color,
+        ...(p.faceColors !== undefined ? { faceColors: p.faceColors } : {}),
+        ...(p.faceTextures !== undefined ? { faceTextures: p.faceTextures } : {}),
+        ...(p.shapePoints !== undefined ? { shapePoints: p.shapePoints } : {}),
+        ...(p.holes !== undefined ? { holes: p.holes } : {}),
+        ...(p.lathePoints !== undefined ? { lathePoints: p.lathePoints } : {}),
+        ...(p.phiLength !== undefined ? { phiLength: p.phiLength } : {}),
+        ...(p.depth !== undefined ? { depth: p.depth } : {}),
+      },
+      transform: {
+        position: p.position,
+        quaternion: toQuaternion(p.rotation),
+        scale: isPrimitive ? sizeToScale(p.shape!, p.size!) : (p.scale ?? [1, 1, 1]),
+      },
     };
   });
 
-  const doc = documentFromParts(parts);
+  const doc = documentFromParts(seeds);
   // AI parts carry WORLD transforms, so each group wraps its members where they already
   // stand: the node lands at their centroid and the members localise to it.
   for (const group of aiDraft.groups) {

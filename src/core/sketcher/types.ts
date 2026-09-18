@@ -126,11 +126,11 @@ export type JointSnapshot = {
 };
 
 /**
- * JSON-serializable description of a single part — a document leaf. Geometry is
- * stored as a primitive name ('Box', 'Cylinder', …), the XZ shape points + depth for
+ * A part leaf's body: everything about a part except its placement. Geometry is stored
+ * as a primitive name ('Box', 'Cylinder', …), the XZ shape points + depth for
  * sketch-extruded parts, a revolve profile for lathed parts, or the procedural
- * geometry/material of a catalogue part. Transforms are local to the parent group
- * (world when the part is ungrouped).
+ * geometry/material of a catalogue part. The local transform belongs to the tree node
+ * carrying this body (`SetNode.transform`).
  */
 export type PartDraft = {
   id: string;
@@ -147,9 +147,6 @@ export type PartDraft = {
   /** Sweep angle in radians; absent means full 360° (Math.PI * 2). */
   phiLength?: number;
   depth?: number;
-  position: [number, number, number];
-  quaternion: [number, number, number, number];
-  scale: [number, number, number];
   color: number;
   faceColors?: number[];
   faceTextures?: (string | null)[];

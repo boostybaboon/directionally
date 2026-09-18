@@ -15,25 +15,29 @@ import {
   mergeIntoGroup,
   rebuildGroups,
 } from './documentTree.js';
+import { isPartNode } from './documentTree.js';
 import { localToWorld } from './transform.js';
-import type { SetDocument } from './documentTree.js';
-import type { JointSnapshot, PartDraft } from './types.js';
+import type { PartSeed, SetDocument } from './documentTree.js';
+import type { JointSnapshot } from './types.js';
 
 describe('tree mutation operations', () => {
   function empty(): SetDocument {
     return { root: [], joints: [] };
   }
-  function box(id: string, pos: [number, number, number] = [0, 0, 0]): PartDraft {
-    return { id, kind: 'primitive', name: 'Box', position: pos, quaternion: [0, 0, 0, 1], scale: [1, 1, 1], color: 0x8888cc };
+  function box(id: string, pos: [number, number, number] = [0, 0, 0]): PartSeed {
+    return {
+      content: { id, kind: 'primitive', name: 'Box', color: 0x8888cc },
+      transform: { position: pos, quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+    };
   }
 
   it('insertPart adds a leaf (with a name segment) and removePart removes it', () => {
     const doc = empty();
     insertPart(doc, box('a'));
     expect(doc.root).toHaveLength(1);
-    expect(doc.root[0].kind).toBe('part');
-    if (doc.root[0].kind !== 'part') throw new Error('expected part');
-    expect(doc.root[0].part.id).toBe('a');
+    expect(doc.root[0].role).toBe('prop');
+    if (!isPartNode(doc.root[0])) throw new Error('expected part');
+    expect(doc.root[0].content.id).toBe('a');
     expect(doc.root[0].id).toBe('box');
 
     expect(removePart(doc, 'a')).toBe(true);
@@ -47,10 +51,10 @@ describe('tree mutation operations', () => {
     insertPart(doc, box('b', [2, 0, 0]));
     expect(groupParts(doc, ['a', 'b'], 'pair')).toBe(true);
 
-    const group = doc.root.find((n) => n.kind === 'group');
-    if (group?.kind !== 'group') throw new Error('expected a group node');
-    expect(group.position).toEqual([1, 0, 0]);
-    expect(group.children.map((c) => (c.kind === 'part' ? c.part.position : null))).toEqual([[-1, 0, 0], [1, 0, 0]]);
+    const group = doc.root.find((n) => n.role === 'structure');
+    if (!group) throw new Error('expected a group node');
+    expect(group.transform.position).toEqual([1, 0, 0]);
+    expect(group.children.map((c) => (isPartNode(c) ? c.transform.position : null))).toEqual([[-1, 0, 0], [1, 0, 0]]);
   });
 
   it('ungroupPart promotes children back to their world positions', () => {
@@ -61,7 +65,7 @@ describe('tree mutation operations', () => {
 
     expect(ungroupPart(doc, 'a')).toBe(true);
     expect(doc.root).toHaveLength(2);
-    expect(doc.root.map((n) => (n.kind === 'part' ? n.part.position : null))).toEqual([[0, 0, 0], [2, 0, 0]]);
+    expect(doc.root.map((n) => (isPartNode(n) ? n.transform.position : null))).toEqual([[0, 0, 0], [2, 0, 0]]);
   });
 
   it('setPartTransform and setPartColor update a leaf', () => {
@@ -69,10 +73,10 @@ describe('tree mutation operations', () => {
     insertPart(doc, box('a'));
     expect(setPartTransform(doc, 'a', { position: [1, 2, 3], quaternion: [0, 0, 0, 1], scale: [2, 2, 2] })).toBe(true);
     expect(setPartColor(doc, 'a', 0xff0000)).toBe(true);
-    if (doc.root[0].kind !== 'part') throw new Error('expected part');
-    expect(doc.root[0].part.position).toEqual([1, 2, 3]);
-    expect(doc.root[0].part.scale).toEqual([2, 2, 2]);
-    expect(doc.root[0].part.color).toBe(0xff0000);
+    if (!isPartNode(doc.root[0])) throw new Error('expected part');
+    expect(doc.root[0].transform.position).toEqual([1, 2, 3]);
+    expect(doc.root[0].transform.scale).toEqual([2, 2, 2]);
+    expect(doc.root[0].content.color).toBe(0xff0000);
   });
 });
 
@@ -80,8 +84,11 @@ describe('attach topology', () => {
   function empty(): SetDocument {
     return { root: [], joints: [] };
   }
-  function box(id: string, pos: [number, number, number] = [0, 0, 0]): PartDraft {
-    return { id, kind: 'primitive', name: 'Box', position: pos, quaternion: [0, 0, 0, 1], scale: [1, 1, 1], color: 0x8888cc };
+  function box(id: string, pos: [number, number, number] = [0, 0, 0]): PartSeed {
+    return {
+      content: { id, kind: 'primitive', name: 'Box', color: 0x8888cc },
+      transform: { position: pos, quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+    };
   }
   function jointOf(a: string, b: string): JointSnapshot {
     return {
@@ -157,19 +164,17 @@ describe('attach topology', () => {
 
     expect(mergeIntoGroup(doc, ['a', 'b', 'c'])).toBe(true);
 
-    const groups = doc.root.filter((n) => n.kind === 'group');
+    const groups = doc.root.filter((n) => n.role === 'structure');
     expect(groups).toHaveLength(1);
     const group = groups[0];
-    if (group.kind !== 'group') throw new Error('expected a group node');
+    if (!group) throw new Error('expected a group node');
     expect(group.isGroup).toBe(false);
-    expect(group.children.map((child) => (child.kind === 'part' ? child.part.id : ''))).toEqual(['a', 'b', 'c']);
+    expect(group.children.map((child) => (isPartNode(child) ? child.content.id : ''))).toEqual(['a', 'b', 'c']);
     // The bond survives the merge — only the topology changed.
     expect(doc.groupComponents).toEqual([['a', 'b']]);
     // World positions are unchanged.
-    const worldA = localToWorld(
-      { position: group.children[0].kind === 'part' ? group.children[0].part.position : [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
-      { position: group.position ?? [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
-    );
+    // Every node carries its own transform, so the world position is one call.
+    const worldA = localToWorld(group.children[0].transform, group.transform);
     expect(worldA.position).toEqual([0, 0, 0]);
   });
 
@@ -186,13 +191,13 @@ describe('attach topology', () => {
     rebuildGroups(doc, ['a', 'b', 'c']);
 
     // …so A and B come back as their bonded pure group, and C stands alone.
-    const groups = doc.root.filter((n) => n.kind === 'group');
+    const groups = doc.root.filter((n) => n.role === 'structure');
     expect(groups).toHaveLength(1);
     const group = groups[0];
-    if (group.kind !== 'group') throw new Error('expected a group node');
+    if (!group) throw new Error('expected a group node');
     expect(group.isGroup).toBe(true);
-    expect(group.children.map((child) => (child.kind === 'part' ? child.part.id : ''))).toEqual(['a', 'b']);
-    expect(doc.root.some((n) => n.kind === 'part' && n.part.id === 'c')).toBe(true);
+    expect(group.children.map((child) => (isPartNode(child) ? child.content.id : ''))).toEqual(['a', 'b']);
+    expect(doc.root.some((n) => isPartNode(n) && n.content.id === 'c')).toBe(true);
   });
 
   it('rebuildGroups() keeps a jointed component as an attach assembly', () => {
@@ -204,9 +209,9 @@ describe('attach topology', () => {
     removeJointsTouching(doc, 'c');
     rebuildGroups(doc, ['a', 'b', 'c']);
 
-    const group = doc.root.find((n) => n.kind === 'group');
-    if (group?.kind !== 'group') throw new Error('expected a group node');
+    const group = doc.root.find((n) => n.role === 'structure');
+    if (!group) throw new Error('expected a group node');
     expect(group.isGroup).toBe(false);
-    expect(group.children.map((child) => (child.kind === 'part' ? child.part.id : ''))).toEqual(['a', 'b']);
+    expect(group.children.map((child) => (isPartNode(child) ? child.content.id : ''))).toEqual(['a', 'b']);
   });
 });

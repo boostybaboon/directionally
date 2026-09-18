@@ -1,15 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { getCharacters, getSetPieces, getById, isSettingEntry } from './catalogue';
 import { CATALOGUE_ENTRIES } from './entries';
-import { documentFromParts, collectParts } from '../sketcher/documentTree';
+import { documentFromParts, collectPartNodes, collectParts, isPartNode } from '../sketcher/documentTree';
 import type { CatalogueEntry, CharacterEntry, SetPieceEntry } from './types';
-import type { PartDraft } from '../sketcher/types';
+import type { PlacedPart } from '../sketcher/documentTree';
 import type { GeometryConfig } from '../domain/types';
 
 /** First part of a bundled set-piece entry's document. */
-function bundledPart(id: string): PartDraft {
+function bundledPart(id: string): PlacedPart {
   const entry = getById(id, CATALOGUE_ENTRIES) as SetPieceEntry | undefined;
-  return collectParts(entry?.document ?? { root: [], joints: [] })[0];
+  const node = collectPartNodes(entry?.document ?? { root: [], joints: [] })[0];
+  return { content: node.content, transform: node.transform };
 }
 
 // Controlled fixture — tests must not depend on real seed data so they
@@ -21,7 +22,10 @@ function solidEntry(id: string, label: string, geometry: GeometryConfig, color: 
     id,
     label,
     document: documentFromParts([
-      { id: 'body', kind: 'catalogue', name: label, geometry, material: { color }, position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1], color },
+      {
+        content: { id: 'body', kind: 'catalogue', name: label, geometry, material: { color }, color },
+        transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+      },
     ]),
   };
 }
@@ -122,17 +126,17 @@ describe('CATALOGUE_ENTRIES seed data — Phase 9.B set pieces', () => {
   );
 
   it('wall-flat is a box with correct proportions', () => {
-    expect(bundledPart('wall-flat').geometry).toMatchObject({ type: 'box', width: 4, height: 3, depth: 0.15 });
+    expect(bundledPart('wall-flat').content.geometry).toMatchObject({ type: 'box', width: 4, height: 3, depth: 0.15 });
   });
 
   it('stage-deck is a plane', () => {
-    expect(bundledPart('stage-deck').geometry?.type).toBe('plane');
+    expect(bundledPart('stage-deck').content.geometry?.type).toBe('plane');
   });
 
   it('a plane-bodied set piece lies flat on the ground', () => {
     // The orientation belongs to the document (a part-local rotation), not to a
     // placement convention: inserted or realised, the floor lies flat either way.
-    const [x, y, z, w] = bundledPart('concrete-floor').quaternion;
+    const [x, y, z, w] = bundledPart('concrete-floor').transform.quaternion;
     expect(x).toBeCloseTo(-Math.SQRT1_2);
     expect(y).toBeCloseTo(0);
     expect(z).toBeCloseTo(0);
@@ -143,7 +147,7 @@ describe('CATALOGUE_ENTRIES seed data — Phase 9.B set pieces', () => {
     for (const p of pieces) {
       expect(p.document, p.id).toBeDefined();
       expect(collectParts(p.document!).length).toBeGreaterThan(0);
-      expect(p.document!.root.every((n) => n.kind === 'part')).toBe(true);
+      expect(p.document!.root.every(isPartNode)).toBe(true);
     }
   });
 });

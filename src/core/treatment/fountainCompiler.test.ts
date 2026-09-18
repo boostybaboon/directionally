@@ -4,7 +4,7 @@ import { compileScriptDocument, resolveSetting } from './fountainCompiler';
 import type { ScriptDocument, Beat, ActionBeat, StageSide, StageMark } from './fountain';
 import { documentFromParts } from '../sketcher/documentTree.js';
 import type { CatalogueEntry } from '../catalogue/types.js';
-import type { PartDraft } from '../sketcher/types.js';
+import type { PartSeed } from '../sketcher/documentTree.js';
 import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 
 /** A catalogue part, as a bundled set-piece document holds them. */
@@ -13,17 +13,10 @@ function cataloguePart(
   geometry: GeometryConfig,
   material: MaterialConfig,
   position?: Vec3,
-): PartDraft {
+): PartSeed {
   return {
-    id,
-    kind: 'catalogue',
-    name: 'Box',
-    geometry,
-    material,
-    position: position ?? [0, 0, 0],
-    quaternion: [0, 0, 0, 1],
-    scale: [1, 1, 1],
-    color: material.color,
+    content: { id, kind: 'catalogue', name: 'Box', geometry, material, color: material.color },
+    transform: { position: position ?? [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
   };
 }
 
