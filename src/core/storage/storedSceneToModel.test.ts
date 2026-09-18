@@ -328,6 +328,44 @@ describe('storedSceneToModel – document-backed set pieces', () => {
     expect(model.meshes.map((m) => m.name)).toEqual(['ground']);
   });
 
+  it("adds a setting's own lights and environment from its document", () => {
+    const lit: SetDocument = {
+      ...document,
+      root: [
+        ...document.root,
+        {
+          id: 'lamp',
+          role: 'light',
+          transform: { position: [0, 2, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+          children: [],
+          // A directional light: the model layer has no PointLightAsset yet, so a point
+          // light is skipped by SceneBridge (a pre-existing gap, not this test's subject).
+          light: { type: 'directional', color: 0xffffff, intensity: 3 },
+        },
+      ],
+      environmentMap: 'exterior-sky',
+    };
+    const scene = baseScene({ set: [documentPiece()] });
+    const model = storedSceneToModel(scene, [], [
+      { kind: 'set-piece', id: 'classroom', hasDocument: true, document: lit },
+    ]);
+
+    // A setting's light joins the scene's lights — where light animation addresses it —
+    // rather than riding inside the realised group as geometry.
+    expect(model.lights.map((l) => l.name)).toEqual(['sky', 'lamp']);
+    expect(model.environmentMap).toBe('exterior-sky');
+    expect(model.groups[0].threeObject.children).toHaveLength(1);
+  });
+
+  it("lets the scene's own environment win over the setting's", () => {
+    const scene = baseScene({ set: [documentPiece()], environmentMap: 'scene-sky' });
+    const model = storedSceneToModel(scene, [], [
+      { kind: 'set-piece', id: 'classroom', hasDocument: true, document: { ...document, environmentMap: 'exterior-sky' } },
+    ]);
+
+    expect(model.environmentMap).toBe('scene-sky');
+  });
+
   it('falls back to the placeholder piece when no document was materialised', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const scene = baseScene({ set: [documentPiece()] });

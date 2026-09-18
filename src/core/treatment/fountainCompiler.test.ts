@@ -285,22 +285,22 @@ describe('compileScriptDocument', () => {
     expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
   });
 
-  it('applies environment and lights from a saved setting set-piece entry', () => {
+  it('references a saved setting instead of copying its lighting', () => {
     const doc = buildDoc([sceneWithSetting('Classroom')], ['Robot']);
     const userEntry: CatalogueEntry = {
       kind: 'set-piece',
       id: 'user-classroom-setting',
       label: 'Classroom',
       hasDocument: true,
-      environmentId: 'exterior-sky',
-      lights: [{ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 1 }],
     };
     const result = compileScriptDocument(doc, [userEntry]);
 
-    expect(result.scenes[0].scene.environmentMap).toBe('exterior-sky');
-    expect(result.scenes[0].scene.lights).toHaveLength(1);
+    // A setting's lighting and environment are content of its document, resolved when
+    // the scene is realised (see storedSceneToModel's document-backed set pieces), so the
+    // compiler emits a reference and leaves the scene's own environment alone.
     expect(result.scenes[0].scene.set.length).toBeGreaterThan(0);
     expect(result.scenes[0].scene.placeholderSetting).toBeUndefined();
+    expect(result.scenes[0].scene.environmentMap).toBeUndefined();
   });
 
   it('resolves a setting matching an environment label to the environment map', () => {

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest';
 import { createSetPiece } from './authoringApi.js';
+import { collectLights } from '../sketcher/documentTree.js';
 import {
   _setDirectoryProvider,
   _resetDirectoryProvider,
@@ -72,16 +73,16 @@ describe('createSetPiece', () => {
     expect((await getDocument(entry.id))?.root).toHaveLength(2);
   });
 
-  it('captures the draft lights and environment on the entry', async () => {
+  it('writes the draft lights and environment into the document, not the entry', async () => {
     const { entry } = await createSetPiece({
       ...draft,
       environmentMap: 'studio-neutral',
       lights: [{ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 1 }],
     });
-    const piece = entry as Extract<typeof entry, { kind: 'set-piece' }>;
 
-    expect(piece.environmentId).toBe('studio-neutral');
-    expect(piece.lights).toHaveLength(1);
+    const document = await getDocument(entry.id);
+    expect(document?.environmentMap).toBe('studio-neutral');
+    expect(collectLights(document!)).toHaveLength(1);
   });
 
   it('resumes a same-label entry in place instead of duplicating it', async () => {

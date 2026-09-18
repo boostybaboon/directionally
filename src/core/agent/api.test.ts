@@ -38,7 +38,7 @@ describe('describeCatalogue', () => {
     const entries = [
       character('bob', 'Bob'),
       setPiece('chair', 'Chair'),
-      setPiece('pub', 'Pub', { environmentId: 'studio' }),
+      setPiece('pub', 'Pub', { isSetting: true }),
       environment('studio', 'Studio'),
     ];
     const out = describeCatalogue(entries);

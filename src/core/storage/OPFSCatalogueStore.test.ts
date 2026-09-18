@@ -118,26 +118,19 @@ describe('OPFSCatalogueStore – add + list', () => {
     expect(listed[0].label).toBe('Chair');
   });
 
-  it('createSetPieceDocument() captures the setting metadata', async () => {
-    const entry = await createSetPieceDocument('Classroom', {
-      isSetting: true,
-      environmentId: 'env-night-sky',
-      lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
-    });
+  it('createSetPieceDocument() captures the metadata the entry owns', async () => {
+    const entry = await createSetPieceDocument('Classroom', { isSetting: true, partCount: 4 });
 
     expect(entry.kind).toBe('set-piece');
     const piece = entry as Extract<typeof entry, { kind: 'set-piece' }>;
     expect(piece.isSetting).toBe(true);
-    expect(piece.environmentId).toBe('env-night-sky');
-    expect(piece.lights).toEqual([
-      { id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] },
-    ]);
+    expect(piece.partCount).toBe(4);
 
     const listed = await list();
     expect(listed).toHaveLength(1);
     const listedPiece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
-    expect(listedPiece.environmentId).toBe('env-night-sky');
-    expect(listedPiece.lights).toEqual(piece.lights);
+    expect(listedPiece.isSetting).toBe(true);
+    expect(listedPiece.partCount).toBe(4);
   });
 
   it('add() preserves optional character fields', async () => {
@@ -264,34 +257,6 @@ describe('OPFSCatalogueStore – update (character bake)', () => {
     expect(await list()).toHaveLength(1);
   });
 
-  it('saveDocument() persists environmentId and lights for a re-saved setting', async () => {
-    const entry = await createSetPieceDocument('Garden');
-    await saveDocument(entry.id, { root: [], joints: [] }, {
-      environmentId: 'env-exterior',
-      lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
-    });
-
-    const listed = await list();
-    const piece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
-    expect(piece.environmentId).toBe('env-exterior');
-    expect(piece.lights).toEqual([
-      { id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] },
-    ]);
-  });
-
-  it('saveDocument() clears environmentId and lights when meta omits them', async () => {
-    const entry = await createSetPieceDocument('Garden', {
-      environmentId: 'env-exterior',
-      lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
-    });
-
-    await saveDocument(entry.id, { root: [], joints: [] }, { environmentId: undefined, lights: undefined });
-    const listed = await list();
-    const piece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
-    expect(piece.environmentId).toBeUndefined();
-    expect(piece.lights).toBeUndefined();
-  });
-
   it('saveDocument() writes metadata with the document in one pass', async () => {
     const entry = await createSetPieceDocument('AI Chair');
     const document: SetDocument = { root: [], joints: [] };
@@ -338,30 +303,13 @@ describe('OPFSCatalogueStore – updateSetPieceMeta', () => {
   });
 
   it('leaves fields the caller omits alone', async () => {
-    const entry = await createSetPieceDocument('Garden', {
-      environmentId: 'env-exterior',
-      lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
-      partCount: 3,
-    });
+    const entry = await createSetPieceDocument('Garden', { isSetting: true, partCount: 3 });
 
     await updateSetPieceMeta(entry.id, { label: 'Yard' });
     const piece = (await listDocuments())[0] as Extract<(typeof entry), { kind: 'set-piece' }>;
     expect(piece.label).toBe('Yard');
-    expect(piece.environmentId).toBe('env-exterior');
-    expect(piece.lights).toHaveLength(1);
+    expect(piece.isSetting).toBe(true);
     expect(piece.partCount).toBe(3);
-  });
-
-  it('clears baseline lighting when the caller passes undefined', async () => {
-    const entry = await createSetPieceDocument('Garden', {
-      environmentId: 'env-exterior',
-      lights: [{ id: 'l1', type: 'point', color: 0xffffff, intensity: 1, position: [0, 2, 0] }],
-    });
-
-    await updateSetPieceMeta(entry.id, { environmentId: undefined, lights: undefined });
-    const piece = (await listDocuments())[0] as Extract<(typeof entry), { kind: 'set-piece' }>;
-    expect(piece.environmentId).toBeUndefined();
-    expect(piece.lights).toBeUndefined();
   });
 
   it('marks the entry modified so a renamed set floats to the top of the column', async () => {

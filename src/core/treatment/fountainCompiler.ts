@@ -433,9 +433,10 @@ function compileSceneBlock(
   // Track CAT, CAT-2: resolve the heading's setting against the merged catalogue.
   const setting = resolveSetting(block.setting, userEntries, bindings.setting);
   if (setting.kind === 'set-piece') {
+    // A setting is a reference: its geometry, lighting and environment all travel in
+    // its document, which the renderer resolves. The scene keeps only what the scene
+    // itself declares.
     scene.set = expandEntry(setting.entry);
-    if (setting.entry.environmentId) scene.environmentMap = setting.entry.environmentId;
-    if (setting.entry.lights) scene.lights = setting.entry.lights;
   } else if (setting.kind === 'environment') {
     scene.environmentMap = setting.entry.id;
     // Keep the starter ground plane so actors stand on something under the HDRI.

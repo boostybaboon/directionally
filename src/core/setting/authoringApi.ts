@@ -23,8 +23,8 @@ export type CreatedSetPiece = {
 /**
  * Create — or resume in place — a scenery entry from an untrusted AI Draft.
  *
- * The tree document reaches the entry along with the draft's `lights` and
- * `environmentMap`, so a setting's lighting travels with its geometry. Resuming
+ * The tree document reaches the entry whole — a setting's lighting and environment are
+ * nodes in it, so they travel with its geometry. Resuming
  * matches the user catalogue by label (or an explicit `resumeEntryId`), so a repeat
  * call updates a set rather than duplicating it.
  */
@@ -40,8 +40,6 @@ export async function createSetPiece(
   if (existingId) {
     const updated = await OPFSCatalogueStore.saveDocument(existingId, document, {
       label,
-      environmentId: aiDraft.environmentMap,
-      lights: aiDraft.lights,
       partCount: countParts(document),
     });
     if (updated) return { entry: updated, created: false };
@@ -51,8 +49,6 @@ export async function createSetPiece(
     document,
     isSetting: opts.isSetting ?? true,
     partCount: countParts(document),
-    ...(aiDraft.environmentMap ? { environmentId: aiDraft.environmentMap } : {}),
-    ...(aiDraft.lights && aiDraft.lights.length > 0 ? { lights: aiDraft.lights } : {}),
   });
   return { entry, created: true };
 }

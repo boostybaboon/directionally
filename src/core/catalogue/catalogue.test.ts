@@ -100,9 +100,16 @@ describe('isSettingEntry', () => {
     expect(isSettingEntry(box)).toBe(false);
   });
 
-  it('infers a set-piece is a setting when it captured environment/lights', () => {
-    expect(isSettingEntry({ ...box, id: 'venue', environmentId: 'studio' })).toBe(true);
-    expect(isSettingEntry({ ...box, id: 'lit-venue', lights: [{ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 1 }] })).toBe(true);
+  it('ignores leftover lighting metadata when classifying', () => {
+    // A lighting/environment field is no longer part of an entry — a stale file carrying
+    // one must not flip a prop into a setting.
+    const stale = {
+      ...box,
+      id: 'stale',
+      environmentId: 'studio',
+      lights: [{ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 1 }],
+    } as CatalogueEntry;
+    expect(isSettingEntry(stale)).toBe(false);
   });
 
   it('honours an explicit isSetting flag over the default', () => {

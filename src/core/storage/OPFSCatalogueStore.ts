@@ -1,7 +1,7 @@
 import type { CharacterEntry, SetPieceEntry } from '../catalogue/types.js';
 import type { CharacterSpec } from '../character/characterSpec.js';
 import type { SetDocument } from '../sketcher/documentTree.js';
-import type { LightConfig, Vec3 } from '../domain/types.js';
+import type { Vec3 } from '../domain/types.js';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -46,10 +46,6 @@ type StoredEntry = {
   defaultAnimation?: string;
   /** Procedural character description for spec-backed characters (no GLB). */
   spec?: CharacterSpec;
-  /** Environment catalogue id captured when this entry was saved as a setting. */
-  environmentId?: string;
-  /** Lights captured when this entry was saved as a setting. */
-  lights?: LightConfig[];
   /** Marks a set-piece as a top-level setting rather than a component prop. */
   isSetting?: boolean;
   /** True when a `<id>.document.json` sibling file holds this entry's editable tree. */
@@ -138,10 +134,7 @@ function toUserEntry(s: StoredEntry, gltfPath?: string): UserCatalogueEntry {
     kind: 'set-piece',
     id: s.id,
     label: s.label,
-    ...(s.environmentId ? { environmentId: s.environmentId } : {}),
-    ...(s.lights ? { lights: s.lights } : {}),
-    // An explicit classification round-trips, including `false` (a prop), which is
-    // what stops `isSettingEntry` from falling back to the lighting heuristic.
+    // An explicit classification round-trips, including `false` (a prop).
     ...(s.isSetting !== undefined ? { isSetting: s.isSetting } : {}),
     userAdded: true,
     addedAt: s.addedAt,
@@ -251,14 +244,12 @@ export async function add(
 
 /**
  * Metadata a set-piece carries alongside its tree document: its name, its
- * classification (scenery vs prop), the baseline lighting/environment it was built
- * with, and how many parts it is made of.
+ * classification (scenery vs prop) and how many parts it is made of. Its lighting and
+ * environment are content of the document, not properties of the entry.
  */
 export type SetPieceMeta = {
   label?: string;
   isSetting?: boolean;
-  environmentId?: string;
-  lights?: LightConfig[];
   partCount?: number;
 };
 
@@ -271,8 +262,6 @@ function mergeSetPieceMeta(entry: StoredEntry, meta: SetPieceMeta): StoredEntry 
     ...entry,
     ...(meta.label !== undefined ? { label: meta.label.trim() } : {}),
     ...(meta.isSetting !== undefined ? { isSetting: meta.isSetting } : {}),
-    ...('environmentId' in meta ? { environmentId: meta.environmentId } : {}),
-    ...('lights' in meta ? { lights: meta.lights } : {}),
     ...(meta.partCount !== undefined ? { partCount: meta.partCount } : {}),
     modifiedAt: Date.now(),
   };
@@ -445,10 +434,6 @@ export async function createSetPieceDocument(
     document?: SetDocument;
     /** Marks the set as a top-level setting (a venue) rather than a component prop. */
     isSetting?: boolean;
-    /** Environment catalogue id, captured when the set is used as a setting. */
-    environmentId?: string;
-    /** Baseline lights, captured when the set is used as a setting. */
-    lights?: LightConfig[];
     /** Number of editable primitives, for the catalogue note. */
     partCount?: number;
   } = {},
@@ -471,8 +456,6 @@ export async function createSetPieceDocument(
     label: label.trim(),
     hasDocument: true,
     ...(opts.isSetting ? { isSetting: true } : {}),
-    ...(opts.environmentId ? { environmentId: opts.environmentId } : {}),
-    ...(opts.lights && opts.lights.length > 0 ? { lights: opts.lights } : {}),
     ...(opts.partCount !== undefined ? { partCount: opts.partCount } : {}),
   };
 

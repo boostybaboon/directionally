@@ -52,14 +52,10 @@ export interface SetPieceEntry {
    * `OPFSCatalogueStore.getDocument` rather than carried inline.
    */
   hasDocument?: boolean;
-  /** Optional environment (catalogue id) applied when this entry is used as a setting. */
-  environmentId?: string;
-  /** Optional lights applied when this entry is used as a setting. */
-  lights?: LightConfig[];
   /**
-   * Marks this set-piece as a top-level setting (a venue, e.g. "classroom")
-   * rather than a component (a prop, e.g. "chair"). When absent, `isSettingEntry`
-   * infers top-level status from `environmentId`/`lights` (captured on "save as setting").
+   * Marks this set-piece as a top-level setting (a venue, e.g. "classroom") rather than
+   * a component (a prop, e.g. "chair"). Authored, never inferred: an entry's lighting
+   * and environment are content of its document, not properties of the entry.
    */
   isSetting?: boolean;
 }

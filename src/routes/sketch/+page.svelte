@@ -1491,12 +1491,9 @@
   async function persistSet(): Promise<string | null> {
     const document = sketcher.toDocument();
     if (!currentEntryId && document.root.length === 0) return null;
-    const lights = sketcher.getLights();
-    const meta = {
-      environmentId: sketcher.environmentMap,
-      lights: lights.length > 0 ? [...lights] : undefined,
-      partCount: countParts(document),
-    };
+    // Lighting and environment are content of the document now, so only the metadata
+    // the entry itself owns travels beside it.
+    const meta = { partCount: countParts(document) };
     if (currentEntryId) {
       await OPFSCatalogueStore.saveDocument(currentEntryId, document, meta);
       await refreshSets();
@@ -1587,10 +1584,6 @@
     const entry = await OPFSCatalogueStore.createSetPieceDocument(`${source.label} copy`, {
       document: JSON.parse(JSON.stringify(document)),
       isSetting: isSettingEntry(source),
-      ...(source.kind === 'set-piece' && source.environmentId
-        ? { environmentId: source.environmentId }
-        : {}),
-      ...(source.kind === 'set-piece' && source.lights ? { lights: [...source.lights] } : {}),
       ...(source.partCount !== undefined ? { partCount: source.partCount } : {}),
     });
     await refreshSets();

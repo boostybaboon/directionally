@@ -43,14 +43,12 @@ export function getById(id: string, entries: CatalogueEntry[] = CATALOGUE_ENTRIE
 }
 
 /**
- * True when a catalogue entry can be used as a scene setting (a venue/scenery),
- * as opposed to a component prop. Environments are always settings; a set-piece
- * is a setting when it declares `isSetting`, or — for entries that predate the
- * flag — when it captured an `environmentId`/`lights` on "save as setting".
+ * True when a catalogue entry can be used as a scene setting (a venue/scenery), as
+ * opposed to a component prop. Environments always are; a set-piece is one when it says
+ * so — the classification is authored, never inferred from the content an entry holds.
  */
 export function isSettingEntry(entry: CatalogueEntry): boolean {
   if (entry.kind === 'environment') return true;
   if (entry.kind !== 'set-piece') return false;
-  if (entry.isSetting !== undefined) return entry.isSetting;
-  return Boolean(entry.environmentId || (entry.lights && entry.lights.length > 0));
+  return entry.isSetting === true;
 }

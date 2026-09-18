@@ -7,11 +7,12 @@ import type { CatalogueEntry } from '../catalogue/types.js';
 import type { CharacterSpec } from '../character/characterSpec.js';
 import { specCharacterToGlbUrl } from '../character/specCharacter.js';
 import { realiseDocument } from '../sketcher/realise.js';
+import { collectLights } from '../sketcher/documentTree.js';
 import type { SetDocument } from '../sketcher/documentTree.js';
 import * as OPFSCatalogueStore from './OPFSCatalogueStore.js';
 import { actorBlockToTracks, lightBlockToTracks, setPieceBlockToTracks, cameraBlockToTracks } from '../domain/blockCompiler.js';
 import type { Actor } from '../domain/Production.js';
-import type { ActorVoice, ActorBlock, LightBlock, SetPieceBlock, CameraBlock, Vec3, SceneAction, SetPiece } from '../domain/types.js';
+import type { ActorVoice, ActorBlock, LightBlock, SetPieceBlock, CameraBlock, Vec3, SceneAction, SetPiece, LightConfig } from '../domain/types.js';
 import type { Model } from '../../lib/Model.js';
 import type * as THREE from 'three';
 import type { StoredScene, StoredActor } from './types.js';
@@ -120,25 +121,40 @@ export function storedSceneToModel(
 
   });
 
-  // Re-hydrate StoreScene into a domain Scene so we can reuse the existing
-  // SceneBridge pipeline without duplicating its logic.
-  const scene = new Scene('production', {
-    duration:           storedScene.duration ?? 10,
-    backgroundColor:    storedScene.backgroundColor,
-    environmentMap:     storedScene.environmentMap,
-    placeholderSetting: storedScene.placeholderSetting,
-  });
-
-  scene.setCamera(storedScene.camera);
-
-  for (const light of storedScene.lights) {
-    scene.addLight(light);
-  }
   // Expand any `ref` (Instance) pieces into their rendered children before the scene
   // assembly below — flattening happens here, at render time, never persisted back
   // onto the stored scene.
   const mergedCatalogueEntries = [...CATALOGUE_ENTRIES, ...(userEntries as unknown as CatalogueEntry[])];
   const resolvedSet = resolveInstances(storedScene.set, mergedCatalogueEntries);
+
+  // A setting's lighting and environment belong to its document, so they arrive with
+  // the same documents the geometry is realised from. The scene keeps its own: an
+  // explicit `environmentMap` wins over the setting's, and both light lists are added.
+  const settingLights: LightConfig[] = [];
+  let settingEnvironment: string | undefined;
+  for (const piece of resolvedSet) {
+    if (!piece.catalogueId) continue;
+    const entry = getById(piece.catalogueId, mergedCatalogueEntries);
+    const document = entry?.kind === 'set-piece' ? entry.document : undefined;
+    if (!document) continue;
+    settingLights.push(...collectLights(document));
+    settingEnvironment ??= document.environmentMap;
+  }
+
+  // Re-hydrate StoreScene into a domain Scene so we can reuse the existing
+  // SceneBridge pipeline without duplicating its logic.
+  const scene = new Scene('production', {
+    duration:           storedScene.duration ?? 10,
+    backgroundColor:    storedScene.backgroundColor,
+    environmentMap:     storedScene.environmentMap ?? settingEnvironment,
+    placeholderSetting: storedScene.placeholderSetting,
+  });
+
+  scene.setCamera(storedScene.camera);
+
+  for (const light of [...storedScene.lights, ...settingLights]) {
+    scene.addLight(light);
+  }
   for (const piece of resolvedSet) {
     scene.addSetPiece(piece);
   }
@@ -180,7 +196,9 @@ export function storedSceneToModel(
   }
   for (const [lightId, blocks] of lightBlocksByLight) {
     blocks.sort((a, b) => a.startTime - b.startTime);
-    const lightCfg = storedScene.lights.find((l) => l.id === lightId);
+    // A light is either the scene's own or a setting's (resolved above), and both are in
+    // the domain Scene by now, so the config lookup runs against that one list.
+    const lightCfg = scene.lights.find((l) => l.id === lightId);
     let inferredIntensity: number | undefined = lightCfg?.intensity;
     for (const block of blocks) {
       compiledBlockTracks.push(...lightBlockToTracks(block, inferredIntensity));
