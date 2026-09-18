@@ -1184,6 +1184,69 @@ describe('group / ungroup', () => {
     /** Any edit rebuilds the live objects, so groups are re-read rather than held. */
     const groupById = (id: string) => sketcher.getSession().assemblyGroups.find((g) => g.id === id)!;
 
+    it('expands an instance into live geometry that is not a session part', () => {
+      const chair = documentFromParts([
+        cataloguePart('seat', { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, { color: 0x663311 }, [0, 0.45, 0]),
+        cataloguePart('back', { type: 'box', width: 0.5, height: 0.5, depth: 0.1 }, { color: 0x663311 }, [0, 0.7, -0.2]),
+      ]);
+      sketcher.setRefResolver((ref) => (ref === 'chair' ? chair : null));
+
+      sketcher.loadDocument({
+        root: [
+          { id: 'chair-1', role: 'prop', ref: 'chair', transform: { position: [2, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] }, children: [] },
+        ],
+        joints: [],
+      });
+
+      // The instance owns no session parts: its geometry is the Definition's.
+      expect(sketcher.getSession().parts).toHaveLength(0);
+      const instance = scene.children.find((child) => child.userData.sketcherInstancePath === 'chair-1') as THREE.Group;
+      expect(instance).toBeDefined();
+      expect(instance.position.toArray()).toEqual([2, 0, 0]);
+      expect(instance.children).toHaveLength(2);
+    });
+
+    it('writes an instance transform back to its own node, and survives a reload', () => {
+      const chair = documentFromParts([
+        cataloguePart('seat', { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, { color: 0x663311 }),
+      ]);
+      sketcher.setRefResolver((ref) => (ref === 'chair' ? chair : null));
+      sketcher.loadDocument({
+        root: [
+          { id: 'chair-1', role: 'prop', ref: 'chair', transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] }, children: [] },
+        ],
+        joints: [],
+      });
+
+      const instance = scene.children.find((child) => child.userData.sketcherInstancePath === 'chair-1') as THREE.Group;
+      instance.position.set(4, 1, 0);
+
+      // The node keeps the reference and takes the placement; no geometry is written back.
+      const doc = sketcher.toDocument();
+      expect(doc.root).toHaveLength(1);
+      expect(doc.root[0].ref).toBe('chair');
+      expect(doc.root[0].transform.position).toEqual([4, 1, 0]);
+
+      // A reload releases the old expansion rather than stacking a second one.
+      sketcher.loadDocument(doc);
+      const instances = scene.children.filter((child) => child.userData.sketcherInstancePath !== undefined);
+      expect(instances).toHaveLength(1);
+    });
+
+    it('keeps an unresolvable instance as a node with no geometry', () => {
+      sketcher.setRefResolver(() => null);
+      sketcher.loadDocument({
+        root: [
+          { id: 'chair-1', role: 'prop', ref: 'missing', transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] }, children: [] },
+        ],
+        joints: [],
+      });
+
+      const instance = scene.children.find((child) => child.userData.sketcherInstancePath === 'chair-1') as THREE.Group;
+      expect(instance.children).toHaveLength(0);
+      expect(sketcher.toDocument().root[0].ref).toBe('missing');
+    });
+
     it('groups a group with a part, nesting the inner group', () => {
       const a = sketcher.insertPrimitive('box')!;
       const b = sketcher.insertPrimitive('box')!;

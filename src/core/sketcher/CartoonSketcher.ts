@@ -3,7 +3,8 @@ import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { AttachManager } from './AttachManager.js';
 import { PRIMITIVE_PRESETS, PRESET_BY_NAME, buildLatheGeometry } from './geometry.js';
-import { buildPartMesh } from './realise.js';
+import { buildPartMesh, realiseDocument } from './realise.js';
+import type { RefResolver } from './realise.js';
 import type { JointSnapshot, PartDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
 import {
   emptyDocument,
@@ -22,6 +23,7 @@ import {
   collectPartNodes,
   normalizeDocument,
   isPartNode,
+  isRefNode,
   findGroupByPath,
   findGroupOfPartId,
   collectPartNodesIn,
@@ -141,8 +143,17 @@ export class CartoonSketcher {
    * edit is a document edit (see editDocument).
    */
   private document: SetDocument = emptyDocument();
-  /** The THREE.Group realised for each group node, by node path — rebuilt on every sync. */
-  private readonly groupObjects = new Map<string, THREE.Group>();
+  /** The live object realised for each group or instance node, by node path — rebuilt on
+   *  every sync. A light has none: `placeLight` builds its THREE light. */
+  private readonly nodeObjects = new Map<string, THREE.Group>();
+
+  /**
+   * Definitions the session expands instances from, injected by the caller (the catalogue
+   * is not the Sketcher's to know). Without one, an instance shows nothing.
+   */
+  private refResolver?: RefResolver;
+  /** Instance expansions built by the last sync, so a re-sync can release them. */
+  private instanceRoots: THREE.Object3D[] = [];
 
   /** Called whenever the extrusion depth changes during a drag (phase === 'extruding'). */
   onExtrusionDepthChanged?: (depth: number) => void;
@@ -356,7 +367,7 @@ export class CartoonSketcher {
       (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m) => { m.map?.dispose(); m.dispose(); });
     }
     this.allParts.clear();
-    this.groupObjects.clear();
+    this.nodeObjects.clear();
     this.document = emptyDocument();
     for (const light of this.lightObjects.values()) {
       this.scene.remove(light);
@@ -392,6 +403,11 @@ export class CartoonSketcher {
   /** All available preset names, in display order. */
   static get presetNames(): string[] {
     return PRIMITIVE_PRESETS.map((p) => p.name);
+  }
+
+  /** Inject the resolver an instance is expanded with (see `realiseDocument`). */
+  setRefResolver(resolve?: RefResolver): void {
+    this.refResolver = resolve;
   }
 
   /**
@@ -892,11 +908,11 @@ export class CartoonSketcher {
             node.content = this.partToLeaf(live);
             node.transform = transformOf(live.mesh);
           }
-        } else if (node.role === 'structure') {
-          const group = this.groupObjects.get(path);
-          if (group) {
-            group.updateMatrix();
-            node.transform = transformOf(group);
+        } else {
+          const live = this.nodeObjects.get(path);
+          if (live) {
+            live.updateMatrix();
+            node.transform = transformOf(live);
           }
         }
         walk(node.children, path);
@@ -906,6 +922,45 @@ export class CartoonSketcher {
 
     if (this._environmentMap !== undefined) this.document.environmentMap = this._environmentMap;
     else delete this.document.environmentMap;
+  }
+
+  /**
+   * Expand an instance into one live group at the node's transform. The expansion is the
+   * Definition's own geometry, so it is deliberately *not* registered as session parts: the
+   * instance is edited as a unit, and its internals belong to the Definition (10.4's
+   * overrides are where they become addressable).
+   */
+  private realiseInstance(node: SetNode, path: string): THREE.Group {
+    const t = node.transform;
+    const instance = new THREE.Group();
+    instance.name = path;
+    instance.position.set(t.position[0], t.position[1], t.position[2]);
+    instance.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
+    instance.scale.set(t.scale[0], t.scale[1], t.scale[2]);
+    // Tagged with the node's path, which is how a hit inside it resolves to the instance.
+    instance.userData = { sketcherInstancePath: path };
+
+    const definition = this.refResolver?.(node.ref!);
+    if (definition) {
+      const realised = realiseDocument(definition, this.refResolver);
+      for (const child of [...realised.children]) instance.add(child);
+    }
+    return instance;
+  }
+
+  /** Release an instance expansion: its geometry and materials are not the session's. */
+  private disposeInstance(root: THREE.Object3D): void {
+    root.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.geometry.dispose();
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        (material as THREE.MeshStandardMaterial).map?.dispose();
+        material.dispose();
+      }
+    });
+    root.removeFromParent();
   }
 
   /** Serialise one live part into a part body — its transform lives on the node. */
@@ -952,9 +1007,12 @@ export class CartoonSketcher {
     const partLeaves = new Map<string, PartDraft>();
     for (const node of collectPartNodes(doc)) partLeaves.set(node.content.id, node.content);
 
-    // Dissolve current groups (return members to scene root) + clear joint/group state.
+    // Release the last instance expansions (their meshes and materials are theirs alone),
+    // then dissolve current groups and clear joint/group state.
+    for (const root of this.instanceRoots) this.disposeInstance(root);
+    this.instanceRoots = [];
     this.attach.resetGroups();
-    this.groupObjects.clear();
+    this.nodeObjects.clear();
 
     // Dispose meshes no longer in the tree.
     for (let i = this.parts.length - 1; i >= 0; i--) {
@@ -1056,6 +1114,11 @@ export class CartoonSketcher {
         if (isPartNode(node)) {
           const part = buildPart(node);
           if (part) parentObject.add(part.mesh);
+        } else if (isRefNode(node)) {
+          const instance = this.realiseInstance(node, path);
+          parentObject.add(instance);
+          this.nodeObjects.set(path, instance);
+          this.instanceRoots.push(instance);
         } else if (node.role === 'structure') {
           const t = node.transform;
           const group = new THREE.Group();
@@ -1063,7 +1126,7 @@ export class CartoonSketcher {
           group.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
           group.scale.set(t.scale[0], t.scale[1], t.scale[2]);
           parentObject.add(group);
-          this.groupObjects.set(path, group);
+          this.nodeObjects.set(path, group);
           walkTree(node.children, path, group);
           const memberIds = collectPartNodesIn(node.children).map((part) => part.content.id);
           this.attach.adoptGroup(path, group, memberIds, node.name, node.isGroup);

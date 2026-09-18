@@ -10,6 +10,8 @@
   import CataloguePanel from '../../lib/CataloguePanel.svelte';
   import SetsColumn from '../../lib/SetsColumn.svelte';
   import { getById, isSettingEntry } from '../../core/catalogue/catalogue.js';
+import { collectRefs } from '../../core/sketcher/documentTree.js';
+import type { SetDocument } from '../../core/sketcher/documentTree.js';
   import { CATALOGUE_ENTRIES } from '../../core/catalogue/entries.js';
   import type { CatalogueEntry } from '../../core/catalogue/types.js';
   import type { LightConfig } from '../../core/domain/types.js';
@@ -1527,12 +1529,45 @@
     statusMessage = 'New set — name it in the Sets column.';
   }
 
+  /**
+   * The Definitions the session can expand, by catalogue id. A bundled entry carries its
+   * document inline; a saved one lives in OPFS, which is why this is filled before a load
+   * rather than looked up during it.
+   */
+  const refDocuments = new Map<string, SetDocument>();
+
+  /** A catalogue Definition by id: inline for bundled entries, from OPFS for saved ones. */
+  async function loadDefinition(id: string): Promise<SetDocument | null> {
+    const entry = getById(id, mergedCatalogueEntries);
+    if (entry?.kind === 'set-piece' && entry.document) return entry.document;
+    return OPFSCatalogueStore.getDocument(id);
+  }
+
+  /**
+   * Hand the Sketcher every Definition a document refers to, transitively — a Definition can
+   * hold instances of its own, so the closure is walked rather than the direct refs only.
+   */
+  async function applyRefResolver(doc: SetDocument): Promise<void> {
+    const queue = collectRefs(doc);
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      if (refDocuments.has(id)) continue;
+      const definition = await loadDefinition(id);
+      if (!definition) continue;
+      refDocuments.set(id, definition);
+      queue.push(...collectRefs(definition).filter((ref) => !refDocuments.has(ref)));
+    }
+    sketcher.setRefResolver((ref) => refDocuments.get(ref) ?? null);
+  }
+
   async function openSet(id: string) {
     if (id === currentEntryId) return;
     await persistSet();
     const meta = sets.find((s) => s.id === id);
     const document = await OPFSCatalogueStore.getDocument(id);
     if (!document || !meta) return;
+    // The resolver has to be in place before the load, since sync expands instances.
+    await applyRefResolver(document);
     clearSession();
     sketcher.loadDocument(document);
     sketcherDoc.clearStack();
