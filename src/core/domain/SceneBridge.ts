@@ -157,7 +157,6 @@ export function sceneToModel(
       if (piece.position) asset.position = new THREE.Vector3(...piece.position);
       if (piece.rotation) asset.rotation = new THREE.Euler(...piece.rotation);
       if (piece.scale)    asset.scale    = new THREE.Vector3(...piece.scale);
-      if (piece.parent)   asset.parent   = piece.parent;
       groups.push(asset);
       continue;
     }
@@ -165,7 +164,6 @@ export function sceneToModel(
     if (piece.position) mesh.position = new THREE.Vector3(...piece.position);
     if (piece.rotation) mesh.rotation = new THREE.Euler(...piece.rotation);
     if (piece.scale)    mesh.scale    = new THREE.Vector3(...piece.scale);
-    if (piece.parent)   mesh.parent   = piece.parent;
     meshes.push(mesh);
   }
 

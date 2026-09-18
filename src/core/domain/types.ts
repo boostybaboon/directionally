@@ -29,7 +29,6 @@ export type SetPiece = {
   position?: Vec3;
   rotation?: Vec3;   // Euler XYZ in radians
   scale?: Vec3;
-  parent?: string;   // name of another SetPiece or actor to attach to (for hierarchical assemblies)
   /**
    * Catalogue SetPieceEntry id this piece is an Instance of (Track SET, N2).
    * When set, `resolveInstance`/`resolveInstances` (settingSpec.ts) expand this
