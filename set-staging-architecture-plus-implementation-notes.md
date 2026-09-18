@@ -421,7 +421,10 @@ their producers:
 - a setting's lights are resolved at the *model boundary*, not by the realiser: a model's lights come
   from its `LightAsset[]` (built from the scene's `LightConfig[]`), so a `THREE.Light` inside a
   realised group would be invisible to light animation. `collectLights()` is the single reader of a
-  document's lights — the Sketcher and the model boundary both call it.
+  document's lights — the Sketcher and the model boundary both call it;
+- `getLights()` and `removeLight()` are public API with no page caller: `getSession().lights` covers
+  the read, and the write pair mirrors `addLight` for the light panel 10.5 needs. Kept deliberately
+  rather than deleted, and both are exercised by tests.
 
 ## What the one type buys
 
@@ -508,6 +511,11 @@ no lazy payload loading (documents resolve eagerly — fine at this scale), a fi
 rather than USD's composition-arc generality, and turn-based editing with no true concurrency
 (this doc's synthesis §5; `SKETCHER_ROADMAP.md`'s deferred table; `ROADMAP_API.md`'s out-of-scope
 list).
+
+An open gap rather than an accepted limit: `SceneBridge.buildLight` has no `PointLightAsset`, so a
+point light is warned about and skipped when a scene is built. Pre-existing, but more visible now that
+a setting can own its lighting — a setting that contains one renders without it. TODO: add the asset,
+or refuse point lights at authoring time, so the choice is explicit rather than silent.
 
 ## The AI surface
 

@@ -395,15 +395,22 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       an optional extra: instances are addressed by path. The Outliner (N9) stays deferred — nesting
       is reachable by selecting a member and grouping it, and an indented tree is a navigation
       affordance rather than a requirement.
-    - **10.3 — `ref` + tree-preserving resolution.** "Promote to Definition" (solidify) writes a
-      subtree to the catalogue and replaces it with a `ref` node; inserting an entry produces a `ref`
-      instead of copying leaves. `resolveInstances` stops flattening at resolve time and realises the
-      referenced tree (`realiseDocument` already recurses), so path and identity survive to the
-      renderer. Includes the isolated Edit Source context (N5). The AI draft gains `ref` parts in the
-      same increment — a part body of `{ ref, overrides? }` that `fromAIDraft` maps to a `ref` node and
-      `toAIDraft` projects back — so the AI composes a setting from catalogue items it already sees via
-      `describe_catalogue` instead of reinventing them; the round trip ends in a reference, never a
-      copy.
+    - **10.3 — `ref` + tree-preserving resolution.** Two halves, because the headless model and the
+      editor surface carry different risks:
+      - **10.3-A (headless).** `SetNode.ref`; `realiseDocument(doc, resolve)` expands a referenced
+        Definition under the instance's own transform, recursively (a Definition may itself contain
+        instances) and with the resolver injected, so the realiser stays catalogue-agnostic; and the AI
+        draft gains `ref` parts — a body of `{ ref }` — that `fromAIDraft` maps to a `ref` node and
+        `toAIDraft` projects back. So the AI composes a setting from catalogue items it already sees
+        via `describe_catalogue` instead of reinventing them, and the round trip ends in a reference,
+        never a copy. (`overrides` join the part body in 10.4, with their consumer.)
+      - **10.3-B (session).** The Sketcher resolves refs, so an instance shows its geometry; an
+        instance is selected, moved and undone as one unit (its internals become addressable with
+        10.4's overrides); `insertCatalogueEntry` inserts a `ref` instead of copying leaves; "Save
+        selection as Item" promotes a subtree to a Definition and replaces it in place; and the
+        isolated Edit Source context (N5) opens that Definition in the same editor.
+      `resolveInstances` stops flattening at resolve time, so path and identity survive to the
+      renderer.
       10.2 already introduced paths internally (`pathOfPart`, path-keyed live objects, node-addressed
       grouping); this is where they become the addressing scheme callers use, because two instances of
       one Definition collide on part id — which is what the id-diff, joints and animation addressing
@@ -461,6 +468,10 @@ and the `compose` branch of `expandEntry` (with `offsetPiece` and `MAX_COMPOSITE
 bake (the set-piece path of `OPFSCatalogueStore.update`, and the store's placeholder
 geometry/material), `exportDraftGLB`, the **Publish** button, and the dead `storage/generators/`
 scene generators.
+
+Done in 10.1: `SetDocument.lights` and the entry's `lights`/`environmentId` caches; the
+`isSettingEntry` lighting heuristic; `partTransform()`/`groupTransform()`; and `SetPiece.parent` — a
+name-string parent link that nothing ever set, so `SceneBridge` could only ever read it as undefined.
 
 Done in step 9: the flat `SketcherDraft` and `GroupSnapshot`; `SetSnapshot` (a document *is* the
 snapshot); `CartoonSketcher.toDraft()`/`loadDraft()` and the `draftToDocument`/`documentToDraft`
