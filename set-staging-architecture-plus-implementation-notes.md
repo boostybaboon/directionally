@@ -477,6 +477,43 @@ deletes its dead `parent` field; the flat slot list becomes a tree in 10.3, when
 flattening); and the AI draft grammar, which stays a flat projection that simply reads
 `node.transform`.
 
+## The AI surface
+
+Principle: **the catalogue is the AI's API** — `describe_catalogue` gives it *visibility* (id, label,
+kind, summary), the draft grammar gives it *construction* (primitive/sketch/lathe parts, flat named
+groups, lights, environment), and the verb that connects the two is **`ref`**.
+
+Today the AI is a primitive-only Definition author: `normalizeAIDraft` accepts only
+`primitive | sketch | lathed` (`aiDraftSchema.ts`), the generation prompt only teaches primitives,
+and `AIPart.kind`'s `catalogue` member is rejected rather than realised. The AI can *see* a catalogue
+chair but cannot *use* one.
+
+Decision: the AI drafts **flat Definitions** — primitives + groups + `ref` parts — and nested
+structure is always *referenced*, never authored by the AI. A `ref` part is a handle plus a placement:
+
+```json
+{ "id": "chair-3", "name": "Chair", "ref": "chair", "position": [1, 0, 0], "rotation": [0, 0, 0] }
+```
+
+with optional path-addressed `overrides` (`[{ "path": "chair/back", "op": "remove" }]`). The round
+trip ends in a `ref` node, never a copy:
+
+- `fromAIDraft` maps a `ref` part to a `SetNode` with `ref` + `overrides` — no inlining; the
+  referenced Definition carries the geometry and any nesting;
+- `toAIDraft` projects a `ref` node back to a `ref` part (an opaque handle), so identity survives an
+  edit loop; unreferenced nesting still flattens in the projection, because the grammar cannot
+  express it and only the referenced case needs to;
+- it lands in **10.3**, the same increment that gives the node model `ref` — deliberately, so there
+  is no flatten-at-authoring stopgap.
+
+Because nesting is referenced rather than expressed, the flat grammar stays flat and gains full
+composition power: a preformed "school desk and chair" (itself desk-and-chair groups-of-parts) is one
+`ref` part, and "that chair minus its back" is one `ref` part with an override. Layering
+(venue/dressing/shot) remains compiler-side composition, not AI grammar.
+
+Deferred: a `describe_definition` tool (expose a Definition's node paths) so the AI can target
+overrides intelligently — not needed to place an item, only to vary it.
+
 ## Migration checklist
 
 Ordered and mechanical — one pass touches every file below.
@@ -520,5 +557,4 @@ Deliberately unanswered here, so 10.1 stays bounded:
 - **Override granularity** — may `op: 'set'` patch only the transform, or any field (colour, light
   payload, geometry)?
 - **Resolution timing** — resolve `ref`s lazily per node, or eagerly per document at load?
-- **AI projection of instances** — flatten them (today) or expose an instance as an opaque handle?
 

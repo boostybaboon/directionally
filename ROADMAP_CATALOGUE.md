@@ -385,7 +385,11 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       subtree to the catalogue and replaces it with a `ref` node; inserting an entry produces a `ref`
       instead of copying leaves. `resolveInstances` stops flattening at resolve time and realises the
       referenced tree (`realiseDocument` already recurses), so path and identity survive to the
-      renderer. Includes the isolated Edit Source context (N5).
+      renderer. Includes the isolated Edit Source context (N5). The AI draft gains `ref` parts in the
+      same increment — a part body of `{ ref, overrides? }` that `fromAIDraft` maps to a `ref` node and
+      `toAIDraft` projects back — so the AI composes a setting from catalogue items it already sees via
+      `describe_catalogue` instead of reinventing them; the round trip ends in a reference, never a
+      copy.
     - **10.4 — `overrides` + Apply/Revert.** Instances carry the flat, path-addressed override list
       (Unity's model — the simplest that works); resolution is `deep-copy(Definition)`, then replay
       the overrides in list order. Apply (push to Definition) / Revert affordances, and orphaned
