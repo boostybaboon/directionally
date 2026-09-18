@@ -390,10 +390,14 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       `toAIDraft` projects back — so the AI composes a setting from catalogue items it already sees via
       `describe_catalogue` instead of reinventing them; the round trip ends in a reference, never a
       copy.
+      Path addressing arrives here too: two instances of one Definition collide on part id, which is
+      what the id-diff, joints and animation addressing all key off, so N8 moves up or folds in here.
     - **10.4 — `overrides` + Apply/Revert.** Instances carry the flat, path-addressed override list
       (Unity's model — the simplest that works); resolution is `deep-copy(Definition)`, then replay
       the overrides in list order. Apply (push to Definition) / Revert affordances, and orphaned
-      `path`s are reported on resync rather than silently dropped (Blender's lesson).
+      `path`s are reported on resync rather than silently dropped (Blender's lesson). The same override
+      type and resolution serve 10.5's per-scene setting overrides (N7) — one primitive at two scopes,
+      not two mechanisms.
     - **10.5 — Layering (venue / dressing / shot).** Two or three fixed, ordered override-sets
       composed per scene, last-write-wins — USD's LIVRPS *benefit* without its generality. This is
       where per-shot light tweaks and `role: 'camera' | 'rig'` nodes (additive, no migration) earn

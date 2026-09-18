@@ -467,15 +467,23 @@ override, and a light that moves with its group:
 | Environment | stays `document.environmentMap` | a whole-scene background is not a placed, transformable object. The scene's own `environmentMap` is the author's value; the setting's document supplies the default at load, and the precedence is formalised in 10.5 |
 | `SetPieceEntry.partCount` | kept | the one derived value with a reader that cannot load documents: the catalogue list shows a part count per row |
 | Joints | stay a flat document list keyed by part id | attach is leaf-level; nesting does not change it (a joint *across* two instances needs paths — a 10.3 question, not a 10.1 field) |
+| `NodeOverride` scope | one primitive, two scopes | the same path-addressed override type and resolution serve 10.4's per-instance overrides and 10.5's per-scene setting overrides (N7). Two mechanisms would recreate the combinatorial mess the architecture doc exists to avoid |
 | `SetPieceEntry.lights` / `environmentId` | deleted | they were a covering-index copy so the sync compiler could seed `scene.lights`/`scene.environmentMap` from an entry without loading its document (`fountainCompiler.ts:437`). With lights as nodes the copy has no reader: geometry already arrives from the document at realisation, the async tier is where documents get materialised anyway (`storedSceneToModelAsync`), and light-block intensity inference can read the realised lights. Keeping it would leave one setting's lighting in three places at once — its document, its entry, and the compiled scene |
-| Addressing | unchanged in 10.1: parts by guid, groups by node id | selection and the gizmo are guid-based; path addressing is N8's work, not a rider on this rework |
+| Addressing | unchanged in 10.1: parts by guid, groups by node id | selection and the gizmo are guid-based, so path addressing is not a rider on this rework — but **10.3 requires it**: two instances of one Definition collide on part id, breaking the id-diff, joints and animation addressing, so N8 moves up or folds into 10.3 |
 | Document `version` | dropped (deleted ahead of 10.1) | `version: 2` was written by `emptyDocument()`, `documentFromParts()` and `OPFSCatalogueStore`'s `EMPTY_DOCUMENT` and read by nothing — no check, no upgrader, no compatibility branch. A version field implies a promise we are not keeping, and a stale document is simply abandoned. `normalizeDocument()` is the load-time guard instead: it reads what it recognises and reports what it does not, which catches any stale or malformed file rather than only a version mismatch |
 
-**Not in 10.1** — the address scheme (guid → path) and animation addressing (N8); joint semantics;
-the renderer's `StoredScene`/`SetPiece` contract, where `SetPiece` stays the scene *slot* type (10.1
+**Not in 10.1** — the address scheme (guid → path, which 10.3 pulls forward — see the addressing
+row) and animation addressing (N8); joint semantics; the renderer's `StoredScene`/`SetPiece` contract,
+where `SetPiece` stays the scene *slot* type (10.1
 deletes its dead `parent` field; the flat slot list becomes a tree in 10.3, when resolution stops
 flattening); and the AI draft grammar, which stays a flat projection that simply reads
 `node.transform`.
+
+Accepted limits, named so they stay decisions rather than omissions and documented in full elsewhere:
+no lazy payload loading (documents resolve eagerly — fine at this scale), a fixed 2–3 layer stack
+rather than USD's composition-arc generality, and turn-based editing with no true concurrency
+(this doc's synthesis §5; `SKETCHER_ROADMAP.md`'s deferred table; `ROADMAP_API.md`'s out-of-scope
+list).
 
 ## The AI surface
 
