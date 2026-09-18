@@ -85,13 +85,14 @@ export class AttachManager {
   }
 
   /**
-   * Register a group node's already-realised THREE.Group. `nodeId` is the node's
-   * name segment, so a group keeps its identity across a sync; `isGroup`
-   * distinguishes a pure group (true) from an attach assembly (false).
+   * Register a group node's already-realised THREE.Group. `path` identifies the node (node
+   * ids are only parent-unique, so the path is what keeps a group distinct across a sync);
+   * `partIds` are its descendant parts; `isGroup` distinguishes a pure group (true) from an
+   * attach assembly (false).
    */
-  adoptGroup(nodeId: string, group: THREE.Group, partIds: string[], name?: string, isGroup?: boolean): AssemblyGroup {
-    group.name = nodeId;
-    const ag: AssemblyGroup = { id: nodeId, ...(name !== undefined ? { name } : {}), group, partIds };
+  adoptGroup(path: string, group: THREE.Group, partIds: string[], name?: string, isGroup?: boolean): AssemblyGroup {
+    group.name = path;
+    const ag: AssemblyGroup = { id: path, ...(name !== undefined ? { name } : {}), group, partIds };
     this.assemblyGroups.push(ag);
     if (isGroup !== false) this.groupIds.add(ag.id);
     return ag;
@@ -99,10 +100,12 @@ export class AttachManager {
 
   /** Return all group members to scene root (world preserved) and clear the mirror. Meshes are NOT disposed. */
   resetGroups(): void {
+    // Members first: a nested group's children are attached to the scene (world preserved)
+    // before the group objects themselves go, whichever order the mirror holds them in.
     for (const ag of this.assemblyGroups) {
       for (const child of [...ag.group.children]) this.scene.attach(child);
-      this.scene.remove(ag.group);
     }
+    for (const ag of this.assemblyGroups) ag.group.removeFromParent();
     this.joints.length = 0;
     this.assemblyGroups.length = 0;
     this.groupIds.clear();
@@ -112,7 +115,7 @@ export class AttachManager {
   /** Drop the mirror and remove the group objects it owns from the scene. */
   dispose(): void {
     for (const ag of this.assemblyGroups) {
-      this.scene.remove(ag.group);
+      ag.group.removeFromParent();
     }
     this.joints.length = 0;
     this.assemblyGroups.length = 0;
@@ -122,9 +125,18 @@ export class AttachManager {
 
   // ── Queries over the mirror ────────────────────────────────────────────────
 
-  /** Find the group that contains the given part id, if any. */
+  /**
+   * The innermost group containing the given part id, if any — the group a selection acts
+   * on. A nested group's `partIds` include its descendants too, so containment alone is not
+   * enough to tell the two apart; group ids are paths, so depth is read from them.
+   */
   groupForPart(partId: string): AssemblyGroup | undefined {
-    return this.assemblyGroups.find((g) => g.partIds.includes(partId));
+    let best: AssemblyGroup | undefined;
+    for (const ag of this.assemblyGroups) {
+      if (!ag.partIds.includes(partId)) continue;
+      if (!best || depthOf(ag.id) > depthOf(best.id)) best = ag;
+    }
+    return best;
   }
 
   getJoints(): readonly AttachJoint[] { return this.joints; }
@@ -248,6 +260,10 @@ export class AttachManager {
       }
     }
   }
+}
+
+function depthOf(path: string): number {
+  return path.split('/').length;
 }
 
 function toVector3(v: [number, number, number]): THREE.Vector3 {

@@ -223,33 +223,62 @@ type NodeLocation = {
   path: string;
 };
 
-/**
- * Locate a node by its path (`row-2/chair-3`) or, for a part, by its runtime guid.
- * Node ids are only parent-unique, so the path is what addresses a node unambiguously;
- * a part's guid is what the runtime knows it by.
- */
-function findNodeLocation(nodes: SetNode[], target: string, parent: Transform, prefix: string): NodeLocation | null {
+function locate(
+  nodes: SetNode[],
+  match: (node: SetNode, path: string) => boolean,
+  parent: Transform,
+  prefix: string,
+): NodeLocation | null {
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
     const path = prefix ? `${prefix}/${node.id}` : node.id;
-    if (path === target || (isPartNode(node) && node.content.id === target)) {
-      return { node, nodes, index: i, parent, path };
-    }
-    const found = findNodeLocation(node.children, target, localToWorld(node.transform, parent), path);
+    if (match(node, path)) return { node, nodes, index: i, parent, path };
+    const found = locate(node.children, match, localToWorld(node.transform, parent), path);
     if (found) return found;
   }
   return null;
 }
 
+/**
+ * Locate a node by its path (`row-2/chair-3`) or, for a part, by its runtime guid.
+ * Node ids are only parent-unique, so the path is what addresses a node unambiguously;
+ * a part's guid is what the runtime knows it by.
+ */
+function findNodeLocation(doc: SetDocument, target: string): NodeLocation | null {
+  return locate(doc.root, (node, path) => path === target || (isPartNode(node) && node.content.id === target), IDENTITY_TRANSFORM, '');
+}
+
+/** Locate `node` itself — by identity, so an edit's own re-parenting cannot invalidate it. */
+function findNodeLocationOf(doc: SetDocument, node: SetNode): NodeLocation | null {
+  return locate(doc.root, (candidate) => candidate === node, IDENTITY_TRANSFORM, '');
+}
+
+/** A node given by path, by part guid, or as the node itself — the forms an op accepts. */
+export type NodeRef = string | SetNode;
+
+function locationOf(doc: SetDocument, ref: NodeRef): NodeLocation | null {
+  return typeof ref === 'string' ? findNodeLocation(doc, ref) : findNodeLocationOf(doc, ref);
+}
+
+/** The path of `node` in a document, or null when it is not in this document. */
+export function pathOfNode(doc: SetDocument, node: SetNode): string | null {
+  return findNodeLocationOf(doc, node)?.path ?? null;
+}
+
+/** The node a path or part guid names, or null. */
+export function nodeAt(doc: SetDocument, target: string): SetNode | null {
+  return findNodeLocation(doc, target)?.node ?? null;
+}
+
 /** The path of the part carrying `partId`, or null. Node ids are only parent-unique, so a
  *  part is addressed by path once nesting makes its segment ambiguous. */
 export function pathOfPart(doc: SetDocument, partId: string): string | null {
-  return findNodeLocation(doc.root, partId, IDENTITY_TRANSFORM, '')?.path ?? null;
+  return findNodeLocation(doc, partId)?.path ?? null;
 }
 
 /** The part leaf carrying `partId`, or null. */
 function findPartNode(doc: SetDocument, partId: string): PartNode | null {
-  const loc = findNodeLocation(doc.root, partId, IDENTITY_TRANSFORM, '');
+  const loc = findNodeLocation(doc, partId);
   return loc && isPartNode(loc.node) ? loc.node : null;
 }
 
@@ -271,14 +300,14 @@ function findGroupOfNode(nodes: SetNode[], node: SetNode, parent: Transform, pre
 
 /** The group node that directly contains the part `partId`, or null. */
 export function findGroupOfPartId(doc: SetDocument, partId: string): SetNode | null {
-  const loc = findNodeLocation(doc.root, partId, IDENTITY_TRANSFORM, '');
+  const loc = findNodeLocation(doc, partId);
   if (!loc) return null;
   return findGroupOfNode(doc.root, loc.node, IDENTITY_TRANSFORM, '')?.node ?? null;
 }
 
 /** The group node at `path`, or null. */
 export function findGroupByPath(doc: SetDocument, path: string): SetNode | null {
-  const loc = findNodeLocation(doc.root, path, IDENTITY_TRANSFORM, '');
+  const loc = findNodeLocation(doc, path);
   return loc && loc.node.role === 'structure' ? loc.node : null;
 }
 
@@ -296,7 +325,7 @@ export function insertPart(doc: SetDocument, seed: PartSeed): void {
 
 /** Remove a part leaf (by guid) from the tree. */
 export function removePart(doc: SetDocument, partId: string): boolean {
-  const loc = findNodeLocation(doc.root, partId, IDENTITY_TRANSFORM, '');
+  const loc = findNodeLocation(doc, partId);
   if (!loc || !isPartNode(loc.node)) return false;
   loc.nodes.splice(loc.index, 1);
   return true;
@@ -304,38 +333,39 @@ export function removePart(doc: SetDocument, partId: string): boolean {
 
 /**
  * Wrap sibling nodes into a new group placed at their world centroid, preserving world
- * positions. `targets` are node paths, or a part's runtime guid — so a member may be a
- * part leaf or a whole group, which is what makes a group-of-groups. Members must be
+ * positions. A member is a node path, a part's runtime guid, or the node itself — so a member
+ * may be a part leaf or a whole group, which is what makes a group-of-groups. Members must be
  * siblings: the new group nests into the array they already share.
  *
  * `isGroup` distinguishes a pure group (true) from an attach assembly (false), which is
- * bond-backed only when the group is a whole `groupComponents` entry.
+ * bond-backed only when the group is a whole `groupComponents` entry. Returns the new group
+ * node, or null when the members are not siblings (nothing is changed on that path).
  */
-export function groupNodes(doc: SetDocument, targets: string[], name?: string, isGroup?: boolean): boolean {
-  if (targets.length === 0) return false;
+export function groupNodes(doc: SetDocument, members: NodeRef[], name?: string, isGroup?: boolean): SetNode | null {
+  if (members.length === 0) return null;
 
   const locations: NodeLocation[] = [];
-  for (const target of targets) {
-    const loc = findNodeLocation(doc.root, target, IDENTITY_TRANSFORM, '');
-    if (!loc) return false;
+  for (const member of members) {
+    const loc = locationOf(doc, member);
+    if (!loc) return null;
     locations.push(loc);
   }
   const siblings = locations[0].nodes;
-  if (!locations.every((loc) => loc.nodes === siblings)) return false; // members must be siblings
+  if (!locations.every((loc) => loc.nodes === siblings)) return null; // members must be siblings
 
-  const members = locations.map((loc) => ({ loc, world: localToWorld(loc.node.transform, loc.parent) }));
+  const placed = locations.map((loc) => ({ loc, world: localToWorld(loc.node.transform, loc.parent) }));
   const centroid: [number, number, number] = [0, 0, 0];
-  for (const m of members) {
+  for (const m of placed) {
     centroid[0] += m.world.position[0];
     centroid[1] += m.world.position[1];
     centroid[2] += m.world.position[2];
   }
-  centroid[0] /= members.length;
-  centroid[1] /= members.length;
-  centroid[2] /= members.length;
+  centroid[0] /= placed.length;
+  centroid[1] /= placed.length;
+  centroid[2] /= placed.length;
   const groupT: Transform = { position: centroid, quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
 
-  const ascending = [...members].sort((a, b) => a.loc.index - b.loc.index);
+  const ascending = [...placed].sort((a, b) => a.loc.index - b.loc.index);
   const insertAt = ascending[0].loc.index;
   for (const m of ascending) m.loc.node.transform = worldToLocal(m.world, groupT);
   for (const m of [...ascending].reverse()) siblings.splice(m.loc.index, 1);
@@ -349,7 +379,7 @@ export function groupNodes(doc: SetDocument, targets: string[], name?: string, i
     ...(isGroup !== undefined ? { isGroup } : {}),
   };
   siblings.splice(insertAt, 0, groupNode);
-  return true;
+  return groupNode;
 }
 
 /**
@@ -358,7 +388,7 @@ export function groupNodes(doc: SetDocument, targets: string[], name?: string, i
  * target is itself a group, otherwise the group that directly contains it.
  */
 export function ungroupNode(doc: SetDocument, target: string): boolean {
-  const loc = findNodeLocation(doc.root, target, IDENTITY_TRANSFORM, '');
+  const loc = findNodeLocation(doc, target);
   if (!loc) return false;
   const group = loc.node.role === 'structure'
     ? loc
@@ -565,8 +595,11 @@ export function evictFromGroupBonds(doc: SetDocument, partId: string): void {
  */
 export function mergeIntoGroup(doc: SetDocument, partIds: string[], name?: string): boolean {
   if (partIds.length < 2) return false;
-  for (const id of partIds) promoteToRoot(doc, id);
-  return groupNodes(doc, partIds, name, false);
+  for (const id of partIds) {
+    const node = nodeAt(doc, id);
+    if (node) promoteToRoot(doc, node);
+  }
+  return groupNodes(doc, partIds, name, false) !== null;
 }
 
 /**
@@ -576,7 +609,10 @@ export function mergeIntoGroup(doc: SetDocument, partIds: string[], name?: strin
  * inside it comes back as a pure group.
  */
 export function rebuildGroups(doc: SetDocument, partIds: string[]): void {
-  for (const id of partIds) promoteToRoot(doc, id);
+  for (const id of partIds) {
+    const node = nodeAt(doc, id);
+    if (node) promoteToRoot(doc, node);
+  }
   for (const component of connectedComponents(doc, partIds)) {
     if (component.length < 2) continue;
     const hasAttachJoint = doc.joints.some(
@@ -587,10 +623,11 @@ export function rebuildGroups(doc: SetDocument, partIds: string[]): void {
   }
 }
 
-/** Dissolve every group containing `target`, promoting its members to the document root. */
-function promoteToRoot(doc: SetDocument, target: string): void {
-  const node = findNodeLocation(doc.root, target, IDENTITY_TRANSFORM, '')?.node;
-  if (!node) return;
+/**
+ * Dissolve every group containing `node`, promoting it to the document root. By identity, so
+ * the caller can hold the node across the edits this makes.
+ */
+export function promoteToRoot(doc: SetDocument, node: SetNode): void {
   let containing = findGroupOfNode(doc.root, node, IDENTITY_TRANSFORM, '');
   while (containing) {
     dissolveGroup(containing);

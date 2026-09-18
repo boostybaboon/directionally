@@ -1112,30 +1112,30 @@ describe('group / ungroup', () => {
     expect(sketcher.group([])).toBeNull();
   });
 
-  it('groups a standalone part into an existing group (group merging)', () => {
+  it('groups a standalone part onto an existing group by nesting it', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
     const d = sketcher.insertPrimitive('box')!;
-    sketcher.group([a.id, b.id]);
+    const inner = sketcher.group([a.id, b.id])!;
 
-    // Now group D into the A+B group — all three should end up in one group.
-    const result = sketcher.group([a.id, b.id, d.id]);
-    expect(result).not.toBeNull();
+    // Grouping D with the A+B group nests it: D and that group become siblings.
+    const outer = sketcher.group([a.id, d.id]);
+    expect(outer).not.toBeNull();
 
-    const ag = sketcher.attachManager.groupForPart(a.id);
-    expect(ag).toBeDefined();
-    expect(ag!.partIds).toHaveLength(3);
-    expect(ag!.partIds).toContain(d.id);
+    expect([...outer!.partIds].sort()).toEqual([a.id, b.id, d.id].sort());
     expect(sketcher.attachManager.isGroup(d.id)).toBe(true);
-    // Merged group component should cover all three parts.
+    // The outer group owns all three parts...
     expect(sketcher.attachManager.isInGroupComponent(a.id)).toBe(true);
     expect(sketcher.attachManager.isInGroupComponent(d.id)).toBe(true);
-    // No stale old group — all three share one group.
-    expect(sketcher.attachManager.groupForPart(b.id)?.id).toBe(ag!.id);
-    expect(sketcher.attachManager.groupForPart(d.id)?.id).toBe(ag!.id);
+    // ...while A is still owned by the A+B group, now nested inside the outer one (a
+    // group's id is its path, so nesting prefixes it).
+    const owner = sketcher.attachManager.groupForPart(a.id)!;
+    expect(owner.id).toBe(`${outer!.id}/${inner.id}`);
+    expect([...owner.partIds].sort()).toEqual([a.id, b.id].sort());
+    expect(sketcher.attachManager.groupForPart(d.id)!.id).toBe(outer!.id);
   });
 
-  it('merges two independent groups into one', () => {
+  it('groups two independent groups into one that contains both', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
     const c = sketcher.insertPrimitive('box')!;
@@ -1143,18 +1143,18 @@ describe('group / ungroup', () => {
     sketcher.group([a.id, b.id]);
     sketcher.group([c.id, d.id]);
 
-    // Group all four parts together.
-    const result = sketcher.group([a.id, c.id]);
-    expect(result).not.toBeNull();
+    const outer = sketcher.group([a.id, c.id]);
+    expect(outer).not.toBeNull();
 
-    const ag = sketcher.attachManager.groupForPart(a.id);
-    expect(ag).toBeDefined();
-    expect(ag!.partIds).toHaveLength(4);
-    [a, b, c, d].forEach((p) => {
-      expect(sketcher.attachManager.groupForPart(p.id)?.id).toBe(ag!.id);
-      expect(sketcher.attachManager.isGroup(p.id)).toBe(true);
-    });
-    // Single merged group component.
+    expect([...outer!.partIds].sort()).toEqual([a.id, b.id, c.id, d.id].sort());
+    // Each pair keeps its own group, and both now sit inside the outer one.
+    const owners = [a, b, c, d].map((part) => sketcher.attachManager.groupForPart(part.id)!);
+    expect(new Set(owners.map((g) => g.id)).size).toBe(2);
+    expect(owners.every((g) => g.id.startsWith(`${outer!.id}/`))).toBe(true);
+    expect(owners[0].id).toBe(owners[1].id);
+    expect(owners[2].id).toBe(owners[3].id);
+    expect(owners[0].id).not.toBe(owners[2].id);
+    // One durable bond still covers all four parts.
     expect(sketcher.toDocument().groupComponents).toHaveLength(1);
     expect(sketcher.toDocument().groupComponents![0].sort()).toEqual(
       [a.id, b.id, c.id, d.id].sort(),
@@ -1180,11 +1180,72 @@ describe('group / ungroup', () => {
     const a = sketcher.insertPrimitive('box')!;
     expect(() => sketcher.ungroup(a.id)).not.toThrow();
   });
+  describe('nested groups', () => {
+    /** Any edit rebuilds the live objects, so groups are re-read rather than held. */
+    const groupById = (id: string) => sketcher.getSession().assemblyGroups.find((g) => g.id === id)!;
+
+    it('groups a group with a part, nesting the inner group', () => {
+      const a = sketcher.insertPrimitive('box')!;
+      const b = sketcher.insertPrimitive('box')!;
+      const c = sketcher.insertPrimitive('box')!;
+      sketcher.group([a.id, b.id]);
+      const outer = sketcher.group([a.id, c.id])!;
+
+      expect(outer).not.toBeNull();
+      expect([...outer.partIds].sort()).toEqual([a.id, b.id, c.id].sort());
+
+      // The A+B group still owns A, and is now a live child of the outer group rather than
+      // a sibling of it — a group's id is its path, so nesting prefixes it.
+      const owner = sketcher.attachManager.groupForPart(a.id)!;
+      expect(owner.id).not.toBe(outer.id);
+      expect(owner.id.startsWith(`${outer.id}/`)).toBe(true);
+      expect(owner.group.parent).toBe(outer.group);
+      expect([...owner.partIds].sort()).toEqual([a.id, b.id].sort());
+      expect(sketcher.attachManager.groupForPart(c.id)!.id).toBe(outer.id);
+    });
+
+    it('writes each nested group transform back to its own node', () => {
+      const a = sketcher.insertPrimitive('box')!;
+      const b = sketcher.insertPrimitive('box')!;
+      const c = sketcher.insertPrimitive('box')!;
+      sketcher.group([a.id, b.id]);
+      const outer = sketcher.group([a.id, c.id])!;
+      const inner = sketcher.attachManager.groupForPart(a.id)!;
+
+      outer.group.position.set(5, 0, 0);
+      inner.group.position.set(0, 2, 0);
+
+      const doc = sketcher.toDocument();
+      const outerNode = doc.root.find((n) => n.id === outer.id)!;
+      expect(outerNode.transform.position).toEqual([5, 0, 0]);
+      // The inner group's own node, one level down, carries the inner transform.
+      const innerSegment = inner.id.split('/').pop()!;
+      const innerNode = outerNode.children.find((n) => n.id === innerSegment)!;
+      expect(innerNode.transform.position).toEqual([0, 2, 0]);
+    });
+
+    it('ungrouping a nested group promotes it into its parent, not the root', () => {
+      const a = sketcher.insertPrimitive('box')!;
+      const b = sketcher.insertPrimitive('box')!;
+      const c = sketcher.insertPrimitive('box')!;
+      const inner = sketcher.group([a.id, b.id])!;
+      const outer = sketcher.group([a.id, c.id])!;
+
+      sketcher.ungroup(a.id);
+
+      // The inner group is gone and its parts now belong to the outer one.
+      expect(sketcher.getSession().assemblyGroups.map((g) => g.id)).toEqual([outer.id]);
+      expect(sketcher.attachManager.groupForPart(a.id)!.id).toBe(outer.id);
+      expect(a.mesh.parent).toBe(groupById(outer.id).group);
+    });
+  });
+
 });
 
 // ---------------------------------------------------------------------------
 // attach / detach — the attach flow expressed as tree edits
 // ---------------------------------------------------------------------------
+
 describe('attach / detach', () => {
   let scene: THREE.Scene;
   let sketcher: CartoonSketcher;
@@ -1719,4 +1780,5 @@ describe('PolygonSketcher drawPlane xy', () => {
     // so centroid is (0, 0, 0) but the contract is it IS the average of the points.
     expect(capturedCentroid!.y).toBeCloseTo(0); // centroid.y is always 0 in XZ mode
   });
+
 });

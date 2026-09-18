@@ -54,7 +54,7 @@ describe('tree mutation operations', () => {
     const doc = empty();
     insertPart(doc, box('a', [0, 0, 0]));
     insertPart(doc, box('b', [2, 0, 0]));
-    expect(groupNodes(doc, ['a', 'b'], 'pair')).toBe(true);
+    expect(groupNodes(doc, ['a', 'b'], 'pair')).not.toBeNull();
 
     const group = doc.root.find((n) => n.role === 'structure');
     if (!group) throw new Error('expected a group node');
@@ -286,11 +286,11 @@ describe('nesting and paths', () => {
     insertPart(doc, box('top', [0, 1, 0]));
     insertPart(doc, box('leg', [-0.4, 0.5, 0]));
     insertPart(doc, box('chair', [2, 0, 0]));
-    expect(groupNodes(doc, ['top', 'leg'], 'table')).toBe(true);
+    expect(groupNodes(doc, ['top', 'leg'], 'table')).not.toBeNull();
 
     // The table group and the loose chair are siblings, so grouping them nests the table.
     const tablePath = pathOfPart(doc, 'top')!.split('/')[0];
-    expect(groupNodes(doc, [tablePath, 'chair'], 'room')).toBe(true);
+    expect(groupNodes(doc, [tablePath, 'chair'], 'room')).not.toBeNull();
 
     const room = doc.root[0];
     expect(room.id).toBe('room');
@@ -311,7 +311,7 @@ describe('nesting and paths', () => {
     groupNodes(doc, ['top', 'leg'], 'table');
 
     // `top` sits inside `table` while `loose` is at the root.
-    expect(groupNodes(doc, ['top', 'loose'], 'nope')).toBe(false);
+    expect(groupNodes(doc, ['top', 'loose'], 'nope')).toBeNull();
     expect(doc.root).toHaveLength(2);
   });
 

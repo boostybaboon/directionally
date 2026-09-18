@@ -24,6 +24,11 @@ import {
   isPartNode,
   findGroupByPath,
   findGroupOfPartId,
+  collectPartNodesIn,
+  nodeAt,
+  pathOfPart,
+  pathOfNode,
+  promoteToRoot,
   removePart as removeTreePart,
   setPartColor as setTreePartColor,
   setFaceColor as setTreeFaceColor,
@@ -136,7 +141,7 @@ export class CartoonSketcher {
    * edit is a document edit (see editDocument).
    */
   private document: SetDocument = emptyDocument();
-  /** The THREE.Group realised for each group node, by node id — rebuilt on every sync. */
+  /** The THREE.Group realised for each group node, by node path — rebuilt on every sync. */
   private readonly groupObjects = new Map<string, THREE.Group>();
 
   /** Called whenever the extrusion depth changes during a drag (phase === 'extruding'). */
@@ -616,24 +621,36 @@ export class CartoonSketcher {
    */
   group(partIds: string[], name?: string): AssemblyGroup | null {
     if (partIds.length < 2) return null;
-    // Expand any grouped parts to include all members of their group so that
-    // grouping a standalone D onto an existing A+B group produces an A+B+D group.
-    const expandedIds = [...new Set(
-      partIds.flatMap((id) => {
-        const ag = this.attach.groupForPart(id);
-        return ag ? ag.partIds : [id];
-      })
-    )];
-    if (expandedIds.length < 2) return null;
+    // Each selected part stands for the group that owns it, when it has one — so grouping a
+    // member of a group brings that whole group, and a group can be grouped into another.
+    const targets = [...new Set(partIds.flatMap((id) => {
+      const ag = this.attach.groupForPart(id);
+      if (ag) return [ag.id];
+      const path = pathOfPart(this.document, id);
+      return path ? [path] : [];
+    }))];
+    if (targets.length < 2) return null;
+
+    let created: SetNode | null = null;
     this.editDocument((doc) => {
-      // Ungroup any member already in a group so all become root siblings.
-      for (const id of expandedIds) {
-        if (findGroupOfPartId(doc, id)) ungroupNode(doc, id);
+      const members = targets.map((target) => nodeAt(doc, target)).filter((n): n is SetNode => n !== null);
+      if (members.length < 2) return;
+      const memberIds = members.flatMap((node) => {
+        const under = collectPartNodesIn(node.children).map((part) => part.content.id);
+        return isPartNode(node) ? [node.content.id, ...under] : under;
+      });
+      // Siblings nest where they stand — that is how a group-of-groups is built…
+      created = groupNodes(doc, members, name);
+      if (!created) {
+        // …and members from different branches come to the document root first, as before.
+        for (const node of members) promoteToRoot(doc, node);
+        created = groupNodes(doc, members, name);
       }
-      groupNodes(doc, expandedIds, name);
-      addGroupBond(doc, expandedIds);
+      if (created) addGroupBond(doc, memberIds);
     });
-    return this.attach.groupForPart(expandedIds[0]) ?? null;
+    if (!created) return null;
+    const path = pathOfNode(this.document, created);
+    return path ? this.attach.getAssemblyGroups().find((ag) => ag.id === path) ?? null : null;
   }
 
   /**
@@ -866,25 +883,26 @@ export class CartoonSketcher {
    * document-owned and is not re-derived.
    */
   private writeBack(): void {
-    const walk = (nodes: SetNode[]) => {
+    const walk = (nodes: SetNode[], parentPath: string) => {
       for (const node of nodes) {
+        const path = parentPath ? `${parentPath}/${node.id}` : node.id;
         if (isPartNode(node)) {
           const live = this.allParts.get(node.content.id);
           if (live) {
             node.content = this.partToLeaf(live);
             node.transform = transformOf(live.mesh);
           }
-        } else {
-          const group = this.groupObjects.get(node.id);
+        } else if (node.role === 'structure') {
+          const group = this.groupObjects.get(path);
           if (group) {
             group.updateMatrix();
             node.transform = transformOf(group);
           }
-          walk(node.children);
         }
+        walk(node.children, path);
       }
     };
-    walk(this.document.root);
+    walk(this.document.root, '');
 
     if (this._environmentMap !== undefined) this.document.environmentMap = this._environmentMap;
     else delete this.document.environmentMap;
@@ -1029,35 +1047,31 @@ export class CartoonSketcher {
       return part;
     };
 
-    // Walk the tree, building parts and adopting groups.
-    const walkTree = (nodes: SetNode[]) => {
+    // Walk the tree, building parts and adopting groups at every depth: a nested group's
+    // THREE.Group is parented into its parent's object, so a group's transform composes with
+    // its children's exactly as the document says.
+    const walkTree = (nodes: SetNode[], parentPath: string, parentObject: THREE.Object3D) => {
       for (const node of nodes) {
+        const path = parentPath ? `${parentPath}/${node.id}` : node.id;
         if (isPartNode(node)) {
           const part = buildPart(node);
-          if (part) this.scene.add(part.mesh);
+          if (part) parentObject.add(part.mesh);
         } else if (node.role === 'structure') {
           const t = node.transform;
           const group = new THREE.Group();
           group.position.set(t.position[0], t.position[1], t.position[2]);
           group.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
           group.scale.set(t.scale[0], t.scale[1], t.scale[2]);
-          const memberIds: string[] = [];
-          const collectMembers = (n: SetNode) => {
-            if (isPartNode(n)) { memberIds.push(n.content.id); buildPart(n); }
-            else n.children.forEach(collectMembers);
-          };
-          node.children.forEach(collectMembers);
-          for (const id of memberIds) {
-            const part = this.allParts.get(id);
-            if (part) group.add(part.mesh);
-          }
-          this.scene.add(group);
-          this.groupObjects.set(node.id, group);
-          this.attach.adoptGroup(node.id, group, memberIds, node.name, node.isGroup);
+          parentObject.add(group);
+          this.groupObjects.set(path, group);
+          walkTree(node.children, path, group);
+          const memberIds = collectPartNodesIn(node.children).map((part) => part.content.id);
+          this.attach.adoptGroup(path, group, memberIds, node.name, node.isGroup);
         }
+        // A light node has no scene object of its own: `placeLight` builds its THREE light.
       }
     };
-    walkTree(doc.root);
+    walkTree(doc.root, '', this.scene);
 
     // Mirror the attach topology: joints and the durable group bonds.
     this.attach.setJoints(doc.joints.filter((js) => partLeaves.has(js.partAId) && partLeaves.has(js.partBId)));
