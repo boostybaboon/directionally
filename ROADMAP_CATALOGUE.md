@@ -397,18 +397,22 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       affordance rather than a requirement.
     - **10.3 — `ref` + tree-preserving resolution.** Two halves, because the headless model and the
       editor surface carry different risks:
-      - **10.3-A (headless).** `SetNode.ref`; `realiseDocument(doc, resolve)` expands a referenced
+      - **10.3-A (headless).** ✅ Landed: `SetNode.ref`; `realiseDocument(doc, resolve)` expands a referenced
         Definition under the instance's own transform, recursively (a Definition may itself contain
         instances) and with the resolver injected, so the realiser stays catalogue-agnostic; and the AI
         draft gains `ref` parts — a body of `{ ref }` — that `fromAIDraft` maps to a `ref` node and
         `toAIDraft` projects back. So the AI composes a setting from catalogue items it already sees
         via `describe_catalogue` instead of reinventing them, and the round trip ends in a reference,
-        never a copy. (`overrides` join the part body in 10.4, with their consumer.)
+        never a copy. (`overrides` join the part body in 10.4, with their consumer.) The AI *edit*
+        path trails here: the id-diff walks part leaves, so an edit that adds or removes an instance is
+        currently a no-op — 10.3-B gives the command a node-level diff.
       - **10.3-B (session).** The Sketcher resolves refs, so an instance shows its geometry; an
         instance is selected, moved and undone as one unit (its internals become addressable with
         10.4's overrides); `insertCatalogueEntry` inserts a `ref` instead of copying leaves; "Save
         selection as Item" promotes a subtree to a Definition and replaces it in place; and the
-        isolated Edit Source context (N5) opens that Definition in the same editor.
+        isolated Edit Source context (N5) opens that Definition in the same editor. Two mechanics land
+        with it: the id-diff learns nodes, so an AI edit can add or drop an instance, and an instance's
+        expansion is hit-testable as a unit (its parts are the Definition's, not the session's).
       `resolveInstances` stops flattening at resolve time, so path and identity survive to the
       renderer.
       10.2 already introduced paths internally (`pathOfPart`, path-keyed live objects, node-addressed

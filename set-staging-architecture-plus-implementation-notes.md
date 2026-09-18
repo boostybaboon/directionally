@@ -424,7 +424,10 @@ their producers:
   document's lights — the Sketcher and the model boundary both call it;
 - `getLights()` and `removeLight()` are public API with no page caller: `getSession().lights` covers
   the read, and the write pair mirrors `addLight` for the light panel 10.5 needs. Kept deliberately
-  rather than deleted, and both are exercised by tests.
+  rather than deleted, and both are exercised by tests;
+- `SetNode.ref` landed in 10.3-A with `insertRef`, `collectRefs` and a resolver-aware realiser, and the
+  AI draft's reference parts with it. `overrides` and `tags` still wait for 10.4, where a consumer
+  exists: the instance override the node is meant to carry.
 
 ## What the one type buys
 
