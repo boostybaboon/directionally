@@ -177,14 +177,19 @@ export function countParts(doc: SetDocument): number {
 
 /** Every part leaf in the document, in tree order — node form, transform included. */
 export function collectPartNodes(doc: SetDocument): PartNode[] {
+  return collectPartNodesIn(doc.root);
+}
+
+/** Every part leaf under `nodes`, in tree order. */
+export function collectPartNodesIn(nodes: SetNode[]): PartNode[] {
   const parts: PartNode[] = [];
-  const walk = (nodes: SetNode[]) => {
-    for (const node of nodes) {
+  const walk = (list: SetNode[]) => {
+    for (const node of list) {
       if (isPartNode(node)) parts.push(node);
       else walk(node.children);
     }
   };
-  walk(doc.root);
+  walk(nodes);
   return parts;
 }
 
@@ -208,47 +213,73 @@ function segmentsOf(nodes: SetNode[]): Set<string> {
   return new Set(nodes.map((n) => n.id));
 }
 
-/** Locate a part leaf by guid, returning its sibling array, index, and that array's parent world transform. */
-function findPartLocation(nodes: SetNode[], partId: string, parent: Transform): { nodes: SetNode[]; index: number; parent: Transform } | null {
+/** Where a node sits: its sibling array, index, the parent's world transform and its path. */
+type NodeLocation = {
+  node: SetNode;
+  nodes: SetNode[];
+  index: number;
+  parent: Transform;
+  /** Node ids from the root, joined with '/' — unique within a document. */
+  path: string;
+};
+
+/**
+ * Locate a node by its path (`row-2/chair-3`) or, for a part, by its runtime guid.
+ * Node ids are only parent-unique, so the path is what addresses a node unambiguously;
+ * a part's guid is what the runtime knows it by.
+ */
+function findNodeLocation(nodes: SetNode[], target: string, parent: Transform, prefix: string): NodeLocation | null {
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
-    if (isPartNode(node)) {
-      if (node.content.id === partId) return { nodes, index: i, parent };
-    } else {
-      const found = findPartLocation(node.children, partId, localToWorld(node.transform, parent));
-      if (found) return found;
+    const path = prefix ? `${prefix}/${node.id}` : node.id;
+    if (path === target || (isPartNode(node) && node.content.id === target)) {
+      return { node, nodes, index: i, parent, path };
     }
+    const found = findNodeLocation(node.children, target, localToWorld(node.transform, parent), path);
+    if (found) return found;
   }
   return null;
+}
+
+/** The path of the part carrying `partId`, or null. Node ids are only parent-unique, so a
+ *  part is addressed by path once nesting makes its segment ambiguous. */
+export function pathOfPart(doc: SetDocument, partId: string): string | null {
+  return findNodeLocation(doc.root, partId, IDENTITY_TRANSFORM, '')?.path ?? null;
 }
 
 /** The part leaf carrying `partId`, or null. */
 function findPartNode(doc: SetDocument, partId: string): PartNode | null {
-  const loc = findPartLocation(doc.root, partId, IDENTITY_TRANSFORM);
-  if (!loc) return null;
-  const node = loc.nodes[loc.index];
-  return isPartNode(node) ? node : null;
+  const loc = findNodeLocation(doc.root, partId, IDENTITY_TRANSFORM, '');
+  return loc && isPartNode(loc.node) ? loc.node : null;
 }
 
-/** Locate the group that directly contains `partId`, with its sibling array + parent world transform. */
-function findGroupOfPart(nodes: SetNode[], partId: string, parent: Transform): { group: SetNode; nodes: SetNode[]; index: number; parent: Transform } | null {
+/**
+ * Locate the group whose *direct* children include `node` — by identity, so dissolving a
+ * group mid-walk cannot invalidate the search the way a path would.
+ */
+function findGroupOfNode(nodes: SetNode[], node: SetNode, parent: Transform, prefix: string): NodeLocation | null {
   for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i];
-    if (node.role === 'structure') {
-      if (node.children.some((c) => isPartNode(c) && c.content.id === partId)) {
-        return { group: node, nodes, index: i, parent };
-      }
-      const nested = findGroupOfPart(node.children, partId, localToWorld(node.transform, parent));
-      if (nested) return nested;
-    }
+    const candidate = nodes[i];
+    if (candidate.role !== 'structure') continue;
+    const path = prefix ? `${prefix}/${candidate.id}` : candidate.id;
+    if (candidate.children.includes(node)) return { node: candidate, nodes, index: i, parent, path };
+    const nested = findGroupOfNode(candidate.children, node, localToWorld(candidate.transform, parent), path);
+    if (nested) return nested;
   }
   return null;
 }
 
-/** Return the group node that directly contains `partId`, or null. */
+/** The group node that directly contains the part `partId`, or null. */
 export function findGroupOfPartId(doc: SetDocument, partId: string): SetNode | null {
-  const found = findGroupOfPart(doc.root, partId, IDENTITY_TRANSFORM);
-  return found ? found.group : null;
+  const loc = findNodeLocation(doc.root, partId, IDENTITY_TRANSFORM, '');
+  if (!loc) return null;
+  return findGroupOfNode(doc.root, loc.node, IDENTITY_TRANSFORM, '')?.node ?? null;
+}
+
+/** The group node at `path`, or null. */
+export function findGroupByPath(doc: SetDocument, path: string): SetNode | null {
+  const loc = findNodeLocation(doc.root, path, IDENTITY_TRANSFORM, '');
+  return loc && loc.node.role === 'structure' ? loc.node : null;
 }
 
 /** Add a part leaf to the document root. */
@@ -265,32 +296,34 @@ export function insertPart(doc: SetDocument, seed: PartSeed): void {
 
 /** Remove a part leaf (by guid) from the tree. */
 export function removePart(doc: SetDocument, partId: string): boolean {
-  const loc = findPartLocation(doc.root, partId, IDENTITY_TRANSFORM);
-  if (!loc) return false;
+  const loc = findNodeLocation(doc.root, partId, IDENTITY_TRANSFORM, '');
+  if (!loc || !isPartNode(loc.node)) return false;
   loc.nodes.splice(loc.index, 1);
   return true;
 }
 
 /**
- * Wrap a set of sibling parts into a new group node placed at their world centroid.
- * Members are re-localised to the new group (world positions preserved).
+ * Wrap sibling nodes into a new group placed at their world centroid, preserving world
+ * positions. `targets` are node paths, or a part's runtime guid — so a member may be a
+ * part leaf or a whole group, which is what makes a group-of-groups. Members must be
+ * siblings: the new group nests into the array they already share.
  *
- * `isGroup` distinguishes a pure group (true) from an attach assembly (false),
- * which is bond-backed only when the group is a whole `groupComponents` entry.
+ * `isGroup` distinguishes a pure group (true) from an attach assembly (false), which is
+ * bond-backed only when the group is a whole `groupComponents` entry.
  */
-export function groupParts(doc: SetDocument, partIds: string[], name?: string, isGroup?: boolean): boolean {
-  const first = findPartLocation(doc.root, partIds[0], IDENTITY_TRANSFORM);
-  if (!first) return false;
+export function groupNodes(doc: SetDocument, targets: string[], name?: string, isGroup?: boolean): boolean {
+  if (targets.length === 0) return false;
 
-  const members: { node: PartNode; index: number; world: Transform }[] = [];
-  for (const pid of partIds) {
-    const loc = findPartLocation(first.nodes, pid, first.parent);
-    if (!loc || loc.nodes !== first.nodes) return false; // members must be siblings
-    const node = loc.nodes[loc.index];
-    if (!isPartNode(node)) return false;
-    members.push({ node, index: loc.index, world: localToWorld(node.transform, first.parent) });
+  const locations: NodeLocation[] = [];
+  for (const target of targets) {
+    const loc = findNodeLocation(doc.root, target, IDENTITY_TRANSFORM, '');
+    if (!loc) return false;
+    locations.push(loc);
   }
+  const siblings = locations[0].nodes;
+  if (!locations.every((loc) => loc.nodes === siblings)) return false; // members must be siblings
 
+  const members = locations.map((loc) => ({ loc, world: localToWorld(loc.node.transform, loc.parent) }));
   const centroid: [number, number, number] = [0, 0, 0];
   for (const m of members) {
     centroid[0] += m.world.position[0];
@@ -302,39 +335,49 @@ export function groupParts(doc: SetDocument, partIds: string[], name?: string, i
   centroid[2] /= members.length;
   const groupT: Transform = { position: centroid, quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
 
-  const ascending = [...members].sort((a, b) => a.index - b.index);
-  const insertAt = ascending[0].index;
-  for (const m of ascending) m.node.transform = worldToLocal(m.world, groupT);
-  for (const m of [...ascending].reverse()) first.nodes.splice(m.index, 1);
+  const ascending = [...members].sort((a, b) => a.loc.index - b.loc.index);
+  const insertAt = ascending[0].loc.index;
+  for (const m of ascending) m.loc.node.transform = worldToLocal(m.world, groupT);
+  for (const m of [...ascending].reverse()) siblings.splice(m.loc.index, 1);
 
   const groupNode: SetNode = {
-    id: nameSegment(name ?? 'group', segmentsOf(first.nodes)),
+    id: nameSegment(name ?? 'group', segmentsOf(siblings)),
     role: 'structure',
     transform: groupT,
-    children: ascending.map((x) => x.node),
+    children: ascending.map((m) => m.loc.node),
     ...(name !== undefined ? { name } : {}),
     ...(isGroup !== undefined ? { isGroup } : {}),
   };
-  first.nodes.splice(insertAt, 0, groupNode);
+  siblings.splice(insertAt, 0, groupNode);
   return true;
 }
 
-/** Dissolve the group that directly contains `partId`, promoting its children (world positions preserved). */
-export function ungroupPart(doc: SetDocument, partId: string): boolean {
-  const found = findGroupOfPart(doc.root, partId, IDENTITY_TRANSFORM);
-  if (!found) return false;
-  const { group, nodes, index, parent } = found;
-  const groupWorld = localToWorld(group.transform, parent);
+/**
+ * Dissolve a group, promoting its children into its parent — the document root only when it
+ * sat there. `target` is a node path or a part's guid: the group *at* that target when the
+ * target is itself a group, otherwise the group that directly contains it.
+ */
+export function ungroupNode(doc: SetDocument, target: string): boolean {
+  const loc = findNodeLocation(doc.root, target, IDENTITY_TRANSFORM, '');
+  if (!loc) return false;
+  const group = loc.node.role === 'structure'
+    ? loc
+    : findGroupOfNode(doc.root, loc.node, IDENTITY_TRANSFORM, '');
+  if (!group) return false;
+  dissolveGroup(group);
+  return true;
+}
 
+/** Promote a group's children into its parent, preserving world positions. */
+function dissolveGroup(group: NodeLocation): void {
+  const groupWorld = localToWorld(group.node.transform, group.parent);
   // Every node kind carries its own transform, so promotion is one line each — the
   // uniformity the node hoist buys.
-  const promoted: SetNode[] = group.children.map((child) => {
-    child.transform = worldToLocal(localToWorld(child.transform, groupWorld), parent);
+  const promoted: SetNode[] = group.node.children.map((child) => {
+    child.transform = worldToLocal(localToWorld(child.transform, groupWorld), group.parent);
     return child;
   });
-
-  nodes.splice(index, 1, ...promoted);
-  return true;
+  group.nodes.splice(group.index, 1, ...promoted);
 }
 
 /** Set a part leaf's local transform. */
@@ -448,16 +491,7 @@ export function collectLights(doc: SetDocument): LightConfig[] {
 
 // ── Attach topology (joints, group nodes, durable bonds) ─────────────────────
 
-/** The group node carrying `id`, searching nested groups. */
-export function findGroupNodeById(nodes: SetNode[], id: string): SetNode | null {
-  for (const node of nodes) {
-    if (node.role !== 'structure') continue;
-    if (node.id === id) return node;
-    const nested = findGroupNodeById(node.children, id);
-    if (nested) return nested;
-  }
-  return null;
-}
+
 
 /**
  * The part ids of the group node that contains `partId` — the part itself when it
@@ -532,7 +566,7 @@ export function evictFromGroupBonds(doc: SetDocument, partId: string): void {
 export function mergeIntoGroup(doc: SetDocument, partIds: string[], name?: string): boolean {
   if (partIds.length < 2) return false;
   for (const id of partIds) promoteToRoot(doc, id);
-  return groupParts(doc, partIds, name, false);
+  return groupNodes(doc, partIds, name, false);
 }
 
 /**
@@ -549,13 +583,19 @@ export function rebuildGroups(doc: SetDocument, partIds: string[]): void {
       (j) => component.includes(j.partAId) && component.includes(j.partBId),
     );
     const bonded = groupBonds(doc).some((bond) => component.every((id) => bond.includes(id)));
-    groupParts(doc, component, undefined, !hasAttachJoint && bonded);
+    groupNodes(doc, component, undefined, !hasAttachJoint && bonded);
   }
 }
 
-/** Dissolve every group containing `partId`, promoting its members to the document root. */
-function promoteToRoot(doc: SetDocument, partId: string): void {
-  while (findGroupOfPart(doc.root, partId, IDENTITY_TRANSFORM)) ungroupPart(doc, partId);
+/** Dissolve every group containing `target`, promoting its members to the document root. */
+function promoteToRoot(doc: SetDocument, target: string): void {
+  const node = findNodeLocation(doc.root, target, IDENTITY_TRANSFORM, '')?.node;
+  if (!node) return;
+  let containing = findGroupOfNode(doc.root, node, IDENTITY_TRANSFORM, '');
+  while (containing) {
+    dissolveGroup(containing);
+    containing = findGroupOfNode(doc.root, node, IDENTITY_TRANSFORM, '');
+  }
 }
 
 /** Connected components of `partIds` over attach joints and durable bonds. */

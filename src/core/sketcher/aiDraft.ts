@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { LightConfig } from '../domain/types.js';
 import type { PartDraft } from './types.js';
-import { addLightNode, collectLights, documentFromParts, groupParts, isPartNode } from './documentTree.js';
+import { addLightNode, collectLights, documentFromParts, groupNodes, isPartNode } from './documentTree.js';
 import type { PartSeed, SetDocument, SetNode } from './documentTree.js';
 
 /**
@@ -289,7 +289,7 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
     const memberIds = group.children
       .map((handle) => guidOfHandle.get(handle))
       .filter((id): id is string => id !== undefined);
-    if (memberIds.length > 0) groupParts(doc, memberIds, group.name);
+    if (memberIds.length > 0) groupNodes(doc, memberIds, group.name);
   }
 
   // Lights arrive flat, so each becomes a root node; the AI's own id is kept (an

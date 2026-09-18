@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { toAIDraft, fromAIDraft, AI_CONVENTION } from './aiDraft.js';
-import { addLightNode, collectPartNodes, collectParts, documentFromParts, groupParts, isPartNode } from './documentTree.js';
+import { addLightNode, collectPartNodes, collectParts, documentFromParts, groupNodes, isPartNode } from './documentTree.js';
 import type { PartSeed, SetDocument } from './documentTree.js';
 import type { PartDraft } from './types.js';
 import type { AIPart } from './aiDraft.js';
@@ -31,7 +31,7 @@ const placed = (d: SetDocument) => collectPartNodes(d).map((n) => ({ content: n.
 
 /** Wrap ids in one group node — the tree's own grouping, world positions preserved. */
 function grouped(d: SetDocument, ids: string[], name?: string): SetDocument {
-  groupParts(d, ids, name);
+  groupNodes(d, ids, name);
   return d;
 }
 

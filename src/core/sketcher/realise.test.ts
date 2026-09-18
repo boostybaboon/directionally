@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { realiseDocument } from './realise.js';
-import { insertPart, groupParts } from './documentTree.js';
+import { insertPart, groupNodes } from './documentTree.js';
 import type { PartSeed, SetDocument } from './documentTree.js';
 import type { PartDraft } from './types.js';
 import type { Transform } from './transform.js';
@@ -37,7 +37,7 @@ describe('realiseDocument', () => {
     insertPart(doc, part('top'));
     insertPart(doc, part('leg-a', {}, { position: [5, 2, -3] }));
     insertPart(doc, part('leg-b', {}, { position: [6, 2, -3] }));
-    groupParts(doc, ['leg-a', 'leg-b'], 'table', true);
+    groupNodes(doc, ['leg-a', 'leg-b'], 'table', true);
     const groupNode = doc.root.find((n) => n.role === 'structure');
     if (!groupNode) throw new Error('expected a group node');
 

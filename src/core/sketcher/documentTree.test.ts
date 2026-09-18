@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   insertPart,
   removePart,
-  groupParts,
-  ungroupPart,
+  groupNodes,
+  ungroupNode,
   setPartTransform,
   setPartColor,
   addJoint,
@@ -17,6 +17,7 @@ import {
   addLightNode,
   removeLightNode,
   collectLights,
+  pathOfPart,
 } from './documentTree.js';
 import { isPartNode } from './documentTree.js';
 import { localToWorld } from './transform.js';
@@ -49,11 +50,11 @@ describe('tree mutation operations', () => {
     expect(removePart(doc, 'a')).toBe(false);
   });
 
-  it('groupParts wraps siblings into a group at their centroid, preserving world positions', () => {
+  it('groupNodes() wraps siblings into a group at their centroid, preserving world positions', () => {
     const doc = empty();
     insertPart(doc, box('a', [0, 0, 0]));
     insertPart(doc, box('b', [2, 0, 0]));
-    expect(groupParts(doc, ['a', 'b'], 'pair')).toBe(true);
+    expect(groupNodes(doc, ['a', 'b'], 'pair')).toBe(true);
 
     const group = doc.root.find((n) => n.role === 'structure');
     if (!group) throw new Error('expected a group node');
@@ -61,13 +62,13 @@ describe('tree mutation operations', () => {
     expect(group.children.map((c) => (isPartNode(c) ? c.transform.position : null))).toEqual([[-1, 0, 0], [1, 0, 0]]);
   });
 
-  it('ungroupPart promotes children back to their world positions', () => {
+  it('ungroupNode() promotes children back to their world positions', () => {
     const doc = empty();
     insertPart(doc, box('a', [0, 0, 0]));
     insertPart(doc, box('b', [2, 0, 0]));
-    groupParts(doc, ['a', 'b'], 'pair');
+    groupNodes(doc, ['a', 'b'], 'pair');
 
-    expect(ungroupPart(doc, 'a')).toBe(true);
+    expect(ungroupNode(doc, 'a')).toBe(true);
     expect(doc.root).toHaveLength(2);
     expect(doc.root.map((n) => (isPartNode(n) ? n.transform.position : null))).toEqual([[0, 0, 0], [2, 0, 0]]);
   });
@@ -131,7 +132,7 @@ describe('attach topology', () => {
     const doc = populated();
     expect(groupMembersOf(doc, 'a')).toEqual(['a']);
 
-    groupParts(doc, ['a', 'b'], 'pair');
+    groupNodes(doc, ['a', 'b'], 'pair');
     expect(groupMembersOf(doc, 'a').sort()).toEqual(['a', 'b']);
     expect(groupMembersOf(doc, 'c')).toEqual(['c']);
   });
@@ -163,7 +164,7 @@ describe('attach topology', () => {
 
   it('mergeIntoGroup() dissolves member groups and keeps world positions', () => {
     const doc = populated();
-    groupParts(doc, ['a', 'b'], 'pair');
+    groupNodes(doc, ['a', 'b'], 'pair');
     addGroupBond(doc, ['a', 'b']);
 
     expect(mergeIntoGroup(doc, ['a', 'b', 'c'])).toBe(true);
@@ -184,7 +185,7 @@ describe('attach topology', () => {
 
   it('rebuildGroups() splits a chain and recovers a bonded pure group', () => {
     const doc = populated();
-    groupParts(doc, ['a', 'b'], 'pair');
+    groupNodes(doc, ['a', 'b'], 'pair');
     addGroupBond(doc, ['a', 'b']);
     mergeIntoGroup(doc, ['a', 'b', 'c']);
     addJoint(doc, jointOf('a', 'b'));
@@ -254,5 +255,96 @@ describe('lights', () => {
     addLightNode(doc, sun);
     addLightNode(doc, { ...sun, position: [0, 0, 0] });
     expect(doc.root.map((n) => n.id)).toEqual(['sun', 'sun-2']);
+  });
+});
+
+describe('nesting and paths', () => {
+  const empty = (): SetDocument => ({ root: [], joints: [] });
+  const box = (id: string, pos: [number, number, number] = [0, 0, 0]): PartSeed => ({
+    content: { id, kind: 'primitive', name: 'Box', color: 0x8888cc },
+    transform: { position: pos, quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+  });
+  // Decomposition can hand back -0, which is not 0 to toEqual.
+  const round = (t: { position: number[] }) => t.position.map((n) => {
+    const r = Math.round(n * 1e6) / 1e6;
+    return Object.is(r, -0) ? 0 : r;
+  });
+
+  it('pathOfPart() reports the node path, which stays unique as groups nest', () => {
+    const doc = empty();
+    insertPart(doc, box('a'));
+    insertPart(doc, box('b', [2, 0, 0]));
+    groupNodes(doc, ['a', 'b'], 'pair');
+
+    expect(pathOfPart(doc, 'a')).toBe('pair/box');
+    expect(pathOfPart(doc, 'b')).toBe('pair/box-2');
+    expect(pathOfPart(doc, 'nope')).toBeNull();
+  });
+
+  it('groupNodes() wraps a group and a part into a group-of-groups', () => {
+    const doc = empty();
+    insertPart(doc, box('top', [0, 1, 0]));
+    insertPart(doc, box('leg', [-0.4, 0.5, 0]));
+    insertPart(doc, box('chair', [2, 0, 0]));
+    expect(groupNodes(doc, ['top', 'leg'], 'table')).toBe(true);
+
+    // The table group and the loose chair are siblings, so grouping them nests the table.
+    const tablePath = pathOfPart(doc, 'top')!.split('/')[0];
+    expect(groupNodes(doc, [tablePath, 'chair'], 'room')).toBe(true);
+
+    const room = doc.root[0];
+    expect(room.id).toBe('room');
+    // A part child is named by its guid, a group child by its node id.
+    expect(room.children.map((c) => (isPartNode(c) ? c.content.id : c.id)).sort()).toEqual(['chair', 'table']);
+
+    // World positions survive both levels of localisation.
+    const table = room.children.find((c) => c.id === 'table')!;
+    const top = table.children[0];
+    expect(round(localToWorld(top.transform, localToWorld(table.transform, room.transform)))).toEqual([0, 1, 0]);
+  });
+
+  it('groupNodes() refuses members that are not siblings', () => {
+    const doc = empty();
+    insertPart(doc, box('top'));
+    insertPart(doc, box('leg'));
+    insertPart(doc, box('loose'));
+    groupNodes(doc, ['top', 'leg'], 'table');
+
+    // `top` sits inside `table` while `loose` is at the root.
+    expect(groupNodes(doc, ['top', 'loose'], 'nope')).toBe(false);
+    expect(doc.root).toHaveLength(2);
+  });
+
+  it('ungroupNode() promotes a nested group into its parent, not the root', () => {
+    const doc = empty();
+    insertPart(doc, box('top'));
+    insertPart(doc, box('leg'));
+    insertPart(doc, box('chair', [2, 0, 0]));
+    groupNodes(doc, ['top', 'leg'], 'table');
+    const tablePath = pathOfPart(doc, 'top')!.split('/')[0];
+    groupNodes(doc, [tablePath, 'chair'], 'room');
+
+    // A part's guid addresses the group that owns it, at whatever depth it now sits.
+    expect(ungroupNode(doc, 'top')).toBe(true);
+    expect(doc.root).toHaveLength(1);
+    expect(doc.root[0].id).toBe('room');
+    expect(doc.root[0].children.map((c) => c.id).sort()).toEqual(['box', 'box-2', 'box-3']);
+  });
+
+  it('addresses a group by its absolute path, which a re-parent changes', () => {
+    const doc = empty();
+    insertPart(doc, box('top'));
+    insertPart(doc, box('leg'));
+    insertPart(doc, box('chair', [2, 0, 0]));
+    groupNodes(doc, ['top', 'leg'], 'table');
+    const tablePath = pathOfPart(doc, 'top')!.split('/')[0];
+    expect(tablePath).toBe('table');
+
+    groupNodes(doc, [tablePath, 'chair'], 'room');
+
+    const nested = pathOfPart(doc, 'top')!.split('/').slice(0, -1).join('/');
+    expect(nested).toBe('room/table');
+    expect(ungroupNode(doc, nested)).toBe(true);
+    expect(doc.root[0].children.map((c) => c.id).sort()).toEqual(['box', 'box-2', 'box-3']);
   });
 });

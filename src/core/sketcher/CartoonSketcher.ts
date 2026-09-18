@@ -9,8 +9,8 @@ import {
   emptyDocument,
   cloneDocument,
   insertPart,
-  groupParts,
-  ungroupPart,
+  groupNodes,
+  ungroupNode,
   mergeIntoGroup,
   rebuildGroups,
   addJoint,
@@ -22,7 +22,7 @@ import {
   collectPartNodes,
   normalizeDocument,
   isPartNode,
-  findGroupNodeById,
+  findGroupByPath,
   findGroupOfPartId,
   removePart as removeTreePart,
   setPartColor as setTreePartColor,
@@ -499,7 +499,7 @@ export class CartoonSketcher {
       for (const seed of seeds) insertPart(doc, seed);
       if (seeds.length > 1) {
         const ids = seeds.map((seed) => seed.content.id);
-        groupParts(doc, ids, entry.label);
+        groupNodes(doc, ids, entry.label);
         addGroupBond(doc, ids);
       }
     });
@@ -526,7 +526,7 @@ export class CartoonSketcher {
     // The mirror's group id is the group node's own id, so it addresses the document directly.
     if (!this.attach.getAssemblyGroups().some((g) => g.id === groupId)) return;
     this.editDocument((doc) => {
-      const node = findGroupNodeById(doc.root, groupId);
+      const node = findGroupByPath(doc, groupId);
       if (!node) return;
       if (name === undefined) delete node.name;
       else node.name = name;
@@ -577,7 +577,7 @@ export class CartoonSketcher {
       evictFromGroupBonds(doc, id);
       const lastChild = group?.children[0];
       if (group && group.children.length === 1 && lastChild && isPartNode(lastChild)) {
-        ungroupPart(doc, lastChild.content.id);
+        ungroupNode(doc, lastChild.content.id);
       }
     });
   }
@@ -628,9 +628,9 @@ export class CartoonSketcher {
     this.editDocument((doc) => {
       // Ungroup any member already in a group so all become root siblings.
       for (const id of expandedIds) {
-        if (findGroupOfPartId(doc, id)) ungroupPart(doc, id);
+        if (findGroupOfPartId(doc, id)) ungroupNode(doc, id);
       }
-      groupParts(doc, expandedIds, name);
+      groupNodes(doc, expandedIds, name);
       addGroupBond(doc, expandedIds);
     });
     return this.attach.groupForPart(expandedIds[0]) ?? null;
@@ -644,7 +644,7 @@ export class CartoonSketcher {
    */
   ungroup(partId: string): void {
     this.editDocument((doc) => {
-      if (findGroupOfPartId(doc, partId)) ungroupPart(doc, partId);
+      if (findGroupOfPartId(doc, partId)) ungroupNode(doc, partId);
       removeGroupBondContaining(doc, partId);
     });
   }
