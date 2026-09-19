@@ -443,8 +443,11 @@ their producers:
   undoes), and double-click opens the Definition an instance refers to — Edit Source (N5), which is
   `openSet` plus the instance's `ref` and a status line naming the way back. A bundled entry reports
   that it has no editable document instead of opening;
-- still owed from 10.3-B: "Save selection as Item" (promote a subtree → Definition, replace in place)
-  and the diff's group-structure pass (see above).
+- "Save selection as Item" (N4) is `extractDefinition`: the node keeps its id and transform and the
+  instance takes its place, so the world does not move — which is why the promotion needs no
+  re-placement, and why a part leaf becomes a one-part Definition at identity. Inside joints and
+  bonds travel with the subtree; a boundary-crossing joint is dropped rather than left dangling;
+- still owed from 10.3-B: the diff's group-structure pass (see above).
 
 ## What the one type buys
 
