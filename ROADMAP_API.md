@@ -49,8 +49,14 @@ not touched), and (b) **review + undo** (the turn is one labelled, undoable step
 
 ## The id-diff contract (app-side)
 
-Given the returned document vs the live session's document, by stable part id: same id + same data
+Given the returned document vs the live session's document, by stable id: same id + same data
 → no-op; new id → add; missing id → remove; same id + changed data → update.
+
+The id is the part's guid for a part leaf, and the node's id for an instance — a `ref` node has no body
+to compare, so its placement *is* its state (Track SET 10.3-B). Node ids are what survives the round
+trip, since `toAIDraft` re-derives them from the same names; a node the AI re-points at another
+Definition is a drop and a place under one id. Structure is the part this diff still has no pass for:
+group membership changes are not applied, so an instance added *inside* a new group lands at the root.
 
 ## Relationship to the set-staging Node model
 

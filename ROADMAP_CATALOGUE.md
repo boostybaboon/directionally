@@ -322,10 +322,11 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
    entry's document — inline for bundled definitions, from OPFS for saved sets. `SetPieceEntry` lost
    `geometry`/`material`/`compose`/`gltfPath` and its `defaultRotation` (a plane's orientation is a
    part-local rotation inside its document), the catalogue builders moved from `CartoonSketcher` into
-   `geometry.ts`, and `insertCatalogueEntry` now copies a document's parts into the session's tree —
+   `geometry.ts`, and `insertCatalogueEntry` grew to copy a document's parts into the session's tree —
    fresh runtime ids, one assembly group when the prop is multi-part — so an inserted prop survives
    every later edit (previously a tree re-derive dropped it, since its name was not a primitive
-   preset). Lights/environments remain their own kinds. The sidecar went with it: no per-set GLB bake,
+   preset). 10.3-B replaced that copy with a `ref` node: once the session can resolve a reference, the
+   copy is the thing to avoid, not the thing to build on. Lights/environments remain their own kinds. The sidecar went with it: no per-set GLB bake,
    no `opfs://` gltfPath, no `exportDraftGLB`, no **Publish** — the document *is* the published
    artefact (`isPublishedEntry` reads `hasDocument`), and `update()` is the character bake only. An
    autosave writes the document and its metadata (name, classification, environment, lights, part
@@ -404,15 +405,31 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
         `toAIDraft` projects back. So the AI composes a setting from catalogue items it already sees
         via `describe_catalogue` instead of reinventing them, and the round trip ends in a reference,
         never a copy. (`overrides` join the part body in 10.4, with their consumer.) The AI *edit*
-        path trails here: the id-diff walks part leaves, so an edit that adds or removes an instance is
-        currently a no-op — 10.3-B gives the command a node-level diff.
-      - **10.3-B (session).** The Sketcher resolves refs, so an instance shows its geometry; an
-        instance is selected, moved and undone as one unit (its internals become addressable with
-        10.4's overrides); `insertCatalogueEntry` inserts a `ref` instead of copying leaves; "Save
-        selection as Item" promotes a subtree to a Definition and replaces it in place; and the
-        isolated Edit Source context (N5) opens that Definition in the same editor. Two mechanics land
-        with it: the id-diff learns nodes, so an AI edit can add or drop an instance, and an instance's
-        expansion is hit-testable as a unit (its parts are the Definition's, not the session's).
+        path trailed here: the id-diff walked part leaves, so an edit that added or removed an instance
+        was a no-op — 10.3-B gave the command a node-level diff.
+      - **10.3-B (session).** ✅ Most of it landed, in four steps:
+        - the session resolves refs: `setRefResolver` injects the Definitions (the catalogue is not the
+          Sketcher's to know) and `syncFromDocument` expands a `ref` node into one live group, released
+          on the next sync because its geometry and materials are the Definition's. The page fills the
+          resolver before a load, walking the ref *closure* — a Definition can hold instances of its own;
+        - an instance is one unit: the pick set includes the expansions' meshes, a hit anywhere inside
+          resolves to the instance (amber box and gizmo on its group), a move writes back to the node's
+          own transform, and a selection that is no session part clears the part-derived state;
+        - `insertCatalogueEntry` places a `ref` instead of copying leaves — so a second placement is a
+          second node over one Definition, a *saved* set can finally be placed into another design, and
+          the placement is an undoable step (the copy-based insert never was);
+        - the id-diff learns nodes: instances are diffed by node id for place/drop/move, `RefSeed.id`
+          keeps an instance's identity across AI turns, and `insertInstance`/`removeNode` are the ops
+          behind it. Node lookup also matches a node's own id, so a nested instance is addressable by
+          the id the diff knows rather than the path only its parent knows.
+        Remaining, recorded rather than assumed: **"Save selection as Item"** (promote a subtree into a
+        Definition, leave an instance in its place) and the **Edit Source** action (N5) — the page can
+        already open a saved entry's document (`openSet`), so what is missing is the action that points
+        it at an instance's `ref` plus the way back to the parent set. Two gaps surfaced on the way: an
+        instance cannot be **deleted** from the UI (undo works; `CartoonSketcher.removeNode` is the op),
+        and the diff has no **group-structure** pass, so an instance the AI places *inside a new group*
+        lands at the root with a parent-relative transform. Grouping an instance with a part works at
+        the document layer (`group()` accepts a node path) but the toolbar is still part-only.
       `resolveInstances` stops flattening at resolve time, so path and identity survive to the
       renderer.
       10.2 already introduced paths internally (`pathOfPart`, path-keyed live objects, node-addressed

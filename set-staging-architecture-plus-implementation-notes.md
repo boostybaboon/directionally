@@ -427,7 +427,21 @@ their producers:
   rather than deleted, and both are exercised by tests;
 - `SetNode.ref` landed in 10.3-A with `insertRef`, `collectRefs` and a resolver-aware realiser, and the
   AI draft's reference parts with it. `overrides` and `tags` still wait for 10.4, where a consumer
-  exists: the instance override the node is meant to carry.
+  exists: the instance override the node is meant to carry;
+- 10.3-B is the session half: the resolver is *injected* (`setRefResolver`), an expansion's meshes are
+  deliberately **not** session parts — they belong to the Definition, so a click inside one selects the
+  instance and `writeBack` reads only the instance's own group. The expansion is released on the next
+  sync, because its geometry and materials are the Definition's;
+- `insertCatalogueEntry` places a `ref` rather than copying leaves: two placements are two nodes over one
+  Definition, and a *saved* set (OPFS document) is placeable for the first time. The page resolves the
+  ref closure before a load, since a Definition can hold instances of its own;
+- the AI id-diff is node-aware now: instances diff by node id for place/drop/move, and a node's own id
+  resolves in `documentTree`'s lookup (parents' ids are only parent-unique, so a first-match-in-tree-order
+  tie-break is the documented cost). What it still has no pass for is **group structure**, so an instance
+  the AI places inside a *new* group lands at the root with a parent-relative transform;
+- an instance cannot be deleted from the UI yet (undo covers it; `CartoonSketcher.removeNode` is the op),
+  and "Save selection as Item" (promote a subtree → Definition, replace in place) plus the Edit Source
+  action (N5) remain from 10.3-B.
 
 ## What the one type buys
 
