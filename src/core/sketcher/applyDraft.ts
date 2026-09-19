@@ -1,8 +1,8 @@
 import type { Object3D } from 'three';
 import type { CartoonSketcher } from './CartoonSketcher.js';
 import type { SketcherCommand } from './SketcherCommand.js';
-import { collectPartNodes } from './documentTree.js';
-import type { PlacedPart, SetDocument } from './documentTree.js';
+import { collectPartNodes, isRefNode } from './documentTree.js';
+import type { PlacedPart, RefNode, RefSeed, SetDocument, SetNode } from './documentTree.js';
 import type { Transform } from './transform.js';
 
 /**
@@ -21,6 +21,12 @@ export type DocumentDiff = {
   add: PlacedPart[];
   remove: string[];
   update: PlacedPart[];
+  /** Instances the edit places, as node seeds (the seed carries the node's id). */
+  addRefs: RefSeed[];
+  /** Instances the edit drops, by node id. */
+  removeRefs: string[];
+  /** Instances the edit moves, by node id — a placement the AI changed. */
+  moveRefs: { id: string; transform: Transform }[];
 };
 
 const EPS = 1e-6;
@@ -52,7 +58,26 @@ function placedParts(doc: SetDocument): PlacedPart[] {
   return collectPartNodes(doc).map((node) => ({ content: node.content, transform: node.transform }));
 }
 
-/** Diff two documents by stable part id. Pure — no Three.js runtime. */
+/**
+ * Every instance in the document, by node id. A `ref` node has no body to compare, so it is
+ * diffed by node instead: the placement and the reference *are* the node, and its internals
+ * belong to the Definition. Node ids are what survives an AI round trip (`toAIDraft`
+ * re-derives them from the same names), which is what makes an instance addressable at all.
+ */
+function instances(doc: SetDocument): Map<string, RefNode> {
+  const found = new Map<string, RefNode>();
+  const walk = (nodes: SetNode[]) => {
+    for (const node of nodes) {
+      if (isRefNode(node)) found.set(node.id, node);
+      walk(node.children);
+    }
+  };
+  walk(doc.root);
+  return found;
+}
+
+/** Diff two documents by stable id — part leaves by part id, instances by node id.
+ *  Pure — no Three.js runtime. */
 export function diffDocument(current: SetDocument, target: SetDocument): DocumentDiff {
   const currentById = new Map(placedParts(current).map((p) => [p.content.id, p]));
   const targetById = new Map(placedParts(target).map((p) => [p.content.id, p]));
@@ -68,7 +93,29 @@ export function diffDocument(current: SetDocument, target: SetDocument): Documen
   for (const c of currentById.values()) {
     if (!targetById.has(c.content.id)) remove.push(c.content.id);
   }
-  return { add, remove, update };
+
+  const currentRefs = instances(current);
+  const targetRefs = instances(target);
+  const addRefs: RefSeed[] = [];
+  const removeRefs: string[] = [];
+  const moveRefs: { id: string; transform: Transform }[] = [];
+
+  for (const [id, node] of targetRefs) {
+    const before = currentRefs.get(id);
+    // A node the AI re-pointed at another Definition is a replacement: drop it, place the new
+    // one. Keeping the id is deliberate — it is one node in the tree either way.
+    if (!before || before.ref !== node.ref) {
+      if (before) removeRefs.push(id);
+      addRefs.push({ id, ref: node.ref, name: node.name, transform: node.transform });
+      continue;
+    }
+    if (!transformEquals(before.transform, node.transform)) moveRefs.push({ id, transform: node.transform });
+  }
+  for (const id of currentRefs.keys()) {
+    if (!targetRefs.has(id)) removeRefs.push(id);
+  }
+
+  return { add, remove, update, addRefs, removeRefs, moveRefs };
 }
 
 function setTransform(mesh: Object3D, t: Transform): void {
@@ -83,10 +130,14 @@ function setTransform(mesh: Object3D, t: Transform): void {
  */
 export function applyDocumentCommand(sketcher: CartoonSketcher, target: SetDocument): SketcherCommand {
   const diff = diffDocument(sketcher.toDocument(), target);
+  const adds = diff.add.length + diff.addRefs.length;
+  const updates = diff.update.length + diff.moveRefs.length;
+  const removes = diff.remove.length + diff.removeRefs.length;
   return {
-    label: `AI edit (${diff.add.length} add, ${diff.update.length} update, ${diff.remove.length} remove)`,
+    label: `AI edit (${adds} add, ${updates} update, ${removes} remove)`,
     execute() {
       for (const id of diff.remove) sketcher.removePart(id);
+      for (const id of diff.removeRefs) sketcher.removeNode(id);
 
       for (const p of diff.update) {
         const part = sketcher.getSession().parts.find((x) => x.id === p.content.id);
@@ -94,6 +145,13 @@ export function applyDocumentCommand(sketcher: CartoonSketcher, target: SetDocum
         setTransform(part.mesh, p.transform);
         part.label = p.content.label;
         sketcher.setPartColor(p.content.id, p.content.color);
+      }
+
+      // An instance has no mesh of its own to place: its live group *is* the placement, and
+      // the next write-back carries the transform into the document.
+      for (const { id, transform } of diff.moveRefs) {
+        const object = sketcher.nodeObject(id);
+        if (object) setTransform(object, transform);
       }
 
       for (const p of diff.add) {
@@ -104,6 +162,8 @@ export function applyDocumentCommand(sketcher: CartoonSketcher, target: SetDocum
         part.label = p.content.label;
         sketcher.setPartColor(part.id, p.content.color);
       }
+
+      for (const seed of diff.addRefs) sketcher.insertInstance(seed);
     },
   };
 }

@@ -61,7 +61,15 @@ export type PartNode = SetNode & { role: 'prop'; content: PartDraft };
 export type PartSeed = { content: PartDraft; transform?: Transform };
 
 /** An instance before it is a node: the Definition to place, plus its placement. */
-export type RefSeed = { ref: string; name?: string; role?: NodeRole; transform?: Transform };
+export type RefSeed = {
+  ref: string;
+  /** Node id to place under; defaults to a slug of `name`. Given when the caller owns the id
+   *  (an AI edit re-placing a node it read, so the instance keeps its identity across turns). */
+  id?: string;
+  name?: string;
+  role?: NodeRole;
+  transform?: Transform;
+};
 
 /** A part leaf's body and transform, both present — what `collectPartNodes` yields. */
 export type PlacedPart = { content: PartDraft; transform: Transform };
@@ -274,12 +282,17 @@ function locate(
 }
 
 /**
- * Locate a node by its path (`row-2/chair-3`) or, for a part, by its runtime guid.
- * Node ids are only parent-unique, so the path is what addresses a node unambiguously;
- * a part's guid is what the runtime knows it by.
+ * Locate a node by its path (`row-2/chair-3`), by its own id, or — for a part — by its runtime
+ * guid. A path is unambiguous; an id is only parent-unique, so it resolves to the first match in
+ * tree order, which is what lets `removeNode` and the AI diff drop a node they know by id.
  */
 function findNodeLocation(doc: SetDocument, target: string): NodeLocation | null {
-  return locate(doc.root, (node, path) => path === target || (isPartNode(node) && node.content.id === target), IDENTITY_TRANSFORM, '');
+  return locate(
+    doc.root,
+    (node, path) => path === target || node.id === target || (isPartNode(node) && node.content.id === target),
+    IDENTITY_TRANSFORM,
+    '',
+  );
 }
 
 /** Locate `node` itself — by identity, so an edit's own re-parenting cannot invalidate it. */
@@ -361,7 +374,7 @@ export function findGroupByPath(doc: SetDocument, path: string): SetNode | null 
  */
 export function insertRef(doc: SetDocument, seed: RefSeed): SetNode {
   const node: SetNode = {
-    id: nameSegment(seed.name ?? seed.ref, segmentsOf(doc.root)),
+    id: seed.id ?? nameSegment(seed.name ?? seed.ref, segmentsOf(doc.root)),
     role: seed.role ?? 'prop',
     transform: nodeTransform(seed.transform),
     children: [],
@@ -383,12 +396,19 @@ export function insertPart(doc: SetDocument, seed: PartSeed): void {
   });
 }
 
+/** Remove any node (path, guid or the node itself) from the tree, whatever it is. */
+export function removeTreeNode(doc: SetDocument, target: NodeRef): boolean {
+  const loc = locationOf(doc, target);
+  if (!loc) return false;
+  loc.nodes.splice(loc.index, 1);
+  return true;
+}
+
 /** Remove a part leaf (by guid) from the tree. */
 export function removePart(doc: SetDocument, partId: string): boolean {
   const loc = findNodeLocation(doc, partId);
   if (!loc || !isPartNode(loc.node)) return false;
-  loc.nodes.splice(loc.index, 1);
-  return true;
+  return removeTreeNode(doc, partId);
 }
 
 /**

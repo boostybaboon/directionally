@@ -31,6 +31,7 @@ import {
   nodeAt,
   pathOfPart,
   pathOfNode,
+  removeTreeNode,
   promoteToRoot,
   removePart as removeTreePart,
   setPartColor as setTreePartColor,
@@ -41,7 +42,7 @@ import {
   removeLightNode,
   collectLights,
 } from './documentTree.js';
-import type { PartNode, PartSeed, SetDocument, SetNode } from './documentTree.js';
+import type { NodeRef, PartNode, PartSeed, RefSeed, SetDocument, SetNode } from './documentTree.js';
 import type { Transform } from './transform.js';
 import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 import type { SetPieceEntry } from '../catalogue/types.js';
@@ -519,26 +520,62 @@ export class CartoonSketcher {
   }
 
   /**
-   * Insert a catalogue entry as an instance (Track SET, N3). The document holds a reference,
-   * so the item is never copied and editing its Definition reaches every place it is used; the
-   * session expands it for display, and the instance is edited as one unit.
+   * Place a Definition as a new instance (Track SET, N3). The node takes the seed's id when it
+   * has one, so a caller that owns the id — an AI edit re-placing a node it read — keeps the
+   * instance's identity across turns.
    *
    * A Definition the Sketcher cannot resolve is still inserted: the reference is the
-   * document's, and the geometry appears as soon as the resolver knows the entry.
+   * document's, and the geometry appears as soon as the resolver knows it.
    */
-  insertCatalogueEntry(entry: SetPieceEntry): { path: string | null; object: THREE.Group | null } {
+  insertInstance(seed: RefSeed): string | null {
     let path: string | null = null;
     this.editDocument((doc) => {
-      const node = insertRef(doc, {
-        ref: entry.id,
-        name: entry.label,
-        role: entry.isSetting === true ? 'structure' : 'prop',
-      });
-      path = pathOfNode(doc, node);
+      path = pathOfNode(doc, insertRef(doc, seed));
+    });
+    return path;
+  }
+
+  /**
+   * Insert a catalogue entry as an instance. The document holds a reference, so the item is
+   * never copied and editing its Definition reaches every place it is used; the session
+   * expands it for display, and the instance is edited as one unit.
+   */
+  insertCatalogueEntry(entry: SetPieceEntry): { path: string | null; object: THREE.Group | null } {
+    const path = this.insertInstance({
+      ref: entry.id,
+      name: entry.label,
+      role: entry.isSetting === true ? 'structure' : 'prop',
     });
     if (path === null) return { path: null, object: null };
     const object = this.nodeObjects.get(path);
     return { path, object: object instanceof THREE.Group ? object : null };
+  }
+
+  /**
+   * Remove a node by path or guid. A part keeps `removePart`'s cleanup; anything else — an
+   * instance, a group — is dropped with its subtree, which is what the AI diff needs to drop
+   * something that was placed (see `applyDraft`).
+   */
+  removeNode(target: NodeRef): void {
+    this.editDocument((doc) => {
+      const node = typeof target === 'string' ? nodeAt(doc, target) : target;
+      if (!node) return;
+      if (isPartNode(node)) {
+        removeJointsTouching(doc, node.content.id);
+        removeTreePart(doc, node.content.id);
+        evictFromGroupBonds(doc, node.content.id);
+        return;
+      }
+      removeTreeNode(doc, node);
+    });
+  }
+
+  /** The live object realised for a node — an instance's expansion, or a group's group. */
+  nodeObject(target: NodeRef): THREE.Object3D | null {
+    const node = typeof target === 'string' ? nodeAt(this.document, target) : target;
+    if (!node) return null;
+    const path = pathOfNode(this.document, node);
+    return path === null ? null : this.nodeObjects.get(path) ?? null;
   }
 
   /** Update a part's colour, resetting all face colours to a uniform value. */

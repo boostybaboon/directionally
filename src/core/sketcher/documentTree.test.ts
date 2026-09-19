@@ -20,6 +20,9 @@ import {
   pathOfPart,
   collectRefs,
   normalizeDocument,
+  insertRef,
+  nodeAt,
+  removeTreeNode,
 } from './documentTree.js';
 import { isPartNode } from './documentTree.js';
 import { localToWorld } from './transform.js';
@@ -388,6 +391,27 @@ describe('instances', () => {
     expect(doc.root).toHaveLength(1);
     expect(doc.root[0].ref).toBe('chair');
     expect(doc.root[0].transform.position).toEqual([0, 0, 0]);
+  });
+
+  it('insertRef() places under the seed id when it has one', () => {
+    const doc: SetDocument = { root: [], joints: [] };
+    insertRef(doc, { id: 'chair-7', ref: 'chair', name: 'Chair' });
+    expect(doc.root[0].id).toBe('chair-7');
+  });
+
+  it('removes a nested instance addressed by its id, though its path carries the group', () => {
+    const doc: SetDocument = {
+      root: [
+        { id: 'row', role: 'structure', transform: { ...identity }, children: [instance('chair-1', 'chair')] },
+      ],
+      joints: [],
+    };
+
+    // A path is unambiguous, an id is not — it resolves to the first match in tree order.
+    expect(nodeAt(doc, 'chair-1')).not.toBeNull();
+    expect(removeTreeNode(doc, 'chair-1')).toBe(true);
+    expect(doc.root[0].children).toHaveLength(0);
+    expect(removeTreeNode(doc, 'chair-1')).toBe(false);
   });
 
   it('normalizeDocument() still drops a prop with neither content nor ref', () => {
