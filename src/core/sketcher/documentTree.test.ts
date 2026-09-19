@@ -23,6 +23,8 @@ import {
   insertRef,
   nodeAt,
   removeTreeNode,
+  extractDefinition,
+  collectPartNodes,
 } from './documentTree.js';
 import { isPartNode } from './documentTree.js';
 import { localToWorld } from './transform.js';
@@ -417,5 +419,82 @@ describe('instances', () => {
   it('normalizeDocument() still drops a prop with neither content nor ref', () => {
     const doc = normalizeDocument({ root: [{ id: 'a', role: 'prop', children: [] }], joints: [] });
     expect(doc.root).toHaveLength(0);
+  });
+});
+
+describe('extractDefinition', () => {
+  const identity: Transform = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
+  const jointOf = (a: string, b: string): JointSnapshot => ({
+    type: 'snap',
+    partAId: a,
+    localPointA: [0, 0.5, 0],
+    localNormalA: [0, 1, 0],
+    partBId: b,
+    localPointB: [0, -0.5, 0],
+    localNormalB: [0, -1, 0],
+  });
+  function chair(): SetDocument {
+    const doc: SetDocument = { root: [], joints: [] };
+    insertPart(doc, {
+      content: { id: 'seat', kind: 'primitive', name: 'Box', color: 0x663311 },
+      transform: { ...identity, position: [0, 0.45, 0] },
+    });
+    insertPart(doc, {
+      content: { id: 'back', kind: 'primitive', name: 'Box', color: 0x663311 },
+      transform: { ...identity, position: [0, 0.7, -0.2] },
+    });
+    return doc;
+  }
+
+  it('promotes a group: the children move into the Definition, the node keeps its placement', () => {
+    const doc = chair();
+    const before = collectPartNodes(doc).map((node) => localToWorld(node.transform, identity).position);
+    const group = groupNodes(doc, ['seat', 'back'], 'Chair')!;
+    const placement = structuredClone(group.transform);
+
+    const definition = extractDefinition(doc, group, 'chair-item')!;
+
+    // The Definition holds what the group held and the instance keeps the group's placement, so
+    // every part is still exactly where it was.
+    expect(definition.root.map((node) => (isPartNode(node) ? node.content.id : null))).toEqual(['seat', 'back']);
+    const after = definition.root.map((node) => localToWorld(node.transform, placement).position);
+    after.forEach((position, i) => position.forEach((value, axis) => expect(value).toBeCloseTo(before[i][axis])));
+    // The node is an instance now: its id, its placement, nothing of its own inside.
+    expect(group.ref).toBe('chair-item');
+    expect(group.children).toEqual([]);
+    expect(group.transform).toEqual(placement);
+    expect(doc.root).toEqual([group]);
+    expect(collectPartNodes(doc)).toHaveLength(0);
+  });
+
+  it('promotes a part leaf into a one-part Definition at identity', () => {
+    const doc = chair();
+
+    const definition = extractDefinition(doc, 'seat', 'seat-item')!;
+
+    expect(definition.root).toHaveLength(1);
+    expect(definition.root.map((node) => (isPartNode(node) ? node.content.id : null))).toEqual(['seat']);
+    expect(definition.root[0].transform.position).toEqual([0, 0, 0]);
+    expect(doc.root[0].ref).toBe('seat-item');
+    expect(isPartNode(doc.root[0])).toBe(false);
+    expect(isPartNode(doc.root[1]) ? doc.root[1].content.id : null).toBe('back');
+  });
+
+  it('carries inside joints and bonds, and drops what crosses the boundary', () => {
+    const doc = chair();
+    addJoint(doc, jointOf('seat', 'back'));
+    addGroupBond(doc, ['seat', 'back']);
+    const group = groupNodes(doc, ['seat', 'back'], 'Chair')!;
+    addJoint(doc, jointOf('back', 'lamp-post'));
+
+    const definition = extractDefinition(doc, group, 'chair-item')!;
+
+    expect(definition.joints).toHaveLength(1);
+    expect(definition.joints[0].partBId).toBe('back');
+    expect(definition.groupComponents).toEqual([['seat', 'back']]);
+    // The joint to a part that stayed behind cannot be represented: it is dropped here, not kept
+    // dangling. The bond that stayed behind keeps what is left of it.
+    expect(doc.joints).toHaveLength(0);
+    expect(doc.groupComponents).toBeUndefined();
   });
 });

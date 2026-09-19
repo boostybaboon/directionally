@@ -1240,6 +1240,23 @@ describe('group / ungroup', () => {
       expect(sketcher.toDocument().root[0].ref).toBe('missing');
     });
 
+    it('promotes a group into an item, leaving the session with an instance', () => {
+      const a = sketcher.insertPrimitive('Box')!;
+      const b = sketcher.insertPrimitive('Box')!;
+      const ag = sketcher.group([a.id, b.id], 'Chair')!;
+
+      const definition = sketcher.extractInstance(ag.id, 'chair-item')!;
+      sketcher.setRefResolver((ref) => (ref === 'chair-item' ? definition : null));
+
+      // The Definition holds the two parts; the session holds the instance, not its internals.
+      expect(definition.root).toHaveLength(2);
+      expect(sketcher.getSession().parts).toHaveLength(0);
+      const doc = sketcher.toDocument();
+      expect(doc.root).toHaveLength(1);
+      expect(doc.root[0].ref).toBe('chair-item');
+      expect(sketcher.instanceMeshes).toHaveLength(2);
+    });
+
     it('groups a group with a part, nesting the inner group', () => {
       const a = sketcher.insertPrimitive('box')!;
       const b = sketcher.insertPrimitive('box')!;

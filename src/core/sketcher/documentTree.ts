@@ -396,6 +396,51 @@ export function insertPart(doc: SetDocument, seed: PartSeed): void {
   });
 }
 
+/**
+ * Promote a node's subtree into a Definition and leave an instance of it in the node's place
+ * ("Save selection as Item", N4). The node keeps its id and transform and the Definition's root
+ * takes the contents' own transforms, so nothing moves in the world: a part leaf becomes a
+ * one-part Definition at identity, and a group's children become the Definition's root, since
+ * they are already relative to the group.
+ *
+ * What travels with the subtree: joints with both ends inside it, and group bonds whose members
+ * are all inside it. A joint *across* the boundary is dropped — its far end is a part of this
+ * document, not of the Definition — and a partially moved bond keeps its remaining members as a
+ * bond here, so the source loses nothing it can still represent.
+ *
+ * Returns the Definition for the caller to store; `doc` is left with the instance in place.
+ */
+export function extractDefinition(doc: SetDocument, target: NodeRef, ref: string): SetDocument | null {
+  const loc = locationOf(doc, target);
+  if (!loc) return null;
+  const node = loc.node;
+
+  const contents = isPartNode(node)
+    ? [{ ...structuredClone(node), transform: nodeTransform(undefined) }]
+    : structuredClone(node.children);
+  const movedIds = collectPartNodesIn(contents).map((part) => part.content.id);
+  const moved = new Set(movedIds);
+
+  const definition: SetDocument = {
+    root: contents,
+    joints: structuredClone(doc.joints.filter((joint) => moved.has(joint.partAId) && moved.has(joint.partBId))),
+  };
+  const carried = groupBonds(doc).filter((bond) => bond.every((id) => moved.has(id)));
+  if (carried.length > 0) definition.groupComponents = structuredClone(carried);
+
+  for (const id of movedIds) removeJointsTouching(doc, id);
+  const remaining = groupBonds(doc)
+    .map((bond) => bond.filter((id) => !moved.has(id)))
+    .filter((bond) => bond.length > 1);
+  doc.groupComponents = remaining.length > 0 ? remaining : undefined;
+
+  delete node.content;
+  delete node.isGroup;
+  node.children = [];
+  node.ref = ref;
+  return definition;
+}
+
 /** Remove any node (path, guid or the node itself) from the tree, whatever it is. */
 export function removeTreeNode(doc: SetDocument, target: NodeRef): boolean {
   const loc = locationOf(doc, target);

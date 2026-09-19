@@ -663,6 +663,37 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
     }
   }
 
+  /**
+   * Save selection as Item (N4): promote the selected part or group into a Definition and leave
+   * an instance of it in place. The item is a catalogue entry from the moment it exists, so other
+   * sets place it rather than copy it, and opening it (`openInstanceSource`) edits what it is made
+   * of. The entry is created first because the node has to reference its id — the empty write is
+   * the price of that order, and it is what `saveDocument` then fills in.
+   */
+  async function saveSelectionAsItem() {
+    if (!sketcher || !selectedPartId) return;
+    const session = sketcher.getSession();
+    const part = session.parts.find((p) => p.id === selectedPartId);
+    if (!part) return;
+    const ag = sketcher.attachManager.groupForPart(part.id);
+    const suggested = ag?.name ?? part.label ?? part.name;
+    const label = window.prompt('Save as Item — name it:', suggested)?.trim();
+    if (!label) return;
+
+    const target = ag ? ag.id : part.id;
+    const entry = await OPFSCatalogueStore.createSetPieceDocument(label, { isSetting: false });
+    const before = sketcherDoc.captureSnapshot();
+    const definition = sketcher.extractInstance(target, entry.id);
+    if (!definition) return;
+    await OPFSCatalogueStore.saveDocument(entry.id, definition, { partCount: countParts(definition) });
+    refDocuments.set(entry.id, definition);
+    sketcher.setRefResolver((ref) => refDocuments.get(ref) ?? null);
+    sketcherDoc.record(before, sketcherDoc.captureSnapshot(), `Save "${label}" as Item`);
+    await refreshCatalogueViews();
+    selection.deselect();
+    statusMessage = `Saved "${label}" as a catalogue item — now placed as a reference.`;
+  }
+
   function duplicateSelected() {
     const id = selectedPartId;
     if (!id) return;
@@ -1981,6 +2012,10 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
         <button class="tool-btn" onclick={detachSelected} title="U">Detach</button>
       {/if}
       <button class="tool-btn" onclick={snapToFloor} title="F">⬇ Floor</button>
+      <button
+        class="tool-btn"
+        onclick={saveSelectionAsItem}
+        title="Promote this part or group into a reusable catalogue item">Save as Item</button>
     {/if}
     {#if isDrawing}
       <span class="separator"></span>

@@ -32,6 +32,7 @@ import {
   pathOfPart,
   pathOfNode,
   removeTreeNode,
+  extractDefinition,
   promoteToRoot,
   removePart as removeTreePart,
   setPartColor as setTreePartColor,
@@ -431,9 +432,15 @@ export class CartoonSketcher {
     return meshes;
   }
 
-  /** Inject the resolver an instance is expanded with (see `realiseDocument`). */
+  /**
+   * Inject the resolver an instance is expanded with (see `realiseDocument`). The session re-syncs,
+   * because a new resolver changes what instances expand to: a caller that has just promoted a
+   * selection or stored a new Definition registers it *after* the edit that needs it.
+   */
   setRefResolver(resolve?: RefResolver): void {
     this.refResolver = resolve;
+    this.writeBack();
+    this.syncFromDocument(this.document);
   }
 
   /**
@@ -550,6 +557,19 @@ export class CartoonSketcher {
     if (path === null) return { path: null, object: null };
     const object = this.nodeObjects.get(path);
     return { path, object: object instanceof THREE.Group ? object : null };
+  }
+
+  /**
+   * Promote a node's subtree into a Definition and leave an instance of it in place ("Save
+   * selection as Item", N4). Returns the Definition for the caller to store and register with
+   * the resolver — the session cannot resolve what the caller has not handed it.
+   */
+  extractInstance(target: NodeRef, ref: string): SetDocument | null {
+    let definition: SetDocument | null = null;
+    this.editDocument((doc) => {
+      definition = extractDefinition(doc, target, ref);
+    });
+    return definition;
   }
 
   /**
