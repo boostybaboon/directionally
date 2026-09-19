@@ -634,6 +634,18 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
   function deleteSelected() {
     const mesh = selection.selectedMesh;
     if (!mesh) return;
+
+    // An instance has no part of its own, so its *node* is what goes — the Definition stays.
+    const instance = sketcher.instanceFor(mesh);
+    if (instance) {
+      selection.deselect();
+      const before = sketcherDoc.captureSnapshot();
+      sketcher.removeNode(instance.path);
+      sketcherDoc.record(before, sketcherDoc.captureSnapshot(), 'Delete instance');
+      statusMessage = 'Instance removed. Its Definition is unchanged.';
+      return;
+    }
+
     const session = sketcher.getSession();
     const part = session.parts.find((p) => p.mesh === mesh);
     if (!part) return;
@@ -1310,6 +1322,28 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
     statusMessage = `Added ${entry.label} as a reference.`;
   }
 
+  /**
+   * Edit Source (N5): open the Definition an instance refers to, in this editor. The session *is*
+   * that Definition while it is open, so the set being worked on is persisted first and the way
+   * back is the Sets column. A bundled entry has no editable document: taking a copy of it is what
+   * "Save selection as Item" is for, so it is reported rather than opened.
+   */
+  async function openInstanceSource(ref: string) {
+    if (!sketcher) return;
+    if (ref === currentEntryId) {
+      statusMessage = 'This set is already open.';
+      return;
+    }
+    const label = getById(ref, mergedCatalogueEntries)?.label ?? ref;
+    const document = await OPFSCatalogueStore.getDocument(ref);
+    if (!document) {
+      statusMessage = `"${label}" is a bundled item — save your own copy to change what it is made of.`;
+      return;
+    }
+    await openSet(ref);
+    statusMessage = `Opened "${label}" to edit what the instances are made of. Return via the Sets column.`;
+  }
+
   /** The first mesh in an object tree — a selection outline needs one to hold. */
   function firstMesh(object: THREE.Object3D): THREE.Mesh | null {
     let found: THREE.Mesh | null = null;
@@ -1771,9 +1805,17 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
     if (attachPhase !== null) return;
     const [x, y] = toNDC(e);
     const session = sketcher.getSession();
-    const meshes = session.parts.map((p) => p.mesh);
+    const meshes = [...session.parts.map((p) => p.mesh), ...sketcher.instanceMeshes];
     const hit = selection.pick(x, y, camera, meshes);
     if (!hit) return;
+
+    // Double-clicking an instance opens what it is made of (N5's Edit Source).
+    const instance = sketcher.instanceFor(hit);
+    if (instance) {
+      void openInstanceSource(instance.ref);
+      return;
+    }
+
     const hitPart = session.parts.find((p) => p.mesh === hit);
     if (!hitPart) return;
     const ag = sketcher.attachManager.groupForPart(hitPart.id);

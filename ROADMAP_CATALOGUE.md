@@ -421,15 +421,18 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
         - the id-diff learns nodes: instances are diffed by node id for place/drop/move, `RefSeed.id`
           keeps an instance's identity across AI turns, and `insertInstance`/`removeNode` are the ops
           behind it. Node lookup also matches a node's own id, so a nested instance is addressable by
-          the id the diff knows rather than the path only its parent knows.
+          the id the diff knows rather than the path only its parent knows;
+        - the instance lifecycle closes: Delete removes the *node* (the Definition stays, and the
+          removal undoes), and double-clicking an instance opens its Definition in the same editor —
+          **Edit Source** (N5)'s isolated context, which is `openSet` plus the instance's `ref`. A
+          bundled entry has no editable document, so it reports that instead of opening; the way back
+          to the parent set is the Sets column.
         Remaining, recorded rather than assumed: **"Save selection as Item"** (promote a subtree into a
-        Definition, leave an instance in its place) and the **Edit Source** action (N5) — the page can
-        already open a saved entry's document (`openSet`), so what is missing is the action that points
-        it at an instance's `ref` plus the way back to the parent set. Two gaps surfaced on the way: an
-        instance cannot be **deleted** from the UI (undo works; `CartoonSketcher.removeNode` is the op),
-        and the diff has no **group-structure** pass, so an instance the AI places *inside a new group*
-        lands at the root with a parent-relative transform. Grouping an instance with a part works at
-        the document layer (`group()` accepts a node path) but the toolbar is still part-only.
+        Definition, leave an instance in its place) and the diff's missing **group-structure** pass —
+        without it, an instance the AI places *inside a new group* lands at the root with a
+        parent-relative transform, since its add assumes the parent exists. Grouping an instance with a
+        part works at the document layer (`group()` accepts a node path) but the toolbar is still
+        part-only.
       `resolveInstances` stops flattening at resolve time, so path and identity survive to the
       renderer.
       10.2 already introduced paths internally (`pathOfPart`, path-keyed live objects, node-addressed

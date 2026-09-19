@@ -411,10 +411,11 @@ export class CartoonSketcher {
    * The instance a mesh belongs to, walking up from the hit — an instance is one unit, so a
    * click anywhere inside its expansion addresses the instance itself.
    */
-  instanceFor(object: THREE.Object3D): { path: string; group: THREE.Group } | null {
+  instanceFor(object: THREE.Object3D): { path: string; ref: string; group: THREE.Group } | null {
     for (let node: THREE.Object3D | null = object; node; node = node.parent) {
       const path = node.userData?.sketcherInstancePath as string | undefined;
-      if (path !== undefined) return { path, group: node as THREE.Group };
+      if (path === undefined) continue;
+      return { path, ref: node.userData.sketcherInstanceRef as string, group: node as THREE.Group };
     }
     return null;
   }
@@ -983,8 +984,9 @@ export class CartoonSketcher {
     instance.position.set(t.position[0], t.position[1], t.position[2]);
     instance.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
     instance.scale.set(t.scale[0], t.scale[1], t.scale[2]);
-    // Tagged with the node's path, which is how a hit inside it resolves to the instance.
-    instance.userData = { sketcherInstancePath: path };
+    // Tagged with the node's path, which is how a hit inside it resolves to the instance, and
+    // with its Definition, which is what an edit-source action needs.
+    instance.userData = { sketcherInstancePath: path, sketcherInstanceRef: node.ref };
 
     const definition = this.refResolver?.(node.ref!);
     if (definition) {

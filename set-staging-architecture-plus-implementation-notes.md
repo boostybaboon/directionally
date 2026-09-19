@@ -439,9 +439,12 @@ their producers:
   resolves in `documentTree`'s lookup (parents' ids are only parent-unique, so a first-match-in-tree-order
   tie-break is the documented cost). What it still has no pass for is **group structure**, so an instance
   the AI places inside a *new* group lands at the root with a parent-relative transform;
-- an instance cannot be deleted from the UI yet (undo covers it; `CartoonSketcher.removeNode` is the op),
-  and "Save selection as Item" (promote a subtree → Definition, replace in place) plus the Edit Source
-  action (N5) remain from 10.3-B.
+- the instance lifecycle is complete for editing: Delete drops the node (not the Definition, and it
+  undoes), and double-click opens the Definition an instance refers to — Edit Source (N5), which is
+  `openSet` plus the instance's `ref` and a status line naming the way back. A bundled entry reports
+  that it has no editable document instead of opening;
+- still owed from 10.3-B: "Save selection as Item" (promote a subtree → Definition, replace in place)
+  and the diff's group-structure pass (see above).
 
 ## What the one type buys
 
