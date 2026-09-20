@@ -532,6 +532,46 @@ describe('instances', () => {
   });
 });
 
+describe('a truncated transform', () => {
+  const leaf = (transform: unknown) => ({
+    id: 'seat',
+    role: 'prop',
+    transform,
+    children: [],
+    content: { id: 'seat', kind: 'primitive', name: 'Box', color: 0xffffff },
+  });
+
+  it('normalizeDocument() reads an unreadable transform at rest instead of throwing', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // A guard that throws on the file it exists to catch is worse than no guard: a transform of `{}`
+    // used to raise "source.position is not iterable" and take the whole load with it. An empty
+    // transform reads the same as an absent one, so nothing is reported — there was nothing to read.
+    const doc = normalizeDocument({ root: [leaf({})], joints: [] });
+
+    expect(doc.root).toHaveLength(1);
+    expect(doc.root[0].transform).toEqual({ position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('normalizeDocument() reports a field it cannot read, and puts it at rest', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const doc = normalizeDocument({ root: [leaf({ position: [1, 2], scale: [2, 2, 2] })], joints: [] });
+
+    expect(doc.root[0].transform.position).toEqual([0, 0, 0]);
+    expect(doc.root[0].transform.scale).toEqual([2, 2, 2]);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('unreadable position'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('normalizeDocument() keeps the fields it can read and defaults the ones that are absent', () => {
+    const doc = normalizeDocument({ root: [leaf({ position: [1, 2, 3] })], joints: [] });
+
+    expect(doc.root[0].transform.position).toEqual([1, 2, 3]);
+    expect(doc.root[0].transform.scale).toEqual([1, 1, 1]);
+  });
+});
+
 describe('extractDefinition', () => {
   const identity: Transform = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
   const jointOf = (a: string, b: string): JointSnapshot => ({

@@ -127,6 +127,34 @@ function nodeTransform(t: Transform | undefined): Transform {
   return { position: [...source.position], quaternion: [...source.quaternion], scale: [...source.scale] };
 }
 
+/** One vector from an untrusted document, or null when it cannot be read. */
+function readVector(v: unknown, length: number): number[] | null {
+  return Array.isArray(v) && v.length === length && v.every((n) => typeof n === 'number') ? v : null;
+}
+
+/**
+ * A node's transform from a document of unknown provenance: whatever cannot be read comes back at
+ * rest, and says so. A guard that throws on the file it exists to catch is worse than no guard — a
+ * truncated transform should cost a placement, not the whole load.
+ */
+function readTransform(raw: unknown, at: string, issues: string[]): Transform {
+  const source = (typeof raw === 'object' && raw !== null ? raw : {}) as Partial<Transform>;
+  const position = readVector(source.position, 3);
+  const quaternion = readVector(source.quaternion, 4);
+  const scale = readVector(source.scale, 3);
+  const unreadable = [
+    source.position !== undefined && !position ? 'position' : null,
+    source.quaternion !== undefined && !quaternion ? 'quaternion' : null,
+    source.scale !== undefined && !scale ? 'scale' : null,
+  ].filter((field): field is string => field !== null);
+  if (unreadable.length > 0) issues.push(`${at} has an unreadable ${unreadable.join('/')} — at rest`);
+  return {
+    position: (position ?? IDENTITY_TRANSFORM.position) as [number, number, number],
+    quaternion: (quaternion ?? IDENTITY_TRANSFORM.quaternion) as [number, number, number, number],
+    scale: (scale ?? IDENTITY_TRANSFORM.scale) as [number, number, number],
+  };
+}
+
 export type SetDocument = {
   root: SetNode[];
   joints: JointSnapshot[];
@@ -213,7 +241,7 @@ function normalizeNode(raw: unknown, path: string, issues: string[]): SetNode | 
   return {
     id: n.id,
     role: n.role,
-    transform: nodeTransform(n.transform),
+    transform: readTransform(n.transform, path, issues),
     children: normalizeNodes(Array.isArray(n.children) ? n.children : [], `${path}.children`, issues),
     ...(n.content !== undefined ? { content: n.content } : {}),
     ...(n.light !== undefined ? { light: n.light } : {}),
@@ -282,14 +310,12 @@ function normalizeOverrides(raw: unknown, path: string, issues: string[]): NodeO
 function patchTransform(raw: unknown): Transform | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined;
   const t = raw as Partial<Transform>;
-  const read = (v: unknown, length: number, rest: number[]): number[] | undefined => {
-    if (v === undefined) return [...rest];
-    return Array.isArray(v) && v.length === length && v.every((n) => typeof n === 'number') ? v : undefined;
-  };
-  const position = read(t.position, 3, IDENTITY_TRANSFORM.position);
-  const quaternion = read(t.quaternion, 4, IDENTITY_TRANSFORM.quaternion);
-  const scale = read(t.scale, 3, IDENTITY_TRANSFORM.scale);
-  if (!position || !quaternion || !scale) return undefined;
+  const position = readVector(t.position, 3) ?? [...IDENTITY_TRANSFORM.position];
+  const quaternion = readVector(t.quaternion, 4) ?? [...IDENTITY_TRANSFORM.quaternion];
+  const scale = readVector(t.scale, 3) ?? [...IDENTITY_TRANSFORM.scale];
+  if (t.position !== undefined && readVector(t.position, 3) === null) return undefined;
+  if (t.quaternion !== undefined && readVector(t.quaternion, 4) === null) return undefined;
+  if (t.scale !== undefined && readVector(t.scale, 3) === null) return undefined;
   return {
     position: position as [number, number, number],
     quaternion: quaternion as [number, number, number, number],
