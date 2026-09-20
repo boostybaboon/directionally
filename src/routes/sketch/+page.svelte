@@ -4,14 +4,15 @@
   import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
   import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
   import { CartoonSketcher } from '../../core/sketcher/CartoonSketcher.js';
+  import type { OrphanedOverrideReport } from '../../core/sketcher/CartoonSketcher.js';
   import { SelectionManager } from '../../core/sketcher/SelectionManager.js';
   import { faceGroupFromNormal, faceGroupLabel } from '../../core/sketcher/AttachManager.js';
   import { SketcherDocument } from '../../core/sketcher/SketcherDocument.js';
   import CataloguePanel from '../../lib/CataloguePanel.svelte';
   import SetsColumn from '../../lib/SetsColumn.svelte';
   import { getById, isSettingEntry } from '../../core/catalogue/catalogue.js';
-import { collectRefs } from '../../core/sketcher/documentTree.js';
-import type { SetDocument } from '../../core/sketcher/documentTree.js';
+import { cloneDocument, collectRefs, nodeAt, removeTreeNode } from '../../core/sketcher/documentTree.js';
+import type { NodeOverride, SetDocument } from '../../core/sketcher/documentTree.js';
   import { CATALOGUE_ENTRIES } from '../../core/catalogue/entries.js';
   import type { CatalogueEntry } from '../../core/catalogue/types.js';
   import type { LightConfig } from '../../core/domain/types.js';
@@ -31,7 +32,9 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
     SnapToFloorCommand,
     GroupCommand,
     UngroupCommand,
+    OverrideCommand,
   } from '../../core/sketcher/sketcherCommands.js';
+  import type { OverrideAction } from '../../core/sketcher/sketcherCommands.js';
   import { exportGLB } from '../../core/sketcher/exportGLB.js';
   import { countParts } from '../../core/sketcher/documentTree.js';
   import * as OPFSCatalogueStore from '../../core/storage/OPFSCatalogueStore.js';
@@ -50,6 +53,15 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
   let selectedPartIsAttached = $state(false);
   // When non-null, we are in group edit mode — editing a single member of this group id.
   let groupEditGroupId = $state<string | null>(null);
+  // 10.4-B: the instance whose insides are being edited, the node selected inside it, the instance
+  // the selection stands for, and the variation state the panels show.
+  let focusedInstancePath = $state<string | null>(null);
+  let focusedInstanceRef = $state<string | null>(null);
+  let selectedInstancePath = $state<string | null>(null);
+  let selectedInstanceRef = $state<string | null>(null);
+  let insideDescendant = $state<{ instancePath: string; ref: string; path: string } | null>(null);
+  let instanceOverrides = $state<NodeOverride[]>([]);
+  let orphanedOverrides = $state<readonly OrphanedOverrideReport[]>([]);
   // Face paint mode: when true, clicks lock and colour individual faces instead of selecting parts.
   let facePaintMode = $state(false);
   // The materialIndex of the face currently under the cursor (drives yellow highlight only).
@@ -212,14 +224,24 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
         // Drag ended: record the transform as an undoable entry using the
         // pre-drag snapshot as `before` so it is immune to stale group references.
         if (tcPreDragSnapshot) {
-          sketcherDoc.execute(
-            new TransformPartCommand(sketcher, selectedPartId, tcDragMode),
-            tcPreDragSnapshot,
-          );
+          if (insideDescendant) {
+            // The gizmo moved an object inside an expansion: what changed is a variation on the
+            // instance, not a part of this document.
+            sketcherDoc.execute(
+              new OverrideCommand(sketcher, insideDescendant.instancePath, insideDescendant.path, 'transform'),
+              tcPreDragSnapshot,
+            );
+          } else {
+            sketcherDoc.execute(
+              new TransformPartCommand(sketcher, selectedPartId, tcDragMode),
+              tcPreDragSnapshot,
+            );
+          }
         }
         tcPreDragSnapshot = null;
         tcDragStartScale = null;
         refreshInspector();
+        refreshOverrideState();
       }
     });
 
@@ -251,6 +273,10 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
         if (groupEditGroupId === null) {
           statusMessage = 'W translate · E rotate · R scale · Shift+D duplicate · Delete remove · Esc deselect';
         }
+        // An instance (or a hit inside the focused one) is what the variation panel describes.
+        const instance = sketcher.instanceFor(mesh);
+        selectedInstancePath = instance?.path ?? null;
+        selectedInstanceRef = instance?.ref ?? null;
         const part = sketcher.getSession().parts.find((p) => p.mesh === mesh);
         if (part) {
           selectedPartId = part.id;
@@ -262,10 +288,13 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
           refreshInspector();
         } else {
           // A mesh that is no session part is an instance's geometry, which belongs to its
-          // Definition. Clear the part-derived state so nothing shows a stale part.
+          // Definition. Clear the part-derived state so nothing shows a stale part — but inside an
+          // instance the hit is the node being varied.
           selectedPartId = null;
           selectedGroupIsGrouped = false;
           selectedPartIsAttached = false;
+          insideDescendant = sketcher.descendantAt(mesh);
+          refreshOverrideState();
         }
       } else {
         // Deselection — if in group edit mode, clean up dimming before TC detaches.
@@ -283,6 +312,10 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
         lockedFaceHasTexture = false;
         selectedGroupIsGrouped = false;
         selectedPartIsAttached = false;
+        selectedInstancePath = null;
+        selectedInstanceRef = null;
+        insideDescendant = null;
+        refreshOverrideState();
         clearFaceHighlight();
         // tc.detach() already sets _root.visible = false; no need to touch it here.
       }
@@ -310,6 +343,7 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
     sketcherDoc = new SketcherDocument(sketcher, () => {
       canUndo = sketcherDoc.canUndo;
       canRedo = sketcherDoc.canRedo;
+      refreshOverrideState();
       // Persist the session after every mutation so it survives a page reload.
       if (draftSaveTimer !== null) clearTimeout(draftSaveTimer);
       draftSaveTimer = setTimeout(async () => {
@@ -370,14 +404,15 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
         case 'e': case 'E': setTransformMode('rotate'); break;
         case 'r': case 'R': setTransformMode('scale'); break;
         case 'z': case 'Z':
-          if (e.ctrlKey && e.shiftKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); resyncSelectionAfterUndoRedo(); refreshInspector(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
-          else if (e.ctrlKey) { const lbl = sketcherDoc.undoLabel; exitGroupEditMode(); sketcherDoc.undo(); resyncSelectionAfterUndoRedo(); refreshInspector(); statusMessage = lbl ? `Undid: ${lbl}` : 'Undone.'; e.preventDefault(); }
+          if (e.ctrlKey && e.shiftKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); resyncSelectionAfterUndoRedo(); refreshInspector(); refreshOverrideState(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
+          else if (e.ctrlKey) { const lbl = sketcherDoc.undoLabel; exitGroupEditMode(); sketcherDoc.undo(); resyncSelectionAfterUndoRedo(); refreshInspector(); refreshOverrideState(); statusMessage = lbl ? `Undid: ${lbl}` : 'Undone.'; e.preventDefault(); }
           break;
         case 'y': case 'Y':
-          if (e.ctrlKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); resyncSelectionAfterUndoRedo(); refreshInspector(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
+          if (e.ctrlKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); resyncSelectionAfterUndoRedo(); refreshInspector(); refreshOverrideState(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
           break;
         case 'Escape':
           if (groupEditGroupId !== null) { exitGroupEditMode(); }
+          else if (focusedInstancePath !== null) { exitInstance(); }
           else if (attachPhase !== null) { cancelAttachPick(); }
           else if (sketcher.currentPhase === 'drawing') { isDrawing = false; hideSnapGrid(); sketcher.cancelSketch(); orbit.enabled = true; }
           else if (sketcher.currentPhase === 'hole-drawing') { isDrawing = false; hideSnapGrid(); sketcher.cancelHole(); }
@@ -391,6 +426,10 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
           break;
         case 'g': case 'G':
           if (attachPhase === null) startAttachPick();
+          break;
+        case 'i': case 'I':
+          if (focusedInstancePath !== null) exitInstance();
+          else if (selectedInstancePath && selectedInstanceRef) enterInstance(selectedInstancePath, selectedInstanceRef);
           break;
         case 'u': case 'U':
           if (selectedPartId) {
@@ -635,6 +674,16 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
     const mesh = selection.selectedMesh;
     if (!mesh) return;
 
+    // Inside an instance, Delete takes the node out of *this* instance's copy: the item is what
+    // every other instance shares, and only Apply changes it.
+    if (insideDescendant) {
+      const { instancePath, path } = insideDescendant;
+      sketcherDoc.execute(new OverrideCommand(sketcher, instancePath, path, 'remove'));
+      selection.deselect();
+      statusMessage = `Removed "${path}" from this instance — the item itself is unchanged.`;
+      return;
+    }
+
     // An instance has no part of its own, so its *node* is what goes — the Definition stays.
     const instance = sketcher.instanceFor(mesh);
     if (instance) {
@@ -870,13 +919,24 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
 
       // ── Normal click (not in group edit mode) ─────────────────────────────
       if (hit) {
+        // Inside an instance, the hit addresses the node within its Definition — what a variation
+        // is written against. Clicking anything else steps back out.
+        const descendant = sketcher.descendantAt(hit);
+        if (descendant) {
+          selection.select(hit);
+          tc.attach(hit);
+          statusMessage = `Inside "${descendant.ref}": ${descendant.path} · move, hide or remove it, then Apply or Revert`;
+          return;
+        }
+        if (focusedInstancePath !== null) exitInstance();
+
         // An instance is one unit: its internals belong to its Definition, so a click
         // anywhere inside the expansion grabs the instance itself.
         const instance = sketcher.instanceFor(hit);
         if (instance) {
           selection.selectGroup(hit, instance.group);
           tc.attach(instance.group);
-          statusMessage = 'Instance selected. W/E/R transform · open its source to change what it is made of';
+          statusMessage = 'Instance selected. W/E/R transform · Edit inside to vary it · open its source to change what it is made of';
           return;
         }
 
@@ -1329,6 +1389,10 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
     }
     const entry = getById(id, mergedCatalogueEntries);
     if (entry?.kind !== 'set-piece') return;
+    if (focusedInstancePath !== null) {
+      statusMessage = 'Inside an instance only variations are editable — leave it to place items.';
+      return;
+    }
 
     // An entry arrives as an instance, so the Sketcher has to know the Definition before the
     // insert expands it — bundled entries carry their document inline, saved ones come from OPFS.
@@ -1412,6 +1476,10 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
   }
 
   function insertPrimitive(kind: string) {
+    if (focusedInstancePath !== null) {
+      statusMessage = 'Inside an instance only variations are editable — leave it to add parts.';
+      return;
+    }
     selection.deselect();
     const cmd = new InsertPartCommand(kind, sketcher);
     sketcherDoc.execute(cmd);
@@ -1445,6 +1513,10 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
   }
 
   function newSketch() {
+    if (focusedInstancePath !== null) {
+      statusMessage = 'Inside an instance only variations are editable — leave it to draw.';
+      return;
+    }
     selection.deselect();
     isDrawing = true;
     showSnapGrid();
@@ -1555,6 +1627,10 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
   }
 
   function startRevolveMode() {
+    if (focusedInstancePath !== null) {
+      statusMessage = 'Inside an instance only variations are editable — leave it to draw.';
+      return;
+    }
     enterRevolveEnvironment();
     isDrawing = true;
     isRevolvePending = false;
@@ -1763,6 +1839,147 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
     // selection.select fires onSelectionChanged → tc.attach(activeMesh); TC stays on the individual mesh.
     selection.select(activeMesh);
     statusMessage = 'Group edit: W/E/R transform selected member · click another member to switch · Esc to exit';
+  }
+
+  /**
+   * Step inside an instance (10.4-B): from here a hit addresses the node within its Definition, and
+   * moving, hiding or removing one writes a variation on the instance instead of changing the item
+   * every other instance shares.
+   */
+  function enterInstance(instancePath: string, ref: string) {
+    sketcher.focusInstance(instancePath);
+    focusedInstancePath = instancePath;
+    focusedInstanceRef = ref;
+    insideDescendant = null;
+    selection.deselect();
+    statusMessage = `Inside "${ref}" — click a part to vary it · Apply or Revert in the panel · Esc to leave`;
+    refreshOverrideState();
+  }
+
+  function exitInstance() {
+    if (focusedInstancePath === null) return;
+    sketcher.focusInstance(null);
+    focusedInstancePath = null;
+    focusedInstanceRef = null;
+    insideDescendant = null;
+    selection.deselect();
+    statusMessage = 'Left the instance.';
+    refreshOverrideState();
+  }
+
+  /**
+   * Read what the panels show: the variations the instance in hand carries, and the ones its
+   * Definition no longer answers to. Called wherever the document or the selection changed — the
+   * on-demand pattern the transform inspector already uses.
+   */
+  function refreshOverrideState() {
+    if (!sketcher) return;
+    // The sketcher retires a focus whose instance is gone (undo, delete, a load), so follow it.
+    focusedInstancePath = sketcher.focusedInstancePath;
+    if (focusedInstancePath === null) focusedInstanceRef = null;
+    const instancePath = instancePathOfSelection();
+    instanceOverrides = instancePath ? [...sketcher.overridesFor(instancePath)] : [];
+    orphanedOverrides = [...sketcher.orphanedOverrides];
+  }
+
+  /** The instance the current selection stands for: the focused one, or the selected one. */
+  function instancePathOfSelection(): string | null {
+    return focusedInstancePath ?? selectedInstancePath;
+  }
+
+  /** What that instance references, for the panel's Apply and for opening its source. */
+  function instanceRefInHand(): string | null {
+    return focusedInstancePath !== null ? focusedInstanceRef : selectedInstanceRef;
+  }
+
+  /** Whether the selected node inside the focus is hidden by a variation rather than by the item. */
+  function descendantHidden(): boolean {
+    const override = descendantOverride();
+    return override?.op === 'set' && override.value.hidden === true;
+  }
+
+  /** The variation this instance carries for the selected node, if any. */
+  function descendantOverride(): NodeOverride | null {
+    if (!insideDescendant) return null;
+    return instanceOverrides.find((o) => o.path === insideDescendant!.path) ?? null;
+  }
+
+  /** How a variation reads in the panel: what it does to the node, in a few words. */
+  function describeOverride(override: NodeOverride): string {
+    if (override.op === 'remove') return 'removed';
+    const parts: string[] = [];
+    if (override.value.hidden !== undefined) parts.push(override.value.hidden ? 'hidden' : 'shown');
+    if (override.value.transform) {
+      parts.push(`at ${override.value.transform.position.map((n) => n.toFixed(2)).join(', ')}`);
+    }
+    return parts.join(' · ') || 'changed';
+  }
+
+  /** Write the variation a panel action stands for, and say what it did. */
+  function varyDescendant(action: OverrideAction) {
+    if (!insideDescendant) return;
+    const { instancePath, path } = insideDescendant;
+    sketcherDoc.execute(new OverrideCommand(sketcher, instancePath, path, action));
+    if (action === 'remove') selection.deselect();
+    refreshOverrideState();
+    statusMessage = {
+      transform: `Moved "${path}" in this instance only.`,
+      hide: `Hid "${path}" in this instance only.`,
+      show: `Showing "${path}" in this instance only.`,
+      remove: `Removed "${path}" from this instance — the item itself is unchanged.`,
+      revert: `Reverted "${path}" to the item's own version.`,
+    }[action];
+  }
+
+  /** Take one variation back, leaving the item as it is. */
+  function revertVariation(instancePath: string, path: string) {
+    sketcherDoc.execute(new OverrideCommand(sketcher, instancePath, path, 'revert'));
+    refreshOverrideState();
+    statusMessage = `Reverted "${path}" to the item's own version.`;
+  }
+
+  /**
+   * Push one variation into the item itself, where every instance of it sees the change. That is a
+   * save to the item's own catalogue entry — not an in-session undo step — so it is reported as
+   * such, and the instance stops carrying a variation it no longer needs. A `set` of a transform is
+   * absolute, and a `remove` of an already-removed node is only ever an orphan, so re-applying is
+   * harmless either way.
+   */
+  async function applyOverride(instancePath: string, ref: string, path: string) {
+    const override = sketcher.overridesFor(instancePath).find((o) => o.path === path);
+    if (!override) return;
+    if (ref === currentEntryId) {
+      statusMessage = 'That item is the set you are editing — change it here instead.';
+      return;
+    }
+    // The item's own entry is where an applied variation belongs, so a bundled item (no document of
+    // its own) is reported the way Edit Source reports it rather than edited in place.
+    const stored = await OPFSCatalogueStore.getDocument(ref);
+    if (!stored) {
+      statusMessage = `"${ref}" is a bundled item — save your own copy to change what it is made of.`;
+      return;
+    }
+    const doc = cloneDocument(stored);
+    if (override.op === 'remove') {
+      removeTreeNode(doc, path);
+    } else {
+      const node = nodeAt(doc, path);
+      if (!node) {
+        statusMessage = `"${ref}" no longer has "${path}" — Revert this variation instead.`;
+        return;
+      }
+      if (override.value.transform) node.transform = { ...override.value.transform };
+      if (override.value.hidden !== undefined) node.hidden = override.value.hidden;
+    }
+    await OPFSCatalogueStore.saveDocument(ref, doc, { partCount: countParts(doc) });
+    refDocuments.set(ref, doc);
+    // Re-expanding through the resolver is what shows the change on every instance of it.
+    sketcher.setRefResolver((r) => refDocuments.get(r) ?? null);
+    const before = sketcherDoc.captureSnapshot();
+    sketcher.revertOverride(instancePath, path);
+    sketcherDoc.record(before, sketcherDoc.captureSnapshot(), 'Apply variation');
+    refreshOverrideState();
+    statusMessage = `Applied "${path}" to "${ref}" — every instance of it now has it.`;
   }
 
   function exitGroupEditMode() {
@@ -1982,14 +2199,19 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
 
   <div class="primitives-bar">
     <span class="bar-label">Insert:</span>
-    <button onclick={() => insertPrimitive('box')}>Cube</button>
-    <button onclick={() => insertPrimitive('sphere')}>Sphere</button>
-    <button onclick={() => insertPrimitive('cylinder')}>Cylinder</button>
-    <button onclick={() => insertPrimitive('capsule')}>Capsule</button>
-    <button onclick={() => insertPrimitive('cone')}>Cone</button>
-    <button onclick={() => insertPrimitive('torus')}>Torus</button>
+    <button disabled={focusedInstancePath !== null} onclick={() => insertPrimitive('box')}>Cube</button>
+    <button disabled={focusedInstancePath !== null} onclick={() => insertPrimitive('sphere')}>Sphere</button>
+    <button disabled={focusedInstancePath !== null} onclick={() => insertPrimitive('cylinder')}>Cylinder</button>
+    <button disabled={focusedInstancePath !== null} onclick={() => insertPrimitive('capsule')}>Capsule</button>
+    <button disabled={focusedInstancePath !== null} onclick={() => insertPrimitive('cone')}>Cone</button>
+    <button disabled={focusedInstancePath !== null} onclick={() => insertPrimitive('torus')}>Torus</button>
     <span class="separator"></span>
-    <button class="tool-btn" class:active={attachPhase !== null} onclick={startAttachPick} title="G">Attach…</button>
+    <button class="tool-btn" class:active={attachPhase !== null} disabled={focusedInstancePath !== null} onclick={startAttachPick} title="G">Attach…</button>
+    {#if focusedInstancePath !== null}
+      <span class="bar-label" title="A variation can move, hide or remove an item's nodes; adding parts happens in the item's own context">
+        Inside {focusedInstanceRef ?? 'an instance'} — Esc to leave
+      </span>
+    {/if}
     {#if attachPhase !== null}
       <button
         class="tool-btn"
@@ -2102,6 +2324,63 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
         >↺ col</button>
       {/if}
       <button class="dup-btn" onclick={duplicateSelected} title="Shift+D">Duplicate</button>
+    </div>
+  {/if}
+
+  {#if (instancePathOfSelection() !== null || orphanedOverrides.length > 0) && !isDrawing && !isExtruding}
+    <div class="instance-panel">
+      <div class="insp-row">
+        <span class="insp-label">{focusedInstancePath !== null ? 'Inside' : 'Instance'}</span>
+        <span class="insp-note">{instanceRefInHand() ?? 'an item'}</span>
+        <span class="insp-note">
+          {instanceOverrides.length} variation{instanceOverrides.length === 1 ? '' : 's'}
+          {#if orphanedOverrides.length > 0}· {orphanedOverrides.length} no longer applies{/if}
+        </span>
+        {#if focusedInstancePath !== null}
+          <button class="insp-act" onclick={exitInstance} title="Esc">Leave</button>
+        {:else if selectedInstancePath !== null && selectedInstanceRef !== null}
+          <button
+            class="insp-act"
+            title="Vary the parts this item is made of (I)"
+            onclick={() => enterInstance(selectedInstancePath!, selectedInstanceRef!)}
+          >Edit inside</button>
+        {/if}
+      </div>
+
+      {#if insideDescendant}
+        <div class="insp-row">
+          <span class="insp-label">{insideDescendant.path}</span>
+          <span class="insp-note">{descendantOverride() ? describeOverride(descendantOverride()!) : 'as the item has it'}</span>
+          {#if descendantHidden()}
+            <button class="insp-act" onclick={() => varyDescendant('show')}>Show</button>
+          {:else}
+            <button class="insp-act" onclick={() => varyDescendant('hide')}>Hide</button>
+          {/if}
+          <button class="insp-act" onclick={() => varyDescendant('remove')}>Remove</button>
+          <button class="insp-act" disabled={descendantOverride() === null} onclick={() => varyDescendant('revert')}>Revert</button>
+        </div>
+      {/if}
+
+      {#each instanceOverrides as override (override.path)}
+        <div class="insp-row">
+          <span class="insp-label">{override.path}</span>
+          <span class="insp-note">{describeOverride(override)}</span>
+          <button class="insp-act" onclick={() => revertVariation(instancePathOfSelection()!, override.path)}>Revert</button>
+          <button
+            class="insp-act"
+            title="Push this variation into the item itself, where every instance sees it"
+            onclick={() => void applyOverride(instancePathOfSelection()!, instanceRefInHand()!, override.path)}
+          >Apply to item</button>
+        </div>
+      {/each}
+
+      {#each orphanedOverrides as orphan (orphan.instancePath + '/' + orphan.path)}
+        <div class="insp-row">
+          <span class="insp-label">{orphan.path}</span>
+          <span class="insp-note">{orphan.instancePath.split('/').pop()} no longer has this node</span>
+          <button class="insp-act" onclick={() => revertVariation(orphan.instancePath, orphan.path)}>Revert</button>
+        </div>
+      {/each}
     </div>
   {/if}
 
@@ -2503,6 +2782,34 @@ import type { SetDocument } from '../../core/sketcher/documentTree.js';
     font-size: 13px;
     padding: 1px 4px;
     text-align: right;
+  }
+
+  .instance-panel {
+    position: absolute;
+    bottom: 44px;
+    /* Clears the sets column, which occupies the left edge of the page. */
+    left: calc(12px + var(--sets-column-width));
+    background: #12122a;
+    border: 1px solid #2a2a4a;
+    border-radius: 6px;
+    padding: 6px 10px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 420px;
+  }
+
+  .insp-note {
+    font-size: 10px;
+    color: #8080b0;
+    flex: 1;
+  }
+
+  .insp-act {
+    font-size: 10px;
+    padding: 2px 6px;
+    cursor: pointer;
   }
 
   .transform-inspector {
