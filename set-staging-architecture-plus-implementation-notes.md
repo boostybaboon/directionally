@@ -486,9 +486,9 @@ their producers:
   dressing override on a light node mean "that lamp off";
 - still owed from 10.4: `swap_ref` (with `describe_definition`, the tool that would let the AI target
   a path, deferred alongside it) and N9's Outliner highlight of overridden nodes;
-- still owed from 10.3: the addressing work N8 was
-  folded in for — `resolveInstances` still flattens the *scene*'s ref pieces with name offsets and
-  `SetPieceBlock.targetId` still matches a piece by `name` (see the identity table above).
+- still owed from 10.3: the addressing work N8 was folded in for — `resolveInstances` still flattens
+  the *scene*'s ref pieces with name offsets and `SetPieceBlock.targetId` still matches a piece by
+  `name` (see the identity table above).
 
 ## What the one type buys
 
