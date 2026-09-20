@@ -2,7 +2,7 @@
 
 ```bash
 yarn dev --open       # Start dev server (http://localhost:5173)
-yarn check            # TypeScript type checking
+yarn run check         # TypeScript type checking (plain `yarn check` is yarn's own)
 yarn check:watch      # Watch mode
 yarn test             # Run tests once and exit (use this in CI or scripts)
 yarn test:watch       # Watch mode for interactive development
@@ -13,7 +13,7 @@ yarn preview
 
 ## Long-running commands
 
-`yarn test` (full suite) and `yarn check` routinely take 30 s+, and shell tools that
+`yarn run test` (full suite) and `yarn run check` routinely take 30 s+, and shell tools that
 drive them cap a single command at ~30 s. Run long commands detached and poll the log:
 
 ```bash
