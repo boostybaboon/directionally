@@ -130,16 +130,12 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 ---
 
-### Known gaps (do not expect these to work yet)
+### Known gaps
 
-| Item | Status |
-|---|---|
-| Resize / recolour placed set pieces | Not yet — Phase 9.A |
-| Preset-sized environment pieces (wall flat, stage deck) | Not yet — Phase 9.B |
-| Character ground disc markers (tell Alpha from Beta in viewport) | Not yet — Phase 9.C |
-| Drag scenes between acts to reorder | Not yet — Phase UX3 |
-| Full-production scrollable screenplay view | Not yet — Phase UX2.6 |
-| Scene transition fade | Not yet — deferred after UX2.8 |
+Tracked in the [issue tracker](https://github.com/boostybaboon/directionally/issues?q=is%3Aissue+is%3Aopen)
+— this table used to cite phases from a plan that no longer exists, which was worse than having no
+table. The relevant ones for this workflow: editing a placed set piece is the dressing surface (#10),
+and scene-piece transforms are part of the same missing editor.
 
 ---
 

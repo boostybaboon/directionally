@@ -64,6 +64,19 @@ Follow conventional commits for clarity:
 `feat:`, `fix:`, `refactor:`, `test:`, `chore:`, `docs:`.
 Behavioral change and test addition may be separate commits; prefer clarity over compression.
 
+## Open Work
+
+Open work lives in the [issue tracker](https://github.com/boostybaboon/directionally/issues), not in
+the roadmaps: `gh issue list --label gap:reach` (what a surface cannot reach), `gap:unreachable`
+(built, nothing calls it), `gap:bug`, `gap:deferred`, `gap:stale-doc`. The design docs carry intent and
+history; the tracker carries what is open, and only one of them is allowed to hold a list.
+
+- A commit that closes an item says so (`closes #12`), which is what makes the tracker verifiable from
+  git history rather than from memory.
+- A comment marking real debt names its issue (`TODO(#12): …`), so the gap and its tracking are one
+  hop apart instead of two documents apart.
+- Fixing an item is not finished until the item says it.
+
 ## Refactor Rules
 
 1. **Preserve domain comments** – If moving code, carry over non-meta comments explaining fragile logic or rationale.

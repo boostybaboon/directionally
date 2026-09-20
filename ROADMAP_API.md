@@ -93,20 +93,24 @@ change, not an AI-surface change.
 
 ## Phases
 
+Open work lives in the [issue tracker](https://github.com/boostybaboon/directionally/issues?q=is%3Aissue+is%3Aopen+label%3Agap%3Areach);
+the phases below are the plan of record, and each unfinished one names its issue.
+
 - **P0 — AI Draft grammar + projection (no LLM).** ✅ Done — `AI_DRAFT_JSON_SCHEMA` +
   `normalizeAIDraft`, `toAIDraft`/`fromAIDraft`, `applyDraft`, and the document enrichment
   (part names, group id/name, primitive `size`) are all landed and tested.
-- **P1 — bridge to catalogue.** ✅ Done — `generateEditableSetting` builds a draft → assembly →
-  GLB bake → catalogue entry carrying `sourceAssemblyId`, using the same publish path a human
-  "Save as Setting" uses; resume-by-name and `partCount` stop the catalogue from duplicating.
-  ("Promote a subtree to a Definition" stays on Track SET, not here.)
+- **P1 — bridge to catalogue.** ✅ Done — one scenery verb: an AI Draft becomes the entry's tree
+  document (`create_setting`, `setting/authoringApi.ts`), resume-by-name stops the catalogue from
+  duplicating, and a bundle step no longer exists to describe (steps 4, 6 and 8 deleted the
+  assembly, the GLB bake and `sourceAssemblyId`). "Promote a subtree to a Definition" landed on
+  Track SET as "Save selection as Item".
 - **P2 — `describe_session` + programmatic inserts.** `describe_session`; programmatic
   `insert_sketch`/`insert_lathe` so the AI can express extruded/lathed parts as data (deferable —
-  primitives cover most).
+  primitives cover most). → **#1**
 - **P3 — `edit` route + agent loop.** `/agent/edit` (draft-in/draft-out), mirroring `/agent/make`'s
-  server-held-key boundary.
+  server-held-key boundary. → **#1**
 - **P4 — conversation UX.** Chat panel in `/sketch`: human/AI turns, review + undo of AI turns,
-  propose-vs-auto-apply.
+  propose-vs-auto-apply. → **#20**
 
 ## Out of scope / risks
 
