@@ -249,6 +249,15 @@ describe('lights', () => {
     expect(node.light && 'position' in node.light).toBe(false);
   });
 
+  it('collectLights() omits a hidden light, so a variation can switch one off', () => {
+    const doc: SetDocument = { root: [], joints: [] };
+    addLightNode(doc, sun);
+
+    doc.root[0].hidden = true;
+
+    expect(collectLights(doc)).toEqual([]);
+  });
+
   it('collectLights() rebuilds the renderer configs, and a removed light drops out', () => {
     const doc: SetDocument = { root: [], joints: [] };
     addLightNode(doc, sun);

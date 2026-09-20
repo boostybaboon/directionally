@@ -477,9 +477,34 @@ describe('storedSceneToModel – document-backed set pieces', () => {
 
     // A setting's light joins the scene's lights — where light animation addresses it —
     // rather than riding inside the realised group as geometry.
-    expect(model.lights.map((l) => l.name)).toEqual(['sky', 'lamp']);
+    // It is named by the piece that brought it, so two settings can each have their own `lamp`.
+    expect(model.lights.map((l) => l.name)).toEqual(['sky', 'classroom/lamp']);
     expect(model.environmentMap).toBe('exterior-sky');
     expect(model.groups[0].threeObject.children).toHaveLength(1);
+  });
+
+  it("names a setting's lights by the piece that brought them", () => {
+    const lit: SetDocument = {
+      root: [
+        {
+          id: 'ceiling',
+          role: 'light',
+          transform: { position: [0, 3, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+          children: [],
+          light: { type: 'directional', color: 0xffffff, intensity: 1 },
+        },
+      ],
+      joints: [],
+    };
+    const scene = baseScene({
+      // The scene's own light is called `sky` too: the two have to stay tellable apart.
+      lights: [{ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 2 }],
+      set: [documentPiece()],
+    });
+
+    const model = storedSceneToModel(scene, [], [{ kind: 'set-piece', id: 'classroom', hasDocument: true, document: lit }]);
+
+    expect(model.lights.map((l) => l.name)).toEqual(['sky', 'classroom/ceiling']);
   });
 
   it("lets the scene's own environment win over the setting's", () => {

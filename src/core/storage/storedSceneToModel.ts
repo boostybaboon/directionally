@@ -166,11 +166,12 @@ export function storedSceneToModel(
     const entry = getById(piece.catalogueId, mergedCatalogueEntries);
     const document = entry?.kind === 'set-piece' ? entry.document : undefined;
     if (!document) continue;
-    // TODO: namespace these by piece (`${piece.name}/${light.id}`) so a `LightBlock` can address one,
-    // or state that a setting's lights are lighting rather than tweak targets — the block inference
-    // below resolves an id to the *first* match, so a document light whose id a scene light already
-    // uses is unreachable from a shot.
-    settingLights.push(...collectLights(document));
+    // A setting's own lights arrive with its document, and are *named by the piece that brought
+    // them* (`classroom/ceiling`): a document's light ids are its own local names, so two settings
+    // can both have a `sky`, and a `LightBlock` — which resolves its target by id — has to be able
+    // to say which one it means. This is the same shape as the piece-name prefix the resolver puts
+    // on expanded names, and it is why a shot can tweak a venue's light at all.
+    settingLights.push(...collectLights(document).map((light) => ({ ...light, id: `${piece.name}/${light.id}` })));
     settingEnvironment ??= document.environmentMap;
   }
 

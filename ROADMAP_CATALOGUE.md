@@ -517,10 +517,11 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
         a shot wants a camera the document places; an **authoring surface** for dressing (the level-0
         API carries it, the script and the panels do not — N7 named `settingBindings`, which is a
         name→entry map, so dressing needs a surface of its own); a **shot override list** if a shot ever
-        varies beyond the timeline (the same type, one more scope, additive); and a setting's **lights**
-        as tweak targets — the block inference resolves an id to the first match, so a document light
-        whose id a scene light already uses is unreachable from a shot (the TODO in
-        `storedSceneToModel`).
+        varies beyond the timeline (the same type, one more scope, additive). A setting's **lights** are
+        named by the piece that brought them (`classroom/ceiling`), so a `LightBlock` can address one
+        even when two venues both call a light `sky` — a document's ids are its own local names, and
+        the piece name is what makes them scene-unique. A hidden light is not collected at all, which
+        is what makes `set { hidden }` on a light node mean "that lamp off" rather than nothing.
 
 11. **(Later) One store for characters.** `CharacterDesignStore` is still a second editable-source
     store behind `sourceDesignId`, exactly as `SketcherAssemblyStore` was for sets. Step 4 only

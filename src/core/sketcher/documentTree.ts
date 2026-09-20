@@ -819,10 +819,17 @@ export function removeLightNode(doc: SetDocument, id: string): boolean {
  * The document's lights in the renderer's shape, in tree order. Identity and position
  * come back from the node, which owns them.
  */
+/**
+ * Every light in a document, as renderer configs — the one reader of a document's lights, so the
+ * Sketcher and the model boundary can't disagree about what it lights itself with. A hidden light
+ * (an override, or the document's own `hidden`) is not contributed: hiding is a variation like any
+ * other, and "the classroom with that lamp off" has to mean something.
+ */
 export function collectLights(doc: SetDocument): LightConfig[] {
   const lights: LightConfig[] = [];
   const walk = (nodes: SetNode[]) => {
     for (const node of nodes) {
+      if (node.hidden) continue;
       if (isLightNode(node)) {
         lights.push({ ...node.light, id: node.id, position: node.transform.position } as LightConfig);
       }

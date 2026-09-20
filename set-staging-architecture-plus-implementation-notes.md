@@ -478,10 +478,11 @@ their producers:
   piece transform + `LightBlock` (shot) — one type at two scopes, last write wins. The environment rule
   was already 10.1's: the document supplies the default, an explicit scene value wins;
 - still owed from 10.5: camera/rig nodes (nothing consumes them while the shot layer is `Block[]`), an
-  authoring surface for dressing (script and panels; `settingBindings` is only a name→entry map), a
-  shot override list if a shot ever varies beyond the timeline, and a setting's *lights* as tweak
-  targets — the block inference resolves an id to the first match, so a document light whose id a scene
-  light uses is unreachable from a shot (TODO in `storedSceneToModel`);
+  authoring surface for dressing (script and panels; `settingBindings` is only a name→entry map), and a
+  shot override list if a shot ever varies beyond the timeline. **Answered**: a setting's lights are
+  named by the piece that brought them (`classroom/ceiling`), so a `LightBlock` can address one when two
+  venues both call a light `sky` — and a hidden light is not collected at all, which is what makes a
+  dressing override on a light node mean "that lamp off";
 - still owed from 10.4: `swap_ref` (with `describe_definition`, the tool that would let the AI target
   a path, deferred alongside it) and N9's Outliner highlight of overridden nodes;
 - still owed from 10.3: the diff's group-structure pass (see above), and the addressing work N8 was
