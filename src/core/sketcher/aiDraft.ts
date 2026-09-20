@@ -141,6 +141,13 @@ export function toEulerDeg(quaternion: [number, number, number, number]): [numbe
   return [fixZero(e.x * DEG), fixZero(e.y * DEG), fixZero(e.z * DEG)];
 }
 
+/** One triple from an untrusted draft, or the fallback when it cannot be read. */
+function readTriple(v: unknown, fallback: [number, number, number]): [number, number, number] {
+  return Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number')
+    ? [v[0], v[1], v[2]]
+    : [...fallback];
+}
+
 function toQuaternion(rotation: [number, number, number]): [number, number, number, number] {
   const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rotation[0] * RAD, rotation[1] * RAD, rotation[2] * RAD, 'XYZ'));
   return [fixZero(q.x), fixZero(q.y), fixZero(q.z), fixZero(q.w)];
@@ -322,10 +329,14 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
   const guidOfHandle = new Map<string, string>();
 
   const doc = emptyDocument();
-  for (const p of aiDraft.parts) {
+  const parts = Array.isArray(aiDraft?.parts) ? aiDraft.parts : [];
+  for (const p of parts) {
+    if (typeof p !== 'object' || p === null) continue;
+    // What the model left out is what the grammar asked for and did not get: the part lands at rest
+    // rather than the whole turn failing, and the diff shown for review says where it landed.
     const transform: Transform = {
-      position: p.position,
-      quaternion: toQuaternion(p.rotation),
+      position: readTriple(p.position, [0, 0, 0]),
+      quaternion: toQuaternion(readTriple(p.rotation, [0, 0, 0])),
       scale: p.shape !== undefined && p.size !== undefined ? sizeToScale(p.shape, p.size) : (p.scale ?? [1, 1, 1]),
     };
 
@@ -351,7 +362,7 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
     guidOfHandle.set(p.id, unique);
 
     const isPrimitive = p.shape !== undefined && p.size !== undefined;
-    const presetName = isPrimitive ? capitalize(p.shape!) : p.name;
+    const presetName = isPrimitive ? capitalize(p.shape!) : (p.name ?? 'Part');
 
     insertPart(doc, {
       content: {
@@ -373,8 +384,10 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
   }
   // AI parts carry WORLD transforms, so each group wraps its members where they already
   // stand: the node lands at their centroid and the members localise to it.
-  for (const group of aiDraft.groups) {
-    const memberIds = group.children
+  const groups = Array.isArray(aiDraft?.groups) ? aiDraft.groups : [];
+  for (const group of groups) {
+    if (typeof group !== 'object' || group === null) continue;
+    const memberIds = (Array.isArray(group.children) ? group.children : [])
       .map((handle) => guidOfHandle.get(handle))
       .filter((id): id is string => id !== undefined);
     if (memberIds.length > 0) groupNodes(doc, memberIds, group.name, true);

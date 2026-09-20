@@ -84,21 +84,18 @@ export async function planEditTurn(
   history: string[] = [],
   edit: (draft: unknown, instruction: string, history: string[]) => Promise<unknown> = requestDraftEdit,
 ): Promise<EditTurnPlan> {
-  const before = sketcher.toDocument();
-  const { aiDraft, idMap } = describeSession(before);
-
-  let answer: unknown;
   try {
-    answer = await edit(aiDraft, instruction, history);
+    const before = sketcher.toDocument();
+    const { aiDraft, idMap } = describeSession(before);
+    const draft = (await edit(aiDraft, instruction, history)) as AIDraft;
+    // An untrusted draft is clamped where it becomes a document, so a malformed answer degrades to a
+    // smaller diff rather than an exception. The whole step is inside the guard rather than only the
+    // request: a failure anywhere in planning has to be reportable, or the panel waits forever.
+    const diff = diffDocument(before, fromAIDraft(draft, idMap));
+    return { ok: true, turn: { instruction, draft, idMap, diff, summary: summariseDiff(diff) } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
-
-  // An untrusted draft is clamped where it becomes a document, so a malformed answer degrades to a
-  // small diff rather than a broken session.
-  const draft = answer as AIDraft;
-  const diff = diffDocument(before, fromAIDraft(draft, idMap));
-  return { ok: true, turn: { instruction, draft, idMap, diff, summary: summariseDiff(diff) } };
 }
 
 /**

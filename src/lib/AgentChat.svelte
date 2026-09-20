@@ -43,8 +43,13 @@
 
     instruction = '';
     busy = true;
-    const result = await planEditTurn(sketcher, text, history);
-    busy = false;
+    let result;
+    try {
+      result = await planEditTurn(sketcher, text, history);
+    } finally {
+      // A turn that fails must never leave the panel waiting.
+      busy = false;
+    }
 
     turns = [
       ...turns,

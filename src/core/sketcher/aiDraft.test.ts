@@ -3,7 +3,7 @@ import { toAIDraft, fromAIDraft, AI_CONVENTION } from './aiDraft.js';
 import { addLightNode, collectPartNodes, collectParts, collectRefs, documentFromParts, groupNodes, insertRef, isPartNode } from './documentTree.js';
 import type { PartSeed, SetDocument } from './documentTree.js';
 import type { PartDraft } from './types.js';
-import type { AIPart } from './aiDraft.js';
+import type { AIDraft, AIPart } from './aiDraft.js';
 import type { Transform } from './transform.js';
 
 function doc(seeds: PartSeed[] = []): SetDocument {
@@ -85,6 +85,40 @@ describe('toAIDraft', () => {
     expect(aiDraft.convention).toEqual(AI_CONVENTION);
     expect(aiDraft.environmentMap).toBe('studio');
     expect(aiDraft.lights).toHaveLength(1);
+  });
+});
+
+describe('fromAIDraft with a model answer that omits fields', () => {
+  // The shape that reached the drawer in use: the grammar asks for positions and rotations, and a
+  // model that omits them has written a slightly wrong draft, not an illegal one.
+  const draft = {
+    convention: AI_CONVENTION,
+    parts: [
+      { id: 'a', name: 'Desk', kind: 'primitive', shape: 'box', size: [1, 1, 1], position: [0, 1, 0], color: 0xffffff },
+      { id: 'b', name: 'Chair', kind: 'primitive', shape: 'box', size: [0.5, 0.5, 0.5] },
+    ],
+    groups: [],
+  } as unknown as AIDraft;
+
+  it('places a part with no rotation at rest instead of throwing', () => {
+    const doc = fromAIDraft(draft);
+
+    expect(collectPartNodes(doc)).toHaveLength(2);
+    const chair = collectPartNodes(doc).find((p) => p.content.label === 'Chair')!;
+    expect(chair.transform.quaternion).toEqual([0, 0, 0, 1]);
+    expect(chair.transform.position).toEqual([0, 0, 0]);
+  });
+
+  it('keeps the fields the model did send', () => {
+    const doc = fromAIDraft(draft);
+    const desk = collectPartNodes(doc).find((p) => p.content.label === 'Desk')!;
+
+    expect(desk.transform.position).toEqual([0, 1, 0]);
+  });
+
+  it('treats an unusable answer as an empty draft rather than an exception', () => {
+    expect(collectPartNodes(fromAIDraft({} as AIDraft))).toHaveLength(0);
+    expect(collectPartNodes(fromAIDraft({ parts: 'nonsense' } as unknown as AIDraft))).toHaveLength(0);
   });
 });
 
