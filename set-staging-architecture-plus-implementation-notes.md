@@ -447,7 +447,14 @@ their producers:
   instance takes its place, so the world does not move — which is why the promotion needs no
   re-placement, and why a part leaf becomes a one-part Definition at identity. Inside joints and
   bonds travel with the subtree; a boundary-crossing joint is dropped rather than left dangling;
-- still owed from 10.3-B: the diff's group-structure pass (see above).
+- the renderer boundary resolves instances: `realiseDocumentSets` builds the resolver from the same
+  entry list it takes documents from, so a saved set's instances render in a compiled shot, and
+  `storedSceneToModelAsync` loads that closure from OPFS first (bundled documents carry their own, so a
+  ref nothing serves is read and its own refs are followed). A missing Definition contributes no
+  geometry and says which one;
+- still owed from 10.3: the diff's group-structure pass (see above), and the addressing work N8 was
+  folded in for — `resolveInstances` still flattens the *scene*'s ref pieces with name offsets and
+  `SetPieceBlock.targetId` still matches a piece by `name` (see the identity table above).
 
 ## What the one type buys
 
@@ -561,8 +568,9 @@ structure is always *referenced*, never authored by the AI. A `ref` part is a ha
 with optional path-addressed `overrides` (`[{ "path": "chair/back", "op": "remove" }]`). The round
 trip ends in a `ref` node, never a copy:
 
-- `fromAIDraft` maps a `ref` part to a `SetNode` with `ref` + `overrides` — no inlining; the
-  referenced Definition carries the geometry and any nesting;
+- `fromAIDraft` maps a `ref` part to a `SetNode` with `ref` — no inlining; the referenced Definition
+  carries the geometry and any nesting. The optional `overrides` in that JSON are 10.4's, landing with
+  the consumer that writes them;
 - `toAIDraft` projects a `ref` node back to a `ref` part (an opaque handle), so identity survives an
   edit loop; unreferenced nesting still flattens in the projection, because the grammar cannot
   express it and only the referenced case needs to;
@@ -616,6 +624,11 @@ Deliberately unanswered here, so 10.1 stays bounded:
 - **Joints across an instance boundary** — a joint between two parts that live inside different
   Definitions needs a path, not a part id.
 - **Override granularity** — may `op: 'set'` patch only the transform, or any field (colour, light
-  payload, geometry)?
-- **Resolution timing** — resolve `ref`s lazily per node, or eagerly per document at load?
+  payload, geometry)? This is 10.4's first decision, because it fixes the override's `value` shape.
+- **Resolution timing** — resolve `ref`s lazily per node, or eagerly per document at load? Answered
+  by 10.3 in practice, in both places a document is read: the Sketcher expands instances during a sync
+  (`setRefResolver` + `syncFromDocument`) and the model boundary expands them when it realises the
+  document (`realiseDocumentSets` + the OPFS closure walk). Nothing resolves lazily or mid-frame, so
+  10.4's override replay has one place to live: inside `realiseDocument`, over the Definition it was
+  handed.
 

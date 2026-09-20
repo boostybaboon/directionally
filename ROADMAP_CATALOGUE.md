@@ -440,6 +440,17 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       grouping); this is where they become the addressing scheme callers use, because two instances of
       one Definition collide on part id — which is what the id-diff, joints and animation addressing
       all key off. N8 moves up or folds in here.
+      The renderer boundary resolves instances too: `realiseDocumentSets` hands `realiseDocument` a
+      resolver built from the same entry list it takes documents from, so a saved set's instances
+      render in a compiled shot, not only in the session — and `storedSceneToModelAsync` loads that
+      closure from OPFS first (bundled documents carry their own; a ref nothing serves is read, and the
+      Definitions it brings are followed in turn, the walk the Sketcher already does before a load). An
+      instance whose Definition is missing contributes no geometry and says which one.
+      The two lines above are still owed, though: `resolveInstances` keeps flattening the *scene*'s ref
+      pieces (offsetting names with `${piece.name}/${c.name}`) and `SetPieceBlock.targetId` still
+      matches a piece by `name` — so two instances of one Definition remain ambiguous to animation
+      addressing. That is the **N8** that was folded in here, and it is what makes the sentence about
+      "path and identity survive to the renderer" true.
     - **10.4 — `overrides` + Apply/Revert.** Instances carry the flat, path-addressed override list
       (Unity's model — the simplest that works); resolution is `deep-copy(Definition)`, then replay
       the overrides in list order. Apply (push to Definition) / Revert affordances, and orphaned
