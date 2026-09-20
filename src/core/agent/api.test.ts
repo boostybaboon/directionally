@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { describeCatalogue, describeDefinition, describeScript, bindName, describeToDocument } from './api.js';
+import { describeCatalogue, describeDefinition, describeScript, describeSession, editToDocument, bindName, describeToDocument } from './api.js';
 import type { CatalogueEntry, SetPieceEntry } from '../catalogue/types.js';
 import { addLightNode, documentFromParts, groupNodes, insertRef } from '../sketcher/documentTree.js';
 import type { SetDocument } from '../sketcher/documentTree.js';
@@ -7,6 +7,8 @@ import type { PartDraft } from '../sketcher/types.js';
 import type { Transform } from '../sketcher/transform.js';
 import type { ScriptDocument } from '../treatment/fountain.js';
 import type { AIProvider } from './provider.js';
+import { AI_CONVENTION } from '../sketcher/aiDraft.js';
+import { AI_DRAFT_JSON_SCHEMA } from '../sketcher/aiDraftSchema.js';
 
 const character = (id: string, label: string): CatalogueEntry => ({ kind: 'character', id, label, gltfPath: `/m/${id}.glb` });
 const setPiece = (id: string, label: string, extra: Omit<Partial<SetPieceEntry>, 'kind' | 'id'> = {}): SetPieceEntry => ({ kind: 'set-piece', id, label, document: testSetDocument(), ...extra });
@@ -103,6 +105,53 @@ describe('describeDefinition', () => {
     expect(describeDefinition('empty', entries())).toBeNull();
     expect(describeDefinition('bob', entries())).toBeNull();
     expect(describeDefinition('nothing', entries())).toBeNull();
+  });
+});
+
+describe('describeSession', () => {
+  it('projects the session as a draft, with the map that keeps an answer addressable', () => {
+    const doc = documentFromParts([{
+      content: { id: 'box', kind: 'primitive', name: 'Box', color: 0xffffff },
+      transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+    }]);
+
+    const { aiDraft, idMap } = describeSession(doc);
+
+    expect(aiDraft.parts).toHaveLength(1);
+    expect(aiDraft.parts[0].shape).toBe('box');
+    // The handle answers which content id it stands for: without that, an edit could only delete and
+    // re-add the parts it did not change.
+    expect(idMap[aiDraft.parts[0].id]).toBe('box');
+  });
+});
+
+describe('editToDocument', () => {
+  it('sends the whole draft and the instruction, and asks for the draft grammar back', async () => {
+    let system = '';
+    let user = '';
+    let schema: unknown;
+    const provider: AIProvider = {
+      generate: async (systemPrompt, userPrompt, jsonSchema) => {
+        system = systemPrompt;
+        user = userPrompt;
+        schema = jsonSchema;
+        return { convention: AI_CONVENTION, parts: [], groups: [] };
+      },
+    };
+    const draft = {
+      convention: AI_CONVENTION,
+      parts: [{ id: 'box', name: 'Box', kind: 'primitive' as const, shape: 'box', size: [1, 1, 1], position: [0, 0.5, 0] as [number, number, number], rotation: [0, 0, 0] as [number, number, number], color: 0xffffff }],
+      groups: [],
+    };
+
+    const answer = await editToDocument(provider, draft, 'raise the box', ['make it wider']);
+
+    expect(answer).toEqual({ convention: AI_CONVENTION, parts: [], groups: [] });
+    expect(user).toContain('raise the box');
+    expect(user).toContain('make it wider');
+    expect(user).toContain('"shape":"box"');
+    expect(system).toContain('whole draft');
+    expect(schema).toBe(AI_DRAFT_JSON_SCHEMA);
   });
 });
 

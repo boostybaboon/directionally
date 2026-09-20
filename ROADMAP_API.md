@@ -28,10 +28,15 @@ not touched), and (b) **review + undo** (the turn is one labelled, undoable step
 
 ## The surface
 
-- Read: `describe_session` → the live session as an AI Draft.
-- Write (LLM, server-side): `edit` — `{ draft, instruction, history }` → `{ text, draft }`.
+- Read: `describe_session` → the live session as an AI Draft, plus the handle-to-identity map an
+  answer needs to be applied (`describeSession(document)`).
+- Write (LLM, server-side): `edit` — `{ draft, instruction, history }` → `{ draft }`, at `/agent/edit`,
+  which holds the provider key. The answer is the whole draft rather than a patch: the app-side diff
+  turns the difference into edits, and that is what makes one AI turn one undoable step.
 - Apply (client-side, **not** an LLM verb): `apply_draft` — id-diff → `SketcherDocument.execute()`
-  (snapshot-based undo, no inverse commands).
+  (snapshot-based undo, no inverse commands). `applyDraftCommand(sketcher, draft, idMap)` is that
+  wiring: a returned draft becomes the command, and `idMap` is what keeps a part the AI left alone the
+  same part. `requestDraftEdit` is the browser's half of the round trip.
 - Retained (production binding, unchanged in `src/core/agent/`): `describe_catalogue`,
   `describe_script`, `bind`, `create_character`.
 
@@ -104,11 +109,11 @@ the phases below are the plan of record, and each unfinished one names its issue
   duplicating, and a bundle step no longer exists to describe (steps 4, 6 and 8 deleted the
   assembly, the GLB bake and `sourceAssemblyId`). "Promote a subtree to a Definition" landed on
   Track SET as "Save selection as Item".
-- **P2 — `describe_session` + programmatic inserts.** `describe_session`; programmatic
-  `insert_sketch`/`insert_lathe` so the AI can express extruded/lathed parts as data (deferable —
-  primitives cover most). → **#1**
-- **P3 — `edit` route + agent loop.** `/agent/edit` (draft-in/draft-out), mirroring `/agent/make`'s
-  server-held-key boundary. → **#1**
+- **P2 — `describe_session` + programmatic inserts.** ✅ `describe_session` landed (#1); programmatic
+  `insert_sketch`/`insert_lathe` remain, so the AI can express extruded/lathed parts as data (deferable
+  — primitives cover most). → **#44**
+- **P3 — `edit` route + agent loop.** ✅ `/agent/edit` landed (#1), mirroring `/agent/make`'s
+  server-held-key boundary, with the apply caller the loop was missing.
 - **P4 — conversation UX.** Chat panel in `/sketch`: human/AI turns, review + undo of AI turns,
   propose-vs-auto-apply. → **#20**
 

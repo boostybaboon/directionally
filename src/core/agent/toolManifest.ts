@@ -35,6 +35,17 @@ const DEFINITION_SCHEMA: Record<string, unknown> = {
   },
 };
 
+const EDIT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['draft', 'instruction'],
+  properties: {
+    draft: { type: 'object', description: 'The current draft, exactly as describe_session returned it.' },
+    instruction: { type: 'string', description: 'What to change, in the author’s words.' },
+    history: { type: 'array', items: { type: 'string' }, description: 'Earlier instructions, oldest first.' },
+  },
+};
+
 const MAKE_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
@@ -59,6 +70,16 @@ export function toolManifest(): ToolDefinition[] {
       name: 'describe_definition',
       description: 'Describe what one catalogue Definition is made of: every node with the path an override addresses, its name, kind, world placement and absolute size, plus the instances it references, its lights and its environment. describe_catalogue says what exists; this says what is inside one of them.',
       inputSchema: DEFINITION_SCHEMA,
+    },
+    {
+      name: 'describe_session',
+      description: 'The live session as an AI Draft, with the handle-to-identity map an edit needs to apply its answer: pass that map back with the edited draft so a part left alone stays the same part.',
+      inputSchema: NO_ARGS_SCHEMA,
+    },
+    {
+      name: 'edit',
+      description: 'Change a scene draft from an instruction: give the current draft and what to change, get the whole new draft back. Keep every id, name, group and placement you are not asked to change.',
+      inputSchema: EDIT_SCHEMA,
     },
     { name: 'create_setting', description: 'Create (or update) a scenery set from an AI Draft document; the draft becomes the set\'s tree document.', inputSchema: AI_DRAFT_JSON_SCHEMA },
     { name: 'create_character', description: 'Create (and persist) a spec-backed character from a validated document.', inputSchema: CHARACTER_JSON_SCHEMA },

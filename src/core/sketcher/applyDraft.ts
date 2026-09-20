@@ -1,6 +1,8 @@
 import type { CartoonSketcher } from './CartoonSketcher.js';
 import type { SketcherCommand } from './SketcherCommand.js';
 import { isPartNode, isRefNode } from './documentTree.js';
+import { fromAIDraft } from './aiDraft.js';
+import type { AIDraft } from './aiDraft.js';
 import type { PlacedPart, RefNode, RefSeed, SetDocument, SetNode } from './documentTree.js';
 import { IDENTITY_TRANSFORM, localToWorld } from './transform.js';
 import type { Transform } from './transform.js';
@@ -271,3 +273,19 @@ export function applyDocumentCommand(sketcher: CartoonSketcher, target: SetDocum
     },
   };
 }
+
+/**
+ * The apply step of the agent-edit loop: the AI Draft that came back from /agent/edit becomes the
+ * command that reconciles the live session with it. `idMap` is the one describe_session returned, and
+ * passing it is what keeps a part the AI left alone the *same* part rather than a delete and an add.
+ *
+ * Execute the result through `SketcherDocument.execute()` — one AI turn is one undoable step.
+ */
+export function applyDraftCommand(
+  sketcher: CartoonSketcher,
+  draft: AIDraft,
+  idMap: Record<string, string> = {},
+): SketcherCommand {
+  return applyDocumentCommand(sketcher, fromAIDraft(draft, idMap));
+}
+

@@ -2,9 +2,9 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import * as THREE from 'three';
 import { CartoonSketcher } from './CartoonSketcher.js';
 import { SketcherDocument } from './SketcherDocument.js';
-import { diffDocument, applyDocumentCommand } from './applyDraft.js';
+import { diffDocument, applyDocumentCommand, applyDraftCommand } from './applyDraft.js';
 import { documentFromParts, emptyDocument, insertRef } from './documentTree.js';
-import { AI_CONVENTION, fromAIDraft } from './aiDraft.js';
+import { AI_CONVENTION, fromAIDraft, toAIDraft } from './aiDraft.js';
 import type { PartSeed, SetDocument } from './documentTree.js';
 import type { PartDraft } from './types.js';
 import type { Transform } from './transform.js';
@@ -241,6 +241,36 @@ describe('applyDocumentCommand', () => {
 
     expect(sketcher.toDocument().root.map((n) => n.id)).toEqual(['chair-1']);
     expect(sketcher.nodeObject('chair-1')!.position.toArray()).toEqual([2, 0, 0]);
+  });
+
+  it('applies the answer to an edit as one undoable step, keeping the parts it left alone', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    const document = new SketcherDocument(sketcher);
+
+    const box = sketcher.insertPrimitive('Box')!;
+    const boxId = box.id;
+
+    // What the loop does: read the session, have the model answer with the whole draft, apply it.
+    const { aiDraft, idMap } = toAIDraft(sketcher.toDocument());
+    const answered = {
+      ...aiDraft,
+      parts: [
+        { ...aiDraft.parts[0], position: [3, 0.5, 0] as [number, number, number] },
+        { id: 'extra', name: 'Extra', kind: 'primitive' as const, shape: 'box', size: [1, 1, 1], position: [0, 0.5, 0] as [number, number, number], rotation: [0, 0, 0] as [number, number, number], color: 0xffffff },
+      ],
+    };
+
+    document.execute(applyDraftCommand(sketcher, answered, idMap));
+
+    const parts = sketcher.getSession().parts;
+    expect(parts).toHaveLength(2);
+    // The part the AI moved is still the same part, which is the whole point of passing the map.
+    expect(parts.find((p) => p.id === boxId)!.mesh.position.x).toBeCloseTo(3);
+    expect(parts.some((p) => p.id !== boxId)).toBe(true);
+
+    document.undo();
+    expect(sketcher.getSession().parts).toHaveLength(1);
+    expect(sketcher.getSession().parts[0].id).toBe(boxId);
   });
 
   it('drops a nested instance by id, though its path carries the group', () => {

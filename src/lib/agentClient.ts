@@ -36,3 +36,27 @@ export async function generateAsset(
 
   return make(kind, name, data.document, options);
 }
+
+/**
+ * requestDraftEdit — the client half of an AI edit: POST the current draft and an instruction to the
+ * server's LLM step (`/agent/edit`), and get the whole new draft back. Apply it with
+ * `applyDraftCommand` through `SketcherDocument.execute()` — the id-diff is what makes the turn one
+ * undoable step, and what keeps a part the AI left alone the same part.
+ */
+export async function requestDraftEdit(
+  draft: unknown,
+  instruction: string,
+  history: string[] = [],
+): Promise<unknown> {
+  const response = await fetch('/agent/edit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ draft, instruction, history }),
+  });
+
+  const data = (await response.json().catch(() => ({}))) as { draft?: unknown; error?: string };
+  if (!response.ok) {
+    throw new Error(data.error ?? `Edit failed (${response.status})`);
+  }
+  return data.draft;
+}

@@ -23,7 +23,9 @@ import { collectLights, countParts, isLightNode, isPartNode, isRefNode } from '.
 import type { SetNode } from '../sketcher/documentTree.js';
 import { IDENTITY_TRANSFORM, localToWorld } from '../sketcher/transform.js';
 import type { Transform } from '../sketcher/transform.js';
-import { scaleToSize, toEulerDeg } from '../sketcher/aiDraft.js';
+import { scaleToSize, toEulerDeg, toAIDraft } from '../sketcher/aiDraft.js';
+import type { AIDraft, AIDraftProjection } from '../sketcher/aiDraft.js';
+import type { SetDocument } from '../sketcher/documentTree.js';
 import type { LightConfig } from '../domain/types.js';
 import { resolveCastName, resolveSetting } from '../treatment/fountainCompiler.js';
 import type { ResolveBindings } from '../treatment/fountainCompiler.js';
@@ -151,6 +153,43 @@ export function describeDefinition(
     ...(document.environmentMap !== undefined ? { environmentMap: document.environmentMap } : {}),
     partCount: countParts(document),
   };
+}
+
+/**
+ * describe_session — the live session as an AI Draft, plus the handle-to-identity map that applying an
+ * edited draft needs: without it a part the AI left alone could not be recognised as the same part.
+ * The projection is the editor's own (toAIDraft), so the draft an agent reads and the draft it answers
+ * with are the same grammar in both directions.
+ */
+export function describeSession(document: SetDocument): AIDraftProjection {
+  return toAIDraft(document);
+}
+
+/**
+ * editToDocument — the draft-in / draft-out LLM step behind /agent/edit. The draft is sent whole and
+ * the answer is expected whole, rather than as a patch: the grammar is small, a model rewrites far more
+ * reliably than it invents diffs, and the app-side id-diff is what turns the difference into edits —
+ * which is the property that keeps an AI turn one undoable step.
+ *
+ * Not validated here, deliberately: an untrusted draft is clamped where it is applied, the same shape
+ * describeToDocument has.
+ */
+export async function editToDocument(
+  provider: AIProvider,
+  draft: AIDraft,
+  instruction: string,
+  history: string[] = [],
+): Promise<unknown> {
+  const systemPrompt = 'You edit one JSON scene draft for a 3D animation app. '
+    + 'Return the whole draft, changed only where the instruction asks: keep every id, name, group '
+    + 'and placement you are not asked to change, and keep every part you do not need to touch. '
+    + 'The draft is a flat list of parts (each with an id, name, shape, absolute size in metres, '
+    + 'position in metres, Euler rotation in degrees, and hex color), named groups over part ids, '
+    + 'and optional lights and environment. A part with a ref places a catalogue item instead of '
+    + 'describing a body. Coordinate convention: units are metres; up is +Y with the ground at '
+    + 'Y=0; forward is -Z. Respond with JSON only.';
+  const userPrompt = JSON.stringify({ instruction, draft, history });
+  return provider.generate(systemPrompt, userPrompt, AI_DRAFT_JSON_SCHEMA);
 }
 
 function merged(userEntries: CatalogueEntry[]): CatalogueEntry[] {
