@@ -9,8 +9,8 @@ import {
   withSingleFaceGroup,
 } from './geometry.js';
 import type { PartDraft } from './types.js';
-import { isPartNode, isRefNode } from './documentTree.js';
-import type { SetDocument, SetNode } from './documentTree.js';
+import { applyOverrides, isPartNode, isRefNode } from './documentTree.js';
+import type { OrphanedOverride, SetDocument, SetNode } from './documentTree.js';
 import type { Transform } from './transform.js';
 
 /**
@@ -24,26 +24,42 @@ import type { Transform } from './transform.js';
  *
  * An instance (`node.ref`) is expanded from its Definition by `resolve`, under the
  * instance's own transform, so the reference — not a copy — is what the document holds and
- * the paths inside the expansion stay the Definition's. Without a resolver, or when the
+ * the paths inside the expansion stay the Definition's. Its `overrides` are replayed over
+ * that Definition on expansion, in list order. Without a resolver, or when the
  * Definition cannot be found, an instance contributes no geometry.
  */
 export type RefResolver = (ref: string) => SetDocument | null;
 
+/** Reports an override that matched nothing in the Definition it was replayed over. */
+export type OrphanedOverrideReporter = (ref: string, orphan: OrphanedOverride) => void;
+
 /** A Definition may contain instances of its own, so expansion needs a depth limit. */
 const MAX_REF_DEPTH = 16;
 
-export function realiseDocument(doc: { root: SetNode[] }, resolve?: RefResolver): THREE.Group {
+export function realiseDocument(
+  doc: { root: SetNode[] },
+  resolve?: RefResolver,
+  onOrphanedOverride?: OrphanedOverrideReporter,
+): THREE.Group {
   const root = new THREE.Group();
   root.name = 'realised-set';
   for (const node of doc.root) {
-    const object = realiseNode(node, resolve, 0);
+    const object = realiseNode(node, resolve, 0, onOrphanedOverride);
     if (object) root.add(object);
   }
   return root;
 }
 
-function realiseNode(node: SetNode, resolve: RefResolver | undefined, depth: number): THREE.Object3D | null {
-  if (isRefNode(node)) return realiseInstance(node, resolve, depth);
+function realiseNode(
+  node: SetNode,
+  resolve: RefResolver | undefined,
+  depth: number,
+  onOrphanedOverride: OrphanedOverrideReporter | undefined,
+): THREE.Object3D | null {
+  // Hidden is a variation, not a removal: the node keeps its place in the tree, so an override
+  // that named it still resolves and `hidden: false` can bring it back.
+  if (node.hidden) return null;
+  if (isRefNode(node)) return realiseInstance(node, resolve, depth, onOrphanedOverride);
   if (isPartNode(node)) return buildPartMesh(node.content, node.transform);
   // A light is not geometry, so it is not realised here: a model's lights come from its
   // `LightAsset[]` (built from the scene's `LightConfig[]`), and a THREE.Light buried in
@@ -58,7 +74,7 @@ function realiseNode(node: SetNode, resolve: RefResolver | undefined, depth: num
   group.userData = { isGroupNode: true, groupName: node.name, groupIsGroup: node.isGroup === true };
   applyTransform(group, node.transform);
   for (const child of node.children) {
-    const object = realiseNode(child, resolve, depth);
+    const object = realiseNode(child, resolve, depth, onOrphanedOverride);
     if (object) group.add(object);
   }
   return group;
@@ -67,9 +83,15 @@ function realiseNode(node: SetNode, resolve: RefResolver | undefined, depth: num
 /**
  * Realise a node's Definition as one object under the node's own transform: the
  * Definition's root nodes become children of that object, so an instance composes exactly
- * as a group does.
+ * as a group does. The Definition is the *copy* the overrides produced, never the stored
+ * one — an instance varies its Definition without editing it.
  */
-function realiseInstance(node: SetNode, resolve: RefResolver | undefined, depth: number): THREE.Object3D | null {
+function realiseInstance(
+  node: SetNode,
+  resolve: RefResolver | undefined,
+  depth: number,
+  onOrphanedOverride: OrphanedOverrideReporter | undefined,
+): THREE.Object3D | null {
   if (!resolve || depth >= MAX_REF_DEPTH) return null;
   const definition = resolve(node.ref!);
   if (!definition) return null;
@@ -79,8 +101,11 @@ function realiseInstance(node: SetNode, resolve: RefResolver | undefined, depth:
   // Tagged so a caller can tell instance geometry from the host document's own nodes.
   instance.userData = { isRefNode: true, ref: node.ref };
   applyTransform(instance, node.transform);
-  for (const child of definition.root) {
-    const object = realiseNode(child, resolve, depth + 1);
+  const root = node.overrides && node.overrides.length > 0
+    ? applyOverrides(definition.root, node.overrides, (orphan) => onOrphanedOverride?.(node.ref!, orphan))
+    : definition.root;
+  for (const child of root) {
+    const object = realiseNode(child, resolve, depth + 1, onOrphanedOverride);
     if (object) instance.add(object);
   }
   return instance;

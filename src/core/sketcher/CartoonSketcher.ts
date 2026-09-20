@@ -23,6 +23,7 @@ import {
   groupMembersOf,
   collectPartNodes,
   normalizeDocument,
+  applyOverrides,
   isPartNode,
   isRefNode,
   findGroupByPath,
@@ -1010,7 +1011,14 @@ export class CartoonSketcher {
 
     const definition = this.refResolver?.(node.ref!);
     if (definition) {
-      const realised = realiseDocument(definition, this.refResolver);
+      // The Definition is realised as this instance's overrides leave it, so the session shows what
+      // the renderer will; an override its Definition no longer answers to is reported, not ignored.
+      const root = node.overrides && node.overrides.length > 0
+        ? applyOverrides(definition.root, node.overrides, (orphan) => {
+            console.warn(`CartoonSketcher: instance "${node.id}" has a ${orphan.op} override for "${orphan.path}", which "${node.ref}" no longer has`);
+          })
+        : definition.root;
+      const realised = realiseDocument({ root }, this.refResolver);
       for (const child of [...realised.children]) instance.add(child);
     }
     return instance;

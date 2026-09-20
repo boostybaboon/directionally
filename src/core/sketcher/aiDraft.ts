@@ -34,6 +34,26 @@ export const AI_CONVENTION: AIConvention = {
   forward: '-Z',
 };
 
+/**
+ * One variation a reference part carries: a patch to a node inside its Definition, addressed by
+ * path. The AI reads and writes Euler degrees and Definition-local coordinates, the document stores
+ * quaternions — `toAIDraft`/`fromAIDraft` translate, so an AI edit cannot quietly drop an
+ * instance's variation.
+ */
+export type AIOverride = {
+  path: string;
+  op: 'set' | 'remove';
+  /** `set`: replaces the node's transform inside the Definition. */
+  transform?: {
+    position?: [number, number, number];
+    /** Euler degrees, XYZ order. */
+    rotation?: [number, number, number];
+    scale?: [number, number, number];
+  };
+  /** `set`: hides the node, or shows a Definition-hidden one again with `false`. */
+  hidden?: boolean;
+};
+
 export type AIPart = {
   /** Handle the AI addresses the part by; unique within the draft. */
   id: string;
@@ -44,6 +64,8 @@ export type AIPart = {
    * placement rather than a body. `describe_catalogue` is where the AI learns the ids.
    */
   ref?: string;
+  /** Variation the instance applies to its Definition — reference parts only. */
+  overrides?: AIOverride[];
   /** Body kind; absent on a reference part, where the Definition supplies it. */
   kind?: PartDraft['kind'];
   /** Lowercase primitive preset ('box', 'sphere', …) — primitives only. */
@@ -163,6 +185,33 @@ function sizeToScale(shape: string, size: number[]): [number, number, number] {
 
 import type { Transform } from './transform.js';
 import { IDENTITY_TRANSFORM, localToWorld } from './transform.js';
+import type { NodeOverride, NodePatch } from './documentTree.js';
+
+/** An instance's override, in the draft's terms: Euler degrees, Definition-local coordinates. */
+function toAIOverride(override: NodeOverride): AIOverride {
+  if (override.op === 'remove') return { path: override.path, op: 'remove' };
+  const t = override.value.transform;
+  return {
+    path: override.path,
+    op: 'set',
+    ...(t ? { transform: { position: t.position, rotation: toEulerDeg(t.quaternion), scale: t.scale } } : {}),
+    ...(override.value.hidden !== undefined ? { hidden: override.value.hidden } : {}),
+  };
+}
+
+function fromAIOverride(override: AIOverride): NodeOverride {
+  if (override.op === 'remove') return { path: override.path, op: 'remove' };
+  const value: NodePatch = {};
+  if (override.transform) {
+    value.transform = {
+      position: override.transform.position ?? [0, 0, 0],
+      quaternion: toQuaternion(override.transform.rotation ?? [0, 0, 0]),
+      scale: override.transform.scale ?? [1, 1, 1],
+    };
+  }
+  if (override.hidden !== undefined) value.hidden = override.hidden;
+  return { path: override.path, op: 'set', value };
+}
 
 /** Project a set document into its AI-facing form. */
 export function toAIDraft(doc: SetDocument): AIDraftProjection {
@@ -184,12 +233,14 @@ export function toAIDraft(doc: SetDocument): AIDraftProjection {
         idMap[handle] = node.id;
         if (groupHandle !== undefined) childrenOfGroup.get(groupHandle)!.push(handle);
         const world = localToWorld(node.transform, parent);
+        const overrides = node.overrides?.map(toAIOverride);
         parts.push({
           id: handle,
           name: node.name ?? node.ref,
           ref: node.ref,
           position: world.position,
           rotation: toEulerDeg(world.quaternion),
+          ...(overrides && overrides.length > 0 ? { overrides } : {}),
           ...(groupHandle !== undefined ? { group: groupHandle } : {}),
         });
         continue;
@@ -280,7 +331,13 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
     // A reference part places a Definition instead of describing geometry: the document holds
     // an instance, so the item keeps its own names and paths and is never copied.
     if (p.ref !== undefined) {
-      guidOfHandle.set(p.id, insertRef(doc, { ref: p.ref, name: p.name, transform }).id);
+      const overrides = p.overrides?.map(fromAIOverride);
+      guidOfHandle.set(p.id, insertRef(doc, {
+        ref: p.ref,
+        name: p.name,
+        transform,
+        ...(overrides && overrides.length > 0 ? { overrides } : {}),
+      }).id);
       continue;
     }
 

@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { realiseDocument } from './realise.js';
 import type { RefResolver } from './realise.js';
-import { documentFromParts, insertPart, groupNodes } from './documentTree.js';
-import type { PartSeed, SetDocument } from './documentTree.js';
+import { collectPartNodes, documentFromParts, insertPart, groupNodes } from './documentTree.js';
+import type { NodeOverride, PartNode, PartSeed, SetDocument } from './documentTree.js';
 import type { PartDraft } from './types.js';
 import type { Transform } from './transform.js';
 
@@ -115,5 +115,115 @@ describe('instances', () => {
     const resolve: RefResolver = (ref) => (ref === 'loop' ? loop : null);
 
     expect(() => realiseDocument(host('loop'), resolve)).not.toThrow();
+  });
+});
+describe('instance overrides', () => {
+  const identity: Transform = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
+
+  /** A part leaf whose node id is its own, so an override's path reads as the tree does. */
+  const leaf = (id: string, position: [number, number, number]): PartNode => ({
+    id,
+    role: 'prop',
+    transform: { ...identity, position },
+    children: [],
+    content: { id, kind: 'primitive', name: 'Box', color: 0xffffff },
+  });
+
+  function chair(): SetDocument {
+    return {
+      root: [
+        leaf('seat', [0, 0.45, 0]),
+        {
+          id: 'legs',
+          role: 'structure',
+          isGroup: true,
+          transform: { ...identity },
+          children: [leaf('legleft', [-0.3, 0, 0]), leaf('legright', [0.3, 0, 0])],
+        },
+      ],
+      joints: [],
+    };
+  }
+
+  const resolve: RefResolver = (ref) => (ref === 'chair' ? chair() : null);
+
+  function host(overrides: NodeOverride[], ref = 'chair'): SetDocument {
+    return {
+      root: [{ id: 'chair-1', role: 'prop', ref, transform: { ...identity }, children: [], overrides }],
+      joints: [],
+    };
+  }
+
+  function instance(overrides: NodeOverride[]): THREE.Group {
+    return realiseDocument(host(overrides), resolve).children[0] as THREE.Group;
+  }
+
+  const partIds = (group: THREE.Group): (string | undefined)[] =>
+    group.children.map((c) => (c as THREE.Mesh).userData.sketcherPartId);
+
+  it('removes a node inside the Definition', () => {
+    const [, legs] = instance([{ path: 'legs/legright', op: 'remove' }]).children;
+
+    expect(partIds(legs as THREE.Group)).toEqual(['legleft']);
+  });
+
+  it('sets a node transform, leaving the Definition at its own placement', () => {
+    const [seat] = instance([
+      { path: 'seat', op: 'set', value: { transform: { ...identity, position: [0, 0.9, 0] } } },
+    ]).children as THREE.Mesh[];
+
+    expect(seat.position.toArray()).toEqual([0, 0.9, 0]);
+  });
+
+  it('hides a node with its subtree', () => {
+    const root = instance([{ path: 'legs', op: 'set', value: { hidden: true } }]);
+
+    expect(root.children).toHaveLength(1);
+    expect(partIds(root)).toEqual(['seat']);
+  });
+
+  it('un-hides a node the Definition hides, since hidden is a flag a patch can set either way', () => {
+    const hidden: SetDocument = {
+      root: [{
+        id: 'seat',
+        role: 'prop',
+        hidden: true,
+        transform: { ...identity },
+        children: [],
+        content: { id: 'seat', kind: 'primitive', name: 'Box', color: 0xffffff },
+      }],
+      joints: [],
+    };
+    const resolveHidden: RefResolver = (ref) => (ref === 'hidden-def' ? hidden : null);
+
+    const plain = realiseDocument(host([], 'hidden-def'), resolveHidden).children[0] as THREE.Group;
+    const shown = realiseDocument(
+      host([{ path: 'seat', op: 'set', value: { hidden: false } }], 'hidden-def'),
+      resolveHidden,
+    ).children[0] as THREE.Group;
+
+    expect(plain.children).toHaveLength(0);
+    expect(shown.children).toHaveLength(1);
+  });
+
+  it('reports an override that matches nothing, and replays the rest', () => {
+    const reported: string[] = [];
+    const root = realiseDocument(
+      host([{ path: 'legs/gone', op: 'remove' }, { path: 'legs/legleft', op: 'remove' }]),
+      resolve,
+      (ref, orphan) => reported.push(`${ref}:${orphan.path}:${orphan.op}`),
+    ).children[0] as THREE.Group;
+
+    expect(reported).toEqual(['chair:legs/gone:remove']);
+    expect(partIds(root.children[1] as THREE.Group)).toEqual(['legright']);
+  });
+
+  it('never writes an override into the Definition it replays over', () => {
+    const definition = chair();
+    realiseDocument(host([{ path: 'seat', op: 'remove' }]), () => definition);
+
+    // Two instances of one Definition vary independently because the replay works on a copy.
+    expect(collectPartNodes(definition)).toHaveLength(3);
+    expect(definition.root).toHaveLength(2);
   });
 });

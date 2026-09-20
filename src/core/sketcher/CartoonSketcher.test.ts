@@ -6,7 +6,8 @@ import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { exportGLB } from './exportGLB.js';
 import type { SketcherSession } from './types.js';
 import { collectLights, documentFromParts, isPartNode } from './documentTree.js';
-import type { PartSeed } from './documentTree.js';
+import type { PartSeed, SetDocument } from './documentTree.js';
+import type { Transform } from './transform.js';
 import type { SetPieceEntry } from '../catalogue/types.js';
 import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 
@@ -1238,6 +1239,40 @@ describe('group / ungroup', () => {
       const instance = scene.children.find((child) => child.userData.sketcherInstancePath === 'chair-1') as THREE.Group;
       expect(instance.children).toHaveLength(0);
       expect(sketcher.toDocument().root[0].ref).toBe('missing');
+    });
+
+    it('realises an instance as its overrides leave it, and keeps them through an edit', () => {
+      const identity: Transform = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
+      const definition: SetDocument = {
+        root: [
+          { id: 'seat', role: 'prop', transform: identity, children: [], content: { id: 'seat-part', kind: 'primitive', name: 'Box', color: 0x663311 } },
+          { id: 'back', role: 'prop', transform: identity, children: [], content: { id: 'back-part', kind: 'primitive', name: 'Box', color: 0x663311 } },
+        ],
+        joints: [],
+      };
+      const doc: SetDocument = {
+        root: [{
+          id: 'chair-1',
+          role: 'prop',
+          ref: 'chair-item',
+          transform: identity,
+          children: [],
+          overrides: [{ path: 'back', op: 'set', value: { hidden: true } }],
+        }],
+        joints: [],
+      };
+
+      sketcher.setRefResolver((ref) => (ref === 'chair-item' ? definition : null));
+      sketcher.loadDocument(doc);
+
+      // The Definition minus its hidden part: the session shows what the renderer will.
+      expect(sketcher.instanceMeshes).toHaveLength(1);
+
+      // An edit elsewhere in the document re-syncs the instance without touching its overrides.
+      sketcher.insertPrimitive('Box');
+      expect(sketcher.toDocument().root[0].overrides).toEqual([
+        { path: 'back', op: 'set', value: { hidden: true } },
+      ]);
     });
 
     it('promotes a group into an item, leaving the session with an instance', () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   insertPart,
   removePart,
@@ -25,11 +25,12 @@ import {
   removeTreeNode,
   extractDefinition,
   collectPartNodes,
+  applyOverrides,
 } from './documentTree.js';
 import { isPartNode } from './documentTree.js';
 import { localToWorld } from './transform.js';
 import type { Transform } from './transform.js';
-import type { PartSeed, SetDocument, SetNode } from './documentTree.js';
+import type { NodeOverride, OrphanedOverride, PartSeed, SetDocument, SetNode } from './documentTree.js';
 import type { JointSnapshot } from './types.js';
 import type { LightConfig } from '../domain/types.js';
 
@@ -420,6 +421,103 @@ describe('instances', () => {
     const doc = normalizeDocument({ root: [{ id: 'a', role: 'prop', children: [] }], joints: [] });
     expect(doc.root).toHaveLength(0);
   });
+
+  it('normalizeDocument() keeps the overrides that can be replayed', () => {
+    const patch = { ...identity, position: [0, 0.9, 0] as [number, number, number] };
+    const doc = normalizeDocument({
+      root: [{
+        id: 'chair-1',
+        role: 'prop',
+        ref: 'chair',
+        transform: identity,
+        children: [],
+        overrides: [
+          { path: 'legs/right', op: 'remove' },
+          { path: 'seat', op: 'set', value: { transform: patch, hidden: true } },
+        ],
+      }],
+      joints: [],
+    });
+
+    expect(doc.root[0].overrides).toEqual([
+      { path: 'legs/right', op: 'remove' },
+      { path: 'seat', op: 'set', value: { transform: patch, hidden: true } },
+    ]);
+  });
+
+  it('normalizeDocument() fills in the fields a patch transform leaves out', () => {
+    const doc = normalizeDocument({
+      root: [{
+        id: 'chair-1',
+        role: 'prop',
+        ref: 'chair',
+        transform: identity,
+        children: [],
+        overrides: [{ path: 'seat', op: 'set', value: { transform: { position: [0, 0.9, 0] } } }],
+      }],
+      joints: [],
+    });
+
+    expect(doc.root[0].overrides?.[0]).toEqual({
+      path: 'seat',
+      op: 'set',
+      value: { transform: { position: [0, 0.9, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] } },
+    });
+  });
+
+  it('normalizeDocument() drops an override nothing can replay, and says which', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const doc = normalizeDocument({
+      root: [{
+        id: 'chair-1',
+        role: 'prop',
+        ref: 'chair',
+        transform: identity,
+        children: [],
+        overrides: [
+          { path: '', op: 'remove' },
+          { op: 'remove' },
+          { path: 'seat', op: 'flip' },
+          { path: 'seat', op: 'set', value: {} },
+          { path: 'seat', op: 'set', value: { hidden: true } },
+        ],
+      }],
+      joints: [],
+    });
+
+    expect(doc.root[0].overrides).toEqual([{ path: 'seat', op: 'set', value: { hidden: true } }]);
+    const issues = warn.mock.calls.map((c) => String(c[0]));
+    expect(issues.some((i) => i.includes('has no path'))).toBe(true);
+    expect(issues.some((i) => i.includes('unknown op "flip"'))).toBe(true);
+    expect(issues.some((i) => i.includes('sets nothing'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('normalizeDocument() reports overrides on a node that is not an instance', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const doc = normalizeDocument({
+      root: [{
+        id: 'seat',
+        role: 'prop',
+        transform: identity,
+        children: [],
+        content: { id: 'seat', kind: 'primitive', name: 'Box', color: 0xffffff },
+        overrides: [{ path: 'seat', op: 'remove' }],
+      }],
+      joints: [],
+    });
+
+    // Kept, but inert: overrides are replayed over a Definition, and this node has none.
+    expect(doc.root[0].overrides).toBeUndefined();
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('not an instance'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('insertRef() carries the seed overrides', () => {
+    const doc: SetDocument = { root: [], joints: [] };
+    const node = insertRef(doc, { ref: 'chair', overrides: [{ path: 'seat', op: 'remove' }] });
+    expect(node.overrides).toEqual([{ path: 'seat', op: 'remove' }]);
+  });
 });
 
 describe('extractDefinition', () => {
@@ -498,3 +596,72 @@ describe('extractDefinition', () => {
     expect(doc.groupComponents).toBeUndefined();
   });
 });
+
+describe('applyOverrides', () => {
+  const identity: Transform = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
+
+  function tree(): SetNode[] {
+    return [
+      { id: 'seat', role: 'prop', transform: { ...identity }, children: [], content: { id: 'seat', kind: 'primitive', name: 'Box', color: 0xffffff } },
+      {
+        id: 'legs',
+        role: 'structure',
+        isGroup: true,
+        transform: { ...identity },
+        children: [
+          { id: 'left', role: 'prop', transform: { ...identity }, children: [], content: { id: 'left', kind: 'primitive', name: 'Box', color: 0xffffff } },
+        ],
+      },
+    ];
+  }
+
+  it('leaves the Definition alone and returns the patched copy', () => {
+    const root = tree();
+
+    const patched = applyOverrides(root, [{ path: 'seat', op: 'remove' }]);
+
+    expect(patched.map((n) => n.id)).toEqual(['legs']);
+    expect(root.map((n) => n.id)).toEqual(['seat', 'legs']);
+  });
+
+  it('replays in list order, so the last write to a node wins', () => {
+    const patched = applyOverrides(tree(), [
+      { path: 'legs/left', op: 'set', value: { hidden: true } },
+      { path: 'legs/left', op: 'set', value: { hidden: false, transform: { ...identity, position: [1, 0, 0] } } },
+    ]);
+
+    const left = patched[1].children[0];
+    expect(left.hidden).toBe(false);
+    expect(left.transform.position).toEqual([1, 0, 0]);
+  });
+
+  it('removes a node the earlier entries patched, without resurrecting it', () => {
+    const patched = applyOverrides(tree(), [
+      { path: 'legs/left', op: 'set', value: { hidden: true } },
+      { path: 'legs/left', op: 'remove' },
+    ]);
+
+    expect(patched[1].children).toEqual([]);
+  });
+
+  it('reports an override that matched nothing and keeps going', () => {
+    const orphans: OrphanedOverride[] = [];
+
+    const patched = applyOverrides(
+      tree(),
+      [
+        { path: 'legs/gone', op: 'remove' },
+        { path: 'nothing/here', op: 'set', value: { hidden: true } },
+        { path: 'seat', op: 'remove' },
+      ],
+      (orphan) => orphans.push({ ...orphan }),
+    );
+
+    expect(orphans).toEqual([
+      { path: 'legs/gone', op: 'remove' },
+      { path: 'nothing/here', op: 'set' },
+    ]);
+    expect(patched.map((n) => n.id)).toEqual(['legs']);
+  });
+});
+

@@ -34,6 +34,19 @@ export type SetNode = {
    * assembly or a venue.
    */
   ref?: string;
+  /**
+   * Patches this instance applies to its Definition, replayed in list order by
+   * `applyOverrides()` when the instance is realised. An instance carries variation, never a
+   * copy, so this is where "that chair, minus its back" lives. The instance's own placement is
+   * *not* an override — its `transform` is a node edit, like any other node's.
+   */
+  overrides?: NodeOverride[];
+  /**
+   * Not rendered, with its subtree — hiding is a variation, not a removal, so paths and
+   * identity survive it. An override's `set` writes this on the replay copy; a Definition may
+   * also carry it, which is what makes `hidden: false` a meaningful override.
+   */
+  hidden?: boolean;
   /** A `prop` leaf's body. */
   content?: PartDraft;
   /**
@@ -47,6 +60,23 @@ export type SetNode = {
   /** `true` for a pure group; absent or `false` for an attach assembly. */
   isGroup?: boolean;
 };
+
+/** What an override's `set` patches — a node's placement within the instance, or its visibility. */
+export type NodePatch = {
+  transform?: Transform;
+  hidden?: boolean;
+};
+
+/**
+ * One entry of an instance's override list, addressed by node path inside its Definition
+ * (`chair-legs/left`, or `seat` at the Definition's root).
+ */
+export type NodeOverride =
+  | { path: string; op: 'set'; value: NodePatch }
+  | { path: string; op: 'remove' };
+
+/** An override that matched nothing: the Definition changed under the instance. */
+export type OrphanedOverride = { path: string; op: NodeOverride['op'] };
 
 /** A light's payload: its config minus the identity and placement the node owns. */
 export type LightBody = DistributiveOmit<LightConfig, 'id' | 'position'>;
@@ -69,6 +99,8 @@ export type RefSeed = {
   name?: string;
   role?: NodeRole;
   transform?: Transform;
+  /** Variation this instance applies to the Definition — see `applyOverrides()`. */
+  overrides?: NodeOverride[];
 };
 
 /** A part leaf's body and transform, both present — what `collectPartNodes` yields. */
@@ -174,6 +206,10 @@ function normalizeNode(raw: unknown, path: string, issues: string[]): SetNode | 
     issues.push(`${path} (${n.id}) is a light with no configuration`);
     return null;
   }
+  if (n.overrides !== undefined && ref === undefined) {
+    issues.push(`${path} (${n.id}) has overrides but is not an instance`);
+  }
+  const overrides = ref === undefined ? undefined : normalizeOverrides(n.overrides, path, issues);
   return {
     id: n.id,
     role: n.role,
@@ -182,8 +218,82 @@ function normalizeNode(raw: unknown, path: string, issues: string[]): SetNode | 
     ...(n.content !== undefined ? { content: n.content } : {}),
     ...(n.light !== undefined ? { light: n.light } : {}),
     ...(ref !== undefined ? { ref } : {}),
+    ...(overrides !== undefined ? { overrides } : {}),
+    ...(n.hidden === true ? { hidden: true } : {}),
     ...(n.name !== undefined ? { name: n.name } : {}),
     ...(n.isGroup !== undefined ? { isGroup: n.isGroup } : {}),
+  };
+}
+
+/**
+ * Keep the overrides that can be replayed and report the rest: an override nothing understands is
+ * inert, and an inert override is a silent lie about what the instance varies.
+ */
+function normalizeOverrides(raw: unknown, path: string, issues: string[]): NodeOverride[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) {
+    issues.push(`${path}.overrides is not a list`);
+    return undefined;
+  }
+  const out: NodeOverride[] = [];
+  raw.forEach((entry, i) => {
+    const at = `${path}.overrides[${i}]`;
+    if (typeof entry !== 'object' || entry === null) {
+      issues.push(`${at} is not an override`);
+      return;
+    }
+    const o = entry as { path?: unknown; op?: unknown; value?: unknown };
+    if (typeof o.path !== 'string' || o.path === '') {
+      issues.push(`${at} has no path`);
+      return;
+    }
+    if (o.op === 'remove') {
+      out.push({ path: o.path, op: 'remove' });
+      return;
+    }
+    if (o.op !== 'set') {
+      issues.push(`${at} has unknown op "${String(o.op)}"`);
+      return;
+    }
+    const value = typeof o.value === 'object' && o.value !== null ? o.value as Record<string, unknown> : {};
+    const patch: NodePatch = {};
+    if (value.transform !== undefined) {
+      const transform = patchTransform(value.transform);
+      if (!transform) {
+        issues.push(`${at}.value.transform is not a position/quaternion/scale`);
+        return;
+      }
+      patch.transform = transform;
+    }
+    if (typeof value.hidden === 'boolean') patch.hidden = value.hidden;
+    if (patch.transform === undefined && patch.hidden === undefined) {
+      issues.push(`${at} sets nothing`);
+      return;
+    }
+    out.push({ path: o.path, op: 'set', value: patch });
+  });
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * A patch's transform, field by field, so a partial one still replays: what the file left out comes
+ * back at rest — the same reading a node with no transform of its own gets.
+ */
+function patchTransform(raw: unknown): Transform | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const t = raw as Partial<Transform>;
+  const read = (v: unknown, length: number, rest: number[]): number[] | undefined => {
+    if (v === undefined) return [...rest];
+    return Array.isArray(v) && v.length === length && v.every((n) => typeof n === 'number') ? v : undefined;
+  };
+  const position = read(t.position, 3, IDENTITY_TRANSFORM.position);
+  const quaternion = read(t.quaternion, 4, IDENTITY_TRANSFORM.quaternion);
+  const scale = read(t.scale, 3, IDENTITY_TRANSFORM.scale);
+  if (!position || !quaternion || !scale) return undefined;
+  return {
+    position: position as [number, number, number],
+    quaternion: quaternion as [number, number, number, number],
+    scale: scale as [number, number, number],
   };
 }
 
@@ -195,6 +305,56 @@ function nameSegment(wanted: string, taken: Set<string>): string {
   while (taken.has(candidate)) candidate = `${base}-${i++}`;
   taken.add(candidate);
   return candidate;
+}
+
+// ── Instance overrides ───────────────────────────────────────────────────────
+
+/**
+ * Replay an instance's overrides over its Definition's root, in list order, on a copy — the
+ * Definition itself is never touched, which is the point of an override: two instances of one
+ * Definition vary independently.
+ *
+ * A path addresses a node inside the Definition (`chair-legs/left`, or `seat` at the root), never
+ * the instance's own node, whose placement is a node edit. An override that matches nothing is
+ * reported rather than dropped, because a Definition that changed under an instance is exactly what
+ * a silent drop hides.
+ */
+export function applyOverrides(
+  root: SetNode[],
+  overrides: NodeOverride[],
+  onOrphan?: (orphan: OrphanedOverride) => void,
+): SetNode[] {
+  const copy = JSON.parse(JSON.stringify(root)) as SetNode[];
+  for (const override of overrides) {
+    const found = locateByPath(copy, override.path);
+    if (!found) {
+      onOrphan?.({ path: override.path, op: override.op });
+      continue;
+    }
+    if (override.op === 'remove') {
+      found.nodes.splice(found.index, 1);
+      continue;
+    }
+    if (override.value.transform !== undefined) found.node.transform = { ...override.value.transform };
+    if (override.value.hidden !== undefined) found.node.hidden = override.value.hidden;
+  }
+  return copy;
+}
+
+/** Walk `nodes` by path segments — one node id per level, each unique among its siblings. */
+function locateByPath(
+  nodes: SetNode[],
+  path: string,
+): { node: SetNode; nodes: SetNode[]; index: number } | null {
+  let level = nodes;
+  let found: { node: SetNode; nodes: SetNode[]; index: number } | null = null;
+  for (const segment of path.split('/')) {
+    const index = level.findIndex((n) => n.id === segment);
+    if (index === -1) return null;
+    found = { node: level[index], nodes: level, index };
+    level = found.node.children;
+  }
+  return found;
 }
 
 // ── Tree mutation operations (the live model's edit surface) ─────────────────
@@ -380,6 +540,7 @@ export function insertRef(doc: SetDocument, seed: RefSeed): SetNode {
     children: [],
     ref: seed.ref,
   };
+  if (seed.overrides && seed.overrides.length > 0) node.overrides = seed.overrides;
   doc.root.push(node);
   return node;
 }

@@ -108,7 +108,9 @@ function realiseDocumentSets(
       console.warn(`storedSceneToModel: no document for catalogue piece "${piece.catalogueId}" — rendering placeholder geometry`);
       continue;
     }
-    groups.set(piece.name, realiseDocument(document, resolveRef));
+    groups.set(piece.name, realiseDocument(document, resolveRef, (ref, orphan) => {
+      console.warn(`storedSceneToModel: instance "${ref}" has a ${orphan.op} override for "${orphan.path}", which its Definition no longer has`);
+    }));
   }
   return groups;
 }

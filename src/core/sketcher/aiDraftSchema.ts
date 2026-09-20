@@ -1,5 +1,5 @@
 import { AI_CONVENTION } from './aiDraft.js';
-import type { AIDraft, AIGroup, AIPart } from './aiDraft.js';
+import type { AIDraft, AIGroup, AIOverride, AIPart } from './aiDraft.js';
 import type { LightConfig } from '../domain/types.js';
 
 /**
@@ -63,6 +63,7 @@ const PART_VARIANTS: Record<string, unknown>[] = Object.entries(SIZE_LENGTHS).ma
 /**
  * A part that places a catalogue Definition instead of describing a body: the AI composes
  * from what `describe_catalogue` shows it, and the reference survives into the document.
+ * `overrides` vary a node inside that Definition, addressed by path.
  */
 const REF_VARIANT: Record<string, unknown> = {
   type: 'object',
@@ -75,6 +76,24 @@ const REF_VARIANT: Record<string, unknown> = {
     position: VEC3_SCHEMA,
     rotation: VEC3_SCHEMA,
     group: { type: 'string' },
+    overrides: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['path', 'op'],
+        properties: {
+          path: { type: 'string' },
+          op: { enum: ['set', 'remove'] },
+          transform: {
+            type: 'object',
+            additionalProperties: false,
+            properties: { position: VEC3_SCHEMA, rotation: VEC3_SCHEMA, scale: VEC3_SCHEMA },
+          },
+          hidden: { type: 'boolean' },
+        },
+      },
+    },
   },
 };
 
@@ -142,6 +161,35 @@ function asVec4(v: unknown, field: string): [number, number, number, number] {
   return [asNumber(v[0], `${field}[0]`), asNumber(v[1], `${field}[1]`), asNumber(v[2], `${field}[2]`), asNumber(v[3], `${field}[3]`)];
 }
 
+function normalizeOverrides(v: unknown, field: string): AIOverride[] {
+  if (!Array.isArray(v)) throw new Error(`${field}.overrides must be an array`);
+  return v.map((raw, i) => {
+    const at = `${field}.overrides[${i}]`;
+    if (!isRecord(raw)) throw new Error(`${at} must be an object`);
+    const path = asString(raw.path, `${at}.path`);
+    if (raw.op === 'remove') return { path, op: 'remove' };
+    if (raw.op !== 'set') throw new Error(`${at}.op must be 'set' or 'remove'`);
+
+    const override: AIOverride = { path, op: 'set' };
+    if (raw.transform !== undefined) {
+      if (!isRecord(raw.transform)) throw new Error(`${at}.transform must be an object`);
+      override.transform = {
+        position: raw.transform.position !== undefined ? asVec3(raw.transform.position, `${at}.transform.position`) : [0, 0, 0],
+        rotation: raw.transform.rotation !== undefined ? asVec3(raw.transform.rotation, `${at}.transform.rotation`) : [0, 0, 0],
+        scale: raw.transform.scale !== undefined ? asVec3(raw.transform.scale, `${at}.transform.scale`) : [1, 1, 1],
+      };
+    }
+    if (raw.hidden !== undefined) {
+      if (typeof raw.hidden !== 'boolean') throw new Error(`${at}.hidden must be a boolean`);
+      override.hidden = raw.hidden;
+    }
+    if (override.transform === undefined && override.hidden === undefined) {
+      throw new Error(`${at} sets nothing`);
+    }
+    return override;
+  });
+}
+
 function normalizePart(v: unknown, field: string): AIPart {
   if (!isRecord(v)) throw new Error(`${field} must be an object`);
 
@@ -153,6 +201,10 @@ function normalizePart(v: unknown, field: string): AIPart {
   // A reference part carries no body: the Definition it names supplies one.
   if (v.ref !== undefined) {
     const part: AIPart = { id, name, ref: asString(v.ref, `${field}.ref`), position, rotation };
+    if (v.overrides !== undefined) {
+      const overrides = normalizeOverrides(v.overrides, field);
+      if (overrides.length > 0) part.overrides = overrides;
+    }
     if (v.group !== undefined) part.group = asString(v.group, `${field}.group`);
     return part;
   }

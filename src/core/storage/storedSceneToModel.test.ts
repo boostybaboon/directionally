@@ -181,6 +181,35 @@ describe('storedSceneToModel – instances inside a document', () => {
     expect(legInstance.children).toHaveLength(2);
   });
 
+  it('applies an instance override, and reports one its Definition cannot answer', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const overridden: SetDocument = {
+      root: [
+        {
+          ...instance('chair-1', 'chair-item', [1, 0, 0]),
+          overrides: [
+            { path: 'seat', op: 'remove' },
+            { path: 'gone', op: 'set', value: { hidden: true } },
+          ],
+        },
+        leaf('desk'),
+      ],
+      joints: [],
+    };
+    const model = storedSceneToModel(baseScene({ set: [pieceFor('classroom')] }), [], [
+      { kind: 'set-piece', id: 'classroom', hasDocument: true, document: overridden },
+      { kind: 'set-piece', id: 'chair-item', hasDocument: true, document: chair },
+      { kind: 'set-piece', id: 'legs-item', hasDocument: true, document: legs },
+    ]);
+
+    // The instance stands for the Definition minus its removed seat: the legs remain.
+    const chairInstance = model.groups[0].threeObject.children[0];
+    expect(chairInstance.children).toHaveLength(1);
+    expect(chairInstance.children[0].userData.ref).toBe('legs-item');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"gone"'));
+    warn.mockRestore();
+  });
+
   it('renders nothing for an instance whose Definition is missing, and says which', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const scene = baseScene({ set: [pieceFor('classroom')] });

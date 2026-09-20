@@ -83,4 +83,35 @@ describe('reference parts', () => {
   it('rejects a reference that is not a string', () => {
     expect(() => normalizeAIDraft({ parts: [{ id: 'a', name: 'a', ref: 7 }] })).toThrow(/ref/);
   });
+
+  it('accepts a reference part\u2019s overrides, filling in the transform fields it omits', () => {
+    const aiDraft = normalizeAIDraft({
+      parts: [{
+        id: 'chair',
+        name: 'chair',
+        ref: 'chair-def',
+        overrides: [
+          { path: 'legs/right', op: 'remove' },
+          { path: 'seat', op: 'set', transform: { position: [0, 0.9, 0] } },
+          { path: 'back', op: 'set', hidden: false },
+        ],
+      }],
+    });
+
+    expect(aiDraft.parts[0].overrides).toEqual([
+      { path: 'legs/right', op: 'remove' },
+      { path: 'seat', op: 'set', transform: { position: [0, 0.9, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } },
+      { path: 'back', op: 'set', hidden: false },
+    ]);
+  });
+
+  it('rejects an override nothing can replay', () => {
+    const withOverride = (override: unknown) => () =>
+      normalizeAIDraft({ parts: [{ id: 'a', name: 'a', ref: 'chair', overrides: [override] }] });
+
+    expect(withOverride({ path: 'seat', op: 'flip' })).toThrow(/op/);
+    expect(withOverride({ path: 'seat', op: 'set' })).toThrow(/sets nothing/);
+    expect(withOverride({ path: 'seat', op: 'set', hidden: 'yes' })).toThrow(/hidden/);
+    expect(withOverride('seat')).toThrow(/must be an object/);
+  });
 });

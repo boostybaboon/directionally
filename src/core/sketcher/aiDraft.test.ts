@@ -242,4 +242,66 @@ describe('reference parts', () => {
     expect(group.children).toHaveLength(2);
     expect(group.children.some((child) => child.ref === 'chair-def')).toBe(true);
   });
+
+  it('carries an instance\u2019s overrides out, in the draft\u2019s terms', () => {
+    const d = doc();
+    insertRef(d, {
+      ref: 'chair',
+      name: 'chair',
+      transform: { ...identity },
+      overrides: [
+        { path: 'legs/right', op: 'remove' },
+        { path: 'seat', op: 'set', value: { transform: { ...identity, position: [0, 0.9, 0] }, hidden: true } },
+      ],
+    });
+
+    expect(toAIDraft(d).aiDraft.parts[0].overrides).toEqual([
+      { path: 'legs/right', op: 'remove' },
+      { path: 'seat', op: 'set', transform: { position: [0, 0.9, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }, hidden: true },
+    ]);
+  });
+
+  it('restores an instance\u2019s overrides, so an AI edit cannot drop them', () => {
+    const out = fromAIDraft({
+      convention: AI_CONVENTION,
+      parts: [{
+        id: 'chair',
+        name: 'chair',
+        ref: 'chair-def',
+        position: [1, 0, 0],
+        rotation: [0, 0, 0],
+        overrides: [
+          { path: 'legs/right', op: 'remove' },
+          { path: 'back', op: 'set', hidden: false },
+          { path: 'seat', op: 'set', transform: { position: [0, 0.9, 0], rotation: [0, 90, 0] } },
+        ],
+      }],
+      groups: [],
+    });
+
+    const [removeLeg, back, seat] = out.root[0].overrides!;
+    expect(removeLeg).toEqual({ path: 'legs/right', op: 'remove' });
+    expect(back).toEqual({ path: 'back', op: 'set', value: { hidden: false } });
+    if (seat.op !== 'set') throw new Error('expected a set override');
+    // A `set` replaces the node's transform, so the fields the draft left out come back at rest.
+    expect(seat.value.transform).toMatchObject({ position: [0, 0.9, 0], scale: [1, 1, 1] });
+    // The draft's Euler degrees are stored as a quaternion: 90° about Y.
+    expect(seat.value.transform!.quaternion[1]).toBeCloseTo(Math.SQRT1_2);
+  });
+
+  it('round-trips an instance\u2019s overrides through the projection', () => {
+    const d = doc();
+    insertRef(d, {
+      ref: 'chair',
+      name: 'chair',
+      transform: { ...identity, position: [2, 0, 0] },
+      overrides: [{ path: 'legs', op: 'set', value: { hidden: true } }],
+    });
+
+    const { aiDraft } = toAIDraft(d);
+    const out = fromAIDraft(aiDraft);
+
+    expect(out.root[0].overrides).toEqual([{ path: 'legs', op: 'set', value: { hidden: true } }]);
+    expect(out.root[0].transform.position).toEqual([2, 0, 0]);
+  });
 });
