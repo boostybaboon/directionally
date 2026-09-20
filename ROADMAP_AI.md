@@ -322,7 +322,7 @@ setting whose document validates.
 Exit criteria: an `UNRESOLVED` name like `Sanders` in the script can be turned into a bound,
 resolvable character with a single `make` call, visible in the Roster without a page reload.
 
-## Phase AI-4 — Validation & cost hardening
+## Phase AI-4 — Validation & cost hardening → [#28](https://github.com/boostybaboon/directionally/issues/28)
 
 - Add Zod (or equivalent) schema validation in place of manual guards from AI-0/AI-1/AI-2.
 - Add a retry-once-on-invalid-JSON policy.
@@ -332,7 +332,7 @@ resolvable character with a single `make` call, visible in the Roster without a 
 Exit criteria: malformed model output never reaches the renderer/catalogue un-clamped; a burst
 of rapid regenerate clicks is throttled with a visible message, not a silent cost spike.
 
-## Phase AI-5 — Production posture *(only if this graduates past POC)*
+## Phase AI-5 — Production posture *(only if this graduates past POC)* → [#29](https://github.com/boostybaboon/directionally/issues/29)
 
 - Split the AI proxy into its own Azure Function App (Flex Consumption) so it scales/fails
   independently of the SvelteKit SSR function.
@@ -344,7 +344,7 @@ of rapid regenerate clicks is throttled with a visible message, not a silent cos
 Exit criteria: AI proxy failures/latency are visible in Application Insights; the Azure OpenAI
 key is not present in any application setting, only in Key Vault.
 
-## Phase AI-6 — BYOK (bring your own key)
+## Phase AI-6 — BYOK (bring your own key) → [#30](https://github.com/boostybaboon/directionally/issues/30)
 
 - Add a `ClaudeProvider` adapter using the **native Messages API** with `tool_choice` forcing a
   single tool whose `input_schema` is the target schema — not the OpenAI-compat shim, which
@@ -363,7 +363,7 @@ Exit criteria: a user with no configuration gets the Azure default silently; a u
 DeepSeek or Claude key sees their own key used for generation (verifiable via that provider's own
 usage dashboard), with zero Azure spend attributed to their requests.
 
-## Phase AI-7 — Local model support (Ollama)
+## Phase AI-7 — Local model support (Ollama) → [#31](https://github.com/boostybaboon/directionally/issues/31)
 
 - Add an `OllamaProvider` adapter: OpenAI-compatible `/v1/chat/completions` for basic use, or the
   native `/api/generate`/`/api/chat` `format` field (accepts a full JSON Schema) for stronger

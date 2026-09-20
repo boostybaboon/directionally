@@ -633,10 +633,10 @@ pipeline, stage by stage, mapped onto concrete phases below:
 | 6 | Wholly special treatment of the head | **Done** — head stays a separate ellipsoid + face-overlay system, deliberately not merged into the ring graph (see Decisions table) | — |
 | 7 | Bone weights to triangulation vertices | **Done** — `tubeSkinWeights` (linear chains) + `parentWeight` (crotch) + 3-bone fan weights (`buildLegFans`) | HP-7 (done) |
 | 8 | Animatable skin | **Done** — one `SkinnedMesh` bound to the real skeleton, driven by the existing `AnimationMixer`/clips, no export changes needed | — |
-| 9 | Feminising enhancements | **Not done** — see HP-9's branch-envelope proposal (no morph targets, no Blender) | HP-9 |
+| 9 → [#32](https://github.com/boostybaboon/directionally/issues/32) | Feminising enhancements | **Not done** — see HP-9's branch-envelope proposal (no morph targets, no Blender) | HP-9 |
 | 10 | Region mapping → texture / clothing approximation | **Partially done** — vertex-colour regions (`regionColors`/`BodyColors`) exist; no UV/texture layer | HP-9 |
-| 11 | Accessories (hair, beard, glasses, …) | **Partially done** — `SKETCHER_ROADMAP.md` CB3 (hair swap) designed but not ported to the ring-graph body | HP-9 |
-| 12 | API for AI driving | **Designed, not wired to the ring graph** — `ROADMAP_AI.md` AI-1 targets the legacy `BoneParams` schema; needs re-pointing at the semantic-slider surface once HP-10 lands | HP-10 |
+| 11 → [#32](https://github.com/boostybaboon/directionally/issues/32) | Accessories (hair, beard, glasses, …) | **Partially done** — `SKETCHER_ROADMAP.md` CB3 (hair swap) designed but not ported to the ring-graph body | HP-9 |
+| 12 → [#33](https://github.com/boostybaboon/directionally/issues/33) | API for AI driving | **Designed, not wired to the ring graph** — `ROADMAP_AI.md` AI-1 targets the legacy `BoneParams` schema; needs re-pointing at the semantic-slider surface once HP-10 lands | HP-10 |
 | 13 | Configurable humanoid | **Partially done** — `semanticParams.ts`'s 5 sliders drive `BoneParams` (HP-0.5); not yet wired to the ring graph's own radii | HP-10 |
 
 Nice-to-haves called out separately: animatable face (blink done, jaw-hinge talking designed —

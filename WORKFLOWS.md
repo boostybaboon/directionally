@@ -141,11 +141,13 @@ and scene-piece transforms are part of the same missing editor.
 
 ## Future workflows (stubs)
 
-- **Workflow 2 — Set Dressing**: resize and recolour primitives, apply a preset environment (Phase 9)
-- **Workflow 3 — Character Animation**: draw blocks, assign clips, walk from A to B (Phase 8 surface)
-- **Workflow 4 — Camera Work**: place camera blocks, cut between angles (Phase 7)
-- **Workflow 5 — Lighting**: fade a spotlight in and out (Phase 10)
-- **Workflow 6 — Print Script**: view full-production screenplay and use browser print (Phase UX2.6)
+> Each stub is tracked as an issue, so writing one is a task rather than a note:
+
+- **Workflow 2 — Set Dressing** → [#35](https://github.com/boostybaboon/directionally/issues/35)
+- **Workflow 3 — Character Animation** → [#36](https://github.com/boostybaboon/directionally/issues/36)
+- **Workflow 4 — Camera Work** → [#37](https://github.com/boostybaboon/directionally/issues/37)
+- **Workflow 5 — Lighting** → [#38](https://github.com/boostybaboon/directionally/issues/38)
+- **Workflow 6 — Print Script** → [#39](https://github.com/boostybaboon/directionally/issues/39)
 
 ---
 

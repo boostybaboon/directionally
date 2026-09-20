@@ -67,9 +67,14 @@ Behavioral change and test addition may be separate commits; prefer clarity over
 ## Open Work
 
 Open work lives in the [issue tracker](https://github.com/boostybaboon/directionally/issues), not in
-the roadmaps: `gh issue list --label gap:reach` (what a surface cannot reach), `gap:unreachable`
-(built, nothing calls it), `gap:bug`, `gap:deferred`, `gap:stale-doc`. The design docs carry intent and
-history; the tracker carries what is open, and only one of them is allowed to hold a list.
+the roadmaps. Every document that used to carry a list now points at it, because a list in a document
+is invisible to the tool doing the work.
+
+Classes, by label: `gap:reach` (a capability a surface cannot reach), `gap:unreachable` (built,
+nothing calls it), `gap:bug`, `gap:deferred` (waiting for a consumer), `gap:stale-doc`, `gap:planned`
+(a track's work that has not started). Tracks keep their own milestone: `Snagging`, `Catalogue 11`,
+`TDA`, `CAP`, `CAT`, `SCR`, `AI`, `Humanoid`, `Workflows`. Priority lives in the project's `Priority`
+field, which is where the backlog order is read from — custom fields do not appear in the issue list.
 
 - A commit that closes an item says so (`closes #12`), which is what makes the tracker verifiable from
   git history rather than from memory.

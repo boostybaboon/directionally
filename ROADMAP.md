@@ -77,6 +77,8 @@ Merge rule:
 
 ## Track TDA — Treatment-Driven Authoring
 
+> Open items: milestone **TDA** — [TDA-4 #21](https://github.com/boostybaboon/directionally/issues/21).
+
 `ScriptDocument` → `compileScriptDocument()` → production is complete and unchanged by the
 editor rework in Track SCR (see [ROADMAP_ARCHIVE.md](ROADMAP_ARCHIVE.md) for TDA-1/2/3 history).
 One item remains open:
@@ -100,6 +102,10 @@ Exit criteria:
 ---
 
 ## Track CAP — Capability Continuation (supporting)
+
+> Open items: milestone **CAP** — [#22](https://github.com/boostybaboon/directionally/issues/22) lighting rig,
+> [#23](https://github.com/boostybaboon/directionally/issues/23) audio, [#24](https://github.com/boostybaboon/directionally/issues/24) remote assets,
+> [#25](https://github.com/boostybaboon/directionally/issues/25) video export.
 
 These are still valuable, but subordinate to the SCR/CAT tracks below.
 
@@ -227,7 +233,7 @@ label matches a still-unresolved cast/setting name silently replaces the placeho
 Exit criteria met: a fresh placeholder name can be authored into a real catalogue asset without
 ever editing the script text.
 
-### CAT-5 — Bundled starter archetypes *(fine-tuning, not a prerequisite)*
+### CAT-5 — Bundled starter archetypes *(fine-tuning, not a prerequisite)* → [#26](https://github.com/boostybaboon/directionally/issues/26)
 
 A handful of additional bundled humanoid archetypes (age/gender variants on CAT-0's
 generic-human) and generic sceneries (classroom, park, café, living room) so common names
@@ -249,6 +255,8 @@ in progress there.
 ---
 
 ## Track SCR — Sigil-Tokenized Script Editor (primary, interleaved with CAT)
+
+> Open item: milestone **SCR** — [SCR-5 #27](https://github.com/boostybaboon/directionally/issues/27).
 
 Highland Pro's writing feel comes from parsing a *prose-shaped* page heuristically (position,
 capitalization, blank lines) into formatting — the parse target is a readable page, and a bad
@@ -400,7 +408,7 @@ The active entry is highlighted and follows the caret (`focusedSceneIndex`), so 
 as a "where am I" indicator. It's a flat list for now: the sigil grammar only has a single `#`
 level, so the scene/act hierarchy (`##`/`###`) is a future grammar question, not part of this step.
 
-### SCR-5 — Sigil visibility toggle + clean export view
+### SCR-5 — Sigil visibility toggle + clean export view → [#27](https://github.com/boostybaboon/directionally/issues/27)
 
 - "Hide sigils" toggle — Word's show/hide-formatting-marks pattern — renders the buffer with
   sigils faded or hidden, showing cast-case names and prose only, closer to a pure screenplay
