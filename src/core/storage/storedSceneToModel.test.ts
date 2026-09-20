@@ -3,7 +3,8 @@ import { storedSceneToModel } from './storedSceneToModel';
 import { PerspectiveCameraAsset } from '../../lib/model/Camera';
 import type { StoredScene, StoredActor } from './types';
 import type { SetPiece } from '../domain/types';
-import type { SetDocument } from '../sketcher/documentTree';
+import type { SetDocument, SetNode } from '../sketcher/documentTree';
+import type { Transform } from '../sketcher/transform';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -122,6 +123,76 @@ describe('storedSceneToModel – set pieces', () => {
     expect(model.groups).toHaveLength(0);
     expect(model.meshes.map((m) => m.name)).toEqual(['ghost']);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('no-such-entry'));
+    warn.mockRestore();
+  });
+});
+
+describe('storedSceneToModel – instances inside a document', () => {
+  const identity: Transform = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
+
+  function leaf(id: string): SetNode {
+    return {
+      id,
+      role: 'prop',
+      transform: { ...identity },
+      children: [],
+      content: { id: `${id}-part`, kind: 'primitive', name: 'Box', color: 0x8844aa },
+    };
+  }
+
+  function instance(id: string, ref: string, position: [number, number, number]): SetNode {
+    return { id, role: 'structure', ref, transform: { ...identity, position }, children: [] };
+  }
+
+  // legs-item ← chair-item ← classroom: an instance of a Definition that is itself an assembly.
+  const legs: SetDocument = { root: [leaf('left'), leaf('right')], joints: [] };
+  const chair: SetDocument = { root: [leaf('seat'), instance('chair-legs-item', 'legs-item', [0, -0.4, 0])], joints: [] };
+  const classroom: SetDocument = { root: [instance('chair-1', 'chair-item', [1, 0, 0]), leaf('desk')], joints: [] };
+
+  function pieceFor(id: string): SetPiece {
+    return {
+      name: id,
+      catalogueId: id,
+      geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 },
+      material: { color: 0 },
+    };
+  }
+
+  it('expands a ref node from the entry list, and the instances inside its Definition', () => {
+    const scene = baseScene({ set: [pieceFor('classroom')] });
+    const model = storedSceneToModel(scene, [], [
+      { kind: 'set-piece', id: 'classroom', hasDocument: true, document: classroom },
+      { kind: 'set-piece', id: 'chair-item', hasDocument: true, document: chair },
+      { kind: 'set-piece', id: 'legs-item', hasDocument: true, document: legs },
+    ]);
+
+    expect(model.meshes).toHaveLength(0);
+    const set = model.groups[0].threeObject;
+    expect(set.children).toHaveLength(2);
+    // The instance stands for its Definition's geometry, at the node's own transform.
+    const chairInstance = set.children[0];
+    expect(chairInstance.userData).toMatchObject({ isRefNode: true, ref: 'chair-item' });
+    expect(chairInstance.position.toArray()).toEqual([1, 0, 0]);
+    expect(chairInstance.children).toHaveLength(2);
+    // A Definition may hold an instance of its own: one lookup per instance, recursion in the realiser.
+    const legInstance = chairInstance.children[1];
+    expect(legInstance.userData.ref).toBe('legs-item');
+    expect(legInstance.position.y).toBeCloseTo(-0.4);
+    expect(legInstance.children).toHaveLength(2);
+  });
+
+  it('renders nothing for an instance whose Definition is missing, and says which', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const scene = baseScene({ set: [pieceFor('classroom')] });
+    const model = storedSceneToModel(scene, [], [
+      { kind: 'set-piece', id: 'classroom', hasDocument: true, document: classroom },
+      { kind: 'set-piece', id: 'chair-item', hasDocument: true, document: chair },
+    ]);
+
+    // The chair is there with its own part; only the missing assembly contributes nothing.
+    const chairInstance = model.groups[0].threeObject.children[0];
+    expect(chairInstance.children).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"legs-item"'));
     warn.mockRestore();
   });
 });

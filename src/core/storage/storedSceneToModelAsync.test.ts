@@ -129,4 +129,41 @@ describe('storedSceneToModelAsync – document-backed sets (step 5)', () => {
     expect(model.groups).toHaveLength(1);
     expect(model.groups[0].threeObject.children).toHaveLength(1);
   });
+
+  it('loads the Definitions a document refers to, at any depth', async () => {
+    const leaf = (id: string) => ({
+      id,
+      role: 'prop' as const,
+      transform: { position: [0, 0, 0] as [number, number, number], quaternion: [0, 0, 0, 1] as [number, number, number, number], scale: [1, 1, 1] as [number, number, number] },
+      children: [],
+      content: { id: `${id}-part`, kind: 'primitive' as const, name: 'Box', color: 0x8844aa },
+    });
+    const chair = await createSetPieceDocument('Chair item', {
+      document: { root: [leaf('seat'), leaf('back')], joints: [] },
+    });
+    const classroom = await createSetPieceDocument('Classroom', {
+      document: {
+        root: [
+          { ...leaf('chair-slot'), ref: chair.id, content: undefined },
+          leaf('desk'),
+        ],
+        joints: [],
+      },
+    });
+
+    const piece = {
+      name: classroom.id,
+      catalogueId: classroom.id,
+      geometry: { type: 'box' as const, width: 0.01, height: 0.01, depth: 0.01 },
+      material: { color: 0 },
+    };
+    // Only the classroom is listed: its instance of the chair is a second entry, read from OPFS.
+    const model = await storedSceneToModelAsync(baseScene({ set: [piece] }), [], [
+      { id: classroom.id, kind: 'set-piece', hasDocument: true },
+    ]);
+
+    const instance = model.groups[0].threeObject.children[0];
+    expect(instance.userData).toMatchObject({ isRefNode: true, ref: chair.id });
+    expect(instance.children).toHaveLength(2);
+  });
 });

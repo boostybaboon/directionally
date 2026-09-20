@@ -7,7 +7,8 @@ import type { CatalogueEntry } from '../catalogue/types.js';
 import type { CharacterSpec } from '../character/characterSpec.js';
 import { specCharacterToGlbUrl } from '../character/specCharacter.js';
 import { realiseDocument } from '../sketcher/realise.js';
-import { collectLights } from '../sketcher/documentTree.js';
+import type { RefResolver } from '../sketcher/realise.js';
+import { collectLights, collectRefs } from '../sketcher/documentTree.js';
 import type { SetDocument } from '../sketcher/documentTree.js';
 import * as OPFSCatalogueStore from './OPFSCatalogueStore.js';
 import { actorBlockToTracks, lightBlockToTracks, setPieceBlockToTracks, cameraBlockToTracks } from '../domain/blockCompiler.js';
@@ -67,18 +68,38 @@ type UserEntryLike = {
 };
 
 /**
+ * Resolve a `ref` node to the Definition it names, out of the same entry list the caller
+ * materialised the documents from — one lookup per instance, because `realiseDocument` recurses
+ * with the same resolver, which is what follows a Definition that contains instances of its own.
+ * An instance whose Definition is missing contributes no geometry and says so, the same
+ * fail-visible choice the piece-level fallback makes.
+ */
+function refDocumentResolver(entries: CatalogueEntry[]): RefResolver {
+  return (ref) => {
+    const entry = getById(ref, entries);
+    if (entry?.kind !== 'set-piece' || !entry.document) {
+      console.warn(`storedSceneToModel: instance "${ref}" has no document — rendering nothing for it`);
+      return null;
+    }
+    return entry.document;
+  };
+}
+
+/**
  * Realise every set-piece into a pre-built object tree, keyed by piece name. A
  * piece is realised from the tree document of the entry it names
  * (`piece.catalogueId`) — bundled definitions carry it inline, a saved set has it
  * attached by whoever materialised the entry list. A piece whose entry (or
  * document) is missing yields nothing, so it falls back to the placeholder
- * geometry the resolver gave it.
+ * geometry the resolver gave it. The piece's own document may hold instances; those
+ * are resolved from the same entries.
  */
 function realiseDocumentSets(
   pieces: SetPiece[],
   entries: CatalogueEntry[],
 ): Map<string, THREE.Object3D> {
   const groups = new Map<string, THREE.Object3D>();
+  const resolveRef = refDocumentResolver(entries);
   for (const piece of pieces) {
     if (!piece.catalogueId) continue;
     const entry = getById(piece.catalogueId, entries);
@@ -87,7 +108,7 @@ function realiseDocumentSets(
       console.warn(`storedSceneToModel: no document for catalogue piece "${piece.catalogueId}" — rendering placeholder geometry`);
       continue;
     }
-    groups.set(piece.name, realiseDocument(document));
+    groups.set(piece.name, realiseDocument(document, resolveRef));
   }
   return groups;
 }
@@ -296,13 +317,48 @@ export function storedSceneToModel(
 }
 
 /**
+ * Load the closure of Definitions the scene's documents reach: a Definition may refer to further
+ * Definitions, and a saved one is not in the entry list the caller passed. Bundled documents carry
+ * their own, so only refs nothing already serves are read from OPFS — the same walk the Sketcher
+ * does before a load.
+ */
+async function materialiseDefinitions(entries: UserEntryLike[]): Promise<UserEntryLike[]> {
+  const materialised = [...entries];
+  const served = new Set<string>();
+  const pending: string[] = [];
+  const consider = (id: string, document: SetDocument | undefined): void => {
+    if (!document) return;
+    served.add(id);
+    pending.push(...collectRefs(document));
+  };
+
+  for (const entry of CATALOGUE_ENTRIES) {
+    if (entry.kind === 'set-piece') consider(entry.id, entry.document);
+  }
+  for (const entry of entries) consider(entry.id, entry.document);
+
+  while (pending.length > 0) {
+    const id = pending.shift()!;
+    if (served.has(id)) continue;
+    served.add(id);
+    const document = await OPFSCatalogueStore.getDocument(id);
+    if (!document) continue;
+    materialised.push({ id, kind: 'set-piece', hasDocument: true, document });
+    pending.push(...collectRefs(document));
+  }
+  return materialised;
+}
+
+/**
  * Async variant of `storedSceneToModel` that first materialises anything the
  * renderer can't read straight from the metadata index, then delegates to the
  * synchronous deserialiser unchanged:
  *
  *   - spec-backed characters (ROADMAP_API.md API-2) become a GLB blob URL;
  *   - document-backed sets gain their tree document, loaded from OPFS, which
- *     `storedSceneToModel` realises into a pre-built object tree (step 5).
+ *     `storedSceneToModel` realises into a pre-built object tree (step 5);
+ *   - the Definitions those documents refer to are loaded too, so an instance renders
+ *     its geometry wherever it sits in the tree (step 10.3).
  */
 export async function storedSceneToModelAsync(
   storedScene: StoredScene,
@@ -326,5 +382,5 @@ export async function storedSceneToModelAsync(
       return e;
     }),
   );
-  return storedSceneToModel(storedScene, storedActors, materialised);
+  return storedSceneToModel(storedScene, storedActors, await materialiseDefinitions(materialised));
 }
