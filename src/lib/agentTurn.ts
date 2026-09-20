@@ -1,8 +1,9 @@
 import { describeSession } from '../core/agent/api.js';
 import { fromAIDraft } from '../core/sketcher/aiDraft.js';
 import type { AIDraft } from '../core/sketcher/aiDraft.js';
-import { applyDraftCommand, diffDocument } from '../core/sketcher/applyDraft.js';
+import { applyDocumentCommand, diffDocument } from '../core/sketcher/applyDraft.js';
 import type { DocumentDiff } from '../core/sketcher/applyDraft.js';
+import type { SetDocument } from '../core/sketcher/documentTree.js';
 import type { CartoonSketcher } from '../core/sketcher/CartoonSketcher.js';
 import { requestDraftEdit } from './agentClient.js';
 
@@ -17,6 +18,8 @@ export type EditTurn = {
   instruction: string;
   /** The draft the model answered with — what applying the turn replays. */
   draft: AIDraft;
+  /** The document that draft became, and the one the diff was taken from. */
+  target: SetDocument;
   /** The handle-to-identity map read before the turn, so parts it left alone stay the same parts. */
   idMap: Record<string, string>;
   diff: DocumentDiff;
@@ -91,8 +94,9 @@ export async function planEditTurn(
     // An untrusted draft is clamped where it becomes a document, so a malformed answer degrades to a
     // smaller diff rather than an exception. The whole step is inside the guard rather than only the
     // request: a failure anywhere in planning has to be reportable, or the panel waits forever.
-    const diff = diffDocument(before, fromAIDraft(draft, idMap));
-    return { ok: true, turn: { instruction, draft, idMap, diff, summary: summariseDiff(diff) } };
+    const target = fromAIDraft(draft, idMap);
+    const diff = diffDocument(before, target);
+    return { ok: true, turn: { instruction, draft, idMap, target, diff, summary: summariseDiff(diff) } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -102,5 +106,8 @@ export async function planEditTurn(
  * Apply an accepted turn: the whole AI turn as one command, so one undo takes it back.
  */
 export function applyEditTurn(sketcher: CartoonSketcher, turn: EditTurn) {
-  return applyDraftCommand(sketcher, turn.draft, turn.idMap);
+  // Applied from the document the diff was taken from, not from the draft a second time: rebuilding it
+  // here gave the new nodes fresh identities, so the placements and group memberships the person had
+  // just approved addressed nodes that did not exist.
+  return applyDocumentCommand(sketcher, turn.target);
 }

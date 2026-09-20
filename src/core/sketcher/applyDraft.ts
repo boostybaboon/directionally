@@ -236,6 +236,13 @@ export function applyDocumentCommand(sketcher: CartoonSketcher, target: SetDocum
       for (const id of diff.remove) sketcher.removePart(id);
       for (const id of diff.removeRefs) sketcher.removeNode(id);
 
+      // The session gives a node its own identity when it is created, so the draft's ids cannot
+      // address what this turn just inserted: placements and group membership go through this map.
+      // This is the invariant that was missing — the plan shown and the plan executed are the same
+      // only if the nodes they name are the same ones.
+      const sessionIdOf = new Map<string, string>();
+      const resolve = (draftId: string): string => sessionIdOf.get(draftId) ?? draftId;
+
       for (const p of diff.update) {
         const part = sketcher.getSession().parts.find((x) => x.id === p.content.id);
         if (!part) continue;
@@ -244,32 +251,46 @@ export function applyDocumentCommand(sketcher: CartoonSketcher, target: SetDocum
       }
 
       for (const p of diff.add) {
-        if (p.content.kind !== 'primitive') continue; // sketch/lathe add deferred
+        if (p.content.kind !== 'primitive') {
+          console.warn(`applyDraft: ${p.content.label ?? p.content.name} is a ${p.content.kind}, which the sketcher cannot build yet — skipped`);
+          continue;
+        }
         const part = sketcher.insertPrimitive(p.content.name);
-        if (!part) continue;
+        if (!part) {
+          console.warn(`applyDraft: the sketcher has no preset called "${p.content.name}" — ${p.content.label ?? 'a part'} skipped`);
+          continue;
+        }
+        sessionIdOf.set(p.content.id, part.id);
         part.label = p.content.label;
         sketcher.setPartColor(part.id, p.content.color);
       }
 
       // An instance has no mesh of its own to place: its live group *is* the placement, and
       // the next write-back carries the transform into the document.
-      for (const seed of diff.addRefs) sketcher.insertInstance(seed);
+      for (const seed of diff.addRefs) {
+        const id = sketcher.insertInstance(seed);
+        if (id !== null && seed.id !== undefined) sessionIdOf.set(seed.id, id);
+      }
 
       // Placements *before* the group pass, as worlds: the pass re-parents nodes without moving any
       // of them, so where they stand now is where the AI means them to stand. A node that stays
       // where it is gets the local transform its own parent calls for.
-      for (const p of [...diff.update, ...diff.add]) sketcher.placeNodeAtWorld(p.content.id, p.transform);
+      for (const p of diff.add) {
+        const id = sessionIdOf.get(p.content.id);
+        if (id !== undefined) sketcher.placeNodeAtWorld(id, p.transform);
+      }
+      for (const p of diff.update) sketcher.placeNodeAtWorld(p.content.id, p.transform);
       for (const { id, transform } of diff.moveRefs) sketcher.placeNodeAtWorld(id, transform);
       for (const seed of diff.addRefs) {
-        if (seed.id && seed.transform) sketcher.placeNodeAtWorld(seed.id, seed.transform);
+        if (seed.id !== undefined && seed.transform) sketcher.placeNodeAtWorld(resolve(seed.id), seed.transform);
       }
 
       // ── Group structure last: a new group's members have to exist, and everything it wraps keeps
       //    the world position it was just given.
-      for (const id of diff.groups.dissolve) sketcher.ungroup(id);
-      for (const { group, members } of diff.groups.leave) sketcher.moveOutOfGroup(group, members);
-      for (const { group, members } of diff.groups.join) sketcher.moveIntoGroup(group, members);
-      for (const group of diff.groups.create) sketcher.groupPure(group.members, group.name);
+      for (const id of diff.groups.dissolve) sketcher.ungroup(resolve(id));
+      for (const { group, members } of diff.groups.leave) sketcher.moveOutOfGroup(resolve(group), members.map(resolve));
+      for (const { group, members } of diff.groups.join) sketcher.moveIntoGroup(resolve(group), members.map(resolve));
+      for (const group of diff.groups.create) sketcher.groupPure(group.members.map(resolve), group.name);
     },
   };
 }

@@ -141,6 +141,16 @@ export function toEulerDeg(quaternion: [number, number, number, number]): [numbe
   return [fixZero(e.x * DEG), fixZero(e.y * DEG), fixZero(e.z * DEG)];
 }
 
+/**
+ * The preset to build for the shape a model named: one it recognises, or a box when it named something
+ * the sketcher has no preset for. Dropping the part instead would lose a thing it asked for; a box is
+ * the honest reading of "a counter", and its size is what makes it a counter rather than a cube.
+ */
+function buildableShape(shape: unknown): string {
+  const named = typeof shape === 'string' ? shape.toLowerCase() : '';
+  return named in SHAPES ? named : 'box';
+}
+
 /** One triple from an untrusted draft, or the fallback when it cannot be read. */
 function readTriple(v: unknown, fallback: [number, number, number]): [number, number, number] {
   return Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number')
@@ -334,10 +344,14 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
     if (typeof p !== 'object' || p === null) continue;
     // What the model left out is what the grammar asked for and did not get: the part lands at rest
     // rather than the whole turn failing, and the diff shown for review says where it landed.
+    const shape = buildableShape(p.shape);
+    const size = Array.isArray(p.size) && p.size.length === 3 && p.size.every((n) => typeof n === 'number')
+      ? (p.size as [number, number, number])
+      : undefined;
     const transform: Transform = {
       position: readTriple(p.position, [0, 0, 0]),
       quaternion: toQuaternion(readTriple(p.rotation, [0, 0, 0])),
-      scale: p.shape !== undefined && p.size !== undefined ? sizeToScale(p.shape, p.size) : (p.scale ?? [1, 1, 1]),
+      scale: size !== undefined ? sizeToScale(shape, size) : (p.scale ?? [1, 1, 1]),
     };
 
     // A reference part places a Definition instead of describing geometry: the document holds
@@ -361,15 +375,15 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
     used.add(unique);
     guidOfHandle.set(p.id, unique);
 
-    const isPrimitive = p.shape !== undefined && p.size !== undefined;
-    const presetName = isPrimitive ? capitalize(p.shape!) : (p.name ?? 'Part');
+    const isPrimitive = (p.kind ?? 'primitive') === 'primitive';
+    const presetName = isPrimitive ? capitalize(shape) : (p.name ?? 'Part');
 
     insertPart(doc, {
       content: {
         id: unique,
         kind: p.kind ?? 'primitive',
         name: presetName,
-        ...(isPrimitive && p.name !== presetName ? { label: p.name } : {}),
+        ...(isPrimitive && p.name !== undefined && p.name !== presetName ? { label: p.name } : {}),
         color: p.color ?? 0x8888cc,
         ...(p.faceColors !== undefined ? { faceColors: p.faceColors } : {}),
         ...(p.faceTextures !== undefined ? { faceTextures: p.faceTextures } : {}),

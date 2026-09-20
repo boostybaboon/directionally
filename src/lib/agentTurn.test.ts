@@ -94,6 +94,33 @@ describe('an AI turn', () => {
     expect(before).toBe(false);
   });
 
+  it('lands a scene-sized answer where the model put it, through the path the panel uses', async () => {
+    const { sketcher, document } = session();
+    const names = ['Floor', 'Back Wall', 'Counter', 'Sink', 'Stove', 'Fridge', 'Table'];
+    const answer = {
+      convention: AI_CONVENTION,
+      parts: names.map((name, i) => ({
+        id: `k${i}`, name, kind: 'primitive' as const,
+        position: [i * 2, 0.5, 0] as [number, number, number],
+        rotation: [0, 0, 0] as [number, number, number],
+        color: 0xccbbaa,
+      })),
+    };
+
+    const plan = await planEditTurn(sketcher, 'build a kitchen', [], async () => answer as AIDraft);
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.turn.summary[0]).toContain('Floor');
+
+    document.execute(applyEditTurn(sketcher, plan.turn));
+
+    // What the person approved is what they get: seven parts, each where the draft put it. Group
+    // membership is asserted in the diff suite, where a member's local position is the group's
+    // business rather than the placement's.
+    expect(sketcher.getSession().parts.map((p) => p.mesh.position.x))
+      .toEqual([0, 2, 4, 6, 8, 10, 12]);
+  });
+
   it('reports a failed turn instead of throwing, so the panel has something to show', async () => {
     const { sketcher } = session();
 

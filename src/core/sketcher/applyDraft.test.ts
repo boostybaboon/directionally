@@ -5,6 +5,7 @@ import { SketcherDocument } from './SketcherDocument.js';
 import { diffDocument, applyDocumentCommand, applyDraftCommand } from './applyDraft.js';
 import { documentFromParts, emptyDocument, insertRef } from './documentTree.js';
 import { AI_CONVENTION, fromAIDraft, toAIDraft } from './aiDraft.js';
+import type { AIDraft } from './aiDraft.js';
 import type { PartSeed, SetDocument } from './documentTree.js';
 import type { PartDraft } from './types.js';
 import type { Transform } from './transform.js';
@@ -106,6 +107,28 @@ describe('diffDocument instances', () => {
     expect(d.moveRefs).toEqual([]);
   });
 });
+
+/**
+ * The shape a model plausibly answers with for a scene-sized instruction: labels, no preset, and a
+ * placement for each. Reported from use: sixteen parts planned, every one of them landing at the
+ * origin, and the ones whose preset the sketcher could not build landing nowhere at all.
+ */
+function kitchenDraft(): AIDraft {
+  const names = ['Floor', 'Back Wall', 'Left Wall', 'Right Wall', 'Counter', 'Sink', 'Stove', 'Fridge',
+    'Upper Cabinet 1', 'Upper Cabinet 2', 'Table', 'Chair 1', 'Chair 2', 'Chair 3', 'Lamp', 'Rug'];
+  return {
+    convention: AI_CONVENTION,
+    parts: names.map((name, i) => ({
+      id: `kitchen-${i}`,
+      name,
+      kind: 'primitive' as const,
+      position: [i, 0.5, 0] as [number, number, number],
+      rotation: [0, 0, 0] as [number, number, number],
+      color: 0xccbbaa,
+    })),
+    groups: [],
+  };
+}
 
 describe('applyDocumentCommand', () => {
   it('applies add/update as one undoable step', () => {
@@ -298,5 +321,45 @@ describe('applyDocumentCommand', () => {
     // The instance is gone; the group it sat in is the AI's business, not the instance's.
     expect(sketcher.nodeObject('chair-1')).toBeNull();
     expect(sketcher.toDocument().root.map((node) => node.id)).toEqual(['row']);
+  });
+});
+
+describe('a scene-sized draft', () => {
+  it('places every part where the draft put it, not at the origin', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    const doc = new SketcherDocument(sketcher);
+    const draft = kitchenDraft();
+
+    doc.execute(applyDraftCommand(sketcher, draft, {}));
+
+    const parts = sketcher.getSession().parts;
+    expect(parts).toHaveLength(16);
+    // All sixteen present and all sixteen distinct: the overprinting symptom was every placement lost.
+    expect(parts.map((p) => p.mesh.position.x)).toEqual(draft.parts.map((p) => p.position[0]));
+    expect(sketcher.toDocument().root.map((n) => n.transform.position[0]))
+      .toEqual(draft.parts.map((p) => p.position[0]));
+  });
+
+  it('builds a part whose preset the sketcher does not have, rather than dropping it', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    const doc = new SketcherDocument(sketcher);
+
+    doc.execute(applyDraftCommand(sketcher, kitchenDraft(), {}));
+
+    // "Sink" and "Stove" are not presets; they are still things the draft asked to have placed.
+    expect(sketcher.getSession().parts).toHaveLength(16);
+  });
+
+  it('forms the groups the draft asked for', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    const doc = new SketcherDocument(sketcher);
+    const draft = kitchenDraft();
+    draft.groups = [{ id: 'chairs', name: 'chairs', children: ['kitchen-11', 'kitchen-12', 'kitchen-13'] }];
+
+    doc.execute(applyDraftCommand(sketcher, draft, {}));
+
+    const group = sketcher.toDocument().root.find((n) => n.role === 'structure');
+    expect(group).toBeDefined();
+    expect(group!.children).toHaveLength(3);
   });
 });
