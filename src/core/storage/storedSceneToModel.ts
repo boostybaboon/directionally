@@ -8,7 +8,7 @@ import type { CharacterSpec } from '../character/characterSpec.js';
 import { specCharacterToGlbUrl } from '../character/specCharacter.js';
 import { realiseDocument } from '../sketcher/realise.js';
 import type { RefResolver } from '../sketcher/realise.js';
-import { collectLights, collectRefs } from '../sketcher/documentTree.js';
+import { applyOverrides, collectLights, collectRefs } from '../sketcher/documentTree.js';
 import type { SetDocument } from '../sketcher/documentTree.js';
 import * as OPFSCatalogueStore from './OPFSCatalogueStore.js';
 import { actorBlockToTracks, lightBlockToTracks, setPieceBlockToTracks, cameraBlockToTracks } from '../domain/blockCompiler.js';
@@ -92,7 +92,8 @@ function refDocumentResolver(entries: CatalogueEntry[]): RefResolver {
  * attached by whoever materialised the entry list. A piece whose entry (or
  * document) is missing yields nothing, so it falls back to the placeholder
  * geometry the resolver gave it. The piece's own document may hold instances; those
- * are resolved from the same entries.
+ * are resolved from the same entries. The piece's `overrides` are the scene's dressing, replayed
+ * over the document before it is realised — the same list, one scope out from an instance's.
  */
 function realiseDocumentSets(
   pieces: SetPiece[],
@@ -108,7 +109,12 @@ function realiseDocumentSets(
       console.warn(`storedSceneToModel: no document for catalogue piece "${piece.catalogueId}" — rendering placeholder geometry`);
       continue;
     }
-    groups.set(piece.name, realiseDocument(document, resolveRef, (ref, orphan) => {
+    const root = piece.overrides && piece.overrides.length > 0
+      ? applyOverrides(document.root, piece.overrides, (orphan) => {
+          console.warn(`storedSceneToModel: piece "${piece.name}" has a ${orphan.op} override for "${orphan.path}", which its document no longer has`);
+        })
+      : document.root;
+    groups.set(piece.name, realiseDocument({ root }, resolveRef, (ref, orphan) => {
       console.warn(`storedSceneToModel: instance "${ref}" has a ${orphan.op} override for "${orphan.path}", which its Definition no longer has`);
     }));
   }
@@ -160,6 +166,10 @@ export function storedSceneToModel(
     const entry = getById(piece.catalogueId, mergedCatalogueEntries);
     const document = entry?.kind === 'set-piece' ? entry.document : undefined;
     if (!document) continue;
+    // TODO: namespace these by piece (`${piece.name}/${light.id}`) so a `LightBlock` can address one,
+    // or state that a setting's lights are lighting rather than tweak targets — the block inference
+    // below resolves an id to the *first* match, so a document light whose id a scene light already
+    // uses is unreachable from a shot.
     settingLights.push(...collectLights(document));
     settingEnvironment ??= document.environmentMap;
   }

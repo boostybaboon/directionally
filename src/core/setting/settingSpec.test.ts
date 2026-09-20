@@ -222,6 +222,40 @@ describe('resolveInstances', () => {
   });
 });
 
+describe('dressing (ROADMAP_CATALOGUE 10.5)', () => {
+  const chair = { path: 'chair-3', op: 'remove' } as const;
+
+  it('carries a placement’s overrides onto the piece it resolves to', () => {
+    const out = expandEntry(resolveProp('box', fixture)!, { position: [2, 0, 0] }, [chair]);
+
+    expect(out[0].overrides).toEqual([chair]);
+    expect(out[0].position).toEqual([2, 0, 0]);
+  });
+
+  it('resolves a prop ref with its dressing', () => {
+    const resolved = resolveSettingSpec({ props: [{ ref: 'box', overrides: [chair] }] }, fixture);
+
+    // The default floor comes first; the prop is the piece the dressing was written on.
+    expect(resolved.set.find((p) => p.catalogueId === 'box')?.overrides).toEqual([chair]);
+  });
+
+  it('keeps the dressing when a ref piece is expanded, so the scene’s variation survives', () => {
+    const piece: SetPieceParam = {
+      name: 'row-2',
+      ref: 'box',
+      geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 },
+      material: { color: 0 },
+      overrides: [chair],
+    };
+
+    const out = resolveInstances([piece], fixture);
+
+    // One scope out from an instance's overrides: the same list, addressed the same way.
+    expect(out[0].name).toBe('row-2/box');
+    expect(out[0].overrides).toEqual([chair]);
+  });
+});
+
 describe('resolveProp / resolveEnvironment', () => {
   it('resolves by id then case-insensitive label', () => {
     expect(resolveProp('box', fixture)?.id).toBe('box');

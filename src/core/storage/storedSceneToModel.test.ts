@@ -415,6 +415,31 @@ describe('storedSceneToModel – document-backed set pieces', () => {
     expect(model.groups[0].threeObject.children[0].position.toArray()).toEqual([0, 0.5, 0]);
   });
 
+  it('replays a piece’s own overrides over the document — the scene’s dressing', () => {
+    const scene = baseScene({
+      set: [documentPiece({
+        overrides: [{
+          path: 'cube',
+          op: 'set',
+          value: { transform: { position: [0, 2, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] } },
+        }],
+      })],
+    });
+    const model = storedSceneToModel(scene, [], [{ kind: 'set-piece', id: 'classroom', hasDocument: true, document }]);
+
+    // The document is the venue; this is what the scene does to it.
+    expect(model.groups[0].threeObject.children[0].position.toArray()).toEqual([0, 2, 0]);
+  });
+
+  it('reports a dressing override its document no longer answers to', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const scene = baseScene({ set: [documentPiece({ overrides: [{ path: 'gone', op: 'remove' }] })] });
+    storedSceneToModel(scene, [], [{ kind: 'set-piece', id: 'classroom', hasDocument: true, document }]);
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('document no longer has'));
+    warn.mockRestore();
+  });
+
   it('realises document and plain pieces side by side', () => {
     const scene = baseScene({
       set: [

@@ -1,4 +1,5 @@
 // Pure domain config types — no Three.js or Tone.js imports
+import type { NodeOverride } from '../sketcher/documentTree.js';
 
 export type Vec3 = [number, number, number];
 
@@ -44,6 +45,14 @@ export type SetPiece = {
    * identity, so renaming the piece can't orphan it.
    */
   catalogueId?: string;
+  /**
+   * Variation this *scene* applies to the entry's document — the dressing layer
+   * (ROADMAP_CATALOGUE 10.5), path-addressed exactly as an instance's overrides are, and
+   * replayed over the document when the piece is realised. The document is the venue, this is
+   * what a particular scene does to it, and the piece's own transform (or a light block) is
+   * the shot: three layers of one primitive, last write wins.
+   */
+  overrides?: NodeOverride[];
 };
 
 // A placed prop: a reference to a catalogue set piece (`ref`) or an inline
@@ -54,7 +63,14 @@ export type PropSpec =
   | { geometry: GeometryConfig; material: MaterialConfig; name?: string };
 
 export type PlacedProp =
-  | { ref: string; position?: Vec3; rotation?: Vec3; scale?: Vec3 }
+  | {
+    ref: string;
+    position?: Vec3;
+    rotation?: Vec3;
+    scale?: Vec3;
+    /** Variation this placement applies to the referenced entry's document (dressing). */
+    overrides?: NodeOverride[];
+  }
   | { geometry: GeometryConfig; material: MaterialConfig; name?: string; position?: Vec3; rotation?: Vec3; scale?: Vec3 };
 
 /** A placement transform (no prop body) — used by `expandEntry` to place an entry. */

@@ -8,6 +8,7 @@ import type {
   Vec3,
 } from '../domain/types.js';
 import type { StoredScene } from '../storage/types.js';
+import type { NodeOverride } from '../sketcher/documentTree.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
 import {
   getById,
@@ -187,11 +188,13 @@ function backdropToSetPiece(b: BackdropSpec, index: number): SetPiece {
 /**
  * Expand a catalogue SetPieceEntry into the piece the renderer consumes: one piece
  * carrying the entry's catalogue identity (`catalogueId`), which the renderer
- * realises into the entry's tree document. `placement` places the whole set.
+ * realises into the entry's tree document. `placement` places the whole set, and
+ * `overrides` is the dressing a particular scene applies to that document.
  */
 export function expandEntry(
   entry: SetPieceEntry,
   placement?: Placement,
+  overrides?: NodeOverride[],
 ): SetPiece[] {
   // A set piece *is* its tree document (ROADMAP_CATALOGUE step 8), so this emits one
   // piece carrying the entry's catalogue identity: its geometry, material and
@@ -202,6 +205,7 @@ export function expandEntry(
     geometry: PLACEHOLDER_GEOMETRY,
     material: PLACEHOLDER_MATERIAL,
   };
+  if (overrides && overrides.length > 0) piece.overrides = overrides;
   return [placement ? applyPlacement(piece, placement) : piece];
 }
 
@@ -215,7 +219,7 @@ function expandProps(
     if ('ref' in p) {
       const entry = resolveProp(p.ref, entries);
       if (entry) {
-        out.push(...expandEntry(entry, p));
+        out.push(...expandEntry(entry, p, p.overrides));
         continue;
       }
       unresolved.push(p.ref);
@@ -255,7 +259,9 @@ export function resolveInstance(
     return [piece];
   }
   const placement: Placement = { position: piece.position, rotation: piece.rotation, scale: piece.scale };
-  const expanded = expandEntry(entry, placement);
+  // The dressing travels with the reference it was written on: the scene's variation is about
+  // *this* placement of the entry, so it survives the expansion rather than being flattened away.
+  const expanded = expandEntry(entry, placement, piece.overrides);
   return expanded.map((c) => ({ ...c, name: `${piece.name}/${c.name}` }));
 }
 
