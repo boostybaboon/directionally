@@ -457,6 +457,28 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       `path`s are reported on resync rather than silently dropped (Blender's lesson). The same override
       type and resolution serve 10.5's per-scene setting overrides (N7) — one primitive at two scopes,
       not two mechanisms.
+      - **10.4-A (headless).** ✅ Landed: `SetNode.overrides` as `NodeOverride[]` —
+        `{ path, op: 'set', value: { transform?, hidden? } }` or `{ path, op: 'remove' }` — where `set`
+        patches the two things a per-instance tweak is made of (a placement, a visibility; `hidden` is
+        a flag, so `false` shows a node its Definition hides, and `remove`/the Definition carry the
+        rest). `applyOverrides()` replays in list order **on a copy**: paths address nodes inside the
+        Definition, the instance's own placement stays a node edit, and the Definition is never
+        written to — two instances of one item vary independently because of that, not by convention.
+        An entry that matches nothing is handed to a reporter instead of dropped, threaded from
+        `realiseDocument(doc, resolve, onOrphanedOverride?)` so both readers of a document report it:
+        the Sketcher's sync and the model boundary. `normalizeDocument()` keeps what can be replayed,
+        fills a partial patch transform from rest, and reports what it drops (unknown op, no path, a
+        patch that sets nothing, overrides on a node that is not an instance). The AI draft carries
+        overrides in its own terms (Euler degrees, Definition-local), so an edit cycle can no longer
+        strip an instance's variation on the way through.
+      - **10.4-B (session).** What the data model still owes a user: **addressing a descendant** — a hit
+        anywhere inside an instance selects the instance, so nothing can name a `path` yet; an
+        enter/exit-instance selection mode (or a modifier to reach a part inside one) plus a write path
+        that turns "moved/hid/deleted a part of this instance" into an override on the *node* rather
+        than a part edit, and **Apply** (push the override into the Definition, which every instance
+        then sees) / **Revert** (drop it) in the inspector, with the orphans the replay already
+        reports surfaced there or in the status line. `swap_ref` stays out until something writes it:
+        `describe_definition` (the tool that would let the AI target paths) is deferred with it.
     - **10.5 — Layering (venue / dressing / shot).** Two or three fixed, ordered override-sets
       composed per scene, last-write-wins — USD's LIVRPS *benefit* without its generality. This is
       where per-shot light tweaks and `role: 'camera' | 'rig'` nodes (additive, no migration) earn

@@ -452,6 +452,17 @@ their producers:
   `storedSceneToModelAsync` loads that closure from OPFS first (bundled documents carry their own, so a
   ref nothing serves is read and its own refs are followed). A missing Definition contributes no
   geometry and says which one;
+- 10.4-A landed the override: `SetNode.overrides` (a path-addressed `set`/`remove` list) replayed by
+  `applyOverrides()` on a *copy* of the Definition, in list order, with an entry that matches nothing
+  handed to a reporter instead of dropped. `set` patches a transform or a `hidden` flag; `remove`
+  drops the node from the copy. An instance's own placement stays a node edit, so the path space is
+  the Definition's, and the Definition is never written to — which is what makes two instances of one
+  item vary independently. Both readers of a document replay it (the Sketcher's sync and the model
+  boundary) and both report a stale override; `normalizeDocument()` keeps what it can replay, fills a
+  partial patch transform from rest, and reports what it drops;
+- still owed from 10.4: the session half (10.4-B) — nothing can address a descendant yet (a hit
+  inside an instance selects the instance), so the write path that turns "the same chair, minus its
+  back" into an override on the node, plus Apply/Revert, is what a user still cannot do;
 - still owed from 10.3: the diff's group-structure pass (see above), and the addressing work N8 was
   folded in for — `resolveInstances` still flattens the *scene*'s ref pieces with name offsets and
   `SetPieceBlock.targetId` still matches a piece by `name` (see the identity table above).
@@ -624,7 +635,11 @@ Deliberately unanswered here, so 10.1 stays bounded:
 - **Joints across an instance boundary** — a joint between two parts that live inside different
   Definitions needs a path, not a part id.
 - **Override granularity** — may `op: 'set'` patch only the transform, or any field (colour, light
-  payload, geometry)? This is 10.4's first decision, because it fixes the override's `value` shape.
+  payload, geometry)? **Answered by 10.4-A**: a placement and a visibility — the two things a
+  per-instance tweak is actually made of. `hidden` is a flag rather than a `visible` boolean so a
+  Definition-hidden node can be shown again, and anything structural is `remove` (or the Definition's
+  business), which keeps the patch's `value` shape closed: widening it later is additive, and every
+  extra field is an override-compatibility question the schema would have to answer.
 - **Resolution timing** — resolve `ref`s lazily per node, or eagerly per document at load? Answered
   by 10.3 in practice, in both places a document is read: the Sketcher expands instances during a sync
   (`setRefResolver` + `syncFromDocument`) and the model boundary expands them when it realises the
