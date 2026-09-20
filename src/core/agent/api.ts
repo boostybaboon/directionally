@@ -17,8 +17,14 @@
  */
 
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
-import { isSettingEntry } from '../catalogue/catalogue.js';
+import { getById, isSettingEntry } from '../catalogue/catalogue.js';
 import type { CatalogueEntry } from '../catalogue/types.js';
+import { collectLights, countParts, isLightNode, isPartNode, isRefNode } from '../sketcher/documentTree.js';
+import type { SetNode } from '../sketcher/documentTree.js';
+import { IDENTITY_TRANSFORM, localToWorld } from '../sketcher/transform.js';
+import type { Transform } from '../sketcher/transform.js';
+import { scaleToSize, toEulerDeg } from '../sketcher/aiDraft.js';
+import type { LightConfig } from '../domain/types.js';
 import { resolveCastName, resolveSetting } from '../treatment/fountainCompiler.js';
 import type { ResolveBindings } from '../treatment/fountainCompiler.js';
 import type { ScriptDocument } from '../treatment/fountain.js';
@@ -63,6 +69,88 @@ export function describeCatalogue(entries: CatalogueEntry[] = CATALOGUE_ENTRIES)
     isSetting: isSettingEntry(entry),
     summary: summarise(entry),
   }));
+}
+
+export type DefinitionNodeSummary = {
+  /** Node ids from the Definition root, joined with '/' — what an override's `path` addresses. */
+  path: string;
+  /** The node's semantic name: a part's label or preset, a group's name, an instance's name. */
+  name: string;
+  role: 'prop' | 'structure' | 'light';
+  body: 'part' | 'instance' | 'group' | 'light';
+  /** An instance: the catalogue entry it references. */
+  ref?: string;
+  /** A part built from a primitive preset: the preset, and its absolute dimensions in metres. */
+  shape?: string;
+  size?: number[];
+  /** World placement, in the AI Draft's convention: metres, +Y up, Euler degrees. */
+  position: [number, number, number];
+  rotation: [number, number, number];
+  /** True when the Definition itself hides the node. */
+  hidden?: boolean;
+};
+
+export type DefinitionDescription = {
+  id: string;
+  label: string;
+  /** Every node in the tree, in tree order — lights included, since a path may need to name one. */
+  nodes: DefinitionNodeSummary[];
+  /** The Definition's own lights, as the renderer reads them. */
+  lights: LightConfig[];
+  environmentMap?: string;
+  partCount: number;
+};
+
+/**
+ * describe_definition — what a Definition is made of, and *where* each node sits inside it: the paths
+ * an override addresses, the names to talk about them by, the placements, and an instance's reference.
+ * `describe_catalogue` says what exists; this says what one of them contains, which is the difference
+ * between naming a chair and varying one.
+ *
+ * The entry must carry its document (`document`): bundled entries carry it inline, a saved set is
+ * attached by the caller — as anywhere else a document is read. Returns null for an entry that is not
+ * a set-piece, or one with no document to describe.
+ */
+export function describeDefinition(
+  id: string,
+  entries: CatalogueEntry[] = CATALOGUE_ENTRIES,
+): DefinitionDescription | null {
+  const entry = getById(id, entries);
+  if (entry?.kind !== 'set-piece' || !entry.document) return null;
+
+  const document = entry.document;
+  const nodes: DefinitionNodeSummary[] = [];
+  const walk = (list: SetNode[], parent: Transform, prefix: string): void => {
+    for (const node of list) {
+      const path = prefix ? `${prefix}/${node.id}` : node.id;
+      const world = localToWorld(node.transform, parent);
+      const content = node.content;
+      nodes.push({
+        path,
+        name: node.name ?? content?.label ?? content?.name ?? node.id,
+        role: node.role,
+        body: isRefNode(node) ? 'instance' : isPartNode(node) ? 'part' : isLightNode(node) ? 'light' : 'group',
+        ...(isRefNode(node) ? { ref: node.ref } : {}),
+        ...(content?.kind === 'primitive'
+          ? { shape: content.name.toLowerCase(), size: scaleToSize(content.name.toLowerCase(), world.scale) }
+          : {}),
+        position: world.position,
+        rotation: toEulerDeg(world.quaternion),
+        ...(node.hidden === true ? { hidden: true } : {}),
+      });
+      walk(node.children, world, path);
+    }
+  };
+  walk(document.root, IDENTITY_TRANSFORM, '');
+
+  return {
+    id: entry.id,
+    label: entry.label,
+    nodes,
+    lights: collectLights(document),
+    ...(document.environmentMap !== undefined ? { environmentMap: document.environmentMap } : {}),
+    partCount: countParts(document),
+  };
 }
 
 function merged(userEntries: CatalogueEntry[]): CatalogueEntry[] {

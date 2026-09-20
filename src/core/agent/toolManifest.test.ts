@@ -4,10 +4,16 @@ import { toolManifest } from './toolManifest.js';
 describe('toolManifest', () => {
   const manifest = toolManifest();
 
-  it('exposes all six verbs', () => {
+  it('exposes all seven verbs', () => {
     expect(manifest.map((t) => t.name)).toEqual([
-      'describe_catalogue', 'describe_script', 'create_setting', 'create_character', 'bind', 'make',
+      'describe_catalogue', 'describe_script', 'describe_definition',
+      'create_setting', 'create_character', 'bind', 'make',
     ]);
+  });
+
+  it('describe_definition takes an entry id, so a path can be targeted afterwards', () => {
+    const definition = manifest.find((t) => t.name === 'describe_definition')!;
+    expect(definition.inputSchema.required).toEqual(['id']);
   });
 
   it('each tool has a name, description, and a JSON-serialisable schema', () => {

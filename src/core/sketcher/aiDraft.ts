@@ -136,7 +136,7 @@ function fixZero(n: number): number {
   return Object.is(n, -0) ? 0 : n;
 }
 
-function toEulerDeg(quaternion: [number, number, number, number]): [number, number, number] {
+export function toEulerDeg(quaternion: [number, number, number, number]): [number, number, number] {
   const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(quaternion[0], quaternion[1], quaternion[2], quaternion[3]));
   return [fixZero(e.x * DEG), fixZero(e.y * DEG), fixZero(e.z * DEG)];
 }
@@ -163,7 +163,7 @@ const SHAPES: Record<string, { base: number[]; axis: number[] }> = {
   torus:    { base: [0.5, 0.2],      axis: [0, 1] },    // [radius, tube]
 };
 
-function scaleToSize(shape: string, scale: [number, number, number]): number[] {
+export function scaleToSize(shape: string, scale: [number, number, number]): number[] {
   const s = SHAPES[shape];
   if (!s) return [...scale];
   return s.base.map((b, i) => b * scale[s.axis[i]]);

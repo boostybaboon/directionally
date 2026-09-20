@@ -26,6 +26,15 @@ const BIND_SCHEMA: Record<string, unknown> = {
   },
 };
 
+const DEFINITION_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['id'],
+  properties: {
+    id: { type: 'string', description: 'A set-piece entry id from describe_catalogue.' },
+  },
+};
+
 const MAKE_SCHEMA: Record<string, unknown> = {
   type: 'object',
   additionalProperties: false,
@@ -46,6 +55,11 @@ export function toolManifest(): ToolDefinition[] {
   return [
     { name: 'describe_catalogue', description: 'List catalogue entries (id, label, kind, isSetting, summary).', inputSchema: NO_ARGS_SCHEMA },
     { name: 'describe_script', description: 'Describe the production cast + settings with resolution status (bound/ambiguous/unresolved).', inputSchema: NO_ARGS_SCHEMA },
+    {
+      name: 'describe_definition',
+      description: 'Describe what one catalogue Definition is made of: every node with the path an override addresses, its name, kind, world placement and absolute size, plus the instances it references, its lights and its environment. describe_catalogue says what exists; this says what is inside one of them.',
+      inputSchema: DEFINITION_SCHEMA,
+    },
     { name: 'create_setting', description: 'Create (or update) a scenery set from an AI Draft document; the draft becomes the set\'s tree document.', inputSchema: AI_DRAFT_JSON_SCHEMA },
     { name: 'create_character', description: 'Create (and persist) a spec-backed character from a validated document.', inputSchema: CHARACTER_JSON_SCHEMA },
     { name: 'bind', description: 'Point a script name (cast or setting) at a catalogue id.', inputSchema: BIND_SCHEMA },

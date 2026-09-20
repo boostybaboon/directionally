@@ -414,6 +414,14 @@ describe('instances', () => {
     expect(doc.root[0].id).toBe('chair-7');
   });
 
+  it('insertRef() keeps the name it was given, not only the id derived from it', () => {
+    const doc: SetDocument = { root: [], joints: [] };
+    insertRef(doc, { ref: 'chair', name: 'Chair by the door' });
+
+    expect(doc.root[0].id).toBe('chair-by-the-door');
+    expect(doc.root[0].name).toBe('Chair by the door');
+  });
+
   it('removes a nested instance addressed by its id, though its path carries the group', () => {
     const doc: SetDocument = {
       root: [

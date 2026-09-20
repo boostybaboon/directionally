@@ -591,6 +591,9 @@ export function insertRef(doc: SetDocument, seed: RefSeed): SetNode {
     children: [],
     ref: seed.ref,
   };
+  // The name is what the seed was placed by and what the AI projection reads back, so it belongs on
+  // the node rather than only in the id that was derived from it.
+  if (seed.name !== undefined) node.name = seed.name;
   if (seed.overrides && seed.overrides.length > 0) node.overrides = seed.overrides;
   doc.root.push(node);
   return node;

@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { describeCatalogue, describeScript, bindName, describeToDocument } from './api.js';
+import { describeCatalogue, describeDefinition, describeScript, bindName, describeToDocument } from './api.js';
 import type { CatalogueEntry, SetPieceEntry } from '../catalogue/types.js';
-import { documentFromParts } from '../sketcher/documentTree.js';
+import { addLightNode, documentFromParts, groupNodes, insertRef } from '../sketcher/documentTree.js';
 import type { SetDocument } from '../sketcher/documentTree.js';
+import type { PartDraft } from '../sketcher/types.js';
+import type { Transform } from '../sketcher/transform.js';
 import type { ScriptDocument } from '../treatment/fountain.js';
 import type { AIProvider } from './provider.js';
 
@@ -32,6 +34,77 @@ function doc(cast: string[], settings: Array<string | undefined>): ScriptDocumen
     diagnostics: [],
   };
 }
+
+describe('describeDefinition', () => {
+  const part = (id: string, content: Partial<PartDraft>, transform: Partial<Transform> = {}) => ({
+    content: { id, kind: 'primitive' as const, name: 'Box', color: 0xffffff, ...content },
+    transform: { position: [0, 0, 0] as [number, number, number], quaternion: [0, 0, 0, 1] as [number, number, number, number], scale: [1, 1, 1] as [number, number, number], ...transform },
+  });
+
+  /** A classroom: a desk, a wall of two chairs (one hidden), a light, and an environment. */
+  function classroom(): SetDocument {
+    const doc = documentFromParts([
+      part('desk', {}, { position: [0, 0.5, 0] }),
+      part('chair-a', { label: 'Chair A' }, { position: [-1, 0.25, 0] }),
+      part('chair-b', { label: 'Chair B' }, { position: [1, 0.25, 0] }),
+    ]);
+    groupNodes(doc, ['chair-a', 'chair-b'], 'row', true);
+    const row = doc.root.find((node) => node.role === 'structure')!;
+    row.children[1].hidden = true;
+    insertRef(doc, { id: 'shelf', ref: 'shelf-item', name: 'Shelf', transform: { position: [0, 0, -2], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] } });
+    addLightNode(doc, { type: 'directional', id: 'ceiling', color: 0xffffff, intensity: 1, position: [0, 3, 0] });
+    doc.environmentMap = 'studio-neutral';
+    return doc;
+  }
+
+  const entries = (): CatalogueEntry[] => [
+    { kind: 'set-piece', id: 'classroom', label: 'Classroom', document: classroom() },
+    { kind: 'set-piece', id: 'empty', label: 'Empty' },
+    { kind: 'character', id: 'bob', label: 'Bob' },
+  ];
+
+  it('names every node, with the path an override would address', () => {
+    const described = describeDefinition('classroom', entries())!;
+
+    expect(described.label).toBe('Classroom');
+    expect(described.nodes.map((n) => [n.path, n.name, n.body])).toEqual([
+      ['box', 'Box', 'part'],
+      ['row', 'row', 'group'],
+      ['row/chair-a', 'Chair A', 'part'],
+      ['row/chair-b', 'Chair B', 'part'],
+      ['shelf', 'Shelf', 'instance'],
+      ['ceiling', 'ceiling', 'light'],
+    ]);
+    expect(described.partCount).toBe(3);
+    expect(described.environmentMap).toBe('studio-neutral');
+  });
+
+  it('reports world placements, absolute sizes, references and hidden nodes', () => {
+    const described = describeDefinition('classroom', entries())!;
+    const byPath = new Map(described.nodes.map((n) => [n.path, n]));
+
+    // The row's members are placed relative to the group; what a reader is told is where they stand.
+    expect(byPath.get('box')!.position).toEqual([0, 0.5, 0]);
+    expect(byPath.get('box')!.shape).toBe('box');
+    expect(byPath.get('box')!.size).toEqual([1, 1, 1]);
+    expect(byPath.get('row/chair-b')!.hidden).toBe(true);
+    expect(byPath.get('shelf')!.ref).toBe('shelf-item');
+    // Where the chairs stand, not where their parent puts them: the row's members are 1 m to each side.
+    expect(byPath.get('row/chair-a')!.position[0]).toBeCloseTo(-1);
+    expect(byPath.get('row/chair-b')!.position[0]).toBeCloseTo(1);
+  });
+
+  it('reports the Definition lights, which is how a script can name one', () => {
+    const described = describeDefinition('classroom', entries())!;
+    expect(described.lights.map((l) => l.id)).toEqual(['ceiling']);
+  });
+
+  it('returns null for an entry with no document, and for a non-set-piece', () => {
+    expect(describeDefinition('empty', entries())).toBeNull();
+    expect(describeDefinition('bob', entries())).toBeNull();
+    expect(describeDefinition('nothing', entries())).toBeNull();
+  });
+});
 
 describe('describeCatalogue', () => {
   it('summarises entries with isSetting classification', () => {
