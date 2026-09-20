@@ -44,23 +44,38 @@ export function realiseDocument(
   const root = new THREE.Group();
   root.name = 'realised-set';
   for (const node of doc.root) {
-    const object = realiseNode(node, resolve, 0, onOrphanedOverride);
+    const object = realiseNode(node, resolve, 0, '', onOrphanedOverride);
     if (object) root.add(object);
   }
   return root;
+}
+
+/**
+ * The path a realised object stands for: node ids from the root of the document it was realised
+ * from — which is the Definition's own root for anything inside an instance. Tagging the objects is
+ * what lets a caller address a node the renderer built, rather than only the nodes a document holds.
+ */
+export function nodePathOf(object: THREE.Object3D): string | undefined {
+  return object.userData?.sketcherNodePath as string | undefined;
 }
 
 function realiseNode(
   node: SetNode,
   resolve: RefResolver | undefined,
   depth: number,
+  prefix: string,
   onOrphanedOverride: OrphanedOverrideReporter | undefined,
 ): THREE.Object3D | null {
   // Hidden is a variation, not a removal: the node keeps its place in the tree, so an override
   // that named it still resolves and `hidden: false` can bring it back.
   if (node.hidden) return null;
-  if (isRefNode(node)) return realiseInstance(node, resolve, depth, onOrphanedOverride);
-  if (isPartNode(node)) return buildPartMesh(node.content, node.transform);
+  const path = prefix ? `${prefix}/${node.id}` : node.id;
+  if (isRefNode(node)) return realiseInstance(node, resolve, depth, path, onOrphanedOverride);
+  if (isPartNode(node)) {
+    const mesh = buildPartMesh(node.content, node.transform);
+    if (mesh) mesh.userData.sketcherNodePath = path;
+    return mesh;
+  }
   // A light is not geometry, so it is not realised here: a model's lights come from its
   // `LightAsset[]` (built from the scene's `LightConfig[]`), and a THREE.Light buried in
   // a realised group would be invisible to light animation. `collectLights()` is the one
@@ -71,10 +86,15 @@ function realiseNode(
   group.name = node.name ?? 'group';
   // Tag group nodes so the runtime can map them back to the tree when building
   // SketcherParts + AssemblyGroups from the realised scene.
-  group.userData = { isGroupNode: true, groupName: node.name, groupIsGroup: node.isGroup === true };
+  group.userData = {
+    isGroupNode: true,
+    groupName: node.name,
+    groupIsGroup: node.isGroup === true,
+    sketcherNodePath: path,
+  };
   applyTransform(group, node.transform);
   for (const child of node.children) {
-    const object = realiseNode(child, resolve, depth, onOrphanedOverride);
+    const object = realiseNode(child, resolve, depth, path, onOrphanedOverride);
     if (object) group.add(object);
   }
   return group;
@@ -90,6 +110,7 @@ function realiseInstance(
   node: SetNode,
   resolve: RefResolver | undefined,
   depth: number,
+  path: string,
   onOrphanedOverride: OrphanedOverrideReporter | undefined,
 ): THREE.Object3D | null {
   if (!resolve || depth >= MAX_REF_DEPTH) return null;
@@ -99,13 +120,14 @@ function realiseInstance(
   const instance = new THREE.Group();
   instance.name = node.ref!;
   // Tagged so a caller can tell instance geometry from the host document's own nodes.
-  instance.userData = { isRefNode: true, ref: node.ref };
+  instance.userData = { isRefNode: true, ref: node.ref, sketcherNodePath: path };
   applyTransform(instance, node.transform);
   const root = node.overrides && node.overrides.length > 0
     ? applyOverrides(definition.root, node.overrides, (orphan) => onOrphanedOverride?.(node.ref!, orphan))
     : definition.root;
   for (const child of root) {
-    const object = realiseNode(child, resolve, depth + 1, onOrphanedOverride);
+    // A Definition's own root is the path space its overrides address, so the prefix restarts here.
+    const object = realiseNode(child, resolve, depth + 1, '', onOrphanedOverride);
     if (object) instance.add(object);
   }
   return instance;

@@ -267,6 +267,61 @@ export class UngroupCommand implements SketcherCommand {
   }
 }
 
+// ── OverrideCommand ───────────────────────────────────────────────────────────
+
+/** What a user did inside an instance; each maps to one override the node then carries. */
+export type OverrideAction = 'transform' | 'hide' | 'show' | 'remove' | 'revert';
+
+const OVERRIDE_LABELS: Record<OverrideAction, string> = {
+  transform: 'Vary instance',
+  hide: 'Hide in instance',
+  show: 'Show in instance',
+  remove: 'Remove from instance',
+  revert: 'Revert variation',
+};
+
+/**
+ * Vary one node of an instance's Definition, or take the variation back. The override lives on the
+ * instance's node in the document, so the snapshot pair around the command is what undo restores.
+ *
+ * A drag reads the live transform at execute() time: the gizmo moves the expansion's object, and the
+ * document never saw it.
+ */
+export class OverrideCommand implements SketcherCommand {
+  readonly label: string;
+
+  constructor(
+    private readonly sketcher: CartoonSketcher,
+    private readonly instancePath: string,
+    private readonly nodePath: string,
+    private readonly action: OverrideAction,
+  ) {
+    this.label = OVERRIDE_LABELS[action];
+  }
+
+  execute(): void {
+    switch (this.action) {
+      case 'transform': {
+        const transform = this.sketcher.descendantTransform(this.instancePath, this.nodePath);
+        if (transform) this.sketcher.setDescendantOverride(this.instancePath, this.nodePath, { transform });
+        return;
+      }
+      case 'hide':
+        this.sketcher.setDescendantOverride(this.instancePath, this.nodePath, { hidden: true });
+        return;
+      case 'show':
+        this.sketcher.setDescendantOverride(this.instancePath, this.nodePath, { hidden: false });
+        return;
+      case 'remove':
+        this.sketcher.removeDescendant(this.instancePath, this.nodePath);
+        return;
+      case 'revert':
+        this.sketcher.revertOverride(this.instancePath, this.nodePath);
+        return;
+    }
+  }
+}
+
 // ── Transform snapshot helpers ────────────────────────────────────────────────
 
 // (end of file)

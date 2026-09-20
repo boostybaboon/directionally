@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import * as THREE from 'three';
 import { CartoonSketcher } from './CartoonSketcher.js';
+import { OverrideCommand } from './sketcherCommands.js';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { exportGLB } from './exportGLB.js';
 import type { SketcherSession } from './types.js';
 import { collectLights, documentFromParts, isPartNode } from './documentTree.js';
-import type { PartSeed, SetDocument } from './documentTree.js';
+import type { NodeOverride, PartNode, PartSeed, SetDocument } from './documentTree.js';
 import type { Transform } from './transform.js';
 import type { SetPieceEntry } from '../catalogue/types.js';
 import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
@@ -1889,4 +1890,171 @@ describe('PolygonSketcher drawPlane xy', () => {
     expect(capturedCentroid!.y).toBeCloseTo(0); // centroid.y is always 0 in XZ mode
   });
 
+});
+
+describe('inside an instance (10.4-B)', () => {
+  const identity: Transform = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
+
+  /** A chair whose legs are a group, so a path can address a node below the root. */
+  function chair(): SetDocument {
+    const leaf = (id: string, position: [number, number, number]): PartNode => ({
+      id,
+      role: 'prop',
+      transform: { ...identity, position },
+      children: [],
+      content: { id, kind: 'primitive', name: 'Box', color: 0x663311 },
+    });
+    return {
+      root: [
+        leaf('seat', [0, 0.45, 0]),
+        {
+          id: 'legs',
+          role: 'structure',
+          isGroup: true,
+          transform: { ...identity },
+          children: [leaf('left', [-0.3, 0, 0]), leaf('right', [0.3, 0, 0])],
+        },
+      ],
+      joints: [],
+    };
+  }
+
+  function document(overrides: NodeOverride[] = []): SetDocument {
+    return {
+      root: [{ id: 'chair-1', role: 'prop', ref: 'chair-item', transform: { ...identity, position: [1, 0, 0] }, children: [], overrides }],
+      joints: [],
+    };
+  }
+
+  function session(): CartoonSketcher {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    sketcher.setRefResolver((ref) => (ref === 'chair-item' ? chair() : null));
+    sketcher.loadDocument(document());
+    return sketcher;
+  }
+
+  it('addresses the hit node inside the Definition, once the instance is the focus', () => {
+    const sketcher = session();
+    const [seat] = sketcher.instanceMeshes;
+
+    // Not inside it yet: the hit belongs to the instance as a whole.
+    expect(sketcher.descendantAt(seat)).toBeNull();
+
+    sketcher.focusInstance('chair-1');
+    expect(sketcher.focusedInstancePath).toBe('chair-1');
+    expect(sketcher.insideInstance).toBe(true);
+    expect(sketcher.descendantAt(seat)).toEqual({ instancePath: 'chair-1', ref: 'chair-item', path: 'seat' });
+    expect(sketcher.descendantTransform('chair-1', 'seat')?.position).toEqual([0, 0.45, 0]);
+
+    // A hit on a node inside the Definition's own group keeps the nested path.
+    const nested = sketcher.instanceMeshes.find((m) => m.position.x === -0.3)!;
+    expect(sketcher.descendantAt(nested)?.path).toBe('legs/left');
+  });
+
+  it('varies a node’s transform, and merges into what the instance already said', () => {
+    const sketcher = session();
+    sketcher.focusInstance('chair-1');
+
+    sketcher.setDescendantOverride('chair-1', 'seat', { hidden: true });
+    sketcher.setDescendantOverride('chair-1', 'seat', {
+      transform: { ...identity, position: [0, 1.2, 0] },
+    });
+
+    expect(sketcher.overridesFor('chair-1')).toEqual([
+      { path: 'seat', op: 'set', value: { hidden: true, transform: { ...identity, position: [0, 1.2, 0] } } },
+    ]);
+    // The session shows the variation, and the Definition itself is untouched.
+    expect(sketcher.instanceMeshes).toHaveLength(2);
+    expect(sketcher.orphanedOverrides).toEqual([]);
+  });
+
+  it('drops a node from this instance only, and brings it back on revert', () => {
+    const sketcher = session();
+    sketcher.focusInstance('chair-1');
+
+    sketcher.removeDescendant('chair-1', 'legs/left');
+    expect(sketcher.instanceMeshes).toHaveLength(2);
+    expect(sketcher.overridesFor('chair-1')).toEqual([{ path: 'legs/left', op: 'remove' }]);
+
+    sketcher.revertOverride('chair-1', 'legs/left');
+    expect(sketcher.instanceMeshes).toHaveLength(3);
+    expect(sketcher.overridesFor('chair-1')).toEqual([]);
+  });
+
+  it('collects an override its Definition no longer answers to', () => {
+    const sketcher = session();
+    sketcher.loadDocument(document([{ path: 'legs/gone', op: 'remove' }]));
+
+    expect(sketcher.orphanedOverrides).toEqual([
+      { instancePath: 'chair-1', ref: 'chair-item', path: 'legs/gone', op: 'remove' },
+    ]);
+
+    // Reverting the stale entry is the fix, and it clears the report.
+    sketcher.revertOverride('chair-1', 'legs/gone');
+    expect(sketcher.orphanedOverrides).toEqual([]);
+  });
+
+  it('refuses to add parts while inside an instance', () => {
+    const sketcher = session();
+    sketcher.focusInstance('chair-1');
+
+    expect(sketcher.insertPrimitive('Box')).toBeNull();
+    expect(sketcher.insertInstance({ ref: 'chair-item' })).toBeNull();
+    expect(sketcher.group(['a', 'b'])).toBeNull();
+    expect(sketcher.toDocument().root).toHaveLength(1);
+
+    sketcher.focusInstance(null);
+    expect(sketcher.insertPrimitive('Box')).not.toBeNull();
+  });
+
+  it('stops at a nested instance: past it the node belongs to its own item', () => {
+    const row: SetDocument = {
+      root: [{
+        id: 'chair-slot',
+        role: 'prop',
+        ref: 'chair-item',
+        transform: { ...identity, position: [0.5, 0, 0] },
+        children: [],
+      }],
+      joints: [],
+    };
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    sketcher.setRefResolver((ref) => (ref === 'row' ? row : ref === 'chair-item' ? chair() : null));
+    sketcher.loadDocument({
+      root: [{ id: 'row-1', role: 'structure', ref: 'row', transform: { ...identity }, children: [] }],
+      joints: [],
+    });
+    sketcher.focusInstance('row-1');
+
+    const chairLeg = sketcher.instanceMeshes.find((m) => m.position.x === -0.3)!;
+
+    // The row can vary the node that places the chair, not the chair's own parts: those are the
+    // chair item's to vary, in its own context.
+    expect(sketcher.descendantAt(chairLeg)?.path).toBe('chair-slot');
+    expect(sketcher.descendantTransform('row-1', 'chair-slot')?.position).toEqual([0.5, 0, 0]);
+  });
+
+  it('writes what a drag did, read from the live expansion', () => {
+    const sketcher = session();
+    sketcher.focusInstance('chair-1');
+    const [seat] = sketcher.instanceMeshes;
+    seat.position.set(0, 2, 0);
+
+    new OverrideCommand(sketcher, 'chair-1', 'seat', 'transform').execute();
+
+    expect(sketcher.overridesFor('chair-1')).toEqual([
+      { path: 'seat', op: 'set', value: { transform: { ...identity, position: [0, 2, 0] } } },
+    ]);
+    expect(sketcher.instanceMeshes[0].position.y).toBe(2);
+  });
+
+  it('steps back out when the instance the focus was on is gone', () => {
+    const sketcher = session();
+    sketcher.focusInstance('chair-1');
+
+    sketcher.loadDocument({ root: [], joints: [] });
+
+    expect(sketcher.focusedInstancePath).toBeNull();
+    expect(sketcher.insideInstance).toBe(false);
+  });
 });

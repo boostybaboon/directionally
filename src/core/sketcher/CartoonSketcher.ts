@@ -3,7 +3,7 @@ import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { AttachManager } from './AttachManager.js';
 import { PRIMITIVE_PRESETS, PRESET_BY_NAME, buildLatheGeometry } from './geometry.js';
-import { buildPartMesh, realiseDocument } from './realise.js';
+import { buildPartMesh, nodePathOf, realiseDocument } from './realise.js';
 import type { RefResolver } from './realise.js';
 import type { JointSnapshot, PartDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
 import {
@@ -24,6 +24,8 @@ import {
   collectPartNodes,
   normalizeDocument,
   applyOverrides,
+  dropOverride,
+  upsertOverride,
   isPartNode,
   isRefNode,
   findGroupByPath,
@@ -44,7 +46,8 @@ import {
   removeLightNode,
   collectLights,
 } from './documentTree.js';
-import type { NodeRef, PartNode, PartSeed, RefSeed, SetDocument, SetNode } from './documentTree.js';
+import type { NodeOverride, NodePatch, NodeRef, OrphanedOverride, PartNode, PartSeed, RefSeed, SetDocument, SetNode }
+  from './documentTree.js';
 import type { Transform } from './transform.js';
 import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 import type { SetPieceEntry } from '../catalogue/types.js';
@@ -102,6 +105,17 @@ function toTuple(v: THREE.Vector3): [number, number, number] {
   return [v.x, v.y, v.z];
 }
 
+/** An override the last sync could not replay, with the instance it was written on. */
+export type OrphanedOverrideReport = {
+  /** Path of the instance node in this document. */
+  instancePath: string;
+  /** The Definition the override was written against. */
+  ref: string;
+  /** The path the override addressed, which its Definition no longer has. */
+  path: string;
+  op: NodeOverride['op'];
+};
+
 type Phase = 'idle' | 'drawing' | 'pending-holes' | 'hole-drawing' | 'extruding' | 'revolve-drawing' | 'pending-revolve';
 
 /**
@@ -158,6 +172,10 @@ export class CartoonSketcher {
   private refResolver?: RefResolver;
   /** Instance expansions built by the last sync, so a re-sync can release them. */
   private instanceRoots: THREE.Object3D[] = [];
+  /** The instance whose insides are being edited (10.4-B), or null for the document itself. */
+  private _focusedInstance: string | null = null;
+  /** What the last sync could not replay: overrides naming nodes their Definition no longer has. */
+  private readonly _orphanedOverrides: OrphanedOverrideReport[] = [];
 
   /** Called whenever the extrusion depth changes during a drag (phase === 'extruding'). */
   onExtrusionDepthChanged?: (depth: number) => void;
@@ -388,6 +406,7 @@ export class CartoonSketcher {
    * Returns the new part so the caller can auto-select it, or null if name is unknown.
    */
   insertPrimitive(name: string): SketcherPart | null {
+    if (this.insideInstance) return null;
     const preset = PRESET_BY_NAME.get(name.toLowerCase());
     if (!preset) return null;
     const geometry = preset.geometry();
@@ -431,6 +450,115 @@ export class CartoonSketcher {
       });
     }
     return meshes;
+  }
+
+  /**
+   * Step inside an instance, or back out with `null`. While inside, a hit on the expansion addresses
+   * the node *within the Definition* — which is what an override is written against — and edits are
+   * confined to what an override can express, so adding parts is refused rather than quietly landing
+   * in the host document.
+   */
+  focusInstance(path: string | null): void {
+    this._focusedInstance = path;
+  }
+
+  /** The instance whose insides are being edited, or null when the document itself is the subject. */
+  get focusedInstancePath(): string | null {
+    return this._focusedInstance;
+  }
+
+  /** True while the session is inside an instance, where only what an override expresses is editable. */
+  get insideInstance(): boolean {
+    return this._focusedInstance !== null;
+  }
+
+  /**
+   * The node a hit inside the focused instance addresses: the instance's path in this document, the
+   * Definition it names, and the hit node's path inside that Definition. Null unless the focus is set
+   * and the hit lies inside it.
+   */
+  descendantAt(object: THREE.Object3D): { instancePath: string; ref: string; path: string } | null {
+    const instance = this.instanceFor(object);
+    if (!instance || instance.path !== this._focusedInstance) return null;
+    // A nested instance is a boundary: past one, the hit belongs to *that* instance's Definition, so
+    // the outermost node this instance can vary is the node that names it.
+    let node = object;
+    for (let parent = object.parent; parent && parent !== instance.group; parent = parent.parent) {
+      if (parent.userData?.isRefNode) {
+        node = parent;
+        break;
+      }
+    }
+    const path = nodePathOf(node);
+    return path === undefined ? null : { instancePath: instance.path, ref: instance.ref, path };
+  }
+
+  /** What an instance says about the nodes of its Definition, in list order. */
+  overridesFor(instancePath: string): readonly NodeOverride[] {
+    return nodeAt(this.document, instancePath)?.overrides ?? [];
+  }
+
+  /**
+   * Overrides the last sync could not replay, in tree order: a Definition changed under an instance
+   * leaves entries that name nodes it no longer has, and those are worth showing rather than
+   * dropping.
+   */
+  get orphanedOverrides(): readonly OrphanedOverrideReport[] {
+    return this._orphanedOverrides;
+  }
+
+  /**
+   * Vary one node of an instance's Definition. The patch merges into what the instance already says
+   * about that path, so moving a node leaves it hidden or shown as it was — and it replaces an
+   * earlier `remove`, because the node is back.
+   */
+  setDescendantOverride(instancePath: string, path: string, patch: NodePatch): void {
+    this.editDocument((doc) => {
+      const instance = nodeAt(doc, instancePath);
+      if (!instance?.ref) return;
+      const previous = instance.overrides?.find((o) => o.path === path);
+      const value = previous?.op === 'set' ? { ...previous.value, ...patch } : patch;
+      upsertOverride(instance, { path, op: 'set', value });
+    });
+  }
+
+  /** Drop a node from this instance's copy of the Definition, leaving the Definition itself. */
+  removeDescendant(instancePath: string, path: string): void {
+    this.editDocument((doc) => {
+      const instance = nodeAt(doc, instancePath);
+      if (instance?.ref) upsertOverride(instance, { path, op: 'remove' });
+    });
+  }
+
+  /** Forget what this instance said about a node — Revert, back to the Definition's own state. */
+  revertOverride(instancePath: string, path: string): void {
+    this.editDocument((doc) => {
+      const instance = nodeAt(doc, instancePath);
+      if (instance) dropOverride(instance, path);
+    });
+  }
+
+  /**
+   * The transform a node inside an instance's expansion currently has, read from the live object —
+   * which is Definition-local, since the expansion mirrors the Definition's tree under the
+   * instance's own transform.
+   */
+  descendantTransform(instancePath: string, path: string): Transform | null {
+    const root = this.nodeObjects.get(instancePath);
+    if (!root) return null;
+    // Walk the children, never the instance's own object: its path is the document's, and a
+    // Definition could in principle name a root node the same way.
+    let found: THREE.Object3D | null = null;
+    const visit = (object: THREE.Object3D): void => {
+      if (found) return;
+      if (nodePathOf(object) === path) {
+        found = object;
+        return;
+      }
+      for (const child of object.children) visit(child);
+    };
+    for (const child of root.children) visit(child);
+    return found ? transformOf(found) : null;
   }
 
   /**
@@ -506,6 +634,7 @@ export class CartoonSketcher {
     rotation?: Vec3,
     scale?: Vec3,
   ): SketcherPart | null {
+    if (this.insideInstance) return null;
     const id = `part-${this.nextId++}`;
     const seed: PartSeed = {
       content: {
@@ -537,6 +666,7 @@ export class CartoonSketcher {
    * document's, and the geometry appears as soon as the resolver knows it.
    */
   insertInstance(seed: RefSeed): string | null {
+    if (this.insideInstance) return null;
     let path: string | null = null;
     this.editDocument((doc) => {
       path = pathOfNode(doc, insertRef(doc, seed));
@@ -704,7 +834,7 @@ export class CartoonSketcher {
    * Returns the new AssemblyGroup, or null if the input is invalid.
    */
   group(partIds: string[], name?: string): AssemblyGroup | null {
-    if (partIds.length < 2) return null;
+    if (partIds.length < 2 || this.insideInstance) return null;
     // Each selected part stands for the group that owns it, when it has one — so grouping a
     // member of a group brings that whole group, and a group can be grouped into another.
     const targets = [...new Set(partIds.flatMap((id) => {
@@ -768,6 +898,7 @@ export class CartoonSketcher {
     localPointB: THREE.Vector3,
     localNormalB: THREE.Vector3,
   ): void {
+    if (this.insideInstance) return;
     this.attach.applyJoint(partA, localPointA, localNormalA, partB, localPointB, localNormalB);
     this.editDocument((doc) => {
       const members = [...new Set([...groupMembersOf(doc, partA.id), ...groupMembersOf(doc, partB.id)])];
@@ -1012,13 +1143,18 @@ export class CartoonSketcher {
     const definition = this.refResolver?.(node.ref!);
     if (definition) {
       // The Definition is realised as this instance's overrides leave it, so the session shows what
-      // the renderer will; an override its Definition no longer answers to is reported, not ignored.
+      // the renderer will. An override its Definition no longer answers to is collected for the
+      // caller to surface rather than ignored.
+      const record = (ref: string, orphan: OrphanedOverride): void => {
+        const known = this._orphanedOverrides.some(
+          (o) => o.instancePath === path && o.ref === ref && o.path === orphan.path && o.op === orphan.op,
+        );
+        if (!known) this._orphanedOverrides.push({ instancePath: path, ref, path: orphan.path, op: orphan.op });
+      };
       const root = node.overrides && node.overrides.length > 0
-        ? applyOverrides(definition.root, node.overrides, (orphan) => {
-            console.warn(`CartoonSketcher: instance "${node.id}" has a ${orphan.op} override for "${orphan.path}", which "${node.ref}" no longer has`);
-          })
+        ? applyOverrides(definition.root, node.overrides, (orphan) => record(node.ref!, orphan))
         : definition.root;
-      const realised = realiseDocument({ root }, this.refResolver);
+      const realised = realiseDocument({ root }, this.refResolver, record);
       for (const child of [...realised.children]) instance.add(child);
     }
     return instance;
@@ -1079,6 +1215,13 @@ export class CartoonSketcher {
    * into the AttachManager (no repositioning — positions already reflect the attached state).
    */
   private syncFromDocument(doc: SetDocument): void {
+    // Read fresh each sync: an instance the focus was set on can be gone (undo, delete, a load),
+    // and stepping back out is the only honest reading of that.
+    this._orphanedOverrides.length = 0;
+    if (this._focusedInstance !== null && nodeAt(doc, this._focusedInstance)?.ref === undefined) {
+      this._focusedInstance = null;
+    }
+
     // Collect part bodies by guid from the tree.
     const partLeaves = new Map<string, PartDraft>();
     for (const node of collectPartNodes(doc)) partLeaves.set(node.content.id, node.content);

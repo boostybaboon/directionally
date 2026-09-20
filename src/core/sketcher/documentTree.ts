@@ -357,6 +357,26 @@ function locateByPath(
   return found;
 }
 
+/**
+ * Write one override onto an instance, replacing whatever it said about the same path — the replay
+ * reads the list in order, so a second entry for one path could never win.
+ */
+export function upsertOverride(node: SetNode, override: NodeOverride): void {
+  const list = node.overrides ?? [];
+  const index = list.findIndex((o) => o.path === override.path);
+  if (index === -1) list.push(override);
+  else list[index] = override;
+  node.overrides = list;
+}
+
+/** Drop what an instance says about one path — Revert, back to the Definition's own state. */
+export function dropOverride(node: SetNode, path: string): void {
+  if (!node.overrides) return;
+  const kept = node.overrides.filter((o) => o.path !== path);
+  if (kept.length > 0) node.overrides = kept;
+  else delete node.overrides;
+}
+
 // ── Tree mutation operations (the live model's edit surface) ─────────────────
 
 /** Number of part leaves in a document, nested groups included. */
