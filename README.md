@@ -2,6 +2,8 @@
 
 A browser-based 3D scene presentation engine built with SvelteKit, Three.js, and Tone.js.
 
+[![CI](https://github.com/boostybaboon/directionally/actions/workflows/ci.yml/badge.svg)](https://github.com/boostybaboon/directionally/actions/workflows/ci.yml)
+
 ## Commands
 
 ```bash

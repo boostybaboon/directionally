@@ -1,0 +1,39 @@
+name: CI
+
+# Two different jobs guard this repo and they check different things:
+#   - this one: type check, tests, build — on every branch push, and on PRs into main
+#   - azure-static-web-apps-*.yml: the deploy (main) and a preview environment per PR
+# The deploy's build is Oryx + `vite build`, which compiles but never type-checks or tests, so this
+# is where a broken type or a failing test is caught before anything reaches a preview URL.
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+
+      - name: Install
+        run: yarn install --frozen-lockfile
+
+      - name: Type check
+        run: yarn check
+
+      - name: Tests
+        run: yarn test
+
+      - name: Build
+        run: yarn build
