@@ -233,6 +233,12 @@ export function storedSceneToModel(
     // A light is either the scene's own or a setting's (resolved above), and both are in
     // the domain Scene by now, so the config lookup runs against that one list.
     const lightCfg = scene.lights.find((l) => l.id === lightId);
+    // A block aimed at a light nothing owns compiles to a track nobody reads, so it is worth saying
+    // which id missed: the usual cause is a venue's light addressed by its own name rather than as
+    // piece/light.
+    if (!lightCfg) {
+      console.warn(`storedSceneToModel: light block targets "${lightId}", which this scene has no light for — a setting's light is named after the piece that brought it (piece/light)`);
+    }
     let inferredIntensity: number | undefined = lightCfg?.intensity;
     for (const block of blocks) {
       compiledBlockTracks.push(...lightBlockToTracks(block, inferredIntensity));
@@ -250,7 +256,13 @@ export function storedSceneToModel(
   }
   for (const [targetId, blocks] of setPieceBlocksByTarget) {
     blocks.sort((a, b) => a.startTime - b.startTime);
-    const pieceCfg = storedScene.set.find((p) => p.name === targetId);
+    // The renderer draws the *resolved* pieces, so the inference reads both lists: a block may name
+    // a piece the scene stores (a referenced set) or one the resolver expanded out of it.
+    const pieceCfg = storedScene.set.find((p) => p.name === targetId)
+      ?? resolvedSet.find((p) => p.name === targetId);
+    if (!pieceCfg) {
+      console.warn(`storedSceneToModel: set-piece block targets "${targetId}", which this scene has no piece for — a piece inside a referenced set is named as the resolver expands it (instance/entry)`);
+    }
     let inferredPos: Vec3 = pieceCfg?.position ?? [0, 0, 0];
     let inferredRot: Vec3 = pieceCfg?.rotation ?? [0, 0, 0];
     for (const block of blocks) {

@@ -242,6 +242,66 @@ describe('storedSceneToModel – instances inside a document', () => {
   });
 });
 
+describe('storedSceneToModel – block targets', () => {
+  function withBlocks(blocks: StoredScene['blocks']): StoredScene {
+    return baseScene({ blocks, lights: [
+      { type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 2 },
+      { type: 'point', id: 'lamp', color: 0xffffff, intensity: 1, position: [0, 2, 0] },
+    ] });
+  }
+
+  const lightBlock = (lightId: string): NonNullable<StoredScene['blocks']>[number] => ({
+    type: 'lightBlock', lightId, startTime: 0, endTime: 1, endIntensity: 0,
+  });
+
+  it('says which light a block missed, rather than compiling a track nobody reads', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    storedSceneToModel(withBlocks([lightBlock('classroom/ceiling')]), []);
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"classroom/ceiling"'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('piece/light'));
+    warn.mockRestore();
+  });
+
+  it('says nothing for a light the scene has, a setting’s included', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    storedSceneToModel(withBlocks([lightBlock('sky'), lightBlock('lamp')]), []);
+
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('resolves a set-piece block against the pieces the renderer draws, not only the stored ones', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const scene = baseScene({
+      set: [{ name: 'chair-1', ref: 'chair', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 } }],
+      blocks: [{ type: 'setPieceBlock', targetId: 'chair-1/chair', startTime: 0, endTime: 1, endPosition: [2, 0, 0] }],
+    });
+
+    // The scene stores the reference; the resolver expands it, and the expanded name is what a block
+    // can legitimately target.
+    storedSceneToModel(scene, []);
+
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('says which set piece a block missed', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const scene = baseScene({
+      set: [{ name: 'chair-1', catalogueId: 'chair', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 } }],
+      blocks: [{ type: 'setPieceBlock', targetId: 'nope', startTime: 0, endTime: 1, endPosition: [2, 0, 0] }],
+    });
+
+    storedSceneToModel(scene, []);
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('"nope"'));
+    warn.mockRestore();
+  });
+});
+
 describe('storedSceneToModel – staged actors', () => {
   it('produces one GLTF per staged actor', () => {
     const scene = baseScene({
