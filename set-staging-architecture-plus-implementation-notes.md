@@ -460,9 +460,18 @@ their producers:
   item vary independently. Both readers of a document replay it (the Sketcher's sync and the model
   boundary) and both report a stale override; `normalizeDocument()` keeps what it can replay, fills a
   partial patch transform from rest, and reports what it drops;
-- still owed from 10.4: the session half (10.4-B) — nothing can address a descendant yet (a hit
-  inside an instance selects the instance), so the write path that turns "the same chair, minus its
-  back" into an override on the node, plus Apply/Revert, is what a user still cannot do;
+- 10.4-B landed the session half on top of it: `focusInstance(path)` is a mode, `descendantAt(object)`
+  says what a hit means while it is set (the node within the Definition, stopping at a *nested*
+  instance, past which the node belongs to that item's own Definition), and the writes are the three
+  things an override expresses. `realiseDocument` tags every object it builds with its path
+  (`nodePathOf`), so the session can address a node the renderer made. The editor enters with `I` or
+  **Edit inside**, varies by dragging (the live transform is what gets written), hides, removes, and
+  applies or reverts per variation, with the orphans its Definition no longer answers to listed
+  against the same Revert. Adding is refused inside — palette, catalogue, attach, sketch, group — since
+  no override expresses an addition, and a part that landed in the host document would read as inside
+  the item;
+- still owed from 10.4: `swap_ref` (with `describe_definition`, the tool that would let the AI target
+  a path, deferred alongside it) and N9's Outliner highlight of overridden nodes;
 - still owed from 10.3: the diff's group-structure pass (see above), and the addressing work N8 was
   folded in for — `resolveInstances` still flattens the *scene*'s ref pieces with name offsets and
   `SetPieceBlock.targetId` still matches a piece by `name` (see the identity table above).

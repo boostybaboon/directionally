@@ -471,14 +471,29 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
         patch that sets nothing, overrides on a node that is not an instance). The AI draft carries
         overrides in its own terms (Euler degrees, Definition-local), so an edit cycle can no longer
         strip an instance's variation on the way through.
-      - **10.4-B (session).** What the data model still owes a user: **addressing a descendant** — a hit
-        anywhere inside an instance selects the instance, so nothing can name a `path` yet; an
-        enter/exit-instance selection mode (or a modifier to reach a part inside one) plus a write path
-        that turns "moved/hid/deleted a part of this instance" into an override on the *node* rather
-        than a part edit, and **Apply** (push the override into the Definition, which every instance
-        then sees) / **Revert** (drop it) in the inspector, with the orphans the replay already
-        reports surfaced there or in the status line. `swap_ref` stays out until something writes it:
-        `describe_definition` (the tool that would let the AI target paths) is deferred with it.
+      - **10.4-B (session).** ✅ Landed, in two steps:
+        - the addressing exists: `focusInstance(path)` is a mode, and `descendantAt(object)` says what a
+          hit means while it is set — the node *within* the Definition, with a **nested instance as a
+          hard boundary**, because past one the node belongs to that item's own Definition and the
+          outermost node this instance can vary is the node that names it. `realiseDocument` now tags
+          every object it builds with the path it stands for (`nodePathOf`), which is what lets the
+          session address a node the renderer made rather than only the nodes a document holds.
+        - the writes are the three things an override expresses: a `set` patch that merges into what
+          the node already says (so moving a hidden node leaves it hidden), `remove` from this
+          instance's copy, and Revert dropping the entry. Adding — palette, catalogue insert, attach,
+          sketch, group — is refused while the focus is set, because no override expresses an addition
+          and a part that quietly landed in the host document would read as inside the item;
+        - the editor surfaces it: an `I` keystroke or **Edit inside** enters, Esc or **Leave** exits,
+          a gizmo drag writes the live transform as a variation rather than a part transform, Delete
+          removes the node from this instance rather than the whole instance, and the panel lists the
+          instance's variations with per-row **Revert** and **Apply to item** (a save to the item's own
+          entry, reported as such because it is not an in-session undo step — a `set` transform is
+          absolute, so applying twice is harmless);
+        - orphans are collected per sync (`orphanedOverrides`) rather than warned to the console, and
+          listed in the same panel against the Revert that fixes them.
+        Remaining here, recorded: `swap_ref` waits for something that writes one (`describe_definition`
+        — the tool that would let the AI *target* a path — is deferred with it), and N9's Outliner
+        highlight of overridden nodes stays part of the deferred Outliner.
     - **10.5 — Layering (venue / dressing / shot).** Two or three fixed, ordered override-sets
       composed per scene, last-write-wins — USD's LIVRPS *benefit* without its generality. This is
       where per-shot light tweaks and `role: 'camera' | 'rig'` nodes (additive, no migration) earn
