@@ -201,6 +201,7 @@ export function expandEntry(
   // orientation are all in the document `storedSceneToModel` realises from that id.
   const piece: SetPiece = {
     name: entry.id,
+    id: entry.id,
     catalogueId: entry.id,
     geometry: PLACEHOLDER_GEOMETRY,
     material: PLACEHOLDER_MATERIAL,
@@ -225,7 +226,9 @@ function expandProps(
       unresolved.push(p.ref);
       continue;
     }
-    const piece: SetPiece = { name: p.name ?? 'piece', geometry: p.geometry, material: p.material };
+    // An inline prop has no identity beyond the words the script used for it.
+    const name = p.name ?? 'piece';
+    const piece: SetPiece = { name, id: name, geometry: p.geometry, material: p.material };
     out.push(applyPlacement(piece, p));
   }
   return out;
@@ -247,6 +250,15 @@ function expandProps(
  * Flattening only happens here, at render time (Track SET, N2) — the `ref` on
  * the stored piece is never rewritten, so the scene stays edit-friendly.
  */
+/**
+ * What addresses a piece: its id, or its name when it has none (a scene written before pieces carried
+ * ids, or a piece built inline from a script). One definition, because a mismatch between the address a
+ * block holds and the address the resolver built is exactly the bug this exists to prevent.
+ */
+export function pieceKey(piece: SetPiece): string {
+  return piece.id ?? piece.name;
+}
+
 export function resolveInstance(
   piece: SetPiece,
   entries: CatalogueEntry[] = CATALOGUE_ENTRIES,
@@ -262,7 +274,9 @@ export function resolveInstance(
   // The dressing travels with the reference it was written on: the scene's variation is about
   // *this* placement of the entry, so it survives the expansion rather than being flattened away.
   const expanded = expandEntry(entry, placement, piece.overrides);
-  return expanded.map((c) => ({ ...c, name: `${piece.name}/${c.name}` }));
+  // The child's address is built from the instance's *id* and the entry's stable id, so renaming
+  // either label cannot move the address a block already holds. The name keeps the readable prefix.
+  return expanded.map((c) => ({ ...c, name: `${piece.name}/${c.name}`, id: `${pieceKey(piece)}/${c.id ?? c.name}` }));
 }
 
 /** Resolve every `ref` piece in `pieces` via `resolveInstance`, flattening in place. */

@@ -288,6 +288,21 @@ describe('storedSceneToModel – block targets', () => {
     warn.mockRestore();
   });
 
+  it('addresses a resolved child by id, not by the label a rename would move', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const scene = baseScene({
+      set: [{ name: 'chair-1', id: 'seat-a', ref: 'chair', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 } }],
+      blocks: [{ type: 'setPieceBlock', targetId: 'seat-a/chair', startTime: 0, endTime: 1, endPosition: [2, 0, 0] }],
+    });
+
+    storedSceneToModel(scene, []);
+
+    // The child's *name* is chair-1/chair; its address is seat-a/chair, because the instance carries an
+    // id. Keying off the name is what made a rename break the animation.
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it('says which set piece a block missed', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const scene = baseScene({

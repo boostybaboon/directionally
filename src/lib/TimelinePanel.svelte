@@ -3,6 +3,7 @@
   import { ACTOR_COLORS, numToHex } from './actorColors.js';
   import type { ActorBlock, LightBlock, CameraBlock, SetPieceBlock } from '../core/domain/types.js';
   import type { LightConfig, SetPiece } from '../core/domain/types.js';
+  import { pieceKey } from '../core/setting/settingSpec.js';
 
   interface Props {
     actors: StoredActor[];
@@ -482,7 +483,7 @@
 
     <!-- Per-set-piece rows -->
     {#each setPieces as piece}
-      {@const pBlocks = setPieceBlocks.filter((e) => e.block.targetId === piece.name)}
+      {@const pBlocks = setPieceBlocks.filter((e) => e.block.targetId === pieceKey(piece))}
       {@const hasBlocks = pBlocks.length > 0}
       <div class="tl-row tl-setpiece-row" class:tl-row-stub={!hasBlocks}>
         <div class="tl-label" style:width="{LABEL_W}px">
@@ -493,13 +494,13 @@
           <button
             class="tl-spawn-block tl-spawn-block-setpiece"
             onpointerdown={(e) => e.stopPropagation()}
-            onclick={() => onspawnselect?.(piece.name)}
+            onclick={() => onspawnselect?.(pieceKey(piece))}
             title="Set {piece.name}'s start position"
             tabindex="0"
           >⊕</button>
         </div>
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="tl-track" onpointerdown={(e) => startDraw(e, 'setPiece', piece.name)}>
+        <div class="tl-track" onpointerdown={(e) => startDraw(e, 'setPiece', pieceKey(piece))}>
           <div class="tl-playhead" style:left="{tx(currentPosition)}px"></div>
           {#each pBlocks as entry}
             {@const eff = blockEffective(entry.index, entry.block)}
@@ -526,7 +527,7 @@
               <div class="tl-resize tl-resize-r" onpointerdown={(e) => { e.stopPropagation(); startDrag(e, entry, 'setPiece', 'resize-right'); }}></div>
             </div>
           {/each}
-          {#if drawState?.kind === 'setPiece' && drawState.trackId === piece.name}
+          {#if drawState?.kind === 'setPiece' && drawState.trackId === pieceKey(piece)}
             {@const gs = Math.min(drawState.startTime, drawState.currentTime)}
             {@const ge = Math.max(drawState.startTime, drawState.currentTime)}
             <div class="tl-ghost-block" style:left="{tx(gs)}px" style:width="{Math.max(tx(ge) - tx(gs), 2)}px"></div>

@@ -24,7 +24,17 @@ export type MaterialConfig = {
 
 // A piece of scenery: static geometry placed in the scene (floor, walls, steps, blocks etc.)
 export type SetPiece = {
+  /**
+   * The label: what a person reads in an outliner, and what the script wrote.
+   */
   name: string;
+  /**
+   * The address: what a SetPieceBlock targets, what the resolver builds a child's id from, and what
+   * the renderer names the object after (animation binds by object name, so the name and the address
+   * have to be the same string). Defaults to `name` when absent, which is how a scene stored before
+   * this field existed keeps working: an address only diverges from a label when something renames.
+   */
+  id?: string;
   geometry: GeometryConfig;
   material: MaterialConfig;
   position?: Vec3;

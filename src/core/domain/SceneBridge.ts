@@ -17,6 +17,7 @@ import {
 } from '../../lib/model/Geometry.js';
 import { MeshStandardMaterialAsset } from '../../lib/model/Material.js';
 import { MeshAsset } from '../../lib/model/Mesh.js';
+import { pieceKey } from '../setting/settingSpec.js';
 import { GLTFAsset } from '../../lib/model/GLTF.js';
 import { Object3DAsset } from '../../lib/model/Object3DAsset.js';
 import {
@@ -159,16 +160,18 @@ export function sceneToModel(
     // A set piece is its tree document (ROADMAP_CATALOGUE step 8), so it renders
     // from its realised tree; the placeholder geometry/material the resolver gave
     // it is never built.
-    const realised = piece.catalogueId ? realisedSets?.get(piece.name) : undefined;
+    const realised = piece.catalogueId ? realisedSets?.get(pieceKey(piece)) : undefined;
     if (realised) {
-      const asset = new Object3DAsset(piece.name, realised);
+      const asset = new Object3DAsset(pieceKey(piece), realised);
       if (piece.position) asset.position = new THREE.Vector3(...piece.position);
       if (piece.rotation) asset.rotation = new THREE.Euler(...piece.rotation);
       if (piece.scale)    asset.scale    = new THREE.Vector3(...piece.scale);
       groups.push(asset);
       continue;
     }
-    const mesh = new MeshAsset(piece.name, buildGeometry(piece.geometry), buildMaterial(piece.material));
+    // The object is named after the address, not the label: an animation track binds by object name,
+    // so the name the mixer matches and the id a block targets have to be the same string.
+    const mesh = new MeshAsset(pieceKey(piece), buildGeometry(piece.geometry), buildMaterial(piece.material));
     if (piece.position) mesh.position = new THREE.Vector3(...piece.position);
     if (piece.rotation) mesh.rotation = new THREE.Euler(...piece.rotation);
     if (piece.scale)    mesh.scale    = new THREE.Vector3(...piece.scale);

@@ -2,7 +2,7 @@ import { Scene } from '../domain/Scene.js';
 import { sceneToModel } from '../domain/SceneBridge.js';
 import { getById } from '../catalogue/catalogue.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
-import { resolveInstances } from '../setting/settingSpec.js';
+import { pieceKey, resolveInstances } from '../setting/settingSpec.js';
 import type { CatalogueEntry } from '../catalogue/types.js';
 import type { CharacterSpec } from '../character/characterSpec.js';
 import { specCharacterToGlbUrl } from '../character/specCharacter.js';
@@ -114,7 +114,7 @@ function realiseDocumentSets(
           console.warn(`storedSceneToModel: piece "${piece.name}" has a ${orphan.op} override for "${orphan.path}", which its document no longer has`);
         })
       : document.root;
-    groups.set(piece.name, realiseDocument({ root }, resolveRef, (ref, orphan) => {
+    groups.set(pieceKey(piece), realiseDocument({ root }, resolveRef, (ref, orphan) => {
       console.warn(`storedSceneToModel: instance "${ref}" has a ${orphan.op} override for "${orphan.path}", which its Definition no longer has`);
     }));
   }
@@ -171,7 +171,7 @@ export function storedSceneToModel(
     // can both have a `sky`, and a `LightBlock` — which resolves its target by id — has to be able
     // to say which one it means. This is the same shape as the piece-name prefix the resolver puts
     // on expanded names, and it is why a shot can tweak a venue's light at all.
-    settingLights.push(...collectLights(document).map((light) => ({ ...light, id: `${piece.name}/${light.id}` })));
+    settingLights.push(...collectLights(document).map((light) => ({ ...light, id: `${pieceKey(piece)}/${light.id}` })));
     settingEnvironment ??= document.environmentMap;
   }
 
@@ -258,8 +258,8 @@ export function storedSceneToModel(
     blocks.sort((a, b) => a.startTime - b.startTime);
     // The renderer draws the *resolved* pieces, so the inference reads both lists: a block may name
     // a piece the scene stores (a referenced set) or one the resolver expanded out of it.
-    const pieceCfg = storedScene.set.find((p) => p.name === targetId)
-      ?? resolvedSet.find((p) => p.name === targetId);
+    const pieceCfg = storedScene.set.find((p) => pieceKey(p) === targetId)
+      ?? resolvedSet.find((p) => pieceKey(p) === targetId);
     if (!pieceCfg) {
       console.warn(`storedSceneToModel: set-piece block targets "${targetId}", which this scene has no piece for — a piece inside a referenced set is named as the resolver expands it (instance/entry)`);
     }

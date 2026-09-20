@@ -10,9 +10,11 @@ import {
   sceneToSettingSpec,
   resolveInstance,
   resolveInstances,
+  pieceKey,
   matchesByLabel,
 } from './settingSpec.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
+import type { SetPiece } from '../domain/types.js';
 import { documentFromParts } from '../sketcher/documentTree.js';
 import type { PartSeed } from '../sketcher/documentTree.js';
 import type { StoredScene } from '../storage/types.js';
@@ -85,6 +87,28 @@ describe('resolveSettingSpec', () => {
     expect(piece).toBeDefined();
     expect(piece!.position).toEqual([1, 2, 3]);
     expect(piece!.catalogueId).toBe('box');
+  });
+
+  it('addresses an expanded child by identity, so a renamed label cannot move its address', () => {
+    const instance: SetPiece = {
+      name: 'chair-1',
+      id: 'seat-a',
+      ref: 'chair',
+      geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 },
+      material: { color: 0 },
+    };
+
+    const [child] = resolveInstance(instance, fixture);
+
+    // The label stays readable; the address is built from identity, which is what a block holds.
+    expect(child.name).toBe('chair-1/chair');
+    expect(child.id).toBe('seat-a/chair');
+    expect(pieceKey(child)).toBe('seat-a/chair');
+  });
+
+  it('addresses a piece by its name when it has no identity of its own', () => {
+    const piece: SetPiece = { name: 'wall', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0 } };
+    expect(pieceKey(piece)).toBe('wall');
   });
 
   it('resolves a catalogue floor ref to the entry that owns the geometry', () => {
