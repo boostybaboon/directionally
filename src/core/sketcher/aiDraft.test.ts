@@ -119,6 +119,12 @@ describe('fromAIDraft with a model answer that omits fields', () => {
   it('treats an unusable answer as an empty draft rather than an exception', () => {
     expect(collectPartNodes(fromAIDraft({} as AIDraft))).toHaveLength(0);
     expect(collectPartNodes(fromAIDraft({ parts: 'nonsense' } as unknown as AIDraft))).toHaveLength(0);
+    // The same omission one field along: a value where an array was asked for.
+    // A ref part becomes an instance node, not a part node, so it is collected as one.
+    expect(collectRefs(fromAIDraft({
+      parts: [{ id: 'a', name: 'Shelf', ref: 'shelf', overrides: 'nope' }],
+      groups: [],
+    } as unknown as AIDraft))).toHaveLength(1);
   });
 });
 

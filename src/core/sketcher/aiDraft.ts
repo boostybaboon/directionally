@@ -343,7 +343,7 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
     // A reference part places a Definition instead of describing geometry: the document holds
     // an instance, so the item keeps its own names and paths and is never copied.
     if (p.ref !== undefined) {
-      const overrides = p.overrides?.map(fromAIOverride);
+      const overrides = Array.isArray(p.overrides) ? p.overrides.map(fromAIOverride) : undefined;
       guidOfHandle.set(p.id, insertRef(doc, {
         ref: p.ref,
         name: p.name,
