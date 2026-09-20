@@ -24,6 +24,11 @@ import {
   collectPartNodes,
   normalizeDocument,
   applyOverrides,
+  adoptIntoGroup,
+  releaseFromGroup,
+  childOfGroupHolding,
+  nodeFor,
+  parentTransformOf,
   dropOverride,
   upsertOverride,
   isPartNode,
@@ -48,6 +53,7 @@ import {
 } from './documentTree.js';
 import type { NodeOverride, NodePatch, NodeRef, OrphanedOverride, PartNode, PartSeed, RefSeed, SetDocument, SetNode }
   from './documentTree.js';
+import { IDENTITY_TRANSFORM, worldToLocal } from './transform.js';
 import type { Transform } from './transform.js';
 import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 import type { SetPieceEntry } from '../catalogue/types.js';
@@ -83,6 +89,13 @@ function buildThreeLight(config: LightConfig): THREE.Light | null {
       return light;
     }
   }
+}
+
+/** Write a plain-data transform onto a live object, as its local transform. */
+function applyTransform(object: THREE.Object3D, t: Transform): void {
+  object.position.set(t.position[0], t.position[1], t.position[2]);
+  object.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
+  object.scale.set(t.scale[0], t.scale[1], t.scale[2]);
 }
 
 /** A live object's local transform, in plain data. */
@@ -730,6 +743,28 @@ export class CartoonSketcher {
     return path === null ? null : this.nodeObjects.get(path) ?? null;
   }
 
+  /**
+   * Place a node so that it *stands* at `world` now, whatever it is currently parented to. What the
+   * AI means by a part's transform is where it is, not what its parent's arithmetic says — and the
+   * live object is where a placement has to land, since the next write-back adopts it.
+   */
+  placeNodeAtWorld(ref: NodeRef, world: Transform): void {
+    const node = nodeFor(this.document, ref);
+    if (!node) return;
+    const local = worldToLocal(world, parentTransformOf(this.document, ref) ?? IDENTITY_TRANSFORM);
+    const object = this.nodeObjects.get(pathOfNode(this.document, node) ?? '');
+    if (object) {
+      applyTransform(object, local);
+      return;
+    }
+    const part = isPartNode(node) ? this.allParts.get(node.content.id) : undefined;
+    if (part) {
+      applyTransform(part.mesh, local);
+      return;
+    }
+    node.transform = local;
+  }
+
   /** Update a part's colour, resetting all face colours to a uniform value. */
   setPartColor(id: string, color: number): void {
     this.editDocument((doc) => setTreePartColor(doc, id, color));
@@ -868,15 +903,51 @@ export class CartoonSketcher {
   }
 
   /**
-   * Dissolve the group that contains the given part, returning all members
-   * to the scene root at their current world positions. Its group bond goes too,
-   * so a later detach cannot reform it.
-   * No-op if the part is not in a group.
+   * Dissolve a group, returning all its members to the scene root at their current world positions.
+   * `target` is a part's guid or a group node's own id. A group bond holding the part goes too, so a
+   * later detach cannot reform it. No-op when the target is in no group.
    */
-  ungroup(partId: string): void {
+  ungroup(target: string): void {
     this.editDocument((doc) => {
-      if (findGroupOfPartId(doc, partId)) ungroupNode(doc, partId);
-      removeGroupBondContaining(doc, partId);
+      if (nodeAt(doc, target)) ungroupNode(doc, target);
+      removeGroupBondContaining(doc, target);
+    });
+  }
+
+  /**
+   * Wrap nodes in a pure group — no attach bond, no joints — which is what an AI edit's group is:
+   * an idea about arrangement, not a constraint. Returns the group node's path, or null when the
+   * members could not be grouped (fewer than two, or not siblings).
+   */
+  groupPure(members: NodeRef[], name?: string): string | null {
+    let created: SetNode | null = null;
+    this.editDocument((doc) => {
+      const present = members.filter((member) => nodeFor(doc, member) !== null);
+      for (const member of present) {
+        const node = nodeFor(doc, member);
+        if (node) promoteToRoot(doc, node);
+      }
+      created = groupNodes(doc, present, name, true);
+    });
+    return created ? pathOfNode(this.document, created) : null;
+  }
+
+  /** Move nodes into an existing group, preserving where they stand in the world. */
+  moveIntoGroup(group: NodeRef, members: NodeRef[]): void {
+    this.editDocument((doc) => adoptIntoGroup(doc, group, members));
+  }
+
+  /**
+   * Lift nodes out of the group that holds them, into that group's parent — the group stays. What
+   * leaves is the *anchors*: the group's own direct children, so a member nested in a group of its
+   * own travels with it rather than being cut out.
+   */
+  moveOutOfGroup(group: NodeRef, members: NodeRef[]): void {
+    this.editDocument((doc) => {
+      const anchors = members
+        .map((member) => childOfGroupHolding(doc, group, member))
+        .filter((node): node is SetNode => node !== null);
+      releaseFromGroup(doc, anchors);
     });
   }
 

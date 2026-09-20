@@ -52,11 +52,23 @@ not touched), and (b) **review + undo** (the turn is one labelled, undoable step
 Given the returned document vs the live session's document, by stable id: same id + same data
 → no-op; new id → add; missing id → remove; same id + changed data → update.
 
-The id is the part's guid for a part leaf, and the node's id for an instance — a `ref` node has no body
-to compare, so its placement *is* its state (Track SET 10.3-B). Node ids are what survives the round
-trip, since `toAIDraft` re-derives them from the same names; a node the AI re-points at another
-Definition is a drop and a place under one id. Structure is the part this diff still has no pass for:
-group membership changes are not applied, so an instance added *inside* a new group lands at the root.
+The id is the part's guid for a part leaf, the node's id for an instance, and the group node's id for
+a group — a `ref` node has no body to compare, so its placement *is* its state (Track SET 10.3-B).
+Node ids are what survives the round trip, since `toAIDraft` re-derives them from the same names; a
+node the AI re-points at another Definition is a drop and a place under one id.
+
+**Transforms in the diff are world**, like the AI Draft's: a node's local transform depends on which
+group it sits in, so comparing worlds is both what the AI means and what makes a member that moves
+between groups read as unchanged. Placements are applied at world *before* the group pass, which
+re-parents nodes without moving any of them.
+
+**Group structure has its own pass** (Track SET 10.3's remainder): a group the draft names and the
+document lacks is created around its members; one the draft drops is dissolved; and one that stays
+has its membership reconciled — joiners adopted, leavers released to the root, world preserved.
+Membership is compared as *what a group holds*, not as its direct children, because the AI's grammar
+is flat and cannot tell a direct member from one inside a group of its own. Only **pure** groups
+(`isGroup: true`) are managed: an attach assembly is a constraint the sketcher made, not the AI's to
+rearrange.
 
 ## Relationship to the set-staging Node model
 

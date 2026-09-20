@@ -430,10 +430,16 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
           with `extractDefinition`, which leaves an instance in the node's place: the node keeps its
           id and transform, so nothing moves in the world, inside joints and bonds travel with the
           subtree, and a joint crossing the boundary is dropped.
-        One gap remains, recorded rather than assumed: the diff has no **group-structure** pass, so an
-        instance the AI places *inside a new group* lands at the root with a parent-relative
-        transform, since its add assumes the parent exists. Grouping an instance with a part works at
-        the document layer (`group()` accepts a node path) but the toolbar is still part-only.
+        - the id-diff has a **group-structure pass** of its own: a group the draft names and the document
+          lacks is created around its members, one the draft drops is dissolved, and one that stays has its
+          membership reconciled (joiners adopted, leavers released, world preserved). Only *pure* groups
+          are managed — an attach assembly is a constraint the sketcher made, not the AI's to rearrange —
+          and membership is compared as what a group *holds*, since the flat grammar cannot tell a direct
+          member from one inside a group of its own. The pass belongs with the transforms it depends on:
+          the diff now speaks **world** transforms (what the AI means, and what makes a member that moves
+          between groups read as unchanged) and applies them before the pass, which re-parents without
+          moving anything. Grouping an instance with a part works at the document layer (`group()` accepts
+          a node path) but the toolbar is still part-only.
       `resolveInstances` stops flattening at resolve time, so path and identity survive to the
       renderer.
       10.2 already introduced paths internally (`pathOfPart`, path-keyed live objects, node-addressed

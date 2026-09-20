@@ -26,6 +26,9 @@ import {
   extractDefinition,
   collectPartNodes,
   applyOverrides,
+  adoptIntoGroup,
+  releaseFromGroup,
+  childOfGroupHolding,
 } from './documentTree.js';
 import { isPartNode } from './documentTree.js';
 import { localToWorld } from './transform.js';
@@ -603,6 +606,72 @@ describe('extractDefinition', () => {
     // dangling. The bond that stayed behind keeps what is left of it.
     expect(doc.joints).toHaveLength(0);
     expect(doc.groupComponents).toBeUndefined();
+  });
+});
+
+describe('group membership', () => {
+  const identity: Transform = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
+
+  /** A group at x = 5 holding one of two members, so a move has somewhere to happen. */
+  function scene(): SetDocument {
+    const doc: SetDocument = { root: [], joints: [] };
+    insertPart(doc, { content: { id: 'a', kind: 'primitive', name: 'Box', color: 0xffffff }, transform: { ...identity, position: [4, 0, 0] } });
+    insertPart(doc, { content: { id: 'b', kind: 'primitive', name: 'Box', color: 0xffffff }, transform: { ...identity, position: [6, 0, 0] } });
+    groupNodes(doc, ['a'], undefined, true);
+    const group = doc.root.find((n) => n.role === 'structure')!;
+    group.transform = { ...identity, position: [5, 0, 0] };
+    group.children[0].transform = { ...identity, position: [-1, 0, 0] };
+    return doc;
+  }
+
+  // Parts are named by their content id, nodes by theirs: the fixture says which it means.
+  const nameOf = (node: SetNode): string => node.content?.id ?? node.id;
+  const nodeNamed = (doc: SetDocument, id: string): SetNode =>
+    doc.root.flatMap((n) => [n, ...n.children]).find((n) => nameOf(n) === id)!;
+
+  it('adoptIntoGroup() moves a node in without moving it in the world', () => {
+    const doc = scene();
+
+    expect(adoptIntoGroup(doc, 'group', ['b'])).toBe(true);
+
+    const group = doc.root.find((n) => n.id === 'group')!;
+    expect(group.children.map(nameOf)).toEqual(['a', 'b']);
+    expect(doc.root.map(nameOf)).toEqual(['group']);
+    // b stood at x = 6; relative to a group at 5 that is 1.
+    expect(nodeNamed(doc, 'b').transform.position).toEqual([1, 0, 0]);
+  });
+
+  it('adoptIntoGroup() leaves a member that is already there, and refuses an ancestor', () => {
+    const doc = scene();
+
+    expect(adoptIntoGroup(doc, 'group', ['a'])).toBe(false);
+    expect(adoptIntoGroup(doc, 'group', ['group'])).toBe(false);
+    expect(doc.root.map(nameOf)).toEqual(['group', 'b']);
+  });
+
+  it('releaseFromGroup() lifts a node out, leaving the group and the world where they were', () => {
+    const doc = scene();
+
+    expect(releaseFromGroup(doc, ['a'])).toBe(true);
+
+    const group = doc.root.find((n) => n.id === 'group')!;
+    expect(group.children).toEqual([]);
+    expect(doc.root.map(nameOf)).toEqual(['a', 'group', 'b']);
+    // a was at x = 4 inside a group at 5; it is still at x = 4.
+    expect(nodeNamed(doc, 'a').transform.position).toEqual([4, 0, 0]);
+  });
+
+  it('childOfGroupHolding() answers with the group’s own direct child', () => {
+    const doc: SetDocument = { root: [], joints: [] };
+    for (const id of ['a', 'deep', 'b']) {
+      insertPart(doc, { content: { id, kind: 'primitive', name: 'Box', color: 0xffffff } });
+    }
+    groupNodes(doc, ['a', 'deep'], 'inner', true);
+    groupNodes(doc, ['inner', 'b'], 'group', true);
+
+    // `deep` is two levels down: what can leave the outer group is `inner`, which holds it.
+    expect(childOfGroupHolding(doc, 'group', 'deep')?.id).toBe('inner');
+    expect(nameOf(childOfGroupHolding(doc, 'group', 'b')!)).toBe('b');
   });
 });
 

@@ -280,6 +280,7 @@ export function toAIDraft(doc: SetDocument): AIDraftProjection {
         if (handle === undefined) {
           handle = uniqueHandle(slug(node.name ?? `group-${groups.length + 1}`), taken);
           taken.add(handle);
+          idMap[handle] = node.id;
           childrenOfGroup.set(handle, []);
           groups.push({
             id: handle,
@@ -376,7 +377,7 @@ export function fromAIDraft(aiDraft: AIDraft, idMap: Record<string, string> = {}
     const memberIds = group.children
       .map((handle) => guidOfHandle.get(handle))
       .filter((id): id is string => id !== undefined);
-    if (memberIds.length > 0) groupNodes(doc, memberIds, group.name);
+    if (memberIds.length > 0) groupNodes(doc, memberIds, group.name, true);
   }
 
   // Lights arrive flat, so each becomes a root node; the AI's own id is kept (an

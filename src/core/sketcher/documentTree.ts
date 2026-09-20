@@ -497,6 +497,11 @@ export function nodeAt(doc: SetDocument, target: string): SetNode | null {
   return findNodeLocation(doc, target)?.node ?? null;
 }
 
+/** The node a ref names — a path, a part guid, or a node itself — or null when the document lacks it. */
+export function nodeFor(doc: SetDocument, ref: NodeRef): SetNode | null {
+  return locationOf(doc, ref)?.node ?? null;
+}
+
 /** The path of the part carrying `partId`, or null. Node ids are only parent-unique, so a
  *  part is addressed by path once nesting makes its segment ambiguous. */
 export function pathOfPart(doc: SetDocument, partId: string): string | null {
@@ -921,6 +926,75 @@ export function mergeIntoGroup(doc: SetDocument, partIds: string[], name?: strin
     if (node) promoteToRoot(doc, node);
   }
   return groupNodes(doc, partIds, name, false) !== null;
+}
+
+/**
+ * Re-parent nodes into an existing group, preserving their world transforms — the move a group
+ * *membership* change is made of, as opposed to grouping a fresh set. A member already inside the
+ * group is left where it is (its own group included, which the AI's flat view cannot distinguish),
+ * and one that contains the target group is refused: adopting a node into its own descendant would
+ * cut the tree in two.
+ */
+export function adoptIntoGroup(doc: SetDocument, group: NodeRef, members: NodeRef[]): boolean {
+  const target = locationOf(doc, group);
+  if (!target || target.node.role !== 'structure') return false;
+  const groupWorld = localToWorld(target.node.transform, target.parent);
+  let adopted = false;
+  for (const member of members) {
+    const loc = locationOf(doc, member);
+    if (!loc || loc.node === target.node) continue;
+    if (isInside(doc, target.node, loc.node)) continue;
+    if (isInside(doc, loc.node, target.node)) continue;
+    const world = localToWorld(loc.node.transform, loc.parent);
+    loc.nodes.splice(loc.index, 1);
+    loc.node.transform = worldToLocal(world, groupWorld);
+    target.node.children.push(loc.node);
+    adopted = true;
+  }
+  return adopted;
+}
+
+/**
+ * Lift nodes out of the group that directly holds them, into that group's parent — preserving world
+ * transforms, so a member that leaves never moves. The group itself stays, which is what makes this
+ * different from `ungroupNode`.
+ */
+export function releaseFromGroup(doc: SetDocument, members: NodeRef[]): boolean {
+  let released = false;
+  for (const member of members) {
+    const loc = locationOf(doc, member);
+    if (!loc) continue;
+    const group = findGroupOfNode(doc.root, loc.node, IDENTITY_TRANSFORM, '');
+    if (!group) continue;
+    const world = localToWorld(loc.node.transform, loc.parent);
+    loc.nodes.splice(loc.index, 1);
+    loc.node.transform = worldToLocal(world, group.parent);
+    group.nodes.splice(group.index, 0, loc.node);
+    released = true;
+  }
+  return released;
+}
+
+/**
+ * The accumulated transform of the node's parent, so `world = parent · local`. What a node's
+ * *world* transform is depends on where it sits, which is why anything that means "where this thing
+ * stands" rather than "what its parent's arithmetic says" has to ask.
+ */
+export function parentTransformOf(doc: SetDocument, ref: NodeRef): Transform | null {
+  return locationOf(doc, ref)?.parent ?? null;
+}
+
+/** The direct child of `group` whose subtree holds `target`, or null when it holds it not at all. */
+export function childOfGroupHolding(doc: SetDocument, group: NodeRef, target: NodeRef): SetNode | null {
+  const groupLoc = locationOf(doc, group);
+  let loc = locationOf(doc, target);
+  if (!groupLoc || !loc) return null;
+  while (!groupLoc.node.children.includes(loc.node)) {
+    const parent = findGroupOfNode(doc.root, loc.node, IDENTITY_TRANSFORM, '');
+    if (!parent) return null;
+    loc = parent;
+  }
+  return loc.node;
 }
 
 /**

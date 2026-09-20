@@ -437,8 +437,9 @@ their producers:
   ref closure before a load, since a Definition can hold instances of its own;
 - the AI id-diff is node-aware now: instances diff by node id for place/drop/move, and a node's own id
   resolves in `documentTree`'s lookup (parents' ids are only parent-unique, so a first-match-in-tree-order
-  tie-break is the documented cost). What it still has no pass for is **group structure**, so an instance
-  the AI places inside a *new* group lands at the root with a parent-relative transform;
+  tie-break is the documented cost). It has a **group-structure pass**: groups appear, dissolve, or have
+  their membership reconciled (adopt/leave, world preserved), and the diff speaks world transforms so a
+  member that moves between groups reads as unchanged — see the id-diff contract in ROADMAP_API.md;
 - the instance lifecycle is complete for editing: Delete drops the node (not the Definition, and it
   undoes), and double-click opens the Definition an instance refers to — Edit Source (N5), which is
   `openSet` plus the instance's `ref` and a status line naming the way back. A bundled entry reports
@@ -485,7 +486,7 @@ their producers:
   dressing override on a light node mean "that lamp off";
 - still owed from 10.4: `swap_ref` (with `describe_definition`, the tool that would let the AI target
   a path, deferred alongside it) and N9's Outliner highlight of overridden nodes;
-- still owed from 10.3: the diff's group-structure pass (see above), and the addressing work N8 was
+- still owed from 10.3: the addressing work N8 was
   folded in for — `resolveInstances` still flattens the *scene*'s ref pieces with name offsets and
   `SetPieceBlock.targetId` still matches a piece by `name` (see the identity table above).
 
