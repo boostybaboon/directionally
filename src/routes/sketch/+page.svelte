@@ -1643,6 +1643,12 @@ import type { NodeOverride, SetDocument } from '../../core/sketcher/documentTree
   function clearSession() {
     if (attachPhase !== null) cancelAttachPick();
     selection.deselect();
+    // A new session cannot be inside an instance: a path from the last document could name a node in
+    // this one, and editing it would be a coincidence rather than an intent.
+    sketcher.focusInstance(null);
+    focusedInstancePath = null;
+    focusedInstanceRef = null;
+    insideDescendant = null;
     sketcher.clearSession();
     sketcherDoc.clearStack();
     statusMessage = 'Session cleared.';
