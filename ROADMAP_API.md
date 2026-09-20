@@ -114,8 +114,9 @@ the phases below are the plan of record, and each unfinished one names its issue
   — primitives cover most). → **#44**
 - **P3 — `edit` route + agent loop.** ✅ `/agent/edit` landed (#1), mirroring `/agent/make`'s
   server-held-key boundary, with the apply caller the loop was missing.
-- **P4 — conversation UX.** Chat panel in `/sketch`: human/AI turns, review + undo of AI turns,
-  propose-vs-auto-apply. → **#20**
+- **P4 — conversation UX.** ✅ The AI drawer in `/sketch` landed (#20): an instruction becomes a
+  diff you accept or discard, and an accepted turn is one undoable step (`src/lib/agentTurn.ts`,
+  `src/lib/AgentChat.svelte`).
 
 ## Out of scope / risks
 

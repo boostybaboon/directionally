@@ -58,8 +58,9 @@ hidden work behind it.
       Sketcher and re-saves in place.
 - [ ] **P2 · `describe_session`** — serialise the live session as an AI Draft; programmatic
       `insert_sketch`/`insert_lathe` if needed.
-- [ ] **P3 · `edit` route + agent loop** — `/agent/edit` (draft-in/draft-out) mirroring `/agent/make`.
-- [ ] **P4 · conversation UX** — chat panel in `/sketch`: human/AI turns, review/undo, propose-vs-auto-apply.
+- [x] **P3 · `edit` route + agent loop** — `/agent/edit` (draft-in/draft-out) mirroring `/agent/make` (#1).
+- [x] **P4 · conversation UX** — the AI drawer in `/sketch` (#20): an instruction becomes a diff to
+      accept or discard, and one accepted turn is one undo.
 - [ ] **Catalogue awareness** — inject `describe_catalogue` so the AI reuses real bundled items
       (replaces the temporary "never use `ref`" bootstrap rule).
 - [ ] **Retry + rate limit (AI-4)** — retry-once-on-invalid and a per-session limit on `/agent/*`.

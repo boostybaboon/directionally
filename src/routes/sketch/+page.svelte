@@ -10,6 +10,7 @@
   import { SketcherDocument } from '../../core/sketcher/SketcherDocument.js';
   import CataloguePanel from '../../lib/CataloguePanel.svelte';
   import SetsColumn from '../../lib/SetsColumn.svelte';
+  import AgentChat from '../../lib/AgentChat.svelte';
   import { getById, isSettingEntry } from '../../core/catalogue/catalogue.js';
 import { cloneDocument, collectRefs, nodeAt, removeTreeNode } from '../../core/sketcher/documentTree.js';
 import type { NodeOverride, SetDocument } from '../../core/sketcher/documentTree.js';
@@ -85,6 +86,13 @@ import type { NodeOverride, SetDocument } from '../../core/sketcher/documentTree
   let currentEntryId = $state<string | null>(null);
   let renamingSetId = $state<string | null>(null);
   let showSetsColumn = $state(true);
+  // The AI panel is opened deliberately rather than occupying space by default: it is a conversation
+  // with a session, not a property of it.
+  let showAgentChat = $state(false);
+  // The mounted session, as one reactive value: the sketcher and its undo stack are assigned during
+  // mount, and a panel that reads them needs the assignment to be observable. Raw, because they own
+  // Three objects and must never be proxied.
+  let session = $state.raw<{ sketcher: CartoonSketcher; document: SketcherDocument } | null>(null);
   // Name for a set that does not exist yet, e.g. ?prefillName= from the script view.
   let pendingSetLabel = $state<string | null>(null);
   // Catalogue panel (Track SET, N3) — user-added entries + active environment.
@@ -351,6 +359,7 @@ import type { NodeOverride, SetDocument } from '../../core/sketcher/documentTree
         draftSaveTimer = null;
       }, 500);
     });
+    session = { sketcher, document: sketcherDoc };
 
     // Restore the last-opened set from its catalogue entry.
     void (async () => {
@@ -2167,6 +2176,7 @@ import type { NodeOverride, SetDocument } from '../../core/sketcher/documentTree
       <span class="separator"></span>
       <button class:active={showSetsColumn} onclick={toggleSetsColumn} title="Toggle the sets column">Sets</button>
       <button class:active={showCataloguePanel} onclick={() => { showCataloguePanel = !showCataloguePanel; }} title="Toggle catalogue">Catalogue</button>
+      <button class:active={showAgentChat} onclick={() => { showAgentChat = !showAgentChat; }} title="Ask the AI to change this set">AI</button>
     </div>
   </header>
 
@@ -2185,6 +2195,21 @@ import type { NodeOverride, SetDocument } from '../../core/sketcher/documentTree
         oncollapse={toggleSetsColumn}
       />
     </div>
+  {/if}
+
+  {#if showAgentChat}
+    <aside class="agent-drawer">
+      <div class="panel-header">
+        <span>AI</span>
+        <button class="panel-close" onclick={() => { showAgentChat = false; }}>✕</button>
+      </div>
+      {#if session !== null}
+        <AgentChat
+          {session}
+          onapplied={() => { exitGroupEditMode(); resyncSelectionAfterUndoRedo(); refreshInspector(); }}
+        />
+      {/if}
+    </aside>
   {/if}
 
   {#if showCataloguePanel}
@@ -2613,6 +2638,21 @@ import type { NodeOverride, SetDocument } from '../../core/sketcher/documentTree
     padding: 0 4px;
   }
   .panel-close:hover { color: #e0e0ff; }
+
+  /* The AI conversation sits opposite the catalogue: one is what you can add, the other is what
+     you are asking for. */
+  .agent-drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 90;
+    width: 320px;
+    background: #16162c;
+    border-left: 1px solid #2a2a4a;
+    display: flex;
+    flex-direction: column;
+  }
 
   .catalogue-drawer {
     position: absolute;
