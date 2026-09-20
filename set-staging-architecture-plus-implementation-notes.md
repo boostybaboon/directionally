@@ -470,6 +470,18 @@ their producers:
   against the same Revert. Adding is refused inside — palette, catalogue, attach, sketch, group — since
   no override expresses an addition, and a part that landed in the host document would read as inside
   the item;
+- 10.5's dressing landed at the scene tier: `SetPiece.overrides` (and the reference form of
+  `PlacedProp`, so a `SettingSpec`/`/agent/setting` can write it) is the same override list, replayed by
+  `applyOverrides` over the entry's document at the model boundary, reported when the document no longer
+  has the node, and kept through `resolveInstance`'s expansion because the variation belongs to that
+  placement. Three layers, each one write further out — document (venue), piece overrides (dressing),
+  piece transform + `LightBlock` (shot) — one type at two scopes, last write wins. The environment rule
+  was already 10.1's: the document supplies the default, an explicit scene value wins;
+- still owed from 10.5: camera/rig nodes (nothing consumes them while the shot layer is `Block[]`), an
+  authoring surface for dressing (script and panels; `settingBindings` is only a name→entry map), a
+  shot override list if a shot ever varies beyond the timeline, and a setting's *lights* as tweak
+  targets — the block inference resolves an id to the first match, so a document light whose id a scene
+  light uses is unreachable from a shot (TODO in `storedSceneToModel`);
 - still owed from 10.4: `swap_ref` (with `describe_definition`, the tool that would let the AI target
   a path, deferred alongside it) and N9's Outliner highlight of overridden nodes;
 - still owed from 10.3: the diff's group-structure pass (see above), and the addressing work N8 was

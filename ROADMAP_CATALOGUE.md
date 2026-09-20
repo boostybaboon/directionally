@@ -501,6 +501,26 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       document holds nodes. The one value both tiers legitimately declare — the environment — gets its
       precedence rule here too: the setting's document supplies the default, an explicit scene value
       wins.
+      - **Dressing — the scene tier.** ✅ Landed: `SetPiece.overrides` is a scene's variation on the entry
+        the piece renders, and `PlacedProp`'s reference form carries the same list, so a `SettingSpec`
+        — and with it `/agent/setting` — can say "the classroom, minus a chair" without forking the
+        entry; a piece-level `ref` keeps them through `resolveInstance`'s expansion, because the
+        variation belongs to *that* placement. The replay is `applyOverrides` again, at the model
+        boundary, over the document the piece renders, and an entry that no longer has the node is
+        reported the way an instance's is. That is the three layers the architecture doc asked for,
+        each one write further out: **the document is the venue** (10.1), **the piece's overrides are
+        the dressing**, **the piece's own transform and a `LightBlock` are the shot** — one override
+        type at two scopes, last write wins. The environment rule was already this shape: the document
+        supplies the default, an explicit scene value wins (10.1).
+      - Remaining, recorded: `role: 'camera' | 'rig'` nodes stay unbuilt — additive and migration-free,
+        but nothing consumes them while the shot layer is `Block[]`, so they earn their place only when
+        a shot wants a camera the document places; an **authoring surface** for dressing (the level-0
+        API carries it, the script and the panels do not — N7 named `settingBindings`, which is a
+        name→entry map, so dressing needs a surface of its own); a **shot override list** if a shot ever
+        varies beyond the timeline (the same type, one more scope, additive); and a setting's **lights**
+        as tweak targets — the block inference resolves an id to the first match, so a document light
+        whose id a scene light already uses is unreachable from a shot (the TODO in
+        `storedSceneToModel`).
 
 11. **(Later) One store for characters.** `CharacterDesignStore` is still a second editable-source
     store behind `sourceDesignId`, exactly as `SketcherAssemblyStore` was for sets. Step 4 only
