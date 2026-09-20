@@ -255,12 +255,62 @@ transform, sketch/extrude) with their existing tests before touching them.
   (`commitAttach`/`group`/`ungroup`/`detachAll`/`removePart`/`setGroupName`) edits the tree, live mesh
   transforms are written back into it, undo/redo snapshots *are* documents, and the flat
   `SketcherDraft` + flat `realise()` are gone.
-- [ ] **10. (Later) `ref` + `overrides` + layering**
+- [x] **10. `ref` + `overrides` + layering** — the four use cases the architecture doc opens with, as
+  one recursive primitive. What a user or an agent still cannot reach is in *Surface reach* below.
+  - [x] **10.1** one node type — `SetNode` with `role`, transforms on the node, lights as `role: 'light'`
+    nodes, the entry's lighting/environment caches deleted.
+  - [x] **10.2** nested groups and path addressing — group-of-groups composes, and a node is addressed by
+    path (`pathOfPart`, path-keyed live objects, node-addressed grouping).
+  - [x] **10.3** `ref` + tree-preserving resolution — `realiseDocument(doc, resolve)`, instances the session
+    and the renderer both expand, the AI's `ref` parts, a node-level id-diff (with its group pass), the
+    instance lifecycle (Delete, Edit Source, Save as Item) and dressable paths.
+  - [x] **10.4** overrides + Apply/Revert — `NodeOverride` (`set` a placement or a visibility, `remove`),
+    replayed on a copy, orphans reported; Edit inside varies one instance without forking the item.
+  - [x] **10.5** layering — dressing (`SetPiece.overrides`) beside the venue's document and the shot's
+    blocks, one override type at two scopes, with a venue's lights named by the piece that brought them.
 
 **Notes:** the tree is the persistent source now; the scene is a realisation of it. A gizmo drag is
 written back into the document on the next sync (`writeBack()`), so the one place a transform lives
 outside the tree is a drag in flight. The AI-facing projection (`toAIDraft` / `fromAIDraft`) and the
 AI id-diff (`applyDraft.ts`) read and produce documents.
+
+### Surface reach
+
+A capability lands in the document layer first, where it is headless and testable; the editor, the
+script and the agent's vocabulary follow. This is where each one can actually be reached from, so a
+gap is a row rather than a discovery. **Core** is `documentTree`/`realise`/the model boundary;
+**Editor** is `/sketch`; **Scene** is the script and the production view; **Agent** is
+`toolManifest`'s verbs plus the AI Draft grammar (`src/core/agent/toolManifest.ts`).
+
+| Capability | Core | Editor | Scene | Agent |
+|---|---|---|---|---|
+| An item/set *is* its document | ✅ | ✅ sets column, autosave, full editing | ✅ `RosterPanel` binds a script name to an entry | ✅ `create_setting`, `make`, `describe_catalogue` |
+| An instance of an item/set (`ref`) | ✅ | ✅ insert item, Edit Source, Save as Item | — | ✅ `ref` parts |
+| Node-level id-diff of an AI edit (add, drop, place, group) | ✅ | n/a | n/a | ✅ `apply_draft` |
+| An instance's overrides — vary without forking | ✅ | ✅ Edit inside, drag/hide/remove, Apply/Revert | — | ⚠️ carried by the grammar and unusable: no way to *learn* a path |
+| Dressing — a scene's variation on a venue | ✅ `SetPiece.overrides` | ❌ the wrong tool (it edits one document, not a scene) | ❌ no syntax, no panel: `compileSceneBlock` places one venue piece and nothing else | ❌ no verb |
+| Layering — venue / dressing / shot | ✅ | — | ⚠️ the shot is `LightBlock`/`SetPieceBlock`, addressed **by name** | ❌ |
+| A venue's lights addressable by a shot | ✅ `piece/light` | — | ⚠️ a `LIGHT` line has to spell it, and `sigilAutocomplete` knows neither lights nor pieces | ❌ |
+| Grouping an instance with a part | ✅ (`groupPure`, the diff's pass) | ⚠️ `groupSelected` reads session parts, so the toolbar can't | — | ✅ |
+
+**What closes them, in the order they unlock each other:**
+
+1. **`describe_definition`** (Agent) — a read-only projection of a Definition's tree: its names, paths
+   and sizes. It is what makes overrides usable by an agent (a target has to be knowable), and what
+   `describe_catalogue` lacks: an entry's kind and label, without anything about what is inside it.
+2. **N8's addressing** (Core → Scene) — `resolveInstances` still flattens a scene's `ref` pieces with
+   name offsets, and `SetPieceBlock.targetId` matches a piece by `name`. Every scene-tier target (a
+   piece to move, a venue's light to dim, a node to dress) needs an identity that survives
+   composition, so this comes before building anything that addresses one.
+3. **Dressing's first surface** (Scene, then Agent) — the data is expressible already
+   (`NamedScene.set[].overrides`), so what is missing is a way to write it: a script sigil and/or a
+   scene panel, and the agent verb that follows from 1. Its home is the scene/script side
+   (`ROADMAP.md`'s CAT/SCR tracks) rather than this document — the Sketcher edits one document at a
+   time, and dressing is per-scene.
+4. **Editor reach** (Editor) — grouping an instance as readily as a part, and N9's Outliner with an
+   override indicator, so a varied node reads as varied.
+5. **`swap_ref`, `role: 'camera' | 'rig'` nodes, and step 11** (one store for characters) — each waits
+   for a consumer rather than for machinery.
 
 1. **Extract the Realiser.** Factor the geometry-building out of `CartoonSketcher.loadDraft` into
    `realise(document): THREE.Group` (pure, headless). Sketch view calls it. No behaviour change.
@@ -352,7 +402,7 @@ AI id-diff (`applyDraft.ts`) read and produce documents.
       document stays the single source of truth.
    Guard: the existing `CartoonSketcher`/`SketcherDocument`/`AttachManager` round-trip suites.
 
-10. **(Later) The Node model: one node type, then `ref` + `overrides` + layering.** Implement instance
+10. **The Node model: one node type, then `ref` + `overrides` + layering.** Implement instance
     resolution and venue/dressing layer composition — the doc's reuse-with-variation story — on top of
     the foundation. Together the sub-steps cover the four problems `set-staging-architecture.md` names,
     as one recursive primitive at four scales: part-of hierarchy (10.1–10.2), catalogue-vs-placement

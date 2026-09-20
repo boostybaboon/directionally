@@ -35,6 +35,14 @@ not touched), and (b) **review + undo** (the turn is one labelled, undoable step
 - Retained (production binding, unchanged in `src/core/agent/`): `describe_catalogue`,
   `describe_script`, `bind`, `create_character`.
 
+**Vocabulary against capability.** The catalogue's document layer is ahead of what these verbs can
+name: an entry is described by kind and label with nothing about what is *inside* it, so an agent
+cannot target a node inside a Definition and cannot therefore use the overrides its grammar already
+carries (`describe_definition` is the missing read), and nothing here varies a venue *inside a
+scene* — dressing (`NamedScene.set[].overrides`) is expressible today and has neither a verb nor a
+script surface. The per-capability table, and the order the gaps unlock each other in, is
+[ROADMAP_CATALOGUE.md](ROADMAP_CATALOGUE.md)'s *Surface reach*.
+
 ## Contracts
 
 - **`AI_DRAFT_JSON_SCHEMA`** — the AI-facing grammar for *editable* scenery: named parts with

@@ -121,7 +121,12 @@ These are still valuable, but subordinate to the SCR/CAT tracks below.
 
 > Future direction: name-based resolution is a bootstrap, not a scaling contract — see
 > [ROADMAP_CATALOGUE.md](ROADMAP_CATALOGUE.md) for the identity/resolution model that replaces it
-> as the app moves toward shared, multi-user catalogues.
+> as the app moves toward shared, multi-user catalogues. Steps 1–10 of that model have landed; its
+> *Surface reach* table lists what a user or an agent still cannot reach, of which the scene tier is
+> this track's: a venue is resolved and placed (`compileSceneBlock` → one piece), but a scene cannot
+> yet *vary* it — dressing (`NamedScene.set[].overrides`) is expressible in the data and has no
+> script syntax, no panel and no agent verb, and its targets are addressed by name rather than by
+> identity (N8).
 
 Today the script compiler fakes catalogue resolution entirely: every cast member — regardless
 of the typed name — is bound to `CATALOGUE_ENTRIES.find(e => e.kind === 'character')`, i.e.
