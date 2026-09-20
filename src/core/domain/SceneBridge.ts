@@ -5,6 +5,7 @@ import {
   DirectionalLightAsset,
   HemisphereLightAsset,
   SpotLightAsset,
+  PointLightAsset,
   type LightAsset,
 } from '../../lib/model/Light.js';
 import {
@@ -87,10 +88,17 @@ function buildLight(config: LightConfig): LightAsset | null {
       }
       return light;
     }
-    case 'point':
-      // PointLightAsset not yet in model layer; skip with warning
-      console.warn(`SceneBridge: point light "${config.id}" skipped — no PointLightAsset in model layer yet`);
-      return null;
+    case 'point': {
+      const light = new PointLightAsset(
+        config.id,
+        config.color,
+        config.intensity,
+        config.distance ?? 0,
+        config.decay ?? 2,
+      );
+      light.position = new THREE.Vector3(...config.position);
+      return light;
+    }
   }
 }
 

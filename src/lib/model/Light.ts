@@ -102,4 +102,31 @@ export class SpotLightAsset extends LightAsset {
     set decay(value: number) {
         this._spotLight.decay = value;
     }
-} 
+}
+
+export class PointLightAsset extends LightAsset {
+    private _pointLight: THREE.PointLight;
+
+    constructor(name: string, color: number, intensity: number, distance: number, decay: number) {
+        const light = new THREE.PointLight(color, intensity, distance, decay);
+        super(name, light);
+        this._pointLight = light;
+    }
+
+    /** Zero means no falloff limit — the same reading THREE gives it. */
+    get distance(): number {
+        return this._pointLight.distance;
+    }
+
+    set distance(value: number) {
+        this._pointLight.distance = value;
+    }
+
+    get decay(): number {
+        return this._pointLight.decay;
+    }
+
+    set decay(value: number) {
+        this._pointLight.decay = value;
+    }
+}

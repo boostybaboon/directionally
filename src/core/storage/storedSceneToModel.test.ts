@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { storedSceneToModel } from './storedSceneToModel';
 import { PerspectiveCameraAsset } from '../../lib/model/Camera';
+import { PointLightAsset } from '../../lib/model/Light';
 import type { StoredScene, StoredActor } from './types';
 import type { SetPiece } from '../domain/types';
 import type { SetDocument, SetNode } from '../sketcher/documentTree';
@@ -48,6 +49,21 @@ describe('storedSceneToModel – camera', () => {
 // ── Lights ────────────────────────────────────────────────────────────────────
 
 describe('storedSceneToModel – lights', () => {
+  it('builds a point light instead of skipping it', () => {
+    const scene = baseScene({
+      lights: [{ type: 'point', id: 'lamp', color: 0xffeeaa, intensity: 4, distance: 8, decay: 1.5, position: [1, 2, 3] }],
+    });
+
+    const model = storedSceneToModel(scene, []);
+
+    expect(model.lights).toHaveLength(1);
+    const lamp = model.lights[0];
+    expect(lamp).toBeInstanceOf(PointLightAsset);
+    expect(lamp.intensity).toBe(4);
+    expect((lamp as PointLightAsset).distance).toBe(8);
+    expect((lamp as PointLightAsset).decay).toBe(1.5);
+    expect(lamp.position.toArray()).toEqual([1, 2, 3]);
+  });
   it('includes all defined lights', () => {
     const scene = baseScene({
       lights: [
@@ -463,9 +479,8 @@ describe('storedSceneToModel – document-backed set pieces', () => {
           role: 'light',
           transform: { position: [0, 2, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
           children: [],
-          // A directional light: the model layer has no PointLightAsset yet, so a point
-          // light is skipped by SceneBridge (a pre-existing gap, not this test's subject).
-          light: { type: 'directional', color: 0xffffff, intensity: 3 },
+          // A point light, as the light panel can place one: it used to be skipped at this boundary.
+          light: { type: 'point', color: 0xffffff, intensity: 3, distance: 6, decay: 2 },
         },
       ],
       environmentMap: 'exterior-sky',
