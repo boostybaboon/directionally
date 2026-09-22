@@ -522,7 +522,7 @@ items are the export round-trip checks.
 
 ### Part 3 — HP-0.6 volume-preserving skinning *(optional)*
 
-- [ ] 6. DQS (`USE_DUAL_QUATERNIONS`) if the elbow/knee crook pinches — applies to any skinned
+- 6. DQS (`USE_DUAL_QUATERNIONS`) if the elbow/knee crook pinches — applies to any skinned
   mesh, including HP-5's output.
 
 ### Part 4 — HP-5 SDF soft-union *(done, superseded by Part 5)*
@@ -535,12 +535,12 @@ items are the export round-trip checks.
 - [x] 8. Generalise to the whole body: per-bone capsules + head ellipsoid + smooth-min junctions
   (pelvis/shoulder); tune blend radius against webbing/melting. Done in `_attachSdfBody`
   (`ProceduralHumanoid.ts`) — blend radius 4 cm.
-- [ ] 9. **Bust demo** — two chest ellipsoids smooth-min'd into the chest capsule (scale param):
+- 9. **Bust demo** — two chest ellipsoids smooth-min'd into the chest capsule (scale param):
   the "add a primitive, let it blend" proof.
 - [x] 10. Swap in for `_attachSkinnedBodyTubes` (organic only, behind a `bodyMode` toggle); keep
   the face separate, keep `c3po`/`sonny` rigid; reuse Part 1's sliders → capsule radii and Part 2's
   skeleton/skinning.
-- [ ] 11. Round-trip export + Presenter check for the SDF body.
+- 11. Round-trip export + Presenter check for the SDF body.
 
 ### Part 5 — HP-6 junction volumes (hybrid loft + local SDF) *(prototype, superseded by Part 6)*
 
@@ -560,7 +560,7 @@ items are the export round-trip checks.
 - [x] 16. Swap in for the organic body (behind a `bodyMode` toggle — `tubes`/`sdf`/`loft` buttons),
   keeping the face separate and `c3po`/`sonny` rigid; reuses Part 1's sliders → cross-sections and
   Part 2's skinning plumbing.
-- [ ] 17. Round-trip export + Presenter check.
+- 17. Round-trip export + Presenter check.
 
 ### Part 6 — HP-7 ring-graph skin *(the target)*
 
@@ -571,16 +571,16 @@ items are the export round-trip checks.
   (two wide rings below the pelvis). Palm envelope still pending.
 - [x] 19. Loft the linear chains with shared rings (hip→…→foot, shoulder→…→hand, fingers, toes);
   verify watertight. Done — `buildRingLoft` stitches each bone's rings plus the child's start ring.
-- [ ] 20. **Side port — arm into chest:** ring-space bracket cut + closed-loop loft at the
+- 20. **Side port — arm into chest:** ring-space bracket cut + closed-loop loft at the
   shoulder (see HP-8 "Side-port junction — implementation sequence"); verify a single mesh with
   no twist. Shoulder is still overlap-only (no cut/bridge).
-- [ ] 21. **Fan** the legs into the pelvis base and fingers into the knuckle edge (partition ring
+- 21. **Fan** the legs into the pelvis base and fingers into the knuckle edge (partition ring
   perimeter into arcs). Legs still overlap the girdle base (fan deferred).
-- [ ] 22. **Side port — thumb** into the palm radial side (2-ring bracket + oblique bridge).
+- 22. **Side port — thumb** into the palm radial side (2-ring bracket + oblique bridge).
 - [x] 23. Skin the ring graph (weights from ring ownership) and swap into the `loft` body mode,
   replacing HP-6's per-bone prototype. Done — `_attachLoftBody` binds one SkinnedMesh from
   `buildRingLoft` with `tubeSkinWeights`.
-- [ ] 24. Round-trip export + Presenter check.
+- 24. Round-trip export + Presenter check.
 
 #### HP-7 leg fan — mini-plan *(incremental; visualise + stop each step)*
 
@@ -725,7 +725,7 @@ a `PortSpec` (branch envelope) instead of new code.
 - [x] **Terminal end caps.** Fingertip and toe-tip rings are now closed — `capTerminalEnds`
   fans each terminal ring to a single apex vertex weighted 100% to the terminal bone, leaving no
   open boundaries at the extremities.
-- [ ] Regenerate the round-trip export test with a fully closed mesh and confirm no boundary
+- Regenerate the round-trip export test with a fully closed mesh and confirm no boundary
   edges (`geometry` has no edges with only one adjacent triangle).
 
 #### HP-8 side-port junction — implementation sequence
@@ -769,40 +769,40 @@ port loop, so the same sequence covers both the thumb (2) and shoulder (3) witho
 
 ### HP-9 — Cosmetic & identity layer (no Blender, no morph targets)
 
-- [ ] **Feminising/masculinising enhancements as a branch envelope**, not a morph target: e.g. a
+- **Feminising/masculinising enhancements as a branch envelope**, not a morph target: e.g. a
   bust is two small "breast" pseudo-bones (like the existing finger tips) parented to Spine2,
   each with its own tiny ring set fanned into the chest ring exactly like the crotch fan — scale
   the fan's radius/protrusion from the existing `feminineMasculine` semantic slider. Same
   technique for hip width, jaw/shoulder breadth, etc. This keeps every enhancement inside the
   ring-graph/skinning system already built, instead of introducing a second (morph-target) shape
   pipeline.
-- [ ] **Region → texture.** Promote `regionColors`'s per-vertex flat colour to a small UV atlas
+- **Region → texture.** Promote `regionColors`'s per-vertex flat colour to a small UV atlas
   (skin / top / bottom / shoes regions get their own UV island) so "clothing" becomes a swappable
   texture instead of only a flat tint — still no cloth simulation, just a richer material layer
   over the same mesh.
-- [ ] **Accessories.** Port `SKETCHER_ROADMAP.md` CB3 (hair/hat as a child `Object3D` on
+- **Accessories.** Port `SKETCHER_ROADMAP.md` CB3 (hair/hat as a child `Object3D` on
   `mixamorigHead`) onto the ring-graph body; add beard/glasses as the same pattern (small preset
   meshes parented to head/jaw bones, no new skinning).
 
 ### HP-10 — Configurable humanoid + AI-driving API
 
-- [ ] Re-point the semantic sliders (`semanticParams.ts`) at the HP-7.5 ring surface
+- Re-point the semantic sliders (`semanticParams.ts`) at the HP-7.5 ring surface
   (`ringSurface.ts`) instead of the legacy `BoneParams` intermediate — the ring surface is now
   the real skin, so the sliders should shape it natively rather than through a compatibility shim.
-- [ ] Publish the resulting schema (five shape sliders + appearance fields, per the Decisions
+- Publish the resulting schema (five shape sliders + appearance fields, per the Decisions
   table above) as the target for `ROADMAP_AI.md`'s AI-1 phase — that phase already exists and is
   designed around this exact minimal schema; it currently targets `BoneParams` and should be
   re-pointed here once this lands.
-- [ ] Add a small validation/clamping layer so AI-authored parameter sets can't produce
+- Add a small validation/clamping layer so AI-authored parameter sets can't produce
   degenerate rings (negative radius, zero-length bone, etc.) before they reach `ProceduralHumanoid`.
 
 ### HP-11 — Pose & animation nice-to-haves
 
-- [ ] Jaw-hinge talking + blink as first-class exportable clips — already designed in HP-3.5
+- Jaw-hinge talking + blink as first-class exportable clips — already designed in HP-3.5
   above; do this once the face overlay is confirmed compatible with the ring-graph body (it
   should be, since the head stays a separate system by design).
-- [ ] Hair length/colour and a small glasses preset set, as HP-9 accessory presets.
-- [ ] A handful of bundled static poses (sitting, common gestures) as additional Mixamo-style
+- Hair length/colour and a small glasses preset set, as HP-9 accessory presets.
+- A handful of bundled static poses (sitting, common gestures) as additional Mixamo-style
   clips, reusing the existing `AnimationMixer`/clip pipeline — no new runtime mechanism, just more
   bundled `.glb` clip assets.
 

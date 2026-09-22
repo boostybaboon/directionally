@@ -556,7 +556,11 @@ The character creator serialises the current parameter set (proportion values + 
 
 ## Verification checklist
 
-- [ ] `yarn test` — all tests green
-- [ ] `yarn check` — 0 errors, 0 warnings
-- [ ] Manual: draw polygon → extrude → Export to Catalogue → switch to `/` → asset appears in Catalogue panel → add to production scene
-- [ ] Manual: `yarn build` + production URL → `/sketch` redirects to `/`
+- `yarn test` — all tests green
+- `yarn check` — 0 errors, 0 warnings
+- Manual: draw polygon → extrude → Export to Catalogue → switch to `/` → asset appears in Catalogue panel → add to production scene
+- Manual: `yarn build` + production URL → `/sketch` redirects to `/`
+
+> This four-item verification is the merge checklist on #41: three of the four run in CI, and the
+> manual round trip runs against the preview environment the pull request creates.
+

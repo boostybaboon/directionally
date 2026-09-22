@@ -56,21 +56,21 @@ hidden work behind it.
 - [x] **P1 · bridge to catalogue** — `generateEditableSetting` persists a draft → assembly → GLB
       bake → catalogue entry with `sourceAssemblyId`, so an AI-created design is editable in the
       Sketcher and re-saves in place.
-- [ ] **P2 · `describe_session`** — serialise the live session as an AI Draft; programmatic
+- **P2 · `describe_session`** ✅ landed (#1) — serialise the live session as an AI Draft; programmatic
       `insert_sketch`/`insert_lathe` if needed.
 - [x] **P3 · `edit` route + agent loop** — `/agent/edit` (draft-in/draft-out) mirroring `/agent/make` (#1).
 - [x] **P4 · conversation UX** — the AI drawer in `/sketch` (#20): an instruction becomes a diff to
       accept or discard, and one accepted turn is one undo.
-- [ ] **Catalogue awareness** — inject `describe_catalogue` so the AI reuses real bundled items
+- **Catalogue awareness** — ✅ `describe_catalogue` is in the manifest (no never-use-ref rule survives)
       (replaces the temporary "never use `ref`" bootstrap rule).
-- [ ] **Retry + rate limit (AI-4)** — retry-once-on-invalid and a per-session limit on `/agent/*`.
+- **Retry + rate limit (AI-4)** — retry-once-on-invalid and a per-session limit on `/agent/*`. → #28
 
 ### Walking skeleton B — deployment (deferred): Azure default, user BYOK, identity/billing
 
-- [ ] **AI-0 · Default backend** — provision Azure OpenAI + `AzureOpenAIProvider` as the shipped default (config-only swap).
-- [ ] **AI-5 · Production posture** — own Azure Function App (Flex Consumption); key in Key Vault via Managed Identity; Application Insights.
-- [ ] **AI-6 · BYOK** — "AI Settings" panel; user pastes a DeepSeek/OpenAI/Claude key; per-request header; cost disclaimer.
-- [ ] **AI-7 · Local models** — Ollama server-proxied + client-direct (`OLLAMA_ORIGINS`) paths.
+- **AI-0 · Default backend** → #60 — provision Azure OpenAI + `AzureOpenAIProvider` as the shipped default (config-only swap).
+- **AI-5 · Production posture** → #29 — own Azure Function App (Flex Consumption); key in Key Vault via Managed Identity; Application Insights.
+- **AI-6 · BYOK** → #30 — "AI Settings" panel; user pastes a DeepSeek/OpenAI/Claude key; per-request header; cost disclaimer.
+- **AI-7 · Local models** → #31 — Ollama server-proxied + client-direct (`OLLAMA_ORIGINS`) paths.
 
 > **Identity & billing is a separate roadmap.** Accounts, quotas, metering, and payment gate any
 > "free" default quota, so they are planned independently — not checklist items here.
