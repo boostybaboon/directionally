@@ -58,6 +58,12 @@ export function summariseDiff(diff: DocumentDiff): string[] {
     lines.push(`Take ${leave.members.length} node${leave.members.length === 1 ? '' : 's'} out of group "${leave.group}"`);
   }
   if (diff.groups.dissolve.length > 0) lines.push(`Dissolve ${diff.groups.dissolve.length} group${diff.groups.dissolve.length === 1 ? '' : 's'}`);
+  if (diff.lights.add.length > 0) lines.push(`Add the light ${namesOf(diff.lights.add.map((l) => l.id))}`);
+  if (diff.lights.update.length > 0) lines.push(`Change the light ${namesOf(diff.lights.update.map((l) => l.id))}`);
+  if (diff.lights.remove.length > 0) lines.push(`Remove ${diff.lights.remove.length} light${diff.lights.remove.length === 1 ? '' : 's'}`);
+  if (diff.environment !== undefined) {
+    lines.push(diff.environment.id !== undefined ? `Set the environment to ${diff.environment.id}` : 'Clear the environment');
+  }
   return lines;
 }
 
@@ -72,7 +78,11 @@ export function isEmptyDiff(diff: DocumentDiff): boolean {
     && diff.groups.create.length === 0
     && diff.groups.dissolve.length === 0
     && diff.groups.join.length === 0
-    && diff.groups.leave.length === 0;
+    && diff.groups.leave.length === 0
+    && diff.lights.add.length === 0
+    && diff.lights.remove.length === 0
+    && diff.lights.update.length === 0
+    && diff.environment === undefined;
 }
 
 /**

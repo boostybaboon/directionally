@@ -850,6 +850,21 @@ export function removeLightNode(doc: SetDocument, id: string): boolean {
 }
 
 /**
+ * Replace a light's config and position in place, keeping its place in the tree: a light that changes
+ * intensity is the same light, and re-adding it would move it to the end of the list a person reads.
+ * Returns false when the document has no such light.
+ */
+export function setLightNode(doc: SetDocument, config: LightConfig): boolean {
+  const loc = findLightLocation(doc.root, config.id);
+  if (!loc) return false;
+  const node = loc.nodes[loc.index];
+  const { id: _id, position, ...light } = config;
+  node.light = light;
+  if (position) node.transform = { ...node.transform, position };
+  return true;
+}
+
+/**
  * The document's lights in the renderer's shape, in tree order. Identity and position
  * come back from the node, which owns them.
  */

@@ -48,6 +48,7 @@ import {
   setFaceTexture as setTreeFaceTexture,
   setPartLabel as setTreePartLabel,
   addLightNode,
+  setLightNode,
   removeLightNode,
   collectLights,
 } from './documentTree.js';
@@ -597,6 +598,11 @@ export class CartoonSketcher {
   /** Remove a light by its id. No-op if not found; a document node, so it undoes. */
   removeLight(id: string): void {
     this.editDocument((doc) => removeLightNode(doc, id));
+  }
+
+  /** Change a light in place — same node, same position in the list — as a document edit, so it undoes. */
+  setLight(config: LightConfig): void {
+    this.editDocument((doc) => setLightNode(doc, config));
   }
 
   /**
