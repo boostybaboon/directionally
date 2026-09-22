@@ -1,6 +1,6 @@
 /**
  * A named mutation on the sketcher session.
- * SketcherDocument.execute() captures a before/after SessionSnapshot around
+ * SketcherDocument.execute() captures a before/after SetDocument around
  * each command and uses those snapshots for undo/redo — no inverse logic
  * is required here. Commands only need to perform the forward operation.
  */

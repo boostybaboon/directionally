@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import type { GeometryConfig, LightConfig, MaterialConfig } from '../domain/types.js';
 
 export type SketcherPart = {
   id: string;
@@ -7,12 +8,13 @@ export type SketcherPart = {
   centroid: THREE.Vector3;
   /** Display name shown in the HUD (e.g. 'Box', 'Cylinder', 'Shape'). */
   name: string;
+  /** Optional semantic name (e.g. 'tree trunk'); falls back to `name` when absent. */
+  label?: string;
   /** Hex colour integer, e.g. 0x8888cc. Kept in sync with mesh.material.color. */
   color: number;
   /**
    * XZ shape points for sketch parts (from THREE.Shape.getPoints()), null for
-   * primitives. Required by loadDraft() to reconstruct ExtrudeGeometry after
-   * a page reload.
+   * primitives. Required to reconstruct an ExtrudeGeometry from its document leaf.
    */
   shapePoints: [number, number][] | null;
   /**
@@ -30,6 +32,12 @@ export type SketcherPart = {
    * Null for non-lathe parts.
    */
   lathePhiLength: number | null;
+  /**
+   * Body of a part inserted from the catalogue (a `catalogue` draft): the entry's
+   * procedural geometry and material. Absent for primitives, sketches and lathes.
+   */
+  geometry?: GeometryConfig;
+  material?: MaterialConfig;
   /** Per-draw-group colour array. Length matches mesh.material[]. */
   faceColors: number[];
   /**
@@ -49,6 +57,8 @@ export type SketcherPart = {
  */
 export type AttachJoint = {
   id: string;
+  /** 'snap' = face-snap (glue); 'rigid' = full weld (positional + rotational lock). */
+  type: 'snap' | 'rigid';
   partAId: string;
   /** Contact point in partA's mesh local space. */
   localPointA: THREE.Vector3;
@@ -68,6 +78,8 @@ export type AttachJoint = {
  */
 export type AssemblyGroup = {
   id: string;
+  /** Optional semantic name (e.g. "table"); absent until named. */
+  name?: string;
   group: THREE.Group;
   /** Mirrors group.children membership by part id. */
   partIds: string[];
@@ -77,6 +89,14 @@ export type SketcherSession = {
   parts: SketcherPart[];
   joints: AttachJoint[];
   assemblyGroups: AssemblyGroup[];
+  /**
+   * Lights placed via the catalogue panel (Track SET, N3). Kept alongside
+   * parts/joints/groups so the Set tool can save a whole scene ("Save as
+   * Setting") with its baseline lighting, not just geometry.
+   */
+  lights: LightConfig[];
+  /** Applied HDRI environment (catalogue EnvironmentEntry id), or undefined. */
+  environmentMap?: string;
 };
 
 /**
@@ -93,19 +113,9 @@ export type FaceGroupInfo = {
 
 // ── Snapshot types (used by SketcherDocument for undo/redo) ──────────────────
 
-export type PartSnapshot = {
-  id: string;
-  /** World-space position — correct regardless of group parentage. */
-  worldPosition: [number, number, number];
-  worldQuaternionXYZW: [number, number, number, number];
-  worldScale: [number, number, number];
-  color: number;
-  faceColors: number[];
-  /** Per-draw-group texture data URLs matching faceColors. */
-  faceTextures: (string | null)[];
-};
-
 export type JointSnapshot = {
+  /** 'snap' = face-snap (glue); 'rigid' = full weld (positional + rotational lock). */
+  type: 'snap' | 'rigid';
   partAId: string;
   /** Local-space — unchanged by group transforms. */
   localPointA: [number, number, number];
@@ -116,68 +126,30 @@ export type JointSnapshot = {
 };
 
 /**
- * Plain-data snapshot of an entire session, used by SketcherDocument for
- * undo/redo. Mesh geometry and material are NOT cloned — the mesh objects
- * stay alive in CartoonSketcher's allParts pool and are reused on restore.
- * Only currently-present parts are listed; absent (soft-removed) parts are
- * omitted and restored from the pool by id on demand.
- */
-export type GroupSnapshot = {
-  /** Ordered list of part ids that form the assembly group. */
-  partIds: string[];
-  /**
-   * True when the group was created by a Group command (pure rigid container,
-   * no attach joints between members). False (or absent in legacy snapshots) means
-   * the group was created by an attach operation.
-   */
-  isGroup?: boolean;
-};
-
-export type SessionSnapshot = {
-  parts: PartSnapshot[];
-  joints: JointSnapshot[];
-  /** Groups present at snapshot time. Absent means no groups. */
-  groups?: GroupSnapshot[];
-  /**
-   * Durable group bond components: each entry is the set of part IDs that form
-   * one group unit. Unlike groups, these survive attach merges — when an attach
-   * op collapses a group into a larger assembly, the bond topology is
-   * preserved here so that detaching restores the group correctly.
-   */
-  groupComponents?: string[][];
-};
-
-// ── Draft types (used by CartoonSketcher.toDraft / loadDraft for persistence) ─
-
-/**
- * JSON-serializable description of a single part. Geometry is stored as either
- * a primitive name ('Box', 'Cylinder', …) or the XZ shape points + depth for
- * sketch-extruded parts. World-space transforms allow correct restoration
- * regardless of prior group membership.
+ * A part leaf's body: everything about a part except its placement. Geometry is stored
+ * as a primitive name ('Box', 'Cylinder', …), the XZ shape points + depth for
+ * sketch-extruded parts, a revolve profile for lathed parts, or the procedural
+ * geometry/material of a catalogue part. The local transform belongs to the tree node
+ * carrying this body (`SetNode.transform`).
  */
 export type PartDraft = {
   id: string;
-  kind: 'primitive' | 'sketch' | 'lathed';
+  kind: 'primitive' | 'sketch' | 'lathed' | 'catalogue';
   name: string;
+  /** Optional semantic name; falls back to `name` when absent. */
+  label?: string;
+  /** Body of a `catalogue` part — the entry's own procedural geometry and material. */
+  geometry?: GeometryConfig;
+  material?: MaterialConfig;
   shapePoints?: [number, number][];
   holes?: [number, number][][];
   lathePoints?: [number, number][];
   /** Sweep angle in radians; absent means full 360° (Math.PI * 2). */
   phiLength?: number;
   depth?: number;
-  position: [number, number, number];
-  quaternion: [number, number, number, number];
-  scale: [number, number, number];
   color: number;
   faceColors?: number[];
   faceTextures?: (string | null)[];
-};
-
-export type SketcherDraft = {
-  version: 2;
-  parts: PartDraft[];
-  joints: JointSnapshot[];
-  groups?: GroupSnapshot[];
 };
 
 /** Drawing mode for the polygon sketcher. */

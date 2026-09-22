@@ -1,10 +1,30 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import * as THREE from 'three';
 import { CartoonSketcher } from './CartoonSketcher.js';
+import { OverrideCommand } from './sketcherCommands.js';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { exportGLB } from './exportGLB.js';
 import type { SketcherSession } from './types.js';
+import { collectLights, documentFromParts, isPartNode } from './documentTree.js';
+import type { NodeOverride, PartNode, PartSeed, SetDocument } from './documentTree.js';
+import type { Transform } from './transform.js';
+import type { SetPieceEntry } from '../catalogue/types.js';
+import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
+
+/** A catalogue part, as a bundled set-piece document holds them. */
+function cataloguePart(
+  id: string,
+  geometry: GeometryConfig,
+  material: MaterialConfig,
+  position?: Vec3,
+  quaternion: [number, number, number, number] = [0, 0, 0, 1],
+): PartSeed {
+  return {
+    content: { id, kind: 'catalogue', name: 'Box', geometry, material, color: material.color },
+    transform: { position: position ?? [0, 0, 0], quaternion, scale: [1, 1, 1] },
+  };
+}
 
 // GLTFExporter uses FileReader internally which is not available in the Node
 // test environment. Mock the module so exportGLB tests are self-contained.
@@ -203,6 +223,160 @@ describe('CartoonSketcher', () => {
     expect(sketcher.currentPhase).toBe('idle');
   });
 
+  // ── Lights & environment (Track SET, N3) ──────────────────────────────────
+
+  it('addLight() adds a THREE light to the scene and records it in getLights()', () => {
+    const before = scene.children.length;
+    sketcher.addLight({ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] });
+    expect(scene.children.length).toBe(before + 1);
+    expect(sketcher.getLights()).toHaveLength(1);
+    expect(sketcher.getLights()[0].id).toBe('sun');
+  });
+
+  it('addLight() builds a hemisphere light without a position', () => {
+    sketcher.addLight({ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 2 });
+    expect(sketcher.getLights()).toHaveLength(1);
+  });
+
+  it('removeLight() removes a light from the scene and getLights()', () => {
+    sketcher.addLight({ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] });
+    const before = scene.children.length;
+    sketcher.removeLight('sun');
+    expect(scene.children.length).toBe(before - 1);
+    expect(sketcher.getLights()).toHaveLength(0);
+  });
+
+  it('removeLight() is a no-op for an unknown id', () => {
+    sketcher.addLight({ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] });
+    sketcher.removeLight('no-such-light');
+    expect(sketcher.getLights()).toHaveLength(1);
+  });
+
+  it('setEnvironmentMap() / environmentMap round-trip', () => {
+    expect(sketcher.environmentMap).toBeUndefined();
+    sketcher.setEnvironmentMap('studio-neutral');
+    expect(sketcher.environmentMap).toBe('studio-neutral');
+    sketcher.setEnvironmentMap(undefined);
+    expect(sketcher.environmentMap).toBeUndefined();
+  });
+
+  it('getSession() includes lights and environmentMap', () => {
+    sketcher.addLight({ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] });
+    sketcher.setEnvironmentMap('studio-neutral');
+    const session = sketcher.getSession();
+    expect(session.lights).toHaveLength(1);
+    expect(session.environmentMap).toBe('studio-neutral');
+  });
+
+  it('clearSession() removes lights and the environment map', () => {
+    sketcher.addLight({ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] });
+    sketcher.setEnvironmentMap('studio-neutral');
+    sketcher.clearSession();
+    expect(sketcher.getLights()).toHaveLength(0);
+    expect(sketcher.environmentMap).toBeUndefined();
+  });
+
+  // ── Catalogue insertion (Track SET, N3) ───────────────────────────────────
+
+  it('insertCatalogueEntry() places a reference, not a copy of the leaves', () => {
+    const chair: SetPieceEntry = {
+      kind: 'set-piece',
+      id: 'chair-test',
+      label: 'Chair Test',
+      document: documentFromParts([
+        cataloguePart('seat', { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, { color: 0x663311 }, [0, 0.45, 0]),
+        cataloguePart('back', { type: 'box', width: 0.5, height: 0.5, depth: 0.1 }, { color: 0x663311 }, [0, 0.7, -0.2]),
+      ]),
+    };
+    sketcher.setRefResolver((ref) => (ref === 'chair-test' ? chair.document! : null));
+
+    const { path, object } = sketcher.insertCatalogueEntry(chair);
+
+    // The placement is a node holding a reference; the geometry stays the Definition's.
+    expect(path).toBe('chair-test');
+    expect(sketcher.getSession().parts).toHaveLength(0);
+    expect(object?.children).toHaveLength(2);
+    const doc = sketcher.toDocument();
+    expect(doc.root).toHaveLength(1);
+    expect(doc.root[0].ref).toBe('chair-test');
+    expect(doc.root[0].id).toBe('chair-test');
+    expect(doc.root[0].role).toBe('prop');
+  });
+
+  it('insertCatalogueEntry() places each instance on its own node', () => {
+    const leaf: SetPieceEntry = {
+      kind: 'set-piece',
+      id: 'box',
+      label: 'Box',
+      document: documentFromParts([
+        cataloguePart('box', { type: 'box', width: 2, height: 3, depth: 4 }, { color: 0x8844aa }),
+      ]),
+    };
+
+    const first = sketcher.insertCatalogueEntry(leaf);
+    const second = sketcher.insertCatalogueEntry(leaf);
+
+    expect(first.path).not.toBe(second.path);
+    const roots = sketcher.toDocument().root;
+    expect(roots.map((node) => node.ref)).toEqual(['box', 'box']);
+    expect(roots[0].id).not.toBe(roots[1].id);
+  });
+
+  it('insertCatalogueEntry() places a saved set as a setting', () => {
+    const savedSet: SetPieceEntry = {
+      kind: 'set-piece',
+      id: 'exported-classroom',
+      label: 'Exported Classroom',
+      hasDocument: true,
+      isSetting: true,
+    };
+
+    const { path } = sketcher.insertCatalogueEntry(savedSet);
+
+    // A saved set has no inline document, but a reference needs only its id — and a
+    // setting contributes structure, so its node takes the structure role.
+    expect(path).toBe('exported-classroom');
+    expect(sketcher.toDocument().root[0].role).toBe('structure');
+  });
+
+  it('an unresolved Definition still inserts its reference', () => {
+    sketcher.setRefResolver(() => null);
+    const leaf: SetPieceEntry = {
+      kind: 'set-piece',
+      id: 'unknown',
+      label: 'Unknown',
+      document: documentFromParts([
+        cataloguePart('box', { type: 'box', width: 1, height: 1, depth: 1 }, { color: 0x8844aa }),
+      ]),
+    };
+
+    const { path, object } = sketcher.insertCatalogueEntry(leaf);
+
+    expect(path).toBe('unknown');
+    expect(object?.children).toHaveLength(0);
+    expect(sketcher.toDocument().root[0].ref).toBe('unknown');
+  });
+
+  it('insertCataloguePiece() applies position/rotation/scale and a single face group', () => {
+    const part = sketcher.insertCataloguePiece(
+      'plank',
+      { type: 'box', width: 1, height: 1, depth: 1 },
+      { color: 0x224466 },
+      [3, 1, 2],
+      [0, Math.PI / 2, 0],
+      [2, 2, 2],
+    )!;
+    expect(part.mesh.position).toMatchObject({ x: 3, y: 1, z: 2 });
+    expect(part.mesh.scale).toMatchObject({ x: 2, y: 2, z: 2 });
+    // Euler rotation is stored as a quaternion on the draft.
+    expect(new THREE.Euler().setFromQuaternion(part.mesh.quaternion).y).toBeCloseTo(Math.PI / 2);
+    expect(part.geometry).toMatchObject({ type: 'box', width: 1 });
+    expect(part.material).toMatchObject({ color: 0x224466 });
+    expect(part.faceColors).toHaveLength(1);
+    expect(part.faceTextures).toEqual([null]);
+    expect(sketcher.getSession().parts).toContain(part);
+  });
+
   it('part mesh has non-zero vertex count after extrusion', () => {
     sketcher.startNewSketch();
     sketcher.onClick(0, 0);
@@ -324,7 +498,7 @@ describe('CartoonSketcher', () => {
     expect(sketcher.getSession().parts[0].holes!.length).toBe(1);
   });
 
-  it('toDraft() round-trip preserves holes', () => {
+  it('toDocument() round-trip preserves holes', () => {
     sketcher.startNewSketch();
     sketcher.onClick(-0.5, -0.5);
     sketcher.onClick(0.5, -0.5);
@@ -340,11 +514,12 @@ describe('CartoonSketcher', () => {
     sketcher.onPointerDown(0, 0);
     sketcher.onPointerUp();
 
-    const draft = sketcher.toDraft();
-    expect(draft.parts[0].holes).toBeDefined();
-    expect(draft.parts[0].holes!.length).toBe(1);
+    const doc = sketcher.toDocument();
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].content.holes).toBeDefined();
+    expect(doc.root[0].content.holes!.length).toBe(1);
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];
     expect(restored.holes).not.toBeNull();
     expect(restored.holes!.length).toBe(1);
@@ -419,6 +594,32 @@ describe('CartoonSketcher', () => {
 
   it('setPartColor() is a no-op for unknown id', () => {
     expect(() => sketcher.setPartColor('nonexistent', 0xff0000)).not.toThrow();
+  });
+
+  it('setPartLabel() sets and clears a part label', () => {
+    const part = sketcher.insertPrimitive('box')!;
+    sketcher.setPartLabel(part.id, 'tabletop');
+    expect(part.label).toBe('tabletop');
+    sketcher.setPartLabel(part.id, undefined);
+    expect(part.label).toBeUndefined();
+  });
+
+  it('setPartLabel() is a no-op for unknown id', () => {
+    expect(() => sketcher.setPartLabel('nonexistent', 'x')).not.toThrow();
+  });
+
+  it('setGroupName() sets and clears a group name', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    const ag = sketcher.group([a.id, b.id], 'leg')!;
+    sketcher.setGroupName(ag.id, 'table-leg');
+    expect(sketcher.attachManager.groupForPart(a.id)!.name).toBe('table-leg');
+    sketcher.setGroupName(ag.id, undefined);
+    expect(sketcher.attachManager.groupForPart(a.id)!.name).toBeUndefined();
+  });
+
+  it('setGroupName() is a no-op for unknown group', () => {
+    expect(() => sketcher.setGroupName('nonexistent', 'x')).not.toThrow();
   });
 
   it('insertPrimitive() initialises faceTextures to null for each material slot', () => {
@@ -497,6 +698,7 @@ describe('exportGLB', () => {
       parts: [{ id: 'part-1', mesh, depth: 1, centroid, name: 'Shape', color: 0x8888cc, shapePoints: null, holes: null, lathePoints: null, lathePhiLength: null, faceColors: [0x8888cc], faceTextures: [null] }],
       joints: [],
       assemblyGroups: [],
+      lights: [],
     };
 
     const { blob, filename } = await exportGLB(session);
@@ -505,17 +707,18 @@ describe('exportGLB', () => {
   });
 
   it('returns a Blob for an empty session', async () => {
-    const session: SketcherSession = { parts: [], joints: [], assemblyGroups: [] };
+    const session: SketcherSession = { parts: [], joints: [], assemblyGroups: [], lights: [] };
     const { blob } = await exportGLB(session);
     expect(blob.size).toBeGreaterThan(0); // GLTF header is always present
   });
+
 });
 
 // ---------------------------------------------------------------------------
-// toDraft / loadDraft round-trip tests
+// toDocument / loadDocument round-trip tests
 // ---------------------------------------------------------------------------
 
-describe('toDraft / loadDraft', () => {
+describe('toDocument / loadDocument', () => {
   let scene: THREE.Scene;
   let camera: THREE.PerspectiveCamera;
   let sketcher: CartoonSketcher;
@@ -526,21 +729,48 @@ describe('toDraft / loadDraft', () => {
     sketcher = new CartoonSketcher(scene, camera);
   });
 
-  it('toDraft() on an empty session produces a valid draft with no parts', () => {
-    const draft = sketcher.toDraft();
-    expect(draft.version).toBe(2);
-    expect(draft.parts).toHaveLength(0);
-    expect(draft.joints).toHaveLength(0);
+  it('toDocument() on an empty session produces an empty document', () => {
+    const doc = sketcher.toDocument();
+    expect(doc.root).toHaveLength(0);
+    expect(doc.joints).toHaveLength(0);
+    expect(collectLights(doc)).toHaveLength(0);
+    expect(doc.environmentMap).toBeUndefined();
   });
 
-  it('toDraft() round-trip preserves primitive position and color', () => {
+  it('toDocument() / loadDocument() round-trip preserves lights and environmentMap', () => {
+    sketcher.addLight({ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] });
+    sketcher.setEnvironmentMap('studio-neutral');
+
+    const doc = sketcher.toDocument();
+    // The light is a node, not a document field — see `documentTree`'s `addLightNode`.
+    expect(doc.root.some((n) => n.role === 'light')).toBe(true);
+    expect(collectLights(doc)).toHaveLength(1);
+    expect(doc.environmentMap).toBe('studio-neutral');
+
+    sketcher.loadDocument(doc);
+    expect(sketcher.getLights()).toHaveLength(1);
+    expect(sketcher.getLights()[0].id).toBe('sun');
+    expect(sketcher.environmentMap).toBe('studio-neutral');
+  });
+
+  it('loadDocument() on a document with no lights/environmentMap leaves them empty', () => {
+    sketcher.loadDocument({ root: [], joints: [] });
+    expect(sketcher.getLights()).toHaveLength(0);
+    expect(sketcher.environmentMap).toBeUndefined();
+  });
+
+  it('toDocument() round-trip preserves primitive position and color', () => {
     const part = sketcher.insertPrimitive('box')!;
     part.mesh.position.set(3, 1, 2);
     part.mesh.updateWorldMatrix(false, true);
     sketcher.setPartColor(part.id, 0xff0000);
 
-    const draft = sketcher.toDraft();
-    sketcher.loadDraft(draft);
+    const doc = sketcher.toDocument();
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].transform.position).toEqual([3, 1, 2]);
+    expect(doc.root[0].content.color).toBe(0xff0000);
+
+    sketcher.loadDocument(doc);
 
     const restored = sketcher.getSession().parts[0];
     expect(restored.mesh.position).toMatchObject({ x: expect.closeTo(3, 3), y: expect.closeTo(1, 3), z: expect.closeTo(2, 3) });
@@ -549,23 +779,60 @@ describe('toDraft / loadDraft', () => {
     expect(restored.shapePoints).toBeNull();
   });
 
-  it('toDraft() round-trip preserves multiple primitives', () => {
+  it('toDocument() round-trip preserves multiple primitives', () => {
     sketcher.insertPrimitive('box');
     sketcher.insertPrimitive('sphere');
     sketcher.insertPrimitive('cylinder');
 
-    const draft = sketcher.toDraft();
-    sketcher.loadDraft(draft);
+    const doc = sketcher.toDocument();
+    expect(doc.root).toHaveLength(3);
+
+    sketcher.loadDocument(doc);
 
     expect(sketcher.getSession().parts).toHaveLength(3);
   });
 
-  it('loadDraft() restores part ids so future inserts do not collide', () => {
+  it('toDocument()/loadDocument() round-trips group and member transforms', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    a.mesh.position.set(0, 0, 0);
+    b.mesh.position.set(1, 0, 0);
+    const ag = sketcher.group([a.id, b.id], 'leg')!;
+    ag.group.position.set(5, 2, -3);
+    ag.group.updateMatrixWorld(true);
+
+    const worldA = new THREE.Vector3();
+    a.mesh.getWorldPosition(worldA);
+
+    const doc = sketcher.toDocument();
+    const groupNode = doc.root.find((n) => n.role === 'structure');
+    if (!groupNode) throw new Error('expected a group node');
+    expect(groupNode.transform.position).toEqual([5, 2, -3]);
+    expect(groupNode.name).toBe('leg');
+    expect(groupNode.children).toHaveLength(2);
+    // Members are stored in local space (relative to the group).
+    const leafA = groupNode.children.find((n) => isPartNode(n) && n.content.id === a.id);
+    if (!leafA) throw new Error('expected a part leaf');
+    expect(leafA.transform.position).not.toEqual([0, 0, 0]);
+
+    sketcher.loadDocument(doc);
+
+    const restoredGroup = sketcher.attachManager.getAssemblyGroups()[0];
+    expect(restoredGroup.group.position.toArray()).toEqual([5, 2, -3]);
+    const restoredA = sketcher.getSession().parts.find((p) => p.id === a.id)!;
+    const restoredWorldA = new THREE.Vector3();
+    restoredA.mesh.getWorldPosition(restoredWorldA);
+    expect(restoredWorldA.x).toBeCloseTo(worldA.x, 5);
+    expect(restoredWorldA.y).toBeCloseTo(worldA.y, 5);
+    expect(restoredWorldA.z).toBeCloseTo(worldA.z, 5);
+  });
+
+  it('loadDocument() restores part ids so future inserts do not collide', () => {
     sketcher.insertPrimitive('box'); // part-1
     sketcher.insertPrimitive('box'); // part-2
 
-    const draft = sketcher.toDraft();
-    sketcher.loadDraft(draft);
+    const doc = sketcher.toDocument();
+    sketcher.loadDocument(doc);
 
     const newPart = sketcher.insertPrimitive('sphere')!;
     const ids = sketcher.getSession().parts.map((p) => p.id);
@@ -573,7 +840,7 @@ describe('toDraft / loadDraft', () => {
     expect(ids).toContain(newPart.id);
   });
 
-  it('toDraft() round-trip preserves a sketch part with shapePoints and depth', () => {
+  it('toDocument() round-trip preserves a sketch part with shapePoints and depth', () => {
     // Drive the sketcher to produce a committed extrusion part.
     sketcher.startNewSketch();
     sketcher.onClick(0, 0);
@@ -589,11 +856,12 @@ describe('toDraft / loadDraft', () => {
     expect(original.shapePoints).not.toBeNull();
     expect(original.shapePoints!.length).toBeGreaterThan(2);
 
-    const draft = sketcher.toDraft();
-    expect(draft.parts[0].kind).toBe('sketch');
-    expect(draft.parts[0].shapePoints).toBeDefined();
+    const doc = sketcher.toDocument();
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].content.kind).toBe('sketch');
+    expect(doc.root[0].content.shapePoints).toBeDefined();
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
 
     const restored = sketcher.getSession().parts[0];
     expect(restored.name).toBe('Shape');
@@ -601,49 +869,52 @@ describe('toDraft / loadDraft', () => {
     expect(restored.mesh.geometry.attributes.position.count).toBeGreaterThan(0);
   });
 
-  it('toDraft() round-trip preserves face texture data URLs', () => {
+  it('toDocument() round-trip preserves face texture data URLs', () => {
     const part = sketcher.insertPrimitive('box')!;
     const dataUrl = 'data:image/png;base64,abc123';
     sketcher.setFaceTexture(part.id, 0, dataUrl);
 
-    const draft = sketcher.toDraft();
-    expect(draft.parts[0].faceTextures?.[0]).toBe(dataUrl);
-    expect(draft.parts[0].faceTextures?.[1]).toBeNull();
+    const doc = sketcher.toDocument();
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].content.faceTextures?.[0]).toBe(dataUrl);
+    expect(doc.root[0].content.faceTextures?.[1]).toBeNull();
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];
     expect(restored.faceTextures[0]).toBe(dataUrl);
     expect(restored.faceTextures[1]).toBeNull();
   });
 
-  it('toDraft() round-trip preserves an attach joint', () => {
+  it('toDocument() round-trip preserves an attach joint', () => {
     const pA = sketcher.insertPrimitive('box')!;
     const pB = sketcher.insertPrimitive('box')!;
     pB.mesh.position.set(2, 0, 0);
     pB.mesh.updateWorldMatrix(false, true);
 
-    sketcher.attachManager.commitAttach(
+    sketcher.commitAttach(
       pA, new THREE.Vector3(0.5, 0, 0), new THREE.Vector3(1, 0, 0),
       pB, new THREE.Vector3(-0.5, 0, 0), new THREE.Vector3(-1, 0, 0),
-      [pA, pB],
     );
+    expect(sketcher.getJoints()).toHaveLength(1);
+    expect(sketcher.getJoints()[0].type).toBe('snap');
+
+    const doc = sketcher.toDocument();
+    expect(doc.joints).toHaveLength(1);
+
+    sketcher.loadDocument(doc);
+
     expect(sketcher.getSession().joints).toHaveLength(1);
-
-    const draft = sketcher.toDraft();
-    expect(draft.joints).toHaveLength(1);
-
-    sketcher.loadDraft(draft);
-
-    expect(sketcher.getSession().joints).toHaveLength(1);
+    expect(sketcher.getSession().joints[0].type).toBe('snap');
     expect(sketcher.getSession().parts).toHaveLength(2);
-    // Attach creates a group; after draft round-trip the group is restored.
+    // Attach creates an assembly; the round-trip restores it.
     const ag = sketcher.attachManager.groupForPart(sketcher.getSession().parts[0].id);
     expect(ag).toBeDefined();
+    expect(ag!.partIds).toHaveLength(2);
   });
 
-  it('loadDraft() on empty draft produces an empty session', () => {
+  it('loadDocument() on an empty document produces an empty session', () => {
     sketcher.insertPrimitive('box');
-    sketcher.loadDraft({ version: 2, parts: [], joints: [] });
+    sketcher.loadDocument({ root: [], joints: [] });
     expect(sketcher.getSession().parts).toHaveLength(0);
   });
 });
@@ -762,14 +1033,13 @@ describe('snapToFloor', () => {
   it('moves the entire assembly group when the part is attached', () => {
     const partA = sketcher.insertPrimitive('box')!;
     const partB = sketcher.insertPrimitive('box')!;
-    sketcher.attachManager.commitAttach(
+    sketcher.commitAttach(
       partA,
       new THREE.Vector3(0, 0.5, 0),
       new THREE.Vector3(0, 1, 0),
       partB,
       new THREE.Vector3(0, -0.5, 0),
       new THREE.Vector3(0, -1, 0),
-      [partA, partB],
     );
 
     // Lift the attach group and snap the whole assembly to the floor.
@@ -837,30 +1107,30 @@ describe('group / ungroup', () => {
     expect(sketcher.group([])).toBeNull();
   });
 
-  it('groups a standalone part into an existing group (group merging)', () => {
+  it('groups a standalone part onto an existing group by nesting it', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
     const d = sketcher.insertPrimitive('box')!;
-    sketcher.group([a.id, b.id]);
+    const inner = sketcher.group([a.id, b.id])!;
 
-    // Now group D into the A+B group — all three should end up in one group.
-    const result = sketcher.group([a.id, b.id, d.id]);
-    expect(result).not.toBeNull();
+    // Grouping D with the A+B group nests it: D and that group become siblings.
+    const outer = sketcher.group([a.id, d.id]);
+    expect(outer).not.toBeNull();
 
-    const ag = sketcher.attachManager.groupForPart(a.id);
-    expect(ag).toBeDefined();
-    expect(ag!.partIds).toHaveLength(3);
-    expect(ag!.partIds).toContain(d.id);
+    expect([...outer!.partIds].sort()).toEqual([a.id, b.id, d.id].sort());
     expect(sketcher.attachManager.isGroup(d.id)).toBe(true);
-    // Merged group component should cover all three parts.
+    // The outer group owns all three parts...
     expect(sketcher.attachManager.isInGroupComponent(a.id)).toBe(true);
     expect(sketcher.attachManager.isInGroupComponent(d.id)).toBe(true);
-    // No stale old group — all three share one group.
-    expect(sketcher.attachManager.groupForPart(b.id)?.id).toBe(ag!.id);
-    expect(sketcher.attachManager.groupForPart(d.id)?.id).toBe(ag!.id);
+    // ...while A is still owned by the A+B group, now nested inside the outer one (a
+    // group's id is its path, so nesting prefixes it).
+    const owner = sketcher.attachManager.groupForPart(a.id)!;
+    expect(owner.id).toBe(`${outer!.id}/${inner.id}`);
+    expect([...owner.partIds].sort()).toEqual([a.id, b.id].sort());
+    expect(sketcher.attachManager.groupForPart(d.id)!.id).toBe(outer!.id);
   });
 
-  it('merges two independent groups into one', () => {
+  it('groups two independent groups into one that contains both', () => {
     const a = sketcher.insertPrimitive('box')!;
     const b = sketcher.insertPrimitive('box')!;
     const c = sketcher.insertPrimitive('box')!;
@@ -868,20 +1138,20 @@ describe('group / ungroup', () => {
     sketcher.group([a.id, b.id]);
     sketcher.group([c.id, d.id]);
 
-    // Group all four parts together.
-    const result = sketcher.group([a.id, c.id]);
-    expect(result).not.toBeNull();
+    const outer = sketcher.group([a.id, c.id]);
+    expect(outer).not.toBeNull();
 
-    const ag = sketcher.attachManager.groupForPart(a.id);
-    expect(ag).toBeDefined();
-    expect(ag!.partIds).toHaveLength(4);
-    [a, b, c, d].forEach((p) => {
-      expect(sketcher.attachManager.groupForPart(p.id)?.id).toBe(ag!.id);
-      expect(sketcher.attachManager.isGroup(p.id)).toBe(true);
-    });
-    // Single merged group component.
-    expect(sketcher.attachManager.getGroupComponents()).toHaveLength(1);
-    expect(sketcher.attachManager.getGroupComponents()[0].sort()).toEqual(
+    expect([...outer!.partIds].sort()).toEqual([a.id, b.id, c.id, d.id].sort());
+    // Each pair keeps its own group, and both now sit inside the outer one.
+    const owners = [a, b, c, d].map((part) => sketcher.attachManager.groupForPart(part.id)!);
+    expect(new Set(owners.map((g) => g.id)).size).toBe(2);
+    expect(owners.every((g) => g.id.startsWith(`${outer!.id}/`))).toBe(true);
+    expect(owners[0].id).toBe(owners[1].id);
+    expect(owners[2].id).toBe(owners[3].id);
+    expect(owners[0].id).not.toBe(owners[2].id);
+    // One durable bond still covers all four parts.
+    expect(sketcher.toDocument().groupComponents).toHaveLength(1);
+    expect(sketcher.toDocument().groupComponents![0].sort()).toEqual(
       [a.id, b.id, c.id, d.id].sort(),
     );
   });
@@ -905,6 +1175,322 @@ describe('group / ungroup', () => {
     const a = sketcher.insertPrimitive('box')!;
     expect(() => sketcher.ungroup(a.id)).not.toThrow();
   });
+  describe('nested groups', () => {
+    /** Any edit rebuilds the live objects, so groups are re-read rather than held. */
+    const groupById = (id: string) => sketcher.getSession().assemblyGroups.find((g) => g.id === id)!;
+
+    it('expands an instance into live geometry that is not a session part', () => {
+      const chair = documentFromParts([
+        cataloguePart('seat', { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, { color: 0x663311 }, [0, 0.45, 0]),
+        cataloguePart('back', { type: 'box', width: 0.5, height: 0.5, depth: 0.1 }, { color: 0x663311 }, [0, 0.7, -0.2]),
+      ]);
+      sketcher.setRefResolver((ref) => (ref === 'chair' ? chair : null));
+
+      sketcher.loadDocument({
+        root: [
+          { id: 'chair-1', role: 'prop', ref: 'chair', transform: { position: [2, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] }, children: [] },
+        ],
+        joints: [],
+      });
+
+      // The instance owns no session parts: its geometry is the Definition's.
+      expect(sketcher.getSession().parts).toHaveLength(0);
+      const instance = scene.children.find((child) => child.userData.sketcherInstancePath === 'chair-1') as THREE.Group;
+      expect(instance).toBeDefined();
+      expect(instance.position.toArray()).toEqual([2, 0, 0]);
+      expect(instance.children).toHaveLength(2);
+    });
+
+    it('writes an instance transform back to its own node, and survives a reload', () => {
+      const chair = documentFromParts([
+        cataloguePart('seat', { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, { color: 0x663311 }),
+      ]);
+      sketcher.setRefResolver((ref) => (ref === 'chair' ? chair : null));
+      sketcher.loadDocument({
+        root: [
+          { id: 'chair-1', role: 'prop', ref: 'chair', transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] }, children: [] },
+        ],
+        joints: [],
+      });
+
+      const instance = scene.children.find((child) => child.userData.sketcherInstancePath === 'chair-1') as THREE.Group;
+      instance.position.set(4, 1, 0);
+
+      // The node keeps the reference and takes the placement; no geometry is written back.
+      const doc = sketcher.toDocument();
+      expect(doc.root).toHaveLength(1);
+      expect(doc.root[0].ref).toBe('chair');
+      expect(doc.root[0].transform.position).toEqual([4, 1, 0]);
+
+      // A reload releases the old expansion rather than stacking a second one.
+      sketcher.loadDocument(doc);
+      const instances = scene.children.filter((child) => child.userData.sketcherInstancePath !== undefined);
+      expect(instances).toHaveLength(1);
+    });
+
+    it('keeps an unresolvable instance as a node with no geometry', () => {
+      sketcher.setRefResolver(() => null);
+      sketcher.loadDocument({
+        root: [
+          { id: 'chair-1', role: 'prop', ref: 'missing', transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] }, children: [] },
+        ],
+        joints: [],
+      });
+
+      const instance = scene.children.find((child) => child.userData.sketcherInstancePath === 'chair-1') as THREE.Group;
+      expect(instance.children).toHaveLength(0);
+      expect(sketcher.toDocument().root[0].ref).toBe('missing');
+    });
+
+    it('realises an instance as its overrides leave it, and keeps them through an edit', () => {
+      const identity: Transform = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
+      const definition: SetDocument = {
+        root: [
+          { id: 'seat', role: 'prop', transform: identity, children: [], content: { id: 'seat-part', kind: 'primitive', name: 'Box', color: 0x663311 } },
+          { id: 'back', role: 'prop', transform: identity, children: [], content: { id: 'back-part', kind: 'primitive', name: 'Box', color: 0x663311 } },
+        ],
+        joints: [],
+      };
+      const doc: SetDocument = {
+        root: [{
+          id: 'chair-1',
+          role: 'prop',
+          ref: 'chair-item',
+          transform: identity,
+          children: [],
+          overrides: [{ path: 'back', op: 'set', value: { hidden: true } }],
+        }],
+        joints: [],
+      };
+
+      sketcher.setRefResolver((ref) => (ref === 'chair-item' ? definition : null));
+      sketcher.loadDocument(doc);
+
+      // The Definition minus its hidden part: the session shows what the renderer will.
+      expect(sketcher.instanceMeshes).toHaveLength(1);
+
+      // An edit elsewhere in the document re-syncs the instance without touching its overrides.
+      sketcher.insertPrimitive('Box');
+      expect(sketcher.toDocument().root[0].overrides).toEqual([
+        { path: 'back', op: 'set', value: { hidden: true } },
+      ]);
+    });
+
+    it('promotes a group into an item, leaving the session with an instance', () => {
+      const a = sketcher.insertPrimitive('Box')!;
+      const b = sketcher.insertPrimitive('Box')!;
+      const ag = sketcher.group([a.id, b.id], 'Chair')!;
+
+      const definition = sketcher.extractInstance(ag.id, 'chair-item')!;
+      sketcher.setRefResolver((ref) => (ref === 'chair-item' ? definition : null));
+
+      // The Definition holds the two parts; the session holds the instance, not its internals.
+      expect(definition.root).toHaveLength(2);
+      expect(sketcher.getSession().parts).toHaveLength(0);
+      const doc = sketcher.toDocument();
+      expect(doc.root).toHaveLength(1);
+      expect(doc.root[0].ref).toBe('chair-item');
+      expect(sketcher.instanceMeshes).toHaveLength(2);
+    });
+
+    it('groups a group with a part, nesting the inner group', () => {
+      const a = sketcher.insertPrimitive('box')!;
+      const b = sketcher.insertPrimitive('box')!;
+      const c = sketcher.insertPrimitive('box')!;
+      sketcher.group([a.id, b.id]);
+      const outer = sketcher.group([a.id, c.id])!;
+
+      expect(outer).not.toBeNull();
+      expect([...outer.partIds].sort()).toEqual([a.id, b.id, c.id].sort());
+
+      // The A+B group still owns A, and is now a live child of the outer group rather than
+      // a sibling of it — a group's id is its path, so nesting prefixes it.
+      const owner = sketcher.attachManager.groupForPart(a.id)!;
+      expect(owner.id).not.toBe(outer.id);
+      expect(owner.id.startsWith(`${outer.id}/`)).toBe(true);
+      expect(owner.group.parent).toBe(outer.group);
+      expect([...owner.partIds].sort()).toEqual([a.id, b.id].sort());
+      expect(sketcher.attachManager.groupForPart(c.id)!.id).toBe(outer.id);
+    });
+
+    it('writes each nested group transform back to its own node', () => {
+      const a = sketcher.insertPrimitive('box')!;
+      const b = sketcher.insertPrimitive('box')!;
+      const c = sketcher.insertPrimitive('box')!;
+      sketcher.group([a.id, b.id]);
+      const outer = sketcher.group([a.id, c.id])!;
+      const inner = sketcher.attachManager.groupForPart(a.id)!;
+
+      outer.group.position.set(5, 0, 0);
+      inner.group.position.set(0, 2, 0);
+
+      const doc = sketcher.toDocument();
+      const outerNode = doc.root.find((n) => n.id === outer.id)!;
+      expect(outerNode.transform.position).toEqual([5, 0, 0]);
+      // The inner group's own node, one level down, carries the inner transform.
+      const innerSegment = inner.id.split('/').pop()!;
+      const innerNode = outerNode.children.find((n) => n.id === innerSegment)!;
+      expect(innerNode.transform.position).toEqual([0, 2, 0]);
+    });
+
+    it('ungrouping a nested group promotes it into its parent, not the root', () => {
+      const a = sketcher.insertPrimitive('box')!;
+      const b = sketcher.insertPrimitive('box')!;
+      const c = sketcher.insertPrimitive('box')!;
+      const inner = sketcher.group([a.id, b.id])!;
+      const outer = sketcher.group([a.id, c.id])!;
+
+      sketcher.ungroup(a.id);
+
+      // The inner group is gone and its parts now belong to the outer one.
+      expect(sketcher.getSession().assemblyGroups.map((g) => g.id)).toEqual([outer.id]);
+      expect(sketcher.attachManager.groupForPart(a.id)!.id).toBe(outer.id);
+      expect(a.mesh.parent).toBe(groupById(outer.id).group);
+    });
+  });
+
+});
+
+// ---------------------------------------------------------------------------
+// attach / detach — the attach flow expressed as tree edits
+// ---------------------------------------------------------------------------
+
+describe('attach / detach', () => {
+  let scene: THREE.Scene;
+  let sketcher: CartoonSketcher;
+
+  beforeEach(() => {
+    scene = makeScene();
+    sketcher = new CartoonSketcher(scene, makePerspectiveCamera());
+  });
+
+  const UP = new THREE.Vector3(0, 1, 0);
+  const DOWN = new THREE.Vector3(0, -1, 0);
+  const TOP = new THREE.Vector3(0, 0.5, 0);
+  const BOTTOM = new THREE.Vector3(0, -0.5, 0);
+
+  it('commitAttach() records the joint and merges both parts into one assembly', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    b.mesh.position.set(2, 0, 0);
+    b.mesh.updateWorldMatrix(false, true);
+
+    sketcher.commitAttach(a, TOP, UP, b, BOTTOM, DOWN);
+
+    expect(sketcher.getJoints()).toHaveLength(1);
+    expect(sketcher.getJoints()[0].partAId).toBe(a.id);
+    expect(sketcher.getJoints()[0].partBId).toBe(b.id);
+    const ag = sketcher.attachManager.groupForPart(a.id);
+    expect(ag).toBeDefined();
+    expect(ag!.partIds.sort()).toEqual([a.id, b.id].sort());
+    expect(sketcher.attachManager.groupForPart(b.id)?.id).toBe(ag!.id);
+    // Prests sit on the floor, so partA's centre is at 0.5 and its top at 1.0:
+    // partB lands with its centre half a unit above that.
+    expect(b.mesh.getWorldPosition(new THREE.Vector3()).y).toBeCloseTo(1.5, 3);
+    // An attach assembly is not a pure group.
+    expect(sketcher.attachManager.isGroup(a.id)).toBe(false);
+  });
+
+  it('commitAttach() pulls an existing group into the assembly', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    const c = sketcher.insertPrimitive('box')!;
+    b.mesh.position.set(1, 0, 0);
+    c.mesh.position.set(3, 0, 0);
+    sketcher.group([b.id, c.id]);
+
+    sketcher.commitAttach(a, TOP, UP, b, BOTTOM, DOWN);
+
+    const ag = sketcher.attachManager.groupForPart(a.id);
+    expect(ag).toBeDefined();
+    expect(ag!.partIds.sort()).toEqual([a.id, b.id, c.id].sort());
+    // The old group is gone: one assembly now holds all three.
+    expect(sketcher.attachManager.getAssemblyGroups()).toHaveLength(1);
+    expect(sketcher.attachManager.isGroup(a.id)).toBe(false);
+  });
+
+  it('detachAll() removes the joints and dissolves a two-part assembly', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    sketcher.commitAttach(a, TOP, UP, b, BOTTOM, DOWN);
+
+    sketcher.detachAll(a.id);
+
+    expect(sketcher.getJoints()).toHaveLength(0);
+    expect(sketcher.attachManager.getAssemblyGroups()).toHaveLength(0);
+    expect(a.mesh.parent).toBe(scene);
+    expect(b.mesh.parent).toBe(scene);
+  });
+
+  it('detachAll() splits a chain into its still-jointed groups', () => {
+    const [a, b, c] = [0, 2, 4].map((x) => {
+      const part = sketcher.insertPrimitive('box')!;
+      part.mesh.position.set(x, 0, 0);
+      part.mesh.updateWorldMatrix(false, true);
+      return part;
+    });
+    sketcher.commitAttach(a, TOP, UP, b, BOTTOM, DOWN);
+    sketcher.commitAttach(b, TOP, UP, c, BOTTOM, DOWN);
+
+    sketcher.detachAll(b.id);
+
+    expect(sketcher.getJoints()).toHaveLength(0);
+    expect(sketcher.attachManager.groupForPart(a.id)).toBeUndefined();
+    expect(sketcher.attachManager.groupForPart(c.id)).toBeUndefined();
+  });
+
+  it('detachAll() restores a group that was bonded before the attach', () => {
+    // A+B are a group; attaching C merges everything into one assembly. The bond
+    // survives that merge, so detaching C brings the A+B group back.
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    const c = sketcher.insertPrimitive('box')!;
+    b.mesh.position.set(1, 0, 0);
+    c.mesh.position.set(0, 5, 0);
+    sketcher.group([a.id, b.id]);
+
+    sketcher.commitAttach(b, TOP, UP, c, BOTTOM, DOWN);
+    expect(sketcher.attachManager.isGroup(a.id)).toBe(false); // merged assembly
+    expect(sketcher.attachManager.isInGroupComponent(a.id)).toBe(true);
+
+    sketcher.detachAll(c.id);
+
+    expect(sketcher.attachManager.isGroup(a.id)).toBe(true);
+    expect(sketcher.attachManager.isGroup(b.id)).toBe(true);
+    expect(sketcher.attachManager.groupForPart(c.id)).toBeUndefined();
+    expect(c.mesh.parent).toBe(scene);
+  });
+
+  it('ungrouping before the detach drops the bond, so no group comes back', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    const c = sketcher.insertPrimitive('box')!;
+    b.mesh.position.set(1, 0, 0);
+    c.mesh.position.set(0, 5, 0);
+    sketcher.group([a.id, b.id]);
+    sketcher.ungroup(a.id);
+    expect(sketcher.attachManager.isInGroupComponent(a.id)).toBe(false);
+
+    sketcher.commitAttach(b, TOP, UP, c, BOTTOM, DOWN);
+    sketcher.detachAll(c.id);
+
+    expect(sketcher.attachManager.groupForPart(a.id)).toBeUndefined();
+    expect(sketcher.attachManager.groupForPart(b.id)).toBeUndefined();
+  });
+
+  it('removing a part drops its joints and its group bonds', () => {
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    sketcher.group([a.id, b.id]);
+    const doc = sketcher.toDocument();
+    expect(doc.groupComponents).toHaveLength(1);
+
+    sketcher.removePart(a.id);
+
+    expect(sketcher.attachManager.groupForPart(b.id)).toBeUndefined();
+    expect(sketcher.attachManager.isInGroupComponent(b.id)).toBe(false);
+    expect(sketcher.toDocument().groupComponents).toBeUndefined();
+  });
 });
 
 // takeSnapshot / restoreSnapshot — group round-trip
@@ -924,9 +1510,12 @@ describe('snapshot group round-trip', () => {
 
     const snap = sketcher.takeSnapshot();
 
-    expect(snap.groups).toHaveLength(1);
-    expect(snap.groups![0].partIds).toContain(a.id);
-    expect(snap.groups![0].partIds).toContain(b.id);
+    const groupNode = snap.root.find((n) => n.role === 'structure');
+    expect(groupNode).toBeDefined();
+    if (!groupNode) throw new Error('expected a group node');
+    const memberIds = groupNode.children.map((c) => (isPartNode(c) ? c.content.id : null));
+    expect(memberIds).toContain(a.id);
+    expect(memberIds).toContain(b.id);
   });
 
   it('takeSnapshot returns empty groups when no groups exist', () => {
@@ -935,7 +1524,8 @@ describe('snapshot group round-trip', () => {
 
     const snap = sketcher.takeSnapshot();
 
-    expect(snap.groups).toHaveLength(0);
+    expect(snap.root.filter((n) => n.role === 'structure')).toHaveLength(0);
+    expect(snap.root).toHaveLength(2);
   });
 
   it('restoreSnapshot re-creates groups at correct world positions', () => {
@@ -965,13 +1555,13 @@ describe('snapshot group round-trip', () => {
     expect(wpB.x).toBeCloseTo(5);
   });
 
-  it('restoreSnapshot is backward-compatible when groups is absent', () => {
+  it('restoreSnapshot handles a snapshot with only part nodes (no groups)', () => {
     const a = sketcher.insertPrimitive('box')!;
     const snap = sketcher.takeSnapshot();
-    // Simulate an old snapshot without groups.
-    const oldSnap = { parts: snap.parts, joints: snap.joints };
+    expect(snap.root).toHaveLength(1);
+    expect(snap.root[0].role).toBe('prop');
 
-    expect(() => sketcher.restoreSnapshot(oldSnap)).not.toThrow();
+    expect(() => sketcher.restoreSnapshot(snap)).not.toThrow();
     expect(sketcher.getSession().parts).toHaveLength(1);
     expect(sketcher.getSession().parts[0].id).toBe(a.id);
   });
@@ -1074,15 +1664,16 @@ describe('CartoonSketcher lathe / revolve (SA18a)', () => {
     expect(clone.lathePoints).toEqual(part.lathePoints);
   });
 
-  it('toDraft / loadDraft round-trip preserves kind=lathed and lathePoints', () => {
+  it('toDocument / loadDocument round-trip preserves kind=lathed and lathePoints', () => {
     drawAndCloseProfile();
     sketcher.confirmLathe();
-    const draft = sketcher.toDraft();
-    expect(draft.parts[0].kind).toBe('lathed');
-    expect(draft.parts[0].lathePoints).toBeDefined();
-    expect(draft.parts[0].lathePoints!.length).toBeGreaterThan(0);
+    const doc = sketcher.toDocument();
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].content.kind).toBe('lathed');
+    expect(doc.root[0].content.lathePoints).toBeDefined();
+    expect(doc.root[0].content.lathePoints!.length).toBeGreaterThan(0);
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];
     expect(restored.lathePoints).not.toBeNull();
     expect(restored.lathePoints!.length).toBeGreaterThan(0);
@@ -1149,36 +1740,39 @@ describe('CartoonSketcher partial-angle revolve (SA18b)', () => {
     expect(part.lathePhiLength).toBeCloseTo(Math.PI * 2);
   });
 
-  it('toDraft writes phiLength for partial sweep, omits it for full', () => {
+  it('toDocument() writes phiLength for partial sweep, omits it for full', () => {
     drawAndCloseProfile();
     sketcher.confirmLathe(90);
-    const draft = sketcher.toDraft();
-    expect(draft.parts[0].phiLength).toBeCloseTo(Math.PI / 2);
+    const doc = sketcher.toDocument();
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].content.phiLength).toBeCloseTo(Math.PI / 2);
 
     drawAndCloseProfile();
     sketcher.confirmLathe(360);
-    const draft2 = sketcher.toDraft();
-    expect(draft2.parts[1].phiLength).toBeUndefined();
+    const doc2 = sketcher.toDocument();
+    if (!isPartNode(doc2.root[1])) throw new Error('expected a part node');
+    expect(doc2.root[1].content.phiLength).toBeUndefined();
   });
 
-  it('loadDraft round-trip preserves partial phiLength and group count', () => {
+  it('loadDocument() round-trip preserves partial phiLength and group count', () => {
     drawAndCloseProfile();
     sketcher.confirmLathe(90);
-    const draft = sketcher.toDraft();
+    const doc = sketcher.toDocument();
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];
     expect(restored.lathePhiLength).toBeCloseTo(Math.PI / 2);
     expect(restored.mesh.geometry.groups.length).toBe(3);
   });
 
-  it('loadDraft round-trip defaults to full revolution when phiLength absent', () => {
+  it('loadDocument() round-trip defaults to full revolution when phiLength absent', () => {
     drawAndCloseProfile();
     sketcher.confirmLathe(360);
-    const draft = sketcher.toDraft();
-    expect(draft.parts[0].phiLength).toBeUndefined();
+    const doc = sketcher.toDocument();
+    if (!isPartNode(doc.root[0])) throw new Error('expected a part node');
+    expect(doc.root[0].content.phiLength).toBeUndefined();
 
-    sketcher.loadDraft(draft);
+    sketcher.loadDocument(doc);
     const restored = sketcher.getSession().parts[0];
     expect(restored.lathePhiLength).toBeCloseTo(Math.PI * 2);
     expect(restored.mesh.geometry.groups.length).toBe(1);
@@ -1294,5 +1888,173 @@ describe('PolygonSketcher drawPlane xy', () => {
     // In XZ mode the centroid carries the world offset; all points were (0,0,0)
     // so centroid is (0, 0, 0) but the contract is it IS the average of the points.
     expect(capturedCentroid!.y).toBeCloseTo(0); // centroid.y is always 0 in XZ mode
+  });
+
+});
+
+describe('inside an instance (10.4-B)', () => {
+  const identity: Transform = { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] };
+
+  /** A chair whose legs are a group, so a path can address a node below the root. */
+  function chair(): SetDocument {
+    const leaf = (id: string, position: [number, number, number]): PartNode => ({
+      id,
+      role: 'prop',
+      transform: { ...identity, position },
+      children: [],
+      content: { id, kind: 'primitive', name: 'Box', color: 0x663311 },
+    });
+    return {
+      root: [
+        leaf('seat', [0, 0.45, 0]),
+        {
+          id: 'legs',
+          role: 'structure',
+          isGroup: true,
+          transform: { ...identity },
+          children: [leaf('left', [-0.3, 0, 0]), leaf('right', [0.3, 0, 0])],
+        },
+      ],
+      joints: [],
+    };
+  }
+
+  function document(overrides: NodeOverride[] = []): SetDocument {
+    return {
+      root: [{ id: 'chair-1', role: 'prop', ref: 'chair-item', transform: { ...identity, position: [1, 0, 0] }, children: [], overrides }],
+      joints: [],
+    };
+  }
+
+  function session(): CartoonSketcher {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    sketcher.setRefResolver((ref) => (ref === 'chair-item' ? chair() : null));
+    sketcher.loadDocument(document());
+    return sketcher;
+  }
+
+  it('addresses the hit node inside the Definition, once the instance is the focus', () => {
+    const sketcher = session();
+    const [seat] = sketcher.instanceMeshes;
+
+    // Not inside it yet: the hit belongs to the instance as a whole.
+    expect(sketcher.descendantAt(seat)).toBeNull();
+
+    sketcher.focusInstance('chair-1');
+    expect(sketcher.focusedInstancePath).toBe('chair-1');
+    expect(sketcher.insideInstance).toBe(true);
+    expect(sketcher.descendantAt(seat)).toEqual({ instancePath: 'chair-1', ref: 'chair-item', path: 'seat' });
+    expect(sketcher.descendantTransform('chair-1', 'seat')?.position).toEqual([0, 0.45, 0]);
+
+    // A hit on a node inside the Definition's own group keeps the nested path.
+    const nested = sketcher.instanceMeshes.find((m) => m.position.x === -0.3)!;
+    expect(sketcher.descendantAt(nested)?.path).toBe('legs/left');
+  });
+
+  it('varies a node’s transform, and merges into what the instance already said', () => {
+    const sketcher = session();
+    sketcher.focusInstance('chair-1');
+
+    sketcher.setDescendantOverride('chair-1', 'seat', { hidden: true });
+    sketcher.setDescendantOverride('chair-1', 'seat', {
+      transform: { ...identity, position: [0, 1.2, 0] },
+    });
+
+    expect(sketcher.overridesFor('chair-1')).toEqual([
+      { path: 'seat', op: 'set', value: { hidden: true, transform: { ...identity, position: [0, 1.2, 0] } } },
+    ]);
+    // The session shows the variation, and the Definition itself is untouched.
+    expect(sketcher.instanceMeshes).toHaveLength(2);
+    expect(sketcher.orphanedOverrides).toEqual([]);
+  });
+
+  it('drops a node from this instance only, and brings it back on revert', () => {
+    const sketcher = session();
+    sketcher.focusInstance('chair-1');
+
+    sketcher.removeDescendant('chair-1', 'legs/left');
+    expect(sketcher.instanceMeshes).toHaveLength(2);
+    expect(sketcher.overridesFor('chair-1')).toEqual([{ path: 'legs/left', op: 'remove' }]);
+
+    sketcher.revertOverride('chair-1', 'legs/left');
+    expect(sketcher.instanceMeshes).toHaveLength(3);
+    expect(sketcher.overridesFor('chair-1')).toEqual([]);
+  });
+
+  it('collects an override its Definition no longer answers to', () => {
+    const sketcher = session();
+    sketcher.loadDocument(document([{ path: 'legs/gone', op: 'remove' }]));
+
+    expect(sketcher.orphanedOverrides).toEqual([
+      { instancePath: 'chair-1', ref: 'chair-item', path: 'legs/gone', op: 'remove' },
+    ]);
+
+    // Reverting the stale entry is the fix, and it clears the report.
+    sketcher.revertOverride('chair-1', 'legs/gone');
+    expect(sketcher.orphanedOverrides).toEqual([]);
+  });
+
+  it('refuses to add parts while inside an instance', () => {
+    const sketcher = session();
+    sketcher.focusInstance('chair-1');
+
+    expect(sketcher.insertPrimitive('Box')).toBeNull();
+    expect(sketcher.insertInstance({ ref: 'chair-item' })).toBeNull();
+    expect(sketcher.group(['a', 'b'])).toBeNull();
+    expect(sketcher.toDocument().root).toHaveLength(1);
+
+    sketcher.focusInstance(null);
+    expect(sketcher.insertPrimitive('Box')).not.toBeNull();
+  });
+
+  it('stops at a nested instance: past it the node belongs to its own item', () => {
+    const row: SetDocument = {
+      root: [{
+        id: 'chair-slot',
+        role: 'prop',
+        ref: 'chair-item',
+        transform: { ...identity, position: [0.5, 0, 0] },
+        children: [],
+      }],
+      joints: [],
+    };
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    sketcher.setRefResolver((ref) => (ref === 'row' ? row : ref === 'chair-item' ? chair() : null));
+    sketcher.loadDocument({
+      root: [{ id: 'row-1', role: 'structure', ref: 'row', transform: { ...identity }, children: [] }],
+      joints: [],
+    });
+    sketcher.focusInstance('row-1');
+
+    const chairLeg = sketcher.instanceMeshes.find((m) => m.position.x === -0.3)!;
+
+    // The row can vary the node that places the chair, not the chair's own parts: those are the
+    // chair item's to vary, in its own context.
+    expect(sketcher.descendantAt(chairLeg)?.path).toBe('chair-slot');
+    expect(sketcher.descendantTransform('row-1', 'chair-slot')?.position).toEqual([0.5, 0, 0]);
+  });
+
+  it('writes what a drag did, read from the live expansion', () => {
+    const sketcher = session();
+    sketcher.focusInstance('chair-1');
+    const [seat] = sketcher.instanceMeshes;
+    seat.position.set(0, 2, 0);
+
+    new OverrideCommand(sketcher, 'chair-1', 'seat', 'transform').execute();
+
+    expect(sketcher.overridesFor('chair-1')).toEqual([
+      { path: 'seat', op: 'set', value: { transform: { ...identity, position: [0, 2, 0] } } },
+    ]);
+    expect(sketcher.instanceMeshes[0].position.y).toBe(2);
+  });
+
+  it('steps back out when the instance the focus was on is gone', () => {
+    const sketcher = session();
+    sketcher.focusInstance('chair-1');
+
+    sketcher.loadDocument({ root: [], joints: [] });
+
+    expect(sketcher.focusedInstancePath).toBeNull();
+    expect(sketcher.insideInstance).toBe(false);
   });
 });

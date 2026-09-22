@@ -2,7 +2,7 @@
 
 ```bash
 yarn dev --open       # Start dev server (http://localhost:5173)
-yarn check            # TypeScript type checking
+yarn run check         # TypeScript type checking (plain `yarn check` is yarn's own)
 yarn check:watch      # Watch mode
 yarn test             # Run tests once and exit (use this in CI or scripts)
 yarn test:watch       # Watch mode for interactive development
@@ -10,6 +10,21 @@ yarn test:coverage    # Coverage report
 yarn build
 yarn preview
 ```
+
+## Long-running commands
+
+`yarn run test` (full suite) and `yarn run check` routinely take 30 s+, and shell tools that
+drive them cap a single command at ~30 s. Run long commands detached and poll the log:
+
+```bash
+(nohup yarn test > /tmp/test.log 2>&1 &)   # returns immediately
+tail -c 3000 /tmp/test.log                 # poll with separate short reads
+```
+
+Do not chain a `sleep` longer than ~20 s together with the follow-up read in one
+command — the sleep alone hits the cap. When a change touches only a few files,
+prefer a targeted run (`yarn test <path>`, ~5 s) over the full suite.
+
 ## Development Principles
 
 1. **Only production code** – No comments or files whose sole purpose is narrating refactors or AI changes.
@@ -48,6 +63,28 @@ Preserve:
 Follow conventional commits for clarity:
 `feat:`, `fix:`, `refactor:`, `test:`, `chore:`, `docs:`.
 Behavioral change and test addition may be separate commits; prefer clarity over compression.
+
+## Open Work
+
+Open work lives in the [issue tracker](https://github.com/boostybaboon/directionally/issues), not in
+the roadmaps. Every document that used to carry a list now points at it, because a list in a document
+is invisible to the tool doing the work.
+
+Classes, by label: `gap:reach` (a capability a surface cannot reach), `gap:unreachable` (built,
+nothing calls it), `gap:bug`, `gap:deferred` (waiting for a consumer), `gap:stale-doc`, `gap:planned`
+(a track's work that has not started). Tracks keep their own milestone: `Snagging`, `Catalogue 11`,
+`TDA`, `CAP`, `CAT`, `SCR`, `AI`, `Humanoid`, `Workflows`. Priority lives in the project's `Priority`
+field, which is where the backlog order is read from — custom fields do not appear in the issue list.
+
+A coherent feature is an `epic`: a parent issue with the work attached as sub-issues, so the board can
+be read at epic level and nothing is hidden. Milestones stay the schedule (which track, which release),
+the epic is the grouping (what it belongs to together), and the two are not duplicates of each other.
+
+- A commit that closes an item says so (`closes #12`), which is what makes the tracker verifiable from
+  git history rather than from memory.
+- A comment marking real debt names its issue (`TODO(#12): …`), so the gap and its tracking are one
+  hop apart instead of two documents apart.
+- Fixing an item is not finished until the item says it.
 
 ## Refactor Rules
 

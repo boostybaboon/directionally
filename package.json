@@ -12,7 +12,8 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "vitest --run",
 		"test:watch": "vitest",
-		"test:coverage": "vitest --run --coverage"
+		"test:coverage": "vitest --run --coverage",
+		"agent:experiment": "vite-node scripts/agentExperiment.ts"
 	},
 	"devDependencies": {
 		"@azure/static-web-apps-cli": "^2.0.5",
@@ -21,6 +22,7 @@
 		"@sveltejs/vite-plugin-svelte": "^5.0.0",
 		"@types/three": "^0.174.0",
 		"@vitest/ui": "^1.0.0",
+		"playwright": "1.48.2",
 		"svelte": "^5.0.0",
 		"svelte-adapter-azure-swa": "^0.22.1",
 		"svelte-check": "^4.0.0",

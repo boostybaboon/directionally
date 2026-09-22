@@ -2,10 +2,20 @@ import { Scene } from '../domain/Scene.js';
 import { sceneToModel } from '../domain/SceneBridge.js';
 import { getById } from '../catalogue/catalogue.js';
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
+import { pieceKey, resolveInstances } from '../setting/settingSpec.js';
+import type { CatalogueEntry } from '../catalogue/types.js';
+import type { CharacterSpec } from '../character/characterSpec.js';
+import { specCharacterToGlbUrl } from '../character/specCharacter.js';
+import { realiseDocument } from '../sketcher/realise.js';
+import type { RefResolver } from '../sketcher/realise.js';
+import { applyOverrides, collectLights, collectRefs } from '../sketcher/documentTree.js';
+import type { SetDocument } from '../sketcher/documentTree.js';
+import * as OPFSCatalogueStore from './OPFSCatalogueStore.js';
 import { actorBlockToTracks, lightBlockToTracks, setPieceBlockToTracks, cameraBlockToTracks } from '../domain/blockCompiler.js';
 import type { Actor } from '../domain/Production.js';
-import type { ActorVoice, ActorBlock, LightBlock, SetPieceBlock, CameraBlock, Vec3, SceneAction, SetPiece } from '../domain/types.js';
+import type { ActorVoice, ActorBlock, LightBlock, SetPieceBlock, CameraBlock, Vec3, SceneAction, SetPiece, LightConfig } from '../domain/types.js';
 import type { Model } from '../../lib/Model.js';
+import type * as THREE from 'three';
 import type { StoredScene, StoredActor } from './types.js';
 
 // ── Default voice cycle ───────────────────────────────────────────────────────
@@ -30,25 +40,6 @@ function defaultVoice(index: number): ActorVoice {
 }
 
 /**
- * Resolve an `opfs://<id>` gltfPath reference to the current session blob URL.
- * Returns the piece unchanged if the gltfPath is absent or not an opfs:// ref.
- * Strips gltfPath when the entry cannot be resolved so SceneBridge falls back
- * to the placeholder mesh geometry rather than attempting a broken URL load.
- */
-function resolveOpfsGltfPath(
-  piece: SetPiece,
-  userEntries: Array<{ id: string; gltfPath?: string }>,
-): SetPiece {
-  if (!piece.gltfPath?.startsWith('opfs://')) return piece;
-  const entryId = piece.gltfPath.slice('opfs://'.length);
-  const entry = userEntries.find((e) => e.id === entryId);
-  if (entry?.gltfPath) return { ...piece, gltfPath: entry.gltfPath };
-  // Entry not found — remove gltfPath so SceneBridge uses the placeholder geometry.
-  const { gltfPath: _dropped, ...rest } = piece;
-  return rest as SetPiece;
-}
-
-/**
  * Deserialise a `StoredScene` + cast into a renderable `Model`.
  *
  * Resolves each `StoredActor` against the bundled catalogue to obtain its
@@ -58,14 +49,82 @@ function resolveOpfsGltfPath(
  * Actor IDs in `StoredScene.stagedActors` and `StoredScene.actions` must
  * match `StoredActor.id` — the IDs are not remapped.
  *
- * Pass `userEntries` to resolve `opfs://<id>` gltfPath references in set
- * pieces to the current session blob URLs produced by OPFSCatalogueStore,
- * and to look up user-added characters by catalogueId.
+ * Pass `userEntries` to look up user-added characters by catalogueId and to supply
+ * the tree documents (`document`) that saved sets are realised from. Bundled set
+ * pieces carry their document on the entry itself.
  */
+/** Loose user-entry shape sufficient for actor/character resolution. */
+type UserEntryLike = {
+  id: string;
+  gltfPath?: string;
+  kind?: string;
+  defaultAnimation?: string;
+  defaultRotation?: [number, number, number];
+  spec?: CharacterSpec;
+  /** Set on a sketcher-authored set — its `document` is what the renderer needs. */
+  hasDocument?: boolean;
+  /** The entry's tree document, attached by whoever materialised the entry. */
+  document?: SetDocument;
+};
+
+/**
+ * Resolve a `ref` node to the Definition it names, out of the same entry list the caller
+ * materialised the documents from — one lookup per instance, because `realiseDocument` recurses
+ * with the same resolver, which is what follows a Definition that contains instances of its own.
+ * An instance whose Definition is missing contributes no geometry and says so, the same
+ * fail-visible choice the piece-level fallback makes.
+ */
+function refDocumentResolver(entries: CatalogueEntry[]): RefResolver {
+  return (ref) => {
+    const entry = getById(ref, entries);
+    if (entry?.kind !== 'set-piece' || !entry.document) {
+      console.warn(`storedSceneToModel: instance "${ref}" has no document — rendering nothing for it`);
+      return null;
+    }
+    return entry.document;
+  };
+}
+
+/**
+ * Realise every set-piece into a pre-built object tree, keyed by piece name. A
+ * piece is realised from the tree document of the entry it names
+ * (`piece.catalogueId`) — bundled definitions carry it inline, a saved set has it
+ * attached by whoever materialised the entry list. A piece whose entry (or
+ * document) is missing yields nothing, so it falls back to the placeholder
+ * geometry the resolver gave it. The piece's own document may hold instances; those
+ * are resolved from the same entries. The piece's `overrides` are the scene's dressing, replayed
+ * over the document before it is realised — the same list, one scope out from an instance's.
+ */
+function realiseDocumentSets(
+  pieces: SetPiece[],
+  entries: CatalogueEntry[],
+): Map<string, THREE.Object3D> {
+  const groups = new Map<string, THREE.Object3D>();
+  const resolveRef = refDocumentResolver(entries);
+  for (const piece of pieces) {
+    if (!piece.catalogueId) continue;
+    const entry = getById(piece.catalogueId, entries);
+    const document = entry?.kind === 'set-piece' ? entry.document : undefined;
+    if (!document) {
+      console.warn(`storedSceneToModel: no document for catalogue piece "${piece.catalogueId}" — rendering placeholder geometry`);
+      continue;
+    }
+    const root = piece.overrides && piece.overrides.length > 0
+      ? applyOverrides(document.root, piece.overrides, (orphan) => {
+          console.warn(`storedSceneToModel: piece "${piece.name}" has a ${orphan.op} override for "${orphan.path}", which its document no longer has`);
+        })
+      : document.root;
+    groups.set(pieceKey(piece), realiseDocument({ root }, resolveRef, (ref, orphan) => {
+      console.warn(`storedSceneToModel: instance "${ref}" has a ${orphan.op} override for "${orphan.path}", which its Definition no longer has`);
+    }));
+  }
+  return groups;
+}
+
 export function storedSceneToModel(
   storedScene: StoredScene,
   storedActors: StoredActor[],
-  userEntries: Array<{ id: string; gltfPath?: string; kind?: string; defaultAnimation?: string; defaultRotation?: [number, number, number] }> = [],
+  userEntries: UserEntryLike[] = [],
 ): Model {
   // Resolve stored actors into domain Actor objects.
   // The domain Actor's id must equal StoredActor.id so that all scene
@@ -86,24 +145,52 @@ export function storedSceneToModel(
       voice:          sa.voice ?? defaultVoice(i),
       defaultRotation: resolvedDefaultRotation,
       tint:           sa.tint,
+      placeholder:    sa.placeholder,
     };
+
   });
+
+  // Expand any `ref` (Instance) pieces into their rendered children before the scene
+  // assembly below — flattening happens here, at render time, never persisted back
+  // onto the stored scene.
+  const mergedCatalogueEntries = [...CATALOGUE_ENTRIES, ...(userEntries as unknown as CatalogueEntry[])];
+  const resolvedSet = resolveInstances(storedScene.set, mergedCatalogueEntries);
+
+  // A setting's lighting and environment belong to its document, so they arrive with
+  // the same documents the geometry is realised from. The scene keeps its own: an
+  // explicit `environmentMap` wins over the setting's, and both light lists are added.
+  const settingLights: LightConfig[] = [];
+  let settingEnvironment: string | undefined;
+  for (const piece of resolvedSet) {
+    if (!piece.catalogueId) continue;
+    const entry = getById(piece.catalogueId, mergedCatalogueEntries);
+    const document = entry?.kind === 'set-piece' ? entry.document : undefined;
+    if (!document) continue;
+    // A setting's own lights arrive with its document, and are *named by the piece that brought
+    // them* (`classroom/ceiling`): a document's light ids are its own local names, so two settings
+    // can both have a `sky`, and a `LightBlock` — which resolves its target by id — has to be able
+    // to say which one it means. This is the same shape as the piece-name prefix the resolver puts
+    // on expanded names, and it is why a shot can tweak a venue's light at all.
+    settingLights.push(...collectLights(document).map((light) => ({ ...light, id: `${pieceKey(piece)}/${light.id}` })));
+    settingEnvironment ??= document.environmentMap;
+  }
 
   // Re-hydrate StoreScene into a domain Scene so we can reuse the existing
   // SceneBridge pipeline without duplicating its logic.
   const scene = new Scene('production', {
-    duration:        storedScene.duration ?? 10,
-    backgroundColor: storedScene.backgroundColor,
-    environmentMap:  storedScene.environmentMap,
+    duration:           storedScene.duration ?? 10,
+    backgroundColor:    storedScene.backgroundColor,
+    environmentMap:     storedScene.environmentMap ?? settingEnvironment,
+    placeholderSetting: storedScene.placeholderSetting,
   });
 
   scene.setCamera(storedScene.camera);
 
-  for (const light of storedScene.lights) {
+  for (const light of [...storedScene.lights, ...settingLights]) {
     scene.addLight(light);
   }
-  for (const piece of storedScene.set) {
-    scene.addSetPiece(resolveOpfsGltfPath(piece, userEntries));
+  for (const piece of resolvedSet) {
+    scene.addSetPiece(piece);
   }
   for (const staged of storedScene.stagedActors) {
     const { actorId, ...opts } = staged;
@@ -143,7 +230,15 @@ export function storedSceneToModel(
   }
   for (const [lightId, blocks] of lightBlocksByLight) {
     blocks.sort((a, b) => a.startTime - b.startTime);
-    const lightCfg = storedScene.lights.find((l) => l.id === lightId);
+    // A light is either the scene's own or a setting's (resolved above), and both are in
+    // the domain Scene by now, so the config lookup runs against that one list.
+    const lightCfg = scene.lights.find((l) => l.id === lightId);
+    // A block aimed at a light nothing owns compiles to a track nobody reads, so it is worth saying
+    // which id missed: the usual cause is a venue's light addressed by its own name rather than as
+    // piece/light.
+    if (!lightCfg) {
+      console.warn(`storedSceneToModel: light block targets "${lightId}", which this scene has no light for — a setting's light is named after the piece that brought it (piece/light)`);
+    }
     let inferredIntensity: number | undefined = lightCfg?.intensity;
     for (const block of blocks) {
       compiledBlockTracks.push(...lightBlockToTracks(block, inferredIntensity));
@@ -161,7 +256,13 @@ export function storedSceneToModel(
   }
   for (const [targetId, blocks] of setPieceBlocksByTarget) {
     blocks.sort((a, b) => a.startTime - b.startTime);
-    const pieceCfg = storedScene.set.find((p) => p.name === targetId);
+    // The renderer draws the *resolved* pieces, so the inference reads both lists: a block may name
+    // a piece the scene stores (a referenced set) or one the resolver expanded out of it.
+    const pieceCfg = storedScene.set.find((p) => pieceKey(p) === targetId)
+      ?? resolvedSet.find((p) => pieceKey(p) === targetId);
+    if (!pieceCfg) {
+      console.warn(`storedSceneToModel: set-piece block targets "${targetId}", which this scene has no piece for — a piece inside a referenced set is named as the resolver expands it (instance/entry)`);
+    }
     let inferredPos: Vec3 = pieceCfg?.position ?? [0, 0, 0];
     let inferredRot: Vec3 = pieceCfg?.rotation ?? [0, 0, 0];
     for (const block of blocks) {
@@ -184,14 +285,24 @@ export function storedSceneToModel(
     }
   }
 
-  // Default idle animations: play the catalogue's defaultAnimation looping for the full
-  // scene duration for each staged actor that has one. These run at lowest priority —
-  // any authored per-actor animation blocks that fade in/out will blend over them.
+  // Default idle animations: fill gaps between authored blocks for each actor.
+  // A single full-scene idle track would blend with and visually override any authored
+  // clip (e.g. Walking) because the mixer sums weights — idle must not cover block windows.
   const defaultIdleTracks: SceneAction[] = [];
   const sceneDuration = storedScene.duration ?? 10;
   for (const staged of storedScene.stagedActors) {
     const idleClip = characterEntries.get(staged.actorId)?.defaultAnimation;
-    if (idleClip) {
+    if (!idleClip) continue;
+
+    // Collect all clip-bearing block windows for this actor (blocks that set a clip).
+    const clipWindows = (storedScene.blocks ?? [])
+      .filter((b): b is ActorBlock =>
+        b.type === 'actorBlock' && b.actorId === staged.actorId && !!b.clip
+      )
+      .sort((a, b) => a.startTime - b.startTime);
+
+    if (clipWindows.length === 0) {
+      // No authored clips — single full-scene idle is safe.
       defaultIdleTracks.push({
         type: 'animate',
         actorId: staged.actorId,
@@ -200,6 +311,26 @@ export function storedSceneToModel(
         endTime: sceneDuration,
         loop: 'repeat',
       });
+      continue;
+    }
+
+    // Emit idle segments only in the gaps: before the first block, between blocks,
+    // and after the last block.
+    const gapStarts = [0, ...clipWindows.map((b) => b.endTime)];
+    const gapEnds   = [...clipWindows.map((b) => b.startTime), sceneDuration];
+    for (let i = 0; i < gapStarts.length; i++) {
+      const gapStart = gapStarts[i];
+      const gapEnd   = gapEnds[i];
+      if (gapEnd - gapStart > 0.05) {
+        defaultIdleTracks.push({
+          type: 'animate',
+          actorId: staged.actorId,
+          animationName: idleClip,
+          startTime: gapStart,
+          endTime: gapEnd,
+          loop: 'repeat',
+        });
+      }
     }
   }
 
@@ -207,5 +338,74 @@ export function storedSceneToModel(
     scene.addAction(action);
   }
 
-  return sceneToModel(scene, actors);
+  return sceneToModel(scene, actors, realiseDocumentSets(resolvedSet, mergedCatalogueEntries));
+}
+
+/**
+ * Load the closure of Definitions the scene's documents reach: a Definition may refer to further
+ * Definitions, and a saved one is not in the entry list the caller passed. Bundled documents carry
+ * their own, so only refs nothing already serves are read from OPFS — the same walk the Sketcher
+ * does before a load.
+ */
+async function materialiseDefinitions(entries: UserEntryLike[]): Promise<UserEntryLike[]> {
+  const materialised = [...entries];
+  const served = new Set<string>();
+  const pending: string[] = [];
+  const consider = (id: string, document: SetDocument | undefined): void => {
+    if (!document) return;
+    served.add(id);
+    pending.push(...collectRefs(document));
+  };
+
+  for (const entry of CATALOGUE_ENTRIES) {
+    if (entry.kind === 'set-piece') consider(entry.id, entry.document);
+  }
+  for (const entry of entries) consider(entry.id, entry.document);
+
+  while (pending.length > 0) {
+    const id = pending.shift()!;
+    if (served.has(id)) continue;
+    served.add(id);
+    const document = await OPFSCatalogueStore.getDocument(id);
+    if (!document) continue;
+    materialised.push({ id, kind: 'set-piece', hasDocument: true, document });
+    pending.push(...collectRefs(document));
+  }
+  return materialised;
+}
+
+/**
+ * Async variant of `storedSceneToModel` that first materialises anything the
+ * renderer can't read straight from the metadata index, then delegates to the
+ * synchronous deserialiser unchanged:
+ *
+ *   - spec-backed characters (ROADMAP_API.md API-2) become a GLB blob URL;
+ *   - document-backed sets gain their tree document, loaded from OPFS, which
+ *     `storedSceneToModel` realises into a pre-built object tree (step 5);
+ *   - the Definitions those documents refer to are loaded too, so an instance renders
+ *     its geometry wherever it sits in the tree (step 10.3).
+ */
+export async function storedSceneToModelAsync(
+  storedScene: StoredScene,
+  storedActors: StoredActor[],
+  userEntries: UserEntryLike[] = [],
+): Promise<Model> {
+  const materialised = await Promise.all(
+    userEntries.map(async (e) => {
+      if (e.kind === 'character' && e.spec && !e.gltfPath) {
+        try {
+          return { ...e, gltfPath: await specCharacterToGlbUrl(e.spec), spec: undefined };
+        } catch (err) {
+          console.error('Failed to build spec-backed character', e.id, err);
+          return e; // fall through to the placeholder GLB
+        }
+      }
+      if (e.hasDocument) {
+        const document = await OPFSCatalogueStore.getDocument(e.id);
+        if (document) return { ...e, document };
+      }
+      return e;
+    }),
+  );
+  return storedSceneToModel(storedScene, storedActors, await materialiseDefinitions(materialised));
 }

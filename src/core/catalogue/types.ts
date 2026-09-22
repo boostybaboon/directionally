@@ -1,4 +1,6 @@
-import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
+import type { DistributiveOmit, LightConfig, Vec3 } from '../domain/types.js';
+import type { CharacterSpec } from '../character/characterSpec.js';
+import type { SetDocument } from '../sketcher/documentTree.js';
 
 export type CatalogueKind = 'character' | 'set-piece' | 'light' | 'environment';
 
@@ -6,10 +8,25 @@ export interface CharacterEntry {
   kind: 'character';
   id: string;
   label: string;
-  /** URL passed to the GLTF loader, e.g. '/models/gltf/RobotExpressive.glb' */
-  gltfPath: string;
+  /**
+   * URL passed to the GLTF loader, e.g. '/models/gltf/RobotExpressive.glb'.
+   * Absent for spec-backed characters, which carry `spec` and are rebuilt
+   * procedurally at scene load (ROADMAP_API.md API-2).
+   */
+  gltfPath?: string;
+  /**
+   * High-level character description (`CharacterSpec`). When present, the
+   * character is built from this spec at scene load rather than from a GLB.
+   */
+  spec?: CharacterSpec;
   /** Clip name to use for the idle/standing pose in scene authoring. */
   defaultAnimation?: string;
+  /**
+   * Clip name to use for locomotion (enter/exit/move) beats. Characters don't
+   * agree on a single convention — the Robot's walk clip is "Walking" while
+   * procedural humanoid exports use "walk" — so each entry declares its own.
+   */
+  walkAnimation?: string;
   defaultScale?: number;
   /**
    * Euler XYZ rotation (radians) to apply when no authored rotation exists.
@@ -23,21 +40,25 @@ export interface SetPieceEntry {
   kind: 'set-piece';
   id: string;
   label: string;
-  /** When set, load this GLB path instead of using procedural geometry. */
-  gltfPath?: string;
-  geometry: GeometryConfig;
-  material: MaterialConfig;
   /**
-   * Euler XYZ rotation (radians) applied to the SetPiece on first placement.
-   * Use this to correct geometry whose default orientation differs from the scene
-   * convention, e.g. THREE.PlaneGeometry is in the XY plane and needs [-π/2, 0, 0]
-   * to lie flat on the XZ ground plane.
+   * The entry's tree document — the one representation of a set piece
+   * (ROADMAP_CATALOGUE step 8). Bundled definitions carry it inline; a
+   * sketcher-authored set stores it in a sibling OPFS file (`hasDocument`),
+   * so this is only attached by whoever materialises the entry.
    */
-  defaultRotation?: Vec3;
+  document?: SetDocument;
+  /**
+   * True when the entry's document lives in its own OPFS file, loaded by
+   * `OPFSCatalogueStore.getDocument` rather than carried inline.
+   */
+  hasDocument?: boolean;
+  /**
+   * Marks this set-piece as a top-level setting (a venue, e.g. "classroom") rather than
+   * a component (a prop, e.g. "chair"). Authored, never inferred: an entry's lighting
+   * and environment are content of its document, not properties of the entry.
+   */
+  isSetting?: boolean;
 }
-
-/** Distributive Omit: correctly removes a key from each member of a union type. */
-type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
 
 export interface LightEntry {
   kind: 'light';

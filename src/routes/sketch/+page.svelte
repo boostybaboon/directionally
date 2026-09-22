@@ -4,15 +4,28 @@
   import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
   import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
   import { CartoonSketcher } from '../../core/sketcher/CartoonSketcher.js';
+  import type { OrphanedOverrideReport } from '../../core/sketcher/CartoonSketcher.js';
   import { SelectionManager } from '../../core/sketcher/SelectionManager.js';
   import { faceGroupFromNormal, faceGroupLabel } from '../../core/sketcher/AttachManager.js';
   import { SketcherDocument } from '../../core/sketcher/SketcherDocument.js';
+  import CataloguePanel from '../../lib/CataloguePanel.svelte';
+  import SetsColumn from '../../lib/SetsColumn.svelte';
+  import AgentChat from '../../lib/AgentChat.svelte';
+  import { getById, isSettingEntry } from '../../core/catalogue/catalogue.js';
+import { cloneDocument, collectRefs, nodeAt, removeTreeNode } from '../../core/sketcher/documentTree.js';
+import type { NodeOverride, SetDocument } from '../../core/sketcher/documentTree.js';
+  import { CATALOGUE_ENTRIES } from '../../core/catalogue/entries.js';
+  import type { CatalogueEntry } from '../../core/catalogue/types.js';
+  import type { LightConfig } from '../../core/domain/types.js';
+  import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
   import {
     InsertPartCommand,
     DuplicatePartCommand,
     DeletePartCommand,
     ChangeColorCommand,
     ChangeFaceColorCommand,
+    ChangePartLabelCommand,
+    RenameGroupCommand,
     ApplyTextureCommand,
     TransformPartCommand,
     CommitAttachCommand,
@@ -20,11 +33,13 @@
     SnapToFloorCommand,
     GroupCommand,
     UngroupCommand,
+    OverrideCommand,
   } from '../../core/sketcher/sketcherCommands.js';
+  import type { OverrideAction } from '../../core/sketcher/sketcherCommands.js';
   import { exportGLB } from '../../core/sketcher/exportGLB.js';
+  import { countParts } from '../../core/sketcher/documentTree.js';
   import * as OPFSCatalogueStore from '../../core/storage/OPFSCatalogueStore.js';
-  import * as SketcherAssemblyStore from '../../core/storage/SketcherAssemblyStore.js';
-  import type { AssemblyMeta } from '../../core/storage/SketcherAssemblyStore.js';
+  import type { UserCatalogueEntry } from '../../core/storage/OPFSCatalogueStore.js';
 
   let canvas: HTMLCanvasElement;
   let statusMessage = $state('');
@@ -39,6 +54,15 @@
   let selectedPartIsAttached = $state(false);
   // When non-null, we are in group edit mode — editing a single member of this group id.
   let groupEditGroupId = $state<string | null>(null);
+  // 10.4-B: the instance whose insides are being edited, the node selected inside it, the instance
+  // the selection stands for, and the variation state the panels show.
+  let focusedInstancePath = $state<string | null>(null);
+  let focusedInstanceRef = $state<string | null>(null);
+  let selectedInstancePath = $state<string | null>(null);
+  let selectedInstanceRef = $state<string | null>(null);
+  let insideDescendant = $state<{ instancePath: string; ref: string; path: string } | null>(null);
+  let instanceOverrides = $state<NodeOverride[]>([]);
+  let orphanedOverrides = $state<readonly OrphanedOverrideReport[]>([]);
   // Face paint mode: when true, clicks lock and colour individual faces instead of selecting parts.
   let facePaintMode = $state(false);
   // The materialIndex of the face currently under the cursor (drives yellow highlight only).
@@ -55,11 +79,26 @@
   let dragTargetMaterialIndex = $state<number | null>(null);
   let canUndo = $state(false);
   let canRedo = $state(false);
-  // Assembly management (SA9)
-  let assemblyName = $state('Untitled');
-  let currentAssemblyId = $state<string | null>(null);
-  let savedAssemblies = $state<AssemblyMeta[]>([]);
-  let showOpenPanel = $state(false);
+  // Editable set management (SA9) — a saved set *is* its catalogue entry, carrying
+  // the tree document as its editable source. The Sets column is the tool's only
+  // surface for creating, renaming, duplicating, opening and deleting them.
+  let sets = $state<UserCatalogueEntry[]>([]);
+  let currentEntryId = $state<string | null>(null);
+  let renamingSetId = $state<string | null>(null);
+  let showSetsColumn = $state(true);
+  // The AI panel is opened deliberately rather than occupying space by default: it is a conversation
+  // with a session, not a property of it.
+  let showAgentChat = $state(false);
+  // The mounted session, as one reactive value: the sketcher and its undo stack are assigned during
+  // mount, and a panel that reads them needs the assignment to be observable. Raw, because they own
+  // Three objects and must never be proxied.
+  let session = $state.raw<{ sketcher: CartoonSketcher; document: SketcherDocument } | null>(null);
+  // Name for a set that does not exist yet, e.g. ?prefillName= from the script view.
+  let pendingSetLabel = $state<string | null>(null);
+  // Catalogue panel (Track SET, N3) — user-added entries + active environment.
+  let userCatalogueEntries = $state<CatalogueEntry[]>([]);
+  let showCataloguePanel = $state(false);
+  let activeEnvironmentId = $state<string | undefined>(undefined);
   // Attach interaction state
   let attachPhase = $state<'src' | 'target' | null>(null);
   // The anchor blob placed in phase 'src'.
@@ -82,6 +121,7 @@
   let selection: SelectionManager;
   let animId: number;
   let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let catalogueChannel: BroadcastChannel;
 
   // Yellow hover highlight shown over the hovered face during attach-pick.
   let faceHighlight: THREE.Mesh | null = null;
@@ -128,6 +168,12 @@
   let inspSX = $state('1.000'); let inspSY = $state('1.000'); let inspSZ = $state('1.000');
   let uniformScale = $state(false);
   let inspectorFocused = false; // not reactive — only used to gate refreshInspector()
+
+  // SA13: name fields (part label + group name), editable via the inspector.
+  let inspName = $state('');
+  let inspNamePlaceholder = $state('');
+  let inspGroupName = $state('');
+  let hasSelectedGroup = $state(false);
 
   // Snapshot captured at TC drag-start; passed to execute() at drag-end.
   let tcPreDragSnapshot: ReturnType<typeof sketcherDoc.captureSnapshot> | null = null;
@@ -186,14 +232,24 @@
         // Drag ended: record the transform as an undoable entry using the
         // pre-drag snapshot as `before` so it is immune to stale group references.
         if (tcPreDragSnapshot) {
-          sketcherDoc.execute(
-            new TransformPartCommand(sketcher, selectedPartId, tcDragMode),
-            tcPreDragSnapshot,
-          );
+          if (insideDescendant) {
+            // The gizmo moved an object inside an expansion: what changed is a variation on the
+            // instance, not a part of this document.
+            sketcherDoc.execute(
+              new OverrideCommand(sketcher, insideDescendant.instancePath, insideDescendant.path, 'transform'),
+              tcPreDragSnapshot,
+            );
+          } else {
+            sketcherDoc.execute(
+              new TransformPartCommand(sketcher, selectedPartId, tcDragMode),
+              tcPreDragSnapshot,
+            );
+          }
         }
         tcPreDragSnapshot = null;
         tcDragStartScale = null;
         refreshInspector();
+        refreshOverrideState();
       }
     });
 
@@ -225,6 +281,10 @@
         if (groupEditGroupId === null) {
           statusMessage = 'W translate · E rotate · R scale · Shift+D duplicate · Delete remove · Esc deselect';
         }
+        // An instance (or a hit inside the focused one) is what the variation panel describes.
+        const instance = sketcher.instanceFor(mesh);
+        selectedInstancePath = instance?.path ?? null;
+        selectedInstanceRef = instance?.ref ?? null;
         const part = sketcher.getSession().parts.find((p) => p.mesh === mesh);
         if (part) {
           selectedPartId = part.id;
@@ -234,6 +294,15 @@
             (j) => j.partAId === part.id || j.partBId === part.id,
           );
           refreshInspector();
+        } else {
+          // A mesh that is no session part is an instance's geometry, which belongs to its
+          // Definition. Clear the part-derived state so nothing shows a stale part — but inside an
+          // instance the hit is the node being varied.
+          selectedPartId = null;
+          selectedGroupIsGrouped = false;
+          selectedPartIsAttached = false;
+          insideDescendant = sketcher.descendantAt(mesh);
+          refreshOverrideState();
         }
       } else {
         // Deselection — if in group edit mode, clean up dimming before TC detaches.
@@ -251,6 +320,10 @@
         lockedFaceHasTexture = false;
         selectedGroupIsGrouped = false;
         selectedPartIsAttached = false;
+        selectedInstancePath = null;
+        selectedInstanceRef = null;
+        insideDescendant = null;
+        refreshOverrideState();
         clearFaceHighlight();
         // tc.detach() already sets _root.visible = false; no need to touch it here.
       }
@@ -278,58 +351,59 @@
     sketcherDoc = new SketcherDocument(sketcher, () => {
       canUndo = sketcherDoc.canUndo;
       canRedo = sketcherDoc.canRedo;
+      refreshOverrideState();
       // Persist the session after every mutation so it survives a page reload.
       if (draftSaveTimer !== null) clearTimeout(draftSaveTimer);
       draftSaveTimer = setTimeout(async () => {
-        const draft = sketcher.toDraft();
-        if (currentAssemblyId) {
-          await SketcherAssemblyStore.save(currentAssemblyId, assemblyName, draft);
-        } else {
-          const meta = await SketcherAssemblyStore.create(assemblyName, draft);
-          currentAssemblyId = meta.id;
-          localStorage.setItem('sketcher-assembly-id', meta.id);
-          savedAssemblies = await SketcherAssemblyStore.list();
-        }
+        await persistSet();
         draftSaveTimer = null;
       }, 500);
     });
+    session = { sketcher, document: sketcherDoc };
 
-    // Restore the last-opened assembly from OPFS, or migrate the legacy localStorage draft.
+    // Restore the last-opened set from its catalogue entry.
     void (async () => {
-      savedAssemblies = await SketcherAssemblyStore.list();
-      // Allow deep-linking to a specific assembly via ?assemblyId=<id> (e.g. "Edit in Sketcher").
-      const urlAssemblyId = new URLSearchParams(window.location.search).get('assemblyId');
-      const lastId = urlAssemblyId ?? localStorage.getItem('sketcher-assembly-id');
-    if (lastId) {
-      const draft = await SketcherAssemblyStore.get(lastId);
-      const meta = savedAssemblies.find((a) => a.id === lastId);
-      if (draft && meta) {
-        sketcher.loadDraft(draft);
-        currentAssemblyId = lastId;
-        assemblyName = meta.name;
-        localStorage.setItem('sketcher-assembly-id', lastId);
-      }
-    } else {
-      // Migrate legacy localStorage draft to a named OPFS assembly.
-      const rawDraft = localStorage.getItem('sketcher-draft');
-      if (rawDraft) {
-        try {
-          const draft = JSON.parse(rawDraft);
-          if (draft?.version === 2) {
-            sketcher.loadDraft(draft);
-            const meta = await SketcherAssemblyStore.create('Untitled', draft);
-            currentAssemblyId = meta.id;
-            assemblyName = meta.name;
-            localStorage.setItem('sketcher-assembly-id', meta.id);
-            localStorage.removeItem('sketcher-draft');
-            savedAssemblies = await SketcherAssemblyStore.list();
-          }
-        } catch {
-          // Corrupt legacy draft — ignore and start fresh.
+      sets = await OPFSCatalogueStore.listDocuments();
+      // Allow deep-linking to a specific set via ?entryId=<id> (e.g. "Edit in Sketcher").
+      // CAT-4: ?prefillName starts a fresh, pre-named set instead of restoring.
+      // N11: if a same-named set already exists, resume it instead of minting
+      // a duplicate every time the script view's "Create →" is clicked.
+      const params = new URLSearchParams(window.location.search);
+      const prefill = params.get('prefillName');
+      const urlEntryId = params.get('entryId');
+      const prefillTrimmed = (prefill ?? '').trim().toLowerCase();
+      const nameMatch = prefillTrimmed
+        ? sets.find((s) => s.label.trim().toLowerCase() === prefillTrimmed)
+        : undefined;
+      const lastId = urlEntryId ?? nameMatch?.id ?? (prefill ? null : localStorage.getItem('sketcher-entry-id'));
+      if (lastId) {
+        const document = await OPFSCatalogueStore.getDocument(lastId);
+        const meta = sets.find((s) => s.id === lastId);
+        if (document && meta) {
+          sketcher.loadDocument(document);
+          currentEntryId = lastId;
+          localStorage.setItem('sketcher-entry-id', lastId);
         }
       }
-    }
+
+      if (prefill) {
+        pendingSetLabel = prefill.trim() || null;
+      }
+
+      // Restore the applied HDRI environment (loadDocument only records the id).
+      if (sketcher.environmentMap) {
+        activeEnvironmentId = sketcher.environmentMap;
+        void handleApplyEnvironment(sketcher.environmentMap);
+      }
     })();
+
+    // Catalogue panel: load user-added entries once, then stay in sync with
+    // the catalogue-updated broadcast (e.g. a Sketcher export).
+    void OPFSCatalogueStore.list().then((entries) => { userCatalogueEntries = entries; });
+    catalogueChannel = new BroadcastChannel('directionally-catalogue');
+    catalogueChannel.onmessage = () => {
+      void OPFSCatalogueStore.list().then((entries) => { userCatalogueEntries = entries; });
+    };
 
     // ── Keyboard shortcuts ───────────────────────────────────────────────────
     const onKey = (e: KeyboardEvent) => {
@@ -339,14 +413,15 @@
         case 'e': case 'E': setTransformMode('rotate'); break;
         case 'r': case 'R': setTransformMode('scale'); break;
         case 'z': case 'Z':
-          if (e.ctrlKey && e.shiftKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); resyncSelectionAfterUndoRedo(); refreshInspector(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
-          else if (e.ctrlKey) { const lbl = sketcherDoc.undoLabel; exitGroupEditMode(); sketcherDoc.undo(); resyncSelectionAfterUndoRedo(); refreshInspector(); statusMessage = lbl ? `Undid: ${lbl}` : 'Undone.'; e.preventDefault(); }
+          if (e.ctrlKey && e.shiftKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); resyncSelectionAfterUndoRedo(); refreshInspector(); refreshOverrideState(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
+          else if (e.ctrlKey) { const lbl = sketcherDoc.undoLabel; exitGroupEditMode(); sketcherDoc.undo(); resyncSelectionAfterUndoRedo(); refreshInspector(); refreshOverrideState(); statusMessage = lbl ? `Undid: ${lbl}` : 'Undone.'; e.preventDefault(); }
           break;
         case 'y': case 'Y':
-          if (e.ctrlKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); resyncSelectionAfterUndoRedo(); refreshInspector(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
+          if (e.ctrlKey) { const lbl = sketcherDoc.redoLabel; exitGroupEditMode(); sketcherDoc.redo(); resyncSelectionAfterUndoRedo(); refreshInspector(); refreshOverrideState(); statusMessage = lbl ? `Redid: ${lbl}` : 'Redone.'; e.preventDefault(); }
           break;
         case 'Escape':
           if (groupEditGroupId !== null) { exitGroupEditMode(); }
+          else if (focusedInstancePath !== null) { exitInstance(); }
           else if (attachPhase !== null) { cancelAttachPick(); }
           else if (sketcher.currentPhase === 'drawing') { isDrawing = false; hideSnapGrid(); sketcher.cancelSketch(); orbit.enabled = true; }
           else if (sketcher.currentPhase === 'hole-drawing') { isDrawing = false; hideSnapGrid(); sketcher.cancelHole(); }
@@ -361,6 +436,10 @@
         case 'g': case 'G':
           if (attachPhase === null) startAttachPick();
           break;
+        case 'i': case 'I':
+          if (focusedInstancePath !== null) exitInstance();
+          else if (selectedInstancePath && selectedInstanceRef) enterInstance(selectedInstancePath, selectedInstanceRef);
+          break;
         case 'u': case 'U':
           if (selectedPartId) {
             if (selectedPartIsAttached) detachSelected();
@@ -371,14 +450,7 @@
     };
     window.addEventListener('keydown', onKey);
 
-    const handleResize = () => {
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
-      renderer.setSize(w, h);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-    };
-    window.addEventListener('resize', handleResize);
+    window.addEventListener('resize', resizeCanvas);
 
     const render = () => {
       animId = requestAnimationFrame(render);
@@ -389,7 +461,7 @@
 
     return () => {
       window.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('resize', resizeCanvas);
     };
   });
 
@@ -402,6 +474,7 @@
     sketcher?.dispose();
     orbit?.dispose();
     renderer?.dispose();
+    catalogueChannel?.close();
   });
 
   // ── NDC helpers ──────────────────────────────────────────────────────────────
@@ -478,6 +551,10 @@
     inspX = pos.x.toFixed(3); inspY = pos.y.toFixed(3); inspZ = pos.z.toFixed(3);
     inspRX = toDeg(euler.x).toFixed(1); inspRY = toDeg(euler.y).toFixed(1); inspRZ = toDeg(euler.z).toFixed(1);
     inspSX = scale.x.toFixed(3); inspSY = scale.y.toFixed(3); inspSZ = scale.z.toFixed(3);
+    inspName = part.label ?? '';
+    inspNamePlaceholder = part.name;
+    hasSelectedGroup = ag !== null;
+    inspGroupName = ag?.name ?? '';
   }
 
   /**
@@ -582,11 +659,51 @@
     refreshInspector();
   }
 
+  /** Commit the name field to the selected part's label as an undoable command. */
+  function commitName() {
+    if (!selectedPartId || !sketcher) return;
+    const label = inspName.trim() || undefined;
+    sketcherDoc.execute(new ChangePartLabelCommand(selectedPartId, label, sketcher));
+    refreshInspector();
+  }
+
+  /** Commit the group-name field to the selected part's group as an undoable command. */
+  function commitGroupName() {
+    if (!selectedPartId || !sketcher) return;
+    const ag = sketcher.attachManager.groupForPart(selectedPartId);
+    if (!ag) return;
+    const name = inspGroupName.trim() || undefined;
+    sketcherDoc.execute(new RenameGroupCommand(ag.id, name, sketcher));
+    refreshInspector();
+  }
+
   // ── Selection + delete ──────────────────────────────────────────────────────
 
   function deleteSelected() {
     const mesh = selection.selectedMesh;
     if (!mesh) return;
+
+    // Inside an instance, Delete takes the node out of *this* instance's copy: the item is what
+    // every other instance shares, and only Apply changes it.
+    if (insideDescendant) {
+      const { instancePath, path } = insideDescendant;
+      sketcherDoc.execute(new OverrideCommand(sketcher, instancePath, path, 'remove'));
+      selection.deselect();
+      statusMessage = `Removed "${path}" from this instance — the item itself is unchanged.`;
+      return;
+    }
+
+    // An instance has no part of its own, so its *node* is what goes — the Definition stays.
+    const instance = sketcher.instanceFor(mesh);
+    if (instance) {
+      selection.deselect();
+      const before = sketcherDoc.captureSnapshot();
+      sketcher.removeNode(instance.path);
+      sketcherDoc.record(before, sketcherDoc.captureSnapshot(), 'Delete instance');
+      statusMessage = 'Instance removed. Its Definition is unchanged.';
+      return;
+    }
+
     const session = sketcher.getSession();
     const part = session.parts.find((p) => p.mesh === mesh);
     if (!part) return;
@@ -602,6 +719,37 @@
       sketcherDoc.execute(new DeletePartCommand(part.id, sketcher));
       statusMessage = 'Part deleted.';
     }
+  }
+
+  /**
+   * Save selection as Item (N4): promote the selected part or group into a Definition and leave
+   * an instance of it in place. The item is a catalogue entry from the moment it exists, so other
+   * sets place it rather than copy it, and opening it (`openInstanceSource`) edits what it is made
+   * of. The entry is created first because the node has to reference its id — the empty write is
+   * the price of that order, and it is what `saveDocument` then fills in.
+   */
+  async function saveSelectionAsItem() {
+    if (!sketcher || !selectedPartId) return;
+    const session = sketcher.getSession();
+    const part = session.parts.find((p) => p.id === selectedPartId);
+    if (!part) return;
+    const ag = sketcher.attachManager.groupForPart(part.id);
+    const suggested = ag?.name ?? part.label ?? part.name;
+    const label = window.prompt('Save as Item — name it:', suggested)?.trim();
+    if (!label) return;
+
+    const target = ag ? ag.id : part.id;
+    const entry = await OPFSCatalogueStore.createSetPieceDocument(label, { isSetting: false });
+    const before = sketcherDoc.captureSnapshot();
+    const definition = sketcher.extractInstance(target, entry.id);
+    if (!definition) return;
+    await OPFSCatalogueStore.saveDocument(entry.id, definition, { partCount: countParts(definition) });
+    refDocuments.set(entry.id, definition);
+    sketcher.setRefResolver((ref) => refDocuments.get(ref) ?? null);
+    sketcherDoc.record(before, sketcherDoc.captureSnapshot(), `Save "${label}" as Item`);
+    await refreshCatalogueViews();
+    selection.deselect();
+    statusMessage = `Saved "${label}" as a catalogue item — now placed as a reference.`;
   }
 
   function duplicateSelected() {
@@ -703,7 +851,9 @@
     // Idle phase: click → try to select a part (or paint a face in face-paint mode).
     if (sketcher.currentPhase === 'idle') {
       const session = sketcher.getSession();
-      const meshes = session.parts.map((p) => p.mesh);
+      // Instance geometry is hit-testable as well, so an instance can be grabbed by clicking
+      // any part of it.
+      const meshes = [...session.parts.map((p) => p.mesh), ...sketcher.instanceMeshes];
 
       // Shift-click: toggle parts or whole assembly groups in the multi-selection.
       // When the primary selection or the clicked item is in a group, the group is
@@ -778,6 +928,27 @@
 
       // ── Normal click (not in group edit mode) ─────────────────────────────
       if (hit) {
+        // Inside an instance, the hit addresses the node within its Definition — what a variation
+        // is written against. Clicking anything else steps back out.
+        const descendant = sketcher.descendantAt(hit);
+        if (descendant) {
+          selection.select(hit);
+          tc.attach(hit);
+          statusMessage = `Inside "${descendant.ref}": ${descendant.path} · move, hide or remove it, then Apply or Revert`;
+          return;
+        }
+        if (focusedInstancePath !== null) exitInstance();
+
+        // An instance is one unit: its internals belong to its Definition, so a click
+        // anywhere inside the expansion grabs the instance itself.
+        const instance = sketcher.instanceFor(hit);
+        if (instance) {
+          selection.selectGroup(hit, instance.group);
+          tc.attach(instance.group);
+          statusMessage = 'Instance selected. W/E/R transform · Edit inside to vary it · open its source to change what it is made of';
+          return;
+        }
+
         // In normal mode, selecting any mesh in a group selects the whole group.
         const hitPart = session.parts.find((p) => p.mesh === hit);
         const ag = hitPart ? sketcher.attachManager.groupForPart(hitPart.id) : undefined;
@@ -1210,7 +1381,114 @@
 
   // ── Toolbar actions ─────────────────────────────────────────────────────────
 
+  const mergedCatalogueEntries = $derived<CatalogueEntry[]>([...CATALOGUE_ENTRIES, ...userCatalogueEntries]);
+
+  async function handleCatalogueAdd(kind: 'character' | 'setpiece' | 'light', id: string) {
+    if (kind === 'character') {
+      statusMessage = 'Characters are staged in the script view.';
+      return;
+    }
+    if (kind === 'light') {
+      const entry = getById(id, mergedCatalogueEntries);
+      if (entry?.kind !== 'light') return;
+      const config: LightConfig = { ...entry.config, id: `${entry.id}-${crypto.randomUUID().slice(0, 6)}` };
+      sketcher.addLight(config);
+      statusMessage = `Added ${entry.label}.`;
+      return;
+    }
+    const entry = getById(id, mergedCatalogueEntries);
+    if (entry?.kind !== 'set-piece') return;
+    if (focusedInstancePath !== null) {
+      statusMessage = 'Inside an instance only variations are editable — leave it to place items.';
+      return;
+    }
+
+    // An entry arrives as an instance, so the Sketcher has to know the Definition before the
+    // insert expands it — bundled entries carry their document inline, saved ones come from OPFS.
+    const definition = refDocuments.get(entry.id) ?? await loadDefinition(entry.id);
+    if (!definition) {
+      statusMessage = `"${entry.label}" has no document to reference.`;
+      return;
+    }
+    refDocuments.set(entry.id, definition);
+    sketcher.setRefResolver((ref) => refDocuments.get(ref) ?? null);
+
+    const before = sketcherDoc.captureSnapshot();
+    const { path, object } = sketcher.insertCatalogueEntry(entry);
+    if (!path) return;
+    sketcherDoc.record(before, sketcherDoc.captureSnapshot(), `Add ${entry.label}`);
+
+    const mesh = object ? firstMesh(object) : null;
+    if (object && mesh) {
+      selection.selectGroup(mesh, object);
+      tc.attach(object);
+    }
+    statusMessage = `Added ${entry.label} as a reference.`;
+  }
+
+  /**
+   * Edit Source (N5): open the Definition an instance refers to, in this editor. The session *is*
+   * that Definition while it is open, so the set being worked on is persisted first and the way
+   * back is the Sets column. A bundled entry has no editable document: taking a copy of it is what
+   * "Save selection as Item" is for, so it is reported rather than opened.
+   */
+  async function openInstanceSource(ref: string) {
+    if (!sketcher) return;
+    if (ref === currentEntryId) {
+      statusMessage = 'This set is already open.';
+      return;
+    }
+    const label = getById(ref, mergedCatalogueEntries)?.label ?? ref;
+    const document = await OPFSCatalogueStore.getDocument(ref);
+    if (!document) {
+      statusMessage = `"${label}" is a bundled item — save your own copy to change what it is made of.`;
+      return;
+    }
+    await openSet(ref);
+    statusMessage = `Opened "${label}" to edit what the instances are made of. Return via the Sets column.`;
+  }
+
+  /** The first mesh in an object tree — a selection outline needs one to hold. */
+  function firstMesh(object: THREE.Object3D): THREE.Mesh | null {
+    let found: THREE.Mesh | null = null;
+    object.traverse((child) => {
+      if (!found && (child as THREE.Mesh).isMesh) found = child as THREE.Mesh;
+    });
+    return found;
+  }
+
+  async function handleApplyEnvironment(environmentId: string | undefined) {
+    if (!renderer || !scene) return;
+    if (!environmentId) {
+      scene.environment = null;
+      scene.background = new THREE.Color(0x1a1a2e);
+      sketcher.setEnvironmentMap(undefined);
+      activeEnvironmentId = undefined;
+      statusMessage = 'Environment cleared.';
+      return;
+    }
+    const env = getById(environmentId, mergedCatalogueEntries);
+    if (env?.kind !== 'environment') return;
+    try {
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      const texture = await new RGBELoader().loadAsync(env.hdriPath);
+      const envMap = pmrem.fromEquirectangular(texture).texture;
+      scene.environment = envMap;
+      scene.background = envMap;
+      pmrem.dispose();
+      sketcher.setEnvironmentMap(environmentId);
+      activeEnvironmentId = environmentId;
+      statusMessage = `Environment: ${env.label}.`;
+    } catch {
+      statusMessage = 'Failed to load environment.';
+    }
+  }
+
   function insertPrimitive(kind: string) {
+    if (focusedInstancePath !== null) {
+      statusMessage = 'Inside an instance only variations are editable — leave it to add parts.';
+      return;
+    }
     selection.deselect();
     const cmd = new InsertPartCommand(kind, sketcher);
     sketcherDoc.execute(cmd);
@@ -1244,6 +1522,10 @@
   }
 
   function newSketch() {
+    if (focusedInstancePath !== null) {
+      statusMessage = 'Inside an instance only variations are editable — leave it to draw.';
+      return;
+    }
     selection.deselect();
     isDrawing = true;
     showSnapGrid();
@@ -1354,6 +1636,10 @@
   }
 
   function startRevolveMode() {
+    if (focusedInstancePath !== null) {
+      statusMessage = 'Inside an instance only variations are editable — leave it to draw.';
+      return;
+    }
     enterRevolveEnvironment();
     isDrawing = true;
     isRevolvePending = false;
@@ -1366,56 +1652,174 @@
   function clearSession() {
     if (attachPhase !== null) cancelAttachPick();
     selection.deselect();
+    // A new session cannot be inside an instance: a path from the last document could name a node in
+    // this one, and editing it would be a coincidence rather than an intent.
+    sketcher.focusInstance(null);
+    focusedInstancePath = null;
+    focusedInstanceRef = null;
+    insideDescendant = null;
     sketcher.clearSession();
     sketcherDoc.clearStack();
     statusMessage = 'Session cleared.';
   }
 
-  async function newAssembly() {
-    if (currentAssemblyId) {
-      await SketcherAssemblyStore.save(currentAssemblyId, assemblyName, sketcher.toDraft());
+  /** Re-read the sets column from the store. */
+  async function refreshSets(): Promise<void> {
+    sets = await OPFSCatalogueStore.listDocuments();
+  }
+
+  /** Re-read the sets column and the catalogue, then tell the other views to refresh. */
+  async function refreshCatalogueViews(): Promise<void> {
+    await refreshSets();
+    userCatalogueEntries = await OPFSCatalogueStore.list();
+    new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
+  }
+
+  /**
+   * Write the session's tree document to its catalogue entry — creating the entry on
+   * first save — along with the metadata that travels with a set (its baseline
+   * lighting, its environment and its part count). Autosave is the only save: the
+   * entry and its document are the same artefact, so there is nothing to publish.
+   * Returns the entry id, or null when an empty session has no entry to write to yet.
+   */
+  async function persistSet(): Promise<string | null> {
+    const document = sketcher.toDocument();
+    if (!currentEntryId && document.root.length === 0) return null;
+    // Lighting and environment are content of the document now, so only the metadata
+    // the entry itself owns travels beside it.
+    const meta = { partCount: countParts(document) };
+    if (currentEntryId) {
+      await OPFSCatalogueStore.saveDocument(currentEntryId, document, meta);
+      await refreshSets();
+    } else {
+      // Sets authored here are scenery by default — a venue the script can place —
+      // and the column's tag flips one to a component prop.
+      const entry = await OPFSCatalogueStore.createSetPieceDocument(pendingSetLabel ?? 'Untitled', {
+        document,
+        isSetting: true,
+        ...meta,
+      });
+      pendingSetLabel = null;
+      currentEntryId = entry.id;
+      localStorage.setItem('sketcher-entry-id', entry.id);
+      // A new set is a catalogue item from the moment it exists, so the other views
+      // (catalogue panel, script) hear about it through the usual channel.
+      await refreshCatalogueViews();
     }
+    return currentEntryId;
+  }
+
+  async function newSet() {
+    await persistSet();
     clearSession();
-    const meta = await SketcherAssemblyStore.create('Untitled', { version: 2, parts: [], joints: [], groups: [] });
-    currentAssemblyId = meta.id;
-    assemblyName = meta.name;
-    localStorage.setItem('sketcher-assembly-id', meta.id);
-    savedAssemblies = await SketcherAssemblyStore.list();
-    statusMessage = 'New assembly started.';
+    const entry = await OPFSCatalogueStore.createSetPieceDocument('Untitled', { isSetting: true });
+    currentEntryId = entry.id;
+    localStorage.setItem('sketcher-entry-id', entry.id);
+    await refreshSets();
+    // Name on create: the new row opens its name field straight away.
+    renamingSetId = entry.id;
+    statusMessage = 'New set — name it in the Sets column.';
   }
 
-  async function openAssembly(id: string) {
-    if (currentAssemblyId) {
-      await SketcherAssemblyStore.save(currentAssemblyId, assemblyName, sketcher.toDraft());
+  /**
+   * The Definitions the session can expand, by catalogue id. A bundled entry carries its
+   * document inline; a saved one lives in OPFS, which is why this is filled before a load
+   * rather than looked up during it.
+   */
+  const refDocuments = new Map<string, SetDocument>();
+
+  /** A catalogue Definition by id: inline for bundled entries, from OPFS for saved ones. */
+  async function loadDefinition(id: string): Promise<SetDocument | null> {
+    const entry = getById(id, mergedCatalogueEntries);
+    if (entry?.kind === 'set-piece' && entry.document) return entry.document;
+    return OPFSCatalogueStore.getDocument(id);
+  }
+
+  /**
+   * Hand the Sketcher every Definition a document refers to, transitively — a Definition can
+   * hold instances of its own, so the closure is walked rather than the direct refs only.
+   */
+  async function applyRefResolver(doc: SetDocument): Promise<void> {
+    const queue = collectRefs(doc);
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      if (refDocuments.has(id)) continue;
+      const definition = await loadDefinition(id);
+      if (!definition) continue;
+      refDocuments.set(id, definition);
+      queue.push(...collectRefs(definition).filter((ref) => !refDocuments.has(ref)));
     }
-    const meta = savedAssemblies.find((a) => a.id === id);
-    const draft = await SketcherAssemblyStore.get(id);
-    if (draft && meta) {
+    sketcher.setRefResolver((ref) => refDocuments.get(ref) ?? null);
+  }
+
+  async function openSet(id: string) {
+    if (id === currentEntryId) return;
+    await persistSet();
+    const meta = sets.find((s) => s.id === id);
+    const document = await OPFSCatalogueStore.getDocument(id);
+    if (!document || !meta) return;
+    // The resolver has to be in place before the load, since sync expands instances.
+    await applyRefResolver(document);
+    clearSession();
+    sketcher.loadDocument(document);
+    sketcherDoc.clearStack();
+    currentEntryId = id;
+    localStorage.setItem('sketcher-entry-id', id);
+    // loadDocument only records the environment id; the environment itself is applied here.
+    activeEnvironmentId = sketcher.environmentMap;
+    void handleApplyEnvironment(sketcher.environmentMap);
+    statusMessage = `Opened "${meta.label}".`;
+  }
+
+  async function deleteSet(id: string) {
+    // The entry is the editable source *and* the published asset, so one removal
+    // retires the set everywhere — no cascade between stores.
+    const label = sets.find((s) => s.id === id)?.label ?? 'Untitled';
+    await OPFSCatalogueStore.remove(id);
+    await refreshCatalogueViews();
+    if (currentEntryId === id) {
+      // The session *is* that set: close it, or the next edit would mint a fresh
+      // entry for content the user just deleted.
+      currentEntryId = null;
+      localStorage.removeItem('sketcher-entry-id');
       clearSession();
-      sketcher.loadDraft(draft);
-      sketcherDoc.clearStack();
-      currentAssemblyId = id;
-      assemblyName = meta.name;
-      localStorage.setItem('sketcher-assembly-id', id);
-      showOpenPanel = false;
-      statusMessage = `Opened "${meta.name}".`;
     }
+    statusMessage = `Deleted "${label}".`;
   }
 
-  async function deleteAssembly(id: string) {
-    await SketcherAssemblyStore.remove(id);
-    savedAssemblies = await SketcherAssemblyStore.list();
-    if (currentAssemblyId === id) {
-      currentAssemblyId = null;
-      assemblyName = 'Untitled';
-      localStorage.removeItem('sketcher-assembly-id');
-    }
+  async function renameSet(id: string, label: string) {
+    await OPFSCatalogueStore.updateSetPieceMeta(id, { label });
+    await refreshSets();
+    statusMessage = `Renamed to "${label}".`;
   }
 
-  async function renameCurrentAssembly() {
-    if (!currentAssemblyId) return;
-    await SketcherAssemblyStore.save(currentAssemblyId, assemblyName, sketcher.toDraft());
-    savedAssemblies = await SketcherAssemblyStore.list();
+  async function classifySet(id: string, isSetting: boolean) {
+    await OPFSCatalogueStore.updateSetPieceMeta(id, { isSetting });
+    await refreshSets();
+    statusMessage = isSetting
+      ? 'Marked as scenery — a venue a scene can be set in.'
+      : 'Marked as a component prop.';
+  }
+
+  async function duplicateSet(id: string) {
+    await persistSet();
+    const source = sets.find((s) => s.id === id);
+    const document = await OPFSCatalogueStore.getDocument(id);
+    if (!source || !document) return;
+    // The copy is independent from the outset — its own document, its own metadata —
+    // so editing it never reaches back into the original.
+    const entry = await OPFSCatalogueStore.createSetPieceDocument(`${source.label} copy`, {
+      document: JSON.parse(JSON.stringify(document)),
+      isSetting: isSettingEntry(source),
+      ...(source.partCount !== undefined ? { partCount: source.partCount } : {}),
+    });
+    await refreshSets();
+    if (id === currentEntryId) {
+      // Duplicating what you are editing continues in the copy, as "save as" did.
+      await openSet(entry.id);
+      renamingSetId = entry.id;
+    }
+    statusMessage = `Duplicated "${source.label}".`;
   }
 
   // ── Group edit mode ──────────────────────────────────────────────────────────
@@ -1450,6 +1854,147 @@
     // selection.select fires onSelectionChanged → tc.attach(activeMesh); TC stays on the individual mesh.
     selection.select(activeMesh);
     statusMessage = 'Group edit: W/E/R transform selected member · click another member to switch · Esc to exit';
+  }
+
+  /**
+   * Step inside an instance (10.4-B): from here a hit addresses the node within its Definition, and
+   * moving, hiding or removing one writes a variation on the instance instead of changing the item
+   * every other instance shares.
+   */
+  function enterInstance(instancePath: string, ref: string) {
+    sketcher.focusInstance(instancePath);
+    focusedInstancePath = instancePath;
+    focusedInstanceRef = ref;
+    insideDescendant = null;
+    selection.deselect();
+    statusMessage = `Inside "${ref}" — click a part to vary it · Apply or Revert in the panel · Esc to leave`;
+    refreshOverrideState();
+  }
+
+  function exitInstance() {
+    if (focusedInstancePath === null) return;
+    sketcher.focusInstance(null);
+    focusedInstancePath = null;
+    focusedInstanceRef = null;
+    insideDescendant = null;
+    selection.deselect();
+    statusMessage = 'Left the instance.';
+    refreshOverrideState();
+  }
+
+  /**
+   * Read what the panels show: the variations the instance in hand carries, and the ones its
+   * Definition no longer answers to. Called wherever the document or the selection changed — the
+   * on-demand pattern the transform inspector already uses.
+   */
+  function refreshOverrideState() {
+    if (!sketcher) return;
+    // The sketcher retires a focus whose instance is gone (undo, delete, a load), so follow it.
+    focusedInstancePath = sketcher.focusedInstancePath;
+    if (focusedInstancePath === null) focusedInstanceRef = null;
+    const instancePath = instancePathOfSelection();
+    instanceOverrides = instancePath ? [...sketcher.overridesFor(instancePath)] : [];
+    orphanedOverrides = [...sketcher.orphanedOverrides];
+  }
+
+  /** The instance the current selection stands for: the focused one, or the selected one. */
+  function instancePathOfSelection(): string | null {
+    return focusedInstancePath ?? selectedInstancePath;
+  }
+
+  /** What that instance references, for the panel's Apply and for opening its source. */
+  function instanceRefInHand(): string | null {
+    return focusedInstancePath !== null ? focusedInstanceRef : selectedInstanceRef;
+  }
+
+  /** Whether the selected node inside the focus is hidden by a variation rather than by the item. */
+  function descendantHidden(): boolean {
+    const override = descendantOverride();
+    return override?.op === 'set' && override.value.hidden === true;
+  }
+
+  /** The variation this instance carries for the selected node, if any. */
+  function descendantOverride(): NodeOverride | null {
+    if (!insideDescendant) return null;
+    return instanceOverrides.find((o) => o.path === insideDescendant!.path) ?? null;
+  }
+
+  /** How a variation reads in the panel: what it does to the node, in a few words. */
+  function describeOverride(override: NodeOverride): string {
+    if (override.op === 'remove') return 'removed';
+    const parts: string[] = [];
+    if (override.value.hidden !== undefined) parts.push(override.value.hidden ? 'hidden' : 'shown');
+    if (override.value.transform) {
+      parts.push(`at ${override.value.transform.position.map((n) => n.toFixed(2)).join(', ')}`);
+    }
+    return parts.join(' · ') || 'changed';
+  }
+
+  /** Write the variation a panel action stands for, and say what it did. */
+  function varyDescendant(action: OverrideAction) {
+    if (!insideDescendant) return;
+    const { instancePath, path } = insideDescendant;
+    sketcherDoc.execute(new OverrideCommand(sketcher, instancePath, path, action));
+    if (action === 'remove') selection.deselect();
+    refreshOverrideState();
+    statusMessage = {
+      transform: `Moved "${path}" in this instance only.`,
+      hide: `Hid "${path}" in this instance only.`,
+      show: `Showing "${path}" in this instance only.`,
+      remove: `Removed "${path}" from this instance — the item itself is unchanged.`,
+      revert: `Reverted "${path}" to the item's own version.`,
+    }[action];
+  }
+
+  /** Take one variation back, leaving the item as it is. */
+  function revertVariation(instancePath: string, path: string) {
+    sketcherDoc.execute(new OverrideCommand(sketcher, instancePath, path, 'revert'));
+    refreshOverrideState();
+    statusMessage = `Reverted "${path}" to the item's own version.`;
+  }
+
+  /**
+   * Push one variation into the item itself, where every instance of it sees the change. That is a
+   * save to the item's own catalogue entry — not an in-session undo step — so it is reported as
+   * such, and the instance stops carrying a variation it no longer needs. A `set` of a transform is
+   * absolute, and a `remove` of an already-removed node is only ever an orphan, so re-applying is
+   * harmless either way.
+   */
+  async function applyOverride(instancePath: string, ref: string, path: string) {
+    const override = sketcher.overridesFor(instancePath).find((o) => o.path === path);
+    if (!override) return;
+    if (ref === currentEntryId) {
+      statusMessage = 'That item is the set you are editing — change it here instead.';
+      return;
+    }
+    // The item's own entry is where an applied variation belongs, so a bundled item (no document of
+    // its own) is reported the way Edit Source reports it rather than edited in place.
+    const stored = await OPFSCatalogueStore.getDocument(ref);
+    if (!stored) {
+      statusMessage = `"${ref}" is a bundled item — save your own copy to change what it is made of.`;
+      return;
+    }
+    const doc = cloneDocument(stored);
+    if (override.op === 'remove') {
+      removeTreeNode(doc, path);
+    } else {
+      const node = nodeAt(doc, path);
+      if (!node) {
+        statusMessage = `"${ref}" no longer has "${path}" — Revert this variation instead.`;
+        return;
+      }
+      if (override.value.transform) node.transform = { ...override.value.transform };
+      if (override.value.hidden !== undefined) node.hidden = override.value.hidden;
+    }
+    await OPFSCatalogueStore.saveDocument(ref, doc, { partCount: countParts(doc) });
+    refDocuments.set(ref, doc);
+    // Re-expanding through the resolver is what shows the change on every instance of it.
+    sketcher.setRefResolver((r) => refDocuments.get(r) ?? null);
+    const before = sketcherDoc.captureSnapshot();
+    sketcher.revertOverride(instancePath, path);
+    sketcherDoc.record(before, sketcherDoc.captureSnapshot(), 'Apply variation');
+    refreshOverrideState();
+    statusMessage = `Applied "${path}" to "${ref}" — every instance of it now has it.`;
   }
 
   function exitGroupEditMode() {
@@ -1523,9 +2068,17 @@
     if (attachPhase !== null) return;
     const [x, y] = toNDC(e);
     const session = sketcher.getSession();
-    const meshes = session.parts.map((p) => p.mesh);
+    const meshes = [...session.parts.map((p) => p.mesh), ...sketcher.instanceMeshes];
     const hit = selection.pick(x, y, camera, meshes);
     if (!hit) return;
+
+    // Double-clicking an instance opens what it is made of (N5's Edit Source).
+    const instance = sketcher.instanceFor(hit);
+    if (instance) {
+      void openInstanceSource(instance.ref);
+      return;
+    }
+
     const hitPart = session.parts.find((p) => p.mesh === hit);
     if (!hitPart) return;
     const ag = sketcher.attachManager.groupForPart(hitPart.id);
@@ -1539,52 +2092,56 @@
     sketcherDoc.execute(new SnapToFloorCommand(selectedPartId, sketcher, mode));
   }
 
-  async function exportToCatalogue() {
+  /**
+   * Download the session as a GLB. The document is the stored form of a set; GLB is
+   * export-only, for handing a built set to other 3D tools.
+   */
+  async function exportSceneGLB() {
     const session = sketcher?.getSession();
     if (!session || session.parts.length === 0) {
-      statusMessage = 'No parts to export. Complete at least one sketch first.';
+      statusMessage = 'Nothing to export yet — build at least one part first.';
       return;
     }
-    statusMessage = 'Exporting…';
     // Clear any mesh highlight so the exported GLB has no selection overlay.
     selection?.deselect();
-    const { blob } = await exportGLB(session);
-    const label = assemblyName.trim() || 'Untitled';
+    const { blob, filename } = await exportGLB(session);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    statusMessage = `Exported ${filename}.`;
+  }
 
-    // Re-export path: update the existing catalogue entry in place.
-    if (currentAssemblyId) {
-      const existing = await OPFSCatalogueStore.findByAssemblyId(currentAssemblyId);
-      if (existing) {
-        await OPFSCatalogueStore.update(existing.id, blob, label);
-        new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
-        statusMessage = `Updated "${label}" in catalogue.`;
-        return;
-      }
-    }
+  /**
+   * Re-measure the viewport and resize the renderer. The canvas carries its size as
+   * inline styles (renderer.setSize writes them), so they are cleared first to let
+   * the layout decide how much room is actually left.
+   */
+  function resizeCanvas() {
+    if (!renderer || !camera) return;
+    canvas.style.width = '';
+    canvas.style.height = '';
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    if (w === 0 || h === 0) return;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
 
-    // First export: create a new catalogue entry linked to this assembly.
-    await OPFSCatalogueStore.add(blob, { kind: 'set-piece', label }, currentAssemblyId ?? undefined);
-    new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
-    statusMessage = `Exported "${label}" to catalogue.`;
+  function toggleSetsColumn() {
+    showSetsColumn = !showSetsColumn;
+    // The viewport area changes with the column; re-measure once layout has settled.
+    requestAnimationFrame(resizeCanvas);
   }
 </script>
 
-<div class="sketch-page">
+<div class="sketch-page" class:with-sets-column={showSetsColumn}>
   <header class="toolbar">
     <a class="back-link" href="/">← Back</a>
-    <div class="assembly-controls">
-      <input
-        class="assembly-name-input"
-        type="text"
-        bind:value={assemblyName}
-        onblur={renameCurrentAssembly}
-        onkeydown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-        title="Assembly name"
-        placeholder="Untitled"
-      />
-      <button onclick={newAssembly} title="New assembly">New</button>
-      <button class:active={showOpenPanel} onclick={() => { showOpenPanel = !showOpenPanel; }} title="Open saved assembly">Open…</button>
-    </div>
     <div class="actions">
       <select
         class="sketch-mode-select"
@@ -1615,43 +2172,77 @@
       <button class:active={transformMode === 'rotate'} onclick={() => setTransformMode('rotate')} title="E">Rotate</button>
       <button class:active={transformMode === 'scale'} onclick={() => setTransformMode('scale')} title="R">Scale</button>
       <span class="separator"></span>
-      <button class="primary" onclick={exportToCatalogue}>Export to Catalogue</button>
+      <button onclick={exportSceneGLB} title="Download this set as a GLB (export only — the document is what gets stored)">Export GLB</button>
+      <span class="separator"></span>
+      <button class:active={showSetsColumn} onclick={toggleSetsColumn} title="Toggle the sets column">Sets</button>
+      <button class:active={showCataloguePanel} onclick={() => { showCataloguePanel = !showCataloguePanel; }} title="Toggle catalogue">Catalogue</button>
+      <button class:active={showAgentChat} onclick={() => { showAgentChat = !showAgentChat; }} title="Ask the AI to change this set">AI</button>
     </div>
   </header>
 
-  {#if showOpenPanel}
-    <div class="open-panel">
-      <div class="open-panel-header">
-        <span>Saved assemblies</span>
-        <button class="panel-close" onclick={() => { showOpenPanel = false; }}>✕</button>
-      </div>
-      {#if savedAssemblies.length === 0}
-        <p class="open-panel-empty">No saved assemblies yet.</p>
-      {:else}
-        <ul class="assembly-list">
-          {#each savedAssemblies as a (a.id)}
-            <li class="assembly-item" class:current={a.id === currentAssemblyId}>
-              <button class="assembly-open-btn" onclick={() => openAssembly(a.id)}>
-                <span class="assembly-item-name">{a.name}</span>
-                <span class="assembly-item-date">{new Date(a.modifiedAt).toLocaleDateString()}</span>
-              </button>
-              <button class="assembly-delete-btn" title="Delete" onclick={() => deleteAssembly(a.id)}>✕</button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
+  {#if showSetsColumn}
+    <div class="sets-slot">
+      <SetsColumn
+        entries={sets}
+        currentId={currentEntryId}
+        bind:renamingId={renamingSetId}
+        onopen={openSet}
+        oncreate={newSet}
+        onrename={renameSet}
+        onduplicate={duplicateSet}
+        ondelete={deleteSet}
+        onclassify={classifySet}
+        oncollapse={toggleSetsColumn}
+      />
     </div>
   {/if}
+
+  {#if showAgentChat}
+    <aside class="agent-drawer">
+      <div class="panel-header">
+        <span>AI</span>
+        <button class="panel-close" onclick={() => { showAgentChat = false; }}>✕</button>
+      </div>
+      {#if session !== null}
+        <AgentChat
+          {session}
+          onapplied={() => { exitGroupEditMode(); resyncSelectionAfterUndoRedo(); refreshInspector(); }}
+        />
+      {/if}
+    </aside>
+  {/if}
+
+  {#if showCataloguePanel}
+    <aside class="catalogue-drawer">
+      <div class="panel-header">
+        <span>Catalogue</span>
+        <button class="panel-close" onclick={() => { showCataloguePanel = false; }}>✕</button>
+      </div>
+      <CataloguePanel
+        userEntries={userCatalogueEntries}
+        onadd={handleCatalogueAdd}
+        onapplyenvironment={handleApplyEnvironment}
+        ondelete={deleteSet}
+        activeEnvironmentId={activeEnvironmentId}
+      />
+    </aside>
+  {/if}
+
   <div class="primitives-bar">
     <span class="bar-label">Insert:</span>
-    <button onclick={() => insertPrimitive('box')}>Cube</button>
-    <button onclick={() => insertPrimitive('sphere')}>Sphere</button>
-    <button onclick={() => insertPrimitive('cylinder')}>Cylinder</button>
-    <button onclick={() => insertPrimitive('capsule')}>Capsule</button>
-    <button onclick={() => insertPrimitive('cone')}>Cone</button>
-    <button onclick={() => insertPrimitive('torus')}>Torus</button>
+    <button disabled={focusedInstancePath !== null} onclick={() => insertPrimitive('box')}>Cube</button>
+    <button disabled={focusedInstancePath !== null} onclick={() => insertPrimitive('sphere')}>Sphere</button>
+    <button disabled={focusedInstancePath !== null} onclick={() => insertPrimitive('cylinder')}>Cylinder</button>
+    <button disabled={focusedInstancePath !== null} onclick={() => insertPrimitive('capsule')}>Capsule</button>
+    <button disabled={focusedInstancePath !== null} onclick={() => insertPrimitive('cone')}>Cone</button>
+    <button disabled={focusedInstancePath !== null} onclick={() => insertPrimitive('torus')}>Torus</button>
     <span class="separator"></span>
-    <button class="tool-btn" class:active={attachPhase !== null} onclick={startAttachPick} title="G">Attach…</button>
+    <button class="tool-btn" class:active={attachPhase !== null} disabled={focusedInstancePath !== null} onclick={startAttachPick} title="G">Attach…</button>
+    {#if focusedInstancePath !== null}
+      <span class="bar-label" title="A variation can move, hide or remove an item's nodes; adding parts happens in the item's own context">
+        Inside {focusedInstanceRef ?? 'an instance'} — Esc to leave
+      </span>
+    {/if}
     {#if attachPhase !== null}
       <button
         class="tool-btn"
@@ -1674,6 +2265,10 @@
         <button class="tool-btn" onclick={detachSelected} title="U">Detach</button>
       {/if}
       <button class="tool-btn" onclick={snapToFloor} title="F">⬇ Floor</button>
+      <button
+        class="tool-btn"
+        onclick={saveSelectionAsItem}
+        title="Promote this part or group into a reusable catalogue item">Save as Item</button>
     {/if}
     {#if isDrawing}
       <span class="separator"></span>
@@ -1763,8 +2358,85 @@
     </div>
   {/if}
 
+  {#if (instancePathOfSelection() !== null || orphanedOverrides.length > 0) && !isDrawing && !isExtruding}
+    <div class="instance-panel">
+      <div class="insp-row">
+        <span class="insp-label">{focusedInstancePath !== null ? 'Inside' : 'Instance'}</span>
+        <span class="insp-note">{instanceRefInHand() ?? 'an item'}</span>
+        <span class="insp-note">
+          {instanceOverrides.length} variation{instanceOverrides.length === 1 ? '' : 's'}
+          {#if orphanedOverrides.length > 0}· {orphanedOverrides.length} no longer applies{/if}
+        </span>
+        {#if focusedInstancePath !== null}
+          <button class="insp-act" onclick={exitInstance} title="Esc">Leave</button>
+        {:else if selectedInstancePath !== null && selectedInstanceRef !== null}
+          <button
+            class="insp-act"
+            title="Vary the parts this item is made of (I)"
+            onclick={() => enterInstance(selectedInstancePath!, selectedInstanceRef!)}
+          >Edit inside</button>
+        {/if}
+      </div>
+
+      {#if insideDescendant}
+        <div class="insp-row">
+          <span class="insp-label">{insideDescendant.path}</span>
+          <span class="insp-note">{descendantOverride() ? describeOverride(descendantOverride()!) : 'as the item has it'}</span>
+          {#if descendantHidden()}
+            <button class="insp-act" onclick={() => varyDescendant('show')}>Show</button>
+          {:else}
+            <button class="insp-act" onclick={() => varyDescendant('hide')}>Hide</button>
+          {/if}
+          <button class="insp-act" onclick={() => varyDescendant('remove')}>Remove</button>
+          <button class="insp-act" disabled={descendantOverride() === null} onclick={() => varyDescendant('revert')}>Revert</button>
+        </div>
+      {/if}
+
+      {#each instanceOverrides as override (override.path)}
+        <div class="insp-row">
+          <span class="insp-label">{override.path}</span>
+          <span class="insp-note">{describeOverride(override)}</span>
+          <button class="insp-act" onclick={() => revertVariation(instancePathOfSelection()!, override.path)}>Revert</button>
+          <button
+            class="insp-act"
+            title="Push this variation into the item itself, where every instance sees it"
+            onclick={() => void applyOverride(instancePathOfSelection()!, instanceRefInHand()!, override.path)}
+          >Apply to item</button>
+        </div>
+      {/each}
+
+      {#each orphanedOverrides as orphan (orphan.instancePath + '/' + orphan.path)}
+        <div class="insp-row">
+          <span class="insp-label">{orphan.path}</span>
+          <span class="insp-note">{orphan.instancePath.split('/').pop()} no longer has this node</span>
+          <button class="insp-act" onclick={() => revertVariation(orphan.instancePath, orphan.path)}>Revert</button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   {#if selectedPartId && !isExtruding && !isDrawing}
     <div class="transform-inspector">
+      <div class="insp-row">
+        <span class="insp-label">Name</span>
+        <input type="text" class="insp-field insp-name-field" placeholder={inspNamePlaceholder} value={inspName}
+          onfocus={() => { inspectorFocused = true; }}
+          oninput={(e) => { inspName = (e.target as HTMLInputElement).value; }}
+          onblur={() => { inspectorFocused = false; commitName(); }}
+          onkeydown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        />
+      </div>
+      {#if hasSelectedGroup}
+        <div class="insp-row">
+          <span class="insp-label">Group</span>
+          <input type="text" class="insp-field insp-name-field" placeholder="unnamed group" value={inspGroupName}
+            onfocus={() => { inspectorFocused = true; }}
+            oninput={(e) => { inspGroupName = (e.target as HTMLInputElement).value; }}
+            onblur={() => { inspectorFocused = false; commitGroupName(); }}
+            onkeydown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          />
+        </div>
+      {/if}
       <div class="insp-row">
         <span class="insp-label">Pos</span>
         <label>X<input type="number" step="0.01" class="insp-field" value={inspX}
@@ -1913,16 +2585,30 @@
 
 <style>
   .sketch-page {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    /* The sets column is the only thing in track 1; hiding it collapses the track. */
+    --sets-column-width: 0px;
+    grid-template-columns: var(--sets-column-width) 1fr;
+    grid-template-rows: auto auto 1fr;
     height: 100dvh;
     background: #0f0f1a;
     color: #e0e0f0;
     font-family: sans-serif;
     position: relative;
   }
+  .sketch-page.with-sets-column {
+    --sets-column-width: 232px;
+  }
+
+  .sets-slot {
+    grid-column: 1;
+    grid-row: 2 / 4;
+    min-height: 0;
+    display: flex;
+  }
 
   .toolbar {
+    grid-column: 1 / -1;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -1932,43 +2618,7 @@
     flex-shrink: 0;
   }
 
-  .assembly-controls {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex: 1;
-  }
-
-  .assembly-name-input {
-    background: #1e1e3a;
-    border: 1px solid #3a3a6a;
-    border-radius: 4px;
-    color: #e0e0ff;
-    font-size: 13px;
-    padding: 3px 8px;
-    width: 160px;
-  }
-  .assembly-name-input:focus {
-    outline: none;
-    border-color: #6050c8;
-  }
-
-  .open-panel {
-    position: absolute;
-    top: 36px;
-    left: 52px;
-    z-index: 100;
-    background: #1a1a36;
-    border: 1px solid #3a3a6a;
-    border-radius: 6px;
-    min-width: 280px;
-    max-height: 320px;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 4px 16px #0008;
-  }
-
-  .open-panel-header {
+  .panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1989,62 +2639,33 @@
   }
   .panel-close:hover { color: #e0e0ff; }
 
-  .open-panel-empty {
-    padding: 16px 12px;
-    font-size: 12px;
-    color: #5555a0;
-    margin: 0;
-  }
-
-  .assembly-list {
-    list-style: none;
-    margin: 0;
-    padding: 4px 0;
-    overflow-y: auto;
-  }
-
-  .assembly-item {
+  /* The AI conversation sits opposite the catalogue: one is what you can add, the other is what
+     you are asking for. */
+  .agent-drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 90;
+    width: 320px;
+    background: #16162c;
+    border-left: 1px solid #2a2a4a;
     display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
+    flex-direction: column;
   }
-  .assembly-item.current { background: #25254a; }
 
-  .assembly-open-btn {
-    flex: 1;
+  .catalogue-drawer {
+    position: absolute;
+    top: 0;
+    left: var(--sets-column-width);
+    bottom: 0;
+    z-index: 90;
+    width: 280px;
+    background: #16162c;
+    border-right: 1px solid #2a2a4a;
     display: flex;
-    align-items: baseline;
-    gap: 8px;
-    background: none;
-    border: none;
-    text-align: left;
-    cursor: pointer;
-    padding: 6px 4px;
-    border-radius: 3px;
-    color: #d0d0f0;
+    flex-direction: column;
   }
-  .assembly-open-btn:hover { background: #2a2a50; }
-
-  .assembly-item-name {
-    font-size: 13px;
-    flex: 1;
-  }
-
-  .assembly-item-date {
-    font-size: 11px;
-    color: #5555a0;
-  }
-
-  .assembly-delete-btn {
-    background: none;
-    border: none;
-    color: #5555a0;
-    cursor: pointer;
-    font-size: 13px;
-    padding: 2px 6px;
-  }
-  .assembly-delete-btn:hover { color: #cc4444; }
 
   .back-link {
     color: #8888cc;
@@ -2057,6 +2678,8 @@
     display: flex;
     gap: 8px;
     align-items: center;
+    /* The actions cluster sits at the far end of the toolbar. */
+    margin-left: auto;
   }
 
   .separator {
@@ -2072,6 +2695,8 @@
   }
 
   .primitives-bar {
+    grid-column: 2;
+    grid-row: 2;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -2099,13 +2724,12 @@
     cursor: pointer;
   }
   button:hover { background: #28285a; }
-  button.primary { background: #3d2d8a; border-color: #6050c8; color: #f0eeff; }
-  button.primary:hover { background: #4e3aaa; }
 
   .sketch-hint {
     position: absolute;
     bottom: 12px;
-    left: 12px;
+    /* Clears the sets column, which occupies the left edge of the page. */
+    left: calc(12px + var(--sets-column-width));
     font-size: 12px;
     color: #9090c8;
     background: rgba(15, 15, 26, 0.75);
@@ -2206,10 +2830,39 @@
     text-align: right;
   }
 
+  .instance-panel {
+    position: absolute;
+    bottom: 44px;
+    /* Clears the sets column, which occupies the left edge of the page. */
+    left: calc(12px + var(--sets-column-width));
+    background: #12122a;
+    border: 1px solid #2a2a4a;
+    border-radius: 6px;
+    padding: 6px 10px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 420px;
+  }
+
+  .insp-note {
+    font-size: 10px;
+    color: #8080b0;
+    flex: 1;
+  }
+
+  .insp-act {
+    font-size: 10px;
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+
   .transform-inspector {
     position: absolute;
     top: 80px;
-    left: 12px;
+    /* Clears the sets column, which occupies the left edge of the page. */
+    left: calc(12px + var(--sets-column-width));
     background: #12122a;
     border: 1px solid #2a2a4a;
     border-radius: 6px;
@@ -2260,6 +2913,12 @@
     outline: none;
     border-color: #6050c8;
     color: #ffffff;
+  }
+
+  .insp-name-field {
+    width: auto;
+    flex: 1;
+    text-align: left;
   }
 
   .insp-lock {
@@ -2323,7 +2982,8 @@
   .segments-input:disabled { opacity: 0.5; }
 
   .sketch-canvas {
-    flex: 1;
+    grid-column: 2;
+    grid-row: 3;
     display: block;
     width: 100%;
     height: 100%;

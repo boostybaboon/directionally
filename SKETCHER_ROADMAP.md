@@ -1,3 +1,7 @@
+> **Archived.** N1–N7 and N10–N11 landed; the two that did not (N8, N9) are issues #8 and #13.
+> This file is kept for the reasoning behind those items and for the deferred table at its end —
+> open work lives in the [issue tracker](https://github.com/boostybaboon/directionally/issues).
+
 # Directionally — Cartoon Sketcher Roadmap
 
 Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHER_ROADMAP_ARCHIVE.md).
@@ -6,28 +10,152 @@ Active work only. Completed phases live in [SKETCHER_ROADMAP_ARCHIVE.md](SKETCHE
 
 ## Background & decisions
 
-**Goal:** A fast, fun cartoon-style 3D sketcher (think Spore creature creator, not FreeCAD) built on Three.js. User-created GLB assets flow directly into the production asset catalogue and are usable in productions.
+**Goal:** A single Set Design tool (think Spore creature creator crossed with a lightweight Unity/USD-style prefab system, not FreeCAD) built on Three.js. User-created assets — from raw primitives up through whole dressed settings — flow directly into the production asset catalogue and are reusable across scenes.
 
 **Key documents:**
 - `docs/sketcher.md` — implementation design for the polygon sketcher + extrusion pipeline
 - `docs/asset-authoring-decision.md` — geometry kernel decision (mesh-first wins; monorepo ruled out)
+- `set-staging-architecture.md` / `set-staging-architecture-plus-implementation-notes.md` — the Definition/Instance/override model this roadmap's **Track SET** implements, and the USD/Unity/Blender prior art it's adapted from
 
 | Decision | Choice | Rationale |
 |---|---|---|
 | Package location | `src/core/sketcher/` inside existing app | Extractable later if needed; zero tooling cost now |
-| Navigation | Separate SvelteKit route `/sketch` | Clean URL; dev-only guard until production-ready |
+| Navigation | Single SvelteKit route `/sketch` | One editor for modelling and assembly (Track SET); `/studio` (Set Studio) retired in N10 |
 | Geometry kernel | `THREE.Shape` + `ExtrudeGeometry` | Cartoon aesthetic; trivial GLB export |
 | Monorepo | Ruled out | Premature for a single-developer project |
+
+**Why one tool, not three:** modelling (Sketcher), assembly (attach/group), and set dressing (Set Studio's catalogue + lights + environment) were built as separate surfaces because they grew at different times. They are the same operation at different scales — insert a node, position it, optionally save the selection as a reusable catalogue Definition. Track SET below merges them: the Sketcher's viewport gains a catalogue panel and lights/environment (so it can build whole dressed settings, not just individual props), and a placed catalogue item becomes a single reference (`ref`) node rather than an eagerly-flattened pile of parts. See the design docs above for the full reasoning, including what a hierarchical (parent/child) node model keeps and loses versus the original flat/symmetric attach-joint model (short answer: nothing practical is lost — glue/weld scale semantics survive as a `rigid`/`snap` edge distinction on a tree; only true multi-parent cycles, which set dressing never needs, are given up).
 
 ---
 
 ## Current state — April 2026
 
-The sketcher is a viable cheap-and-cheerful cartoon asset creator. The core loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → attach parts into assemblies (structural group + live joint) → transform (group-level and member-edit) → numeric transform inspector → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing. 473 tests passing.
+The sketcher is a viable cheap-and-cheerful cartoon asset creator, and Track SET (below) is under way to fold set assembly and dressing into it. The core sketch loop works end-to-end: sketch a polygon → extrude → insert primitives → colour individual faces → apply textures to faces → attach parts into assemblies (structural group + live joint) → transform (group-level and member-edit) → numeric transform inspector → undo/redo → autosave. Each wall face of an extruded part and each face of a primitive has its own draw group and material slot enabling per-face colouring and texturing.
 
 **Completed phases:** S0, S1, S2, S3, S4, SA1, SA2, SA3, SA4 (Ctrl+D; linear array deferred), SA5, SA13, SH2, SH1a, SA7, SA8, SH1b, SA11, SA14a, SA14b, SA15, SA9, SA12, SA6, SA16, SA17, SA18.
 
-No phases with open obligations remain. The items below are enhancements.
+No phases with open obligations remain in the original sketch-only scope. Track SET (below) is the active work; the SA-phase items below it are enhancements to the sketch loop itself.
+
+---
+
+## Track SET — Set Design Tool unification (level 0)
+
+Implements the Definition/Instance model from `set-staging-architecture*.md`: a catalogue **Definition** is a `SetPieceEntry` (already supports nested `compose`); an **Instance** is a placed `SetPiece` carrying a `ref` to a Definition. Flattening a `ref` into its rendered children happens only at render time (`resolveInstance`/`resolveInstances`) — the authored scene keeps the reference, never the expansion. Level 0 deliberately excludes per-instance **overrides**, an isolated **Edit Source** mode, and the venue/dressing **layering** split described in the design docs — those are real, understood, and named below as deferred, not forgotten.
+
+> **Render-time structure + AI surface — two additions to Track SET's scope:**
+> - **Render the same hierarchy the editor holds.** Today `resolveInstances` flattens `ref`s into
+>   meshes at render time. To animate a "table" or "car" as a unit — even a group-of-groups — the
+>   production renderer must materialise groups/instances as `THREE.Group`s with stable paths
+>   (set-staging-architecture.md's "stable path" rule), not a flattened mesh soup.
+> - **The AI Draft projection** (ROADMAP_API.md) targets the flat `SketcherDraft` today and will be
+>   re-pointed at the Node tree as Track SET lands — the AI-facing surface stays stable; only the
+>   projection pair changes.
+
+### N1 — Stable `localId` foundation ✅ COMPLETE
+
+Every child of a catalogue Definition's `compose` list needs an identity that survives reordering/insertion — a prerequisite for any future override mechanism (N5+) to keep addressing "the same child" across edits to the Definition.
+
+- `PlacedProp.localId?: string` added (`domain/types.ts`).
+- `generateLocalId()` / `assignLocalIds()` (`core/catalogue/localId.ts`) — idempotent: entries that already carry a `localId` are left untouched, so calling this on load is a safe migration step.
+- **Tests:** `core/catalogue/localId.test.ts` — uniqueness, idempotency, non-mutation of the input.
+
+### N2 — Instance (`ref`) resolution ✅ COMPLETE
+
+A placed `SetPiece` can now be an **Instance** of a catalogue Definition instead of raw geometry.
+
+- `SetPiece.ref?: string` added (`domain/types.ts`) — when set, `geometry`/`material` on the piece are a placeholder only, never rendered directly.
+- `resolveInstance(piece, entries, unresolved)` / `resolveInstances(pieces, entries, unresolved)` (`core/setting/settingSpec.ts`) — expands a `ref` piece into its rendered children via the existing `expandEntry`/`resolveProp` (so nested `compose`-of-`compose` Definitions, the "systems of systems" case, already work with zero extra code — `expandEntry`'s `MAX_COMPOSITE_DEPTH` guard applies unchanged). Expanded child names are prefixed with the instance's own name (`chair-1/seat`) so multiple instances of the same Definition never collide. Unresolved refs fall back to rendering the piece's own placeholder and are reported, not silently dropped.
+- Wired into `storedSceneToModel()` — every stored scene's `set` list is resolved through `resolveInstances` immediately before scene assembly, so `ref` pieces work in every existing scene without any caller changes.
+- **Tests:** `core/setting/settingSpec.test.ts` (`resolveInstance`/`resolveInstances` — leaf, composite, multi-instance naming, unresolved fallback), `core/storage/storedSceneToModel.test.ts` (`ref` expansion reaches the render pipeline; plain pieces unaffected).
+
+### N3 — Sketcher gains lights, environment, and catalogue placement ✅ COMPLETE
+
+Folds Set Studio's dressing capability into the Sketcher so one tool builds both individual items and whole settings.
+
+**Session model (core layer):**
+- `SketcherSession.lights: LightConfig[]` / `SketcherSession.environmentMap?: string` (`core/sketcher/types.ts`).
+- `SketcherDraft.lights?` / `SketcherDraft.environmentMap?` — optional so legacy drafts (no lights/environment) load unchanged.
+- `CartoonSketcher.addLight()` / `.removeLight()` / `.getLights()` / `.setEnvironmentMap()` / `.environmentMap` — builds/removes the raw `THREE.Light` directly (mirrors `SceneBridge.buildLight`'s config→light mapping so the Sketcher stays independent of the domain `SceneBridge` module) and tracks placed lights alongside parts/joints/groups.
+- `getSession()`, `toDraft()`/`loadDraft()`, and `clearSession()` all carry lights/environmentMap through save, reload, and reset.
+- **Tests:** `core/sketcher/CartoonSketcher.test.ts` — add/remove light, hemisphere light without position, environment map get/set, session/draft round-trip, legacy-draft compatibility, `clearSession()` cleanup.
+
+**Catalogue placement (core layer):**
+- `CartoonSketcher.insertCataloguePiece(name, geometry, material, position?, rotation?, scale?)` — builds a single `SketcherPart` from a `GeometryConfig`/`MaterialConfig`; a single material slot + single face group keep it editable through the existing colour/texture/transform paths.
+- `CartoonSketcher.insertCatalogueEntry(entry)` — placed the entry's parts as a fresh copy, grouped into one movable `AssemblyGroup` when the prop was multi-part. **Changed by 10.3-B** (ROADMAP_CATALOGUE.md): an insert now writes a `ref` node and the session expands the Definition, so names and nested groups survive because nothing is flattened — the copy was a workaround for a session that could not resolve a reference.
+- **Tests:** `core/sketcher/CartoonSketcher.test.ts` — leaf → single ungrouped part; composite → grouped assembly; `insertCataloguePiece` position/rotation/scale + single face group; (10.3-B) a placement writes a `ref` node, two placements are two nodes over one Definition, and an unresolved Definition still inserts its reference.
+
+**Page/UI layer:**
+- `/sketch` now imports `CataloguePanel.svelte` with a toolbar **Catalogue** toggle and a left drawer.
+- `handleCatalogueAdd(kind, id)` — set-piece → `insertCatalogueEntry` + select (whole group or single part); light → `addLight` with a fresh per-instance id; character → staged-in-script-view status.
+- `handleApplyEnvironment(id)` — `RGBELoader` + `PMREMGenerator` against the Sketcher's own renderer (same pattern as `Presenter.svelte`), sets `scene.environment`/`scene.background`, and records the choice via `setEnvironmentMap`; clearing restores the flat background.
+- User catalogue entries load on mount and re-sync on the `catalogue-updated` broadcast; the HDRI environment is re-applied on draft restore.
+
+### AI-API — Scenery authoring surface for AI ✅ COMPLETE
+
+Added so an LLM/agent can drive asset creation without the Three.js runtime — it emits JSON against a contract and gets a validated, persisted catalogue entry back. The provider/LLM side stays in `ROADMAP_AI.md` (`/agent/generate/*`); this is the *data* contract + apply path those routes will hand JSON to.
+
+- `SET_PIECE_JSON_SCHEMA` (`core/setting/authoringApi.ts`) — a JSON Schema (draft 2020-12) for `NewProceduralSetPiece`: a leaf primitive, an assembly (`compose` of `ref`s and inline primitives), or a whole setting (`compose` + `lights` + `environmentId`). Embeddable directly in a system prompt or a `response_format`/`tool_choice` `input_schema`. Mirrors `NewProceduralSetPiece`/`PlacedProp` — keep in sync.
+- `normalizeSetPieceInput(input)` — strict validation + clamping of untrusted JSON into a `NewProceduralSetPiece`; assigns stable `localId`s to `compose` children via `assignLocalIds`. Throws a descriptive error on the first invalid field (unknown geometry/light type, bad label, leaf-vs-composite violation, non-finite vec3, …).
+- `createSetPiece(input)` — the single apply call: `normalizeSetPieceInput` → `OPFSCatalogueStore.addSetPiece` → returns the created entry. Caller posts `{ type: 'catalogue-updated' }` on `BroadcastChannel('directionally-catalogue')` so open script views re-resolve via the existing CAT-4 loop.
+- **Tests:** `core/setting/authoringApi.test.ts` — schema is JSON-serialisable; leaf/composite/ref/setting normalisation; `localId` assignment; rejection of bad label/geometry/light/leaf-compose violations/non-object input; `createSetPiece` persists and returns the entry.
+
+Together with the pre-existing `resolveSettingSpec`/`validateSettingSpec` + `/agent/setting` (resolve-only, over HTTP) and `addSetPiece`, this is the complete "something the AI talks to" for scenery: **schema → validated create → broadcast → script auto-resolves**. No `N4`/`N10` UI work is a prerequisite for it.
+
+> **Note (updated):** this is the *headless* scenery surface (procedural `compose` → `createSetPiece`).
+> The *editable* generate path — AI Draft grammar → assembly → GLB → catalogue entry — lives in
+> ROADMAP_API.md P0/P1 and `generateEditableSetting`.
+
+### N4 — Save as Item / Save as Setting ✅ COMPLETE (whole-scene)
+
+Generalises the old `exportToCatalogue` (GLB-only) and Set Studio's `saveAsSetting` (whole-scene-only) into two whole-scene saves in the Set tool:
+
+- **Save as Item** (was "Export to Catalogue") — GLB-bakes the whole session as a reusable geometry item, keeping the `sourceAssemblyId` round-trip (re-export updates in place; "Edit in Sketcher" links back).
+- **Save as Setting** — same GLB bake **plus** the session's `lights` + `environmentMap`, so the entry resolves in a script as a fully-lit setting (`INT <label>` applies geometry + environment + lights).
+- `OPFSCatalogueStore.add()` now persists `environmentId`/`lights` on GLB-backed set-piece entries (previously dropped — only the procedural `addSetPiece` path kept them); `toUserEntry` emits them too.
+- **Tests:** `core/storage/OPFSCatalogueStore.test.ts` — a GLB set-piece saved as a setting round-trips `environmentId` + `lights`.
+
+**Still deferred (the "promote a selection" half):** selecting a *subtree* and promoting it to a procedural `compose` Definition (with fresh `localId`s) that replaces the selection in-scene with a `ref` instance. That needs a "selection → `compose`" flattener plus `ref`-provenance tracking; it folds into N5/N6 (Edit Source / Overrides), which introduce instance-provenance anyway. Whole-scene saves are the level-0 loop; selection-promote isn't required to "put premade items into a room".
+
+### Deferred beyond level 0
+
+These are real, named requirements from the design docs — not gaps discovered later — deliberately excluded from level 0 because "put premade items into a room" doesn't need them yet.
+
+| Phase | Content |
+|---|---|
+| N5 | ✅ DONE (ROADMAP_CATALOGUE 10.3-B) — **Edit Source** — an isolated editing context for a Definition (double-click an instance to open its source; edits there write to the Definition and ripple to every instance), mirroring Unity's Prefab Mode / Blender's linked-collection edit. |
+| N6 | ✅ DONE (ROADMAP_CATALOGUE 10.4) — **Overrides + Apply/Revert** — the list is `{ path, op: 'remove' | 'set', value }` (`swap_ref` waits for something that writes one), replayed over a copy of the Definition when the instance is realised, with `set` patching a placement or a visibility; the editor varies by Edit inside (I) plus drag/hide/remove, and applies or reverts per variation. An Outliner highlight for overridden nodes waits for the Outliner (N9). Original ask:  per-instance sparse diffs (`{ path, op: 'remove' \| 'swap_ref' \| 'set', value }`) resolved by replaying the override list over a deep copy of the Definition at load time; an Outliner highlight for overridden nodes; one-click Apply (push to Definition) / Revert (discard), mirroring Unity's bold-blue-bar property affordance. |
+| N7 | ✅ DONE (ROADMAP_CATALOGUE 10.5, dressing) — **Per-scene setting overrides ("dressing" layer)** — the overrides live on the scene's `SetPiece` rather than beside the binding (a binding maps a name to an entry; the variation is about that placement), replayed over the entry's document at the model boundary, authored through `SettingSpec.props[].overrides` today. No panel or script syntax for it yet. Original ask:  extends `settingBindings` with an overrides list per scene, giving "same classroom, minus one chair, for this scene only" without forking the Definition. Layers 1 (Venue/Definition) and 3 (Shot — `Block[]` camera/light timeline) already exist; this is the only new layer. |
+| N8 | **Stable animation addressing** — formalise `SetPieceBlock.targetId` as keying off a stable `SetPiece` id rather than the mutable `name`, closing the fragile name-key gap once instances are common. → open as **#8**. |
+| N9 | **Outliner panel** — a simple indented tree view of the scene's nodes/groups/instances, reusing `SelectionManager`. → open as **#13** (with the override highlight 10.4 wanted from it). |
+| N10 | **Route consolidation** — ✅ DONE: `/studio` route deleted (superseded by N3's catalogue-in-Sketcher); nav shows a single "Set" link at `/sketch`; `Create →` for an unresolved setting already points at `/sketch?prefillName=…`. Orphaned `PropertiesPanel.svelte` + `SelectedEntity` (the old `/studio` inspector) removed. |
+| — | Nested groups-of-groups in the *session* model (a group containing another group, not just parts) — the catalogue already supports Definition-of-Definitions via nested `compose`/`ref`; a session-level group-of-groups is a separate, lower-priority ask. |
+| — | Full USD-style LIVRPS composition-arc generality, payload lazy-loading — level 0's fixed 2–3 layer resolution (N7) captures the practical benefit without the generality. |
+
+---
+
+## N11 — Catalogue hygiene / duplicate-setting UI snags
+
+Surfaced from a real authoring session: typing `#EXT GARDEN DAY`, using "Create →" to jump to the Sketcher, building a tree, exporting, and finding (a) the production still showed an older placeholder tree, (b) four duplicate GARDEN entries had accumulated in the catalogue with no way to remove them, and (c) a GARDEN catalogue item couldn't be inserted into a new GARDEN2 session. Root causes traced to specific code, not flakiness — see below.
+
+**Status (updated).** Fixes **1, 3, 4, and 6** below have landed, and the AI-set work hardened the save path further: `findByAssemblyId` now resolves metadata-only (AI-generated) entries, `update()` migrates a procedural entry to GLB on re-save (so "Save as Setting" never duplicates the AI CLASSROOM), `partCount` + `findByLabel` keep the catalogue note honest and make `generateEditableSetting` resume-by-name. Delete is now cascading in both directions (`catalogueLifecycle.ts`): removing a catalogue entry also removes its backing assembly and vice-versa, so deleted sets no longer resurface as zombies in the Set designer's Open panel. Still open: **2** (resolve the newest match, not the oldest) and **5** (a visible "resolved via" indicator).
+
+**Root causes:**
+- Label-match resolution (`resolveSetting` in `fountainCompiler.ts`) does `.find()` over `[...CATALOGUE_ENTRIES, ...userEntries]`, so with duplicate labels it silently binds to the **oldest** matching entry, not the most recent export. `settingBindings` can override this but nothing surfaces that duplicates exist or which entry won.
+- `CataloguePanel.svelte` set-piece/character rows have no delete affordance — `OPFSCatalogueStore.remove()` exists but nothing in the UI calls it, so duplicates can never be cleaned up.
+- `handleCreateAsset` (`+page.svelte`) always does `window.open('/sketch?prefillName=…')` with no `assemblyId` — not idempotent. Every "Create →" click (or retry) mints a brand-new blank assembly, which becomes a brand-new catalogue entry on export — the actual source of the duplicate GARDENs.
+- The N4 `saveAsSetting()` always calls `OPFSCatalogueStore.add()` unconditionally, unlike `exportToCatalogue()`, which checks `findByAssemblyId` first and updates in place on re-save — a fresh duplicate-source introduced by N4 itself.
+- `CartoonSketcher.insertCatalogueEntry()` used to skip GLB-backed pieces (`if (piece.gltfPath) continue`), so a GLB-baked GARDEN could not be inserted into a GARDEN2 session. **Decided out of scope for N11**: this is legitimately N4 (promote-selection)/N5 (Edit Source)/N7 (per-scene dressing overrides)'s job, not a bug to patch around — introducing a schema workaround now (e.g. a `custom` GeometryConfig kind to shoehorn arbitrary Sketcher meshes into `compose`) would fork the design ahead of that already-planned work. The interim workaround was manual: "Save As" a copy and customize independently (see below). **Superseded by 10.3-B**: `SetPieceEntry` lost `gltfPath` (the document *is* the artefact), and a GLB-baked set can now be placed as an instance of its Definition; promoting a subtree (N4) and editing that Definition (N5) are what remain.
+
+**Planned fix:**
+1. Fix `saveAsSetting()` to update-in-place via `findByAssemblyId`, matching `exportToCatalogue()` — stop the newest duplicate-source.
+2. Change label-match resolution (`fountainCompiler.ts` `resolveSetting`, and the analogous cast-name path) to prefer the most-recently-added matching entry (sort by `addedAt` descending) instead of the first/oldest.
+3. Add a delete ("✕") action to `CataloguePanel.svelte`'s set-piece and character rows, wired to `OPFSCatalogueStore.remove()` + the `catalogue-updated` broadcast.
+4. Make "Create →" (`handleCreateAsset`) idempotent: check `SketcherAssemblyStore.list()` for an existing name match before opening a blank `/sketch?prefillName=`; deep-link to the existing one via `?assemblyId=` instead.
+5. Add a "resolved via" indicator near the diagnostics/scene heading showing which catalogue entry id a scene's setting resolved to (and how many other same-label entries exist), making duplicates visible and `settingBindings` discoverable instead of invisible.
+6. Add a Sketcher **"Save As…"** toolbar action: duplicate the current draft (parts/joints/groups/lights/environment) into a *new* `SketcherAssemblyStore` entry under a new name, switching `currentAssemblyId` to the copy. This is the sanctioned "base scene → customized copy" workaround until N4/N5/N7 land — not a substitute for them.
+7. Tests: `OPFSCatalogueStore` (remove + any extracted resolution-order helper), `fountainCompiler`/`settingSpec` last-export-wins resolution, `SketcherAssemblyStore`/`+page.svelte` Save As behavior, `CataloguePanel` delete action.
+
+Explicitly **not** in scope for N11: `GeometryConfig` schema changes, GLB-into-Sketcher reuse, or anything that pre-empts N4 (promote selection)/N5 (Edit Source)/N6 (overrides)/N7 (per-scene dressing) — those remain the correct home for "reuse a set inside another set".
 
 ---
 
@@ -428,7 +556,11 @@ The character creator serialises the current parameter set (proportion values + 
 
 ## Verification checklist
 
-- [ ] `yarn test` — all tests green
-- [ ] `yarn check` — 0 errors, 0 warnings
-- [ ] Manual: draw polygon → extrude → Export to Catalogue → switch to `/` → asset appears in Catalogue panel → add to production scene
-- [ ] Manual: `yarn build` + production URL → `/sketch` redirects to `/`
+- `yarn test` — all tests green
+- `yarn check` — 0 errors, 0 warnings
+- Manual: draw polygon → extrude → Export to Catalogue → switch to `/` → asset appears in Catalogue panel → add to production scene
+- Manual: `yarn build` + production URL → `/sketch` redirects to `/`
+
+> This four-item verification is the merge checklist on #41: three of the four run in CI, and the
+> manual round trip runs against the preview environment the pull request creates.
+

@@ -1,0 +1,371 @@
+import { describe, it, expect } from 'vitest';
+import type { CatalogueEntry } from '../catalogue/types.js';
+import {
+  resolveSettingSpec,
+  validateSettingSpec,
+  resolveProp,
+  resolveEnvironment,
+  expandEntry,
+  settingSpecToScene,
+  sceneToSettingSpec,
+  resolveInstance,
+  resolveInstances,
+  pieceKey,
+  matchesByLabel,
+} from './settingSpec.js';
+import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
+import type { SetPiece } from '../domain/types.js';
+import { documentFromParts } from '../sketcher/documentTree.js';
+import type { PartSeed } from '../sketcher/documentTree.js';
+import type { StoredScene } from '../storage/types.js';
+import type { GeometryConfig, MaterialConfig, Vec3, SetPiece as SetPieceParam } from '../domain/types.js';
+
+/** A catalogue part: procedural geometry + material at a local transform. */
+function part(id: string, geometry: GeometryConfig, material: MaterialConfig, position?: Vec3): PartSeed {
+  return {
+    content: { id, kind: 'catalogue', name: 'Box', geometry, material, color: material.color },
+    transform: { position: position ?? [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+  };
+}
+
+// Controlled fixtures — tests must not depend on real seed data.
+const box: CatalogueEntry = {
+  kind: 'set-piece',
+  id: 'box',
+  label: 'Box',
+  document: documentFromParts([part('box', { type: 'box', width: 1, height: 1, depth: 1 }, { color: 0x8844aa })]),
+};
+const woodFloor: CatalogueEntry = {
+  kind: 'set-piece',
+  id: 'wood-floor',
+  label: 'Wood Floor',
+  document: documentFromParts([part('floor', { type: 'plane', width: 8, height: 8 }, { color: 0xffffff, textureUrl: '/textures/wood-boards.jpg' })]),
+};
+const chair: CatalogueEntry = {
+  kind: 'set-piece',
+  id: 'chair',
+  label: 'Chair',
+  document: documentFromParts([
+    part('seat', { type: 'box', width: 0.5, height: 0.1, depth: 0.5 }, { color: 0x663311 }, [0, 0.45, 0]),
+    part('back', { type: 'box', width: 0.5, height: 0.5, depth: 0.1 }, { color: 0x663311 }, [0, 0.7, -0.2]),
+  ]),
+};
+const env: CatalogueEntry = { kind: 'environment', id: 'studio-neutral', label: 'Studio (neutral)', hdriPath: '/environments/studio-neutral.hdr' };
+const light: CatalogueEntry = { kind: 'light', id: 'directional-light', label: 'Directional Light', config: { type: 'directional', color: 0xffffff, intensity: 1, position: [0, 10, 5] } };
+
+const fixture: CatalogueEntry[] = [box, woodFloor, chair, env, light];
+
+describe('validateSettingSpec', () => {
+  it('applies defaults for an empty spec', () => {
+    const v = validateSettingSpec({});
+    expect(v.name).toBe('');
+    expect(v.props).toEqual([]);
+    expect(v.backdrops).toEqual([]);
+    expect(v.lights).toEqual([]);
+    expect(v.floor).toBeDefined();
+  });
+
+  it('keeps provided fields intact', () => {
+    const v = validateSettingSpec({ name: ' Classroom ' });
+    expect(v.name).toBe('Classroom');
+  });
+});
+
+describe('resolveSettingSpec', () => {
+  it('produces a neutral room (default floor + starter lights) for an empty spec', () => {
+    const r = resolveSettingSpec({}, []);
+    expect(r.environmentMap).toBeUndefined();
+    expect(r.set).toHaveLength(1);
+    expect(r.set[0].name).toBe('ground');
+    expect(r.lights).toHaveLength(2);
+    expect(r.unresolved).toEqual([]);
+  });
+
+  it('resolves a catalogue set-piece by label (case-insensitive) with placement', () => {
+    const r = resolveSettingSpec({ props: [{ ref: 'box', position: [1, 2, 3] }] }, fixture);
+    const piece = r.set.find((p) => p.name === 'box');
+    expect(piece).toBeDefined();
+    expect(piece!.position).toEqual([1, 2, 3]);
+    expect(piece!.catalogueId).toBe('box');
+  });
+
+  it('addresses an expanded child by identity, so a renamed label cannot move its address', () => {
+    const instance: SetPiece = {
+      name: 'chair-1',
+      id: 'seat-a',
+      ref: 'chair',
+      geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 },
+      material: { color: 0 },
+    };
+
+    const [child] = resolveInstance(instance, fixture);
+
+    // The label stays readable; the address is built from identity, which is what a block holds.
+    expect(child.name).toBe('chair-1/chair');
+    expect(child.id).toBe('seat-a/chair');
+    expect(pieceKey(child)).toBe('seat-a/chair');
+  });
+
+  it('addresses a piece by its name when it has no identity of its own', () => {
+    const piece: SetPiece = { name: 'wall', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0 } };
+    expect(pieceKey(piece)).toBe('wall');
+  });
+
+  it('resolves a catalogue floor ref to the entry that owns the geometry', () => {
+    const r = resolveSettingSpec({ floor: { ref: 'wood-floor' } }, fixture);
+    const floor = r.set.find((p) => p.name === 'wood-floor');
+    expect(floor!.catalogueId).toBe('wood-floor');
+  });
+
+  it('places a catalogue prop through the instance transform', () => {
+    const r = resolveSettingSpec({ props: [{ ref: 'chair', position: [5, 0, 0] }] }, fixture);
+    const piece = r.set.find((p) => p.name === 'chair');
+    expect(piece).toBeDefined();
+    expect(piece!.catalogueId).toBe('chair');
+    expect(piece!.position).toEqual([5, 0, 0]);
+  });
+
+  it('resolves an inline primitive directly', () => {
+    const r = resolveSettingSpec({ props: [{ geometry: { type: 'sphere', radius: 0.5 }, material: { color: 0xff0000 } }] }, []);
+    expect(r.set.some((p) => p.geometry.type === 'sphere')).toBe(true);
+  });
+
+  it('resolves an environment label to its catalogue id', () => {
+    const r = resolveSettingSpec({ environment: 'Studio (neutral)' }, fixture);
+    expect(r.environmentMap).toBe('studio-neutral');
+  });
+
+  it('collects unresolved refs', () => {
+    const r = resolveSettingSpec({ props: [{ ref: 'spaceship' }] }, []);
+    expect(r.unresolved).toEqual(['spaceship']);
+  });
+
+  it('resolves light refs and falls back to starter lights when empty', () => {
+    const r = resolveSettingSpec({ lights: ['directional-light'] }, fixture);
+    expect(r.lights).toHaveLength(1);
+    expect(r.lights[0].type).toBe('directional');
+    const empty = resolveSettingSpec({}, []);
+    expect(empty.lights).toHaveLength(2);
+  });
+});
+
+describe('expandEntry', () => {
+  it('emits one piece carrying the catalogue identity — the document holds the body', () => {
+    const pieces = expandEntry(resolveProp('chair', fixture)!);
+    expect(pieces.map((p) => p.name)).toEqual(['chair']);
+    expect(pieces[0].catalogueId).toBe('chair');
+  });
+
+  it('applies the caller placement to the whole entry', () => {
+    const pieces = expandEntry(resolveProp('box', fixture)!, { position: [1, 2, 3] });
+    expect(pieces[0].position).toEqual([1, 2, 3]);
+  });
+});
+
+describe('expandEntry – saved sets', () => {
+  const documentEntry: CatalogueEntry = {
+    kind: 'set-piece',
+    id: 'classroom',
+    label: 'Classroom',
+    hasDocument: true,
+  };
+
+  it('emits one piece carrying the catalogue identity', () => {
+    const pieces = expandEntry(documentEntry);
+    expect(pieces).toHaveLength(1);
+    expect(pieces[0].name).toBe('classroom');
+    expect(pieces[0].catalogueId).toBe('classroom');
+  });
+
+  it('applies the caller placement to the whole set', () => {
+    const pieces = expandEntry(documentEntry, { position: [2, 0, -3], scale: [2, 2, 2] });
+    expect(pieces[0].position).toEqual([2, 0, -3]);
+    expect(pieces[0].scale).toEqual([2, 2, 2]);
+  });
+
+  it('resolves an instance ref through to the document piece', () => {
+    const instance: SetPieceParam = {
+      name: 'my-classroom',
+      ref: 'classroom',
+      geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 },
+      material: { color: 0 },
+      position: [5, 0, 0],
+    };
+    const out = resolveInstance(instance, [documentEntry]);
+    expect(out).toHaveLength(1);
+    expect(out[0].catalogueId).toBe('classroom');
+    expect(out[0].position).toEqual([5, 0, 0]);
+  });
+});
+
+describe('resolveInstance', () => {
+  it('returns the piece unchanged when it has no ref', () => {
+    const piece: SetPieceParam = { name: 'box', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0x888888 } };
+    expect(resolveInstance(piece, fixture)).toEqual([piece]);
+  });
+
+  it('expands a leaf-entry ref into a single rendered piece at the instance transform', () => {
+    const piece: SetPieceParam = { name: 'my-box', ref: 'box', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 }, position: [1, 2, 3] };
+    const out = resolveInstance(piece, fixture);
+    expect(out).toHaveLength(1);
+    expect(out[0].position).toEqual([1, 2, 3]);
+    expect(out[0].catalogueId).toBe('box');
+  });
+
+  it('expands a prop ref into one prefixed piece at the instance transform', () => {
+    const piece: SetPieceParam = { name: 'chair-1', ref: 'chair', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 }, position: [5, 0, 0] };
+    const out = resolveInstance(piece, fixture);
+    expect(out.map((p) => p.name)).toEqual(['chair-1/chair']);
+    expect(out[0].catalogueId).toBe('chair');
+    expect(out[0].position).toEqual([5, 0, 0]);
+  });
+
+  it('multiple instances of the same Definition produce non-colliding names', () => {
+    const piece1: SetPieceParam = { name: 'chair-1', ref: 'chair', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 } };
+    const piece2: SetPieceParam = { name: 'chair-2', ref: 'chair', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 } };
+    const out = [...resolveInstance(piece1, fixture), ...resolveInstance(piece2, fixture)];
+    const names = out.map((p) => p.name);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('falls back to the piece itself and records the ref as unresolved when the ref is missing', () => {
+    const unresolved: string[] = [];
+    const piece: SetPieceParam = { name: 'ghost', ref: 'no-such-entry', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 } };
+    const out = resolveInstance(piece, fixture, unresolved);
+    expect(out).toEqual([piece]);
+    expect(unresolved).toEqual(['no-such-entry']);
+  });
+});
+
+describe('resolveInstances', () => {
+  it('leaves plain pieces alone and expands ref pieces, flattening the whole list', () => {
+    const ground: SetPieceParam = { name: 'ground', geometry: { type: 'plane', width: 12, height: 12 }, material: { color: 0x888888 } };
+    const chairInstance: SetPieceParam = { name: 'chair-1', ref: 'chair', geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 }, material: { color: 0 } };
+    const out = resolveInstances([ground, chairInstance], fixture);
+    expect(out.map((p) => p.name)).toEqual(['ground', 'chair-1/chair']);
+  });
+});
+
+describe('dressing (ROADMAP_CATALOGUE 10.5)', () => {
+  const chair = { path: 'chair-3', op: 'remove' } as const;
+
+  it('carries a placement’s overrides onto the piece it resolves to', () => {
+    const out = expandEntry(resolveProp('box', fixture)!, { position: [2, 0, 0] }, [chair]);
+
+    expect(out[0].overrides).toEqual([chair]);
+    expect(out[0].position).toEqual([2, 0, 0]);
+  });
+
+  it('resolves a prop ref with its dressing', () => {
+    const resolved = resolveSettingSpec({ props: [{ ref: 'box', overrides: [chair] }] }, fixture);
+
+    // The default floor comes first; the prop is the piece the dressing was written on.
+    expect(resolved.set.find((p) => p.catalogueId === 'box')?.overrides).toEqual([chair]);
+  });
+
+  it('keeps the dressing when a ref piece is expanded, so the scene’s variation survives', () => {
+    const piece: SetPieceParam = {
+      name: 'row-2',
+      ref: 'box',
+      geometry: { type: 'box', width: 0.01, height: 0.01, depth: 0.01 },
+      material: { color: 0 },
+      overrides: [chair],
+    };
+
+    const out = resolveInstances([piece], fixture);
+
+    // One scope out from an instance's overrides: the same list, addressed the same way.
+    expect(out[0].name).toBe('row-2/box');
+    expect(out[0].overrides).toEqual([chair]);
+  });
+});
+
+describe('resolveProp / resolveEnvironment', () => {
+  it('resolves by id then case-insensitive label', () => {
+    expect(resolveProp('box', fixture)?.id).toBe('box');
+    expect(resolveProp('BOX', fixture)?.id).toBe('box');
+    expect(resolveEnvironment('studio-neutral', fixture)?.id).toBe('studio-neutral');
+    expect(resolveProp('missing', fixture)).toBeUndefined();
+  });
+
+  it('prefers the most-recently-added user entry when labels collide', () => {
+    const older = { ...box, id: 'garden-old', label: 'Garden', userAdded: true as const, addedAt: 1000 } as CatalogueEntry;
+    const newer = { ...box, id: 'garden-new', label: 'Garden', userAdded: true as const, addedAt: 2000 } as CatalogueEntry;
+    expect(resolveProp('Garden', [older, newer])?.id).toBe('garden-new');
+    expect(resolveProp('Garden', [newer, older])?.id).toBe('garden-new');
+  });
+
+  it('falls back to the bundled entry when no user entry matches the label', () => {
+    expect(resolveProp('box', fixture)?.id).toBe('box');
+  });
+});
+
+describe('CATALOGUE_ENTRIES composite seeds', () => {
+  it('bundled composite props resolve without unresolved refs', () => {
+    for (const id of ['chair', 'desk', 'bench', 'whiteboard', 'blackboard', 'window-flat', 'door', 'bookshelf', 'cabin-seat']) {
+      const r = resolveSettingSpec({ props: [{ ref: id }] }, CATALOGUE_ENTRIES);
+      expect(r.unresolved).toEqual([]);
+      expect(r.set.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('settingSpecToScene / sceneToSettingSpec', () => {
+  it('resolves a spec into a StoredScene', () => {
+    const scene = settingSpecToScene({ props: [{ ref: 'box', position: [1, 2, 3] }] }, fixture);
+    expect(scene.set.some((p) => p.name === 'box')).toBe(true);
+    expect(scene.camera).toBeDefined();
+    expect(scene.lights.length).toBeGreaterThan(0);
+  });
+
+  it('round-trips a scene through a spec (floor separated from props)', () => {
+    const source: StoredScene = {
+      camera: { fov: 50, near: 0.1, far: 120, position: [0, 5, 12], lookAt: [0, 1, 0] },
+      lights: [{ type: 'directional', id: 'sun', color: 0xffffff, intensity: 1, position: [5, 10, 5] }],
+      set: [
+        { name: 'ground', geometry: { type: 'plane', width: 12, height: 12 }, material: { color: 0x888888 }, rotation: [-Math.PI / 2, 0, 0] },
+        { name: 'box', geometry: { type: 'box', width: 1, height: 1, depth: 1 }, material: { color: 0x8844aa }, position: [1, 0, 2] },
+      ],
+      stagedActors: [],
+      actions: [],
+    };
+
+    const spec = sceneToSettingSpec(source);
+    expect(spec.floor).toBeDefined();
+    expect(spec.props).toHaveLength(1);
+
+    const back = settingSpecToScene(spec, []);
+    expect(back.set.map((p) => p.name)).toEqual(['ground', 'box']);
+    expect(back.lights).toHaveLength(1);
+    expect(back.lights[0].id).toBe('sun');
+  });
+
+  it('accepts inline light configs in the spec', () => {
+    const r = resolveSettingSpec({ lights: [{ type: 'directional', id: 'my-sun', color: 0xffffff, intensity: 1, position: [0, 10, 5] }] }, []);
+    expect(r.lights).toHaveLength(1);
+    expect(r.lights[0].id).toBe('my-sun');
+  });
+});
+
+describe('matchesByLabel', () => {
+  const userGarden = (id: string, addedAt: number): CatalogueEntry & { userAdded: true; addedAt: number } => ({
+    kind: 'set-piece',
+    id,
+    label: 'GARDEN',
+    document: documentFromParts([part('ground', { type: 'box', width: 1, height: 1, depth: 1 }, { color: 0x11aa22 })]),
+    userAdded: true as const,
+    addedAt,
+  });
+
+  it('returns all case-insensitive matches, most-recent user entry first', () => {
+    const older = userGarden('garden-old', 1000);
+    const newer = userGarden('garden-new', 2000);
+    const bundled: CatalogueEntry = { kind: 'set-piece', id: 'garden-bundled', label: 'garden', document: documentFromParts([part('ground', { type: 'box', width: 1, height: 1, depth: 1 }, { color: 0 })]) };
+    const result = matchesByLabel([bundled, older, newer], 'GARDEN');
+    expect(result.map((e) => e.id)).toEqual(['garden-new', 'garden-old', 'garden-bundled']);
+  });
+
+  it('returns an empty array when nothing matches', () => {
+    expect(matchesByLabel([userGarden('garden-only', 1000)], 'CLASSROOM')).toEqual([]);
+  });
+});

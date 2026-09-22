@@ -1,408 +1,478 @@
 # Directionally — Roadmap
 
-Completed phases live in [ROADMAP_ARCHIVE.md](ROADMAP_ARCHIVE.md).
+Completed and superseded phases live in [ROADMAP_ARCHIVE.md](ROADMAP_ARCHIVE.md).
 
 ## Vision
 
-Evolve Directionally from a scene player into a full production authoring tool: write scripts, build scenes from an asset catalogue, choreograph characters, control cameras and lighting, and export productions for sharing or printing.
+Directionally should let a creator start from a treatment and reach a playable first pass quickly,
+then iterate through structured refinement passes without expert-level setup.
+
+Primary loop:
+
+1. Write treatment / scene intent.
+2. Compile to a first-pass production.
+3. Refine staging, timing, animation, and voice.
+4. Recompile safely without losing deliberate manual edits.
 
 ---
 
-## Phase L — Locations & Environment Generation *(L1–L4 complete; L5 next)*
+## Roadmap Principle
 
-*A director should be able to rough in a convincing location — a theatre stage, a TV studio, an exterior plaza — in under two minutes, without Blender expertise. This phase builds that capability in six ordered steps, each independently valuable.*
+ScriptDocument is the source of truth. Built programmatically, never derived from
+heuristic parsing of unscoped free-form text. The text editor is a locked-down
+controller: every keystroke either fills a field that is already scoped to a
+closed set (a **sigil-scoped token** — see Track SCR) or is verbatim dialogue text
+that is never interpreted. Nothing is ever guessed from prose shape or position.
 
-### Layered asset architecture
+API-first semantics, thin UX seam now, broader UX rework later.
+
+- `ScriptDocument` ↔ sigil-tokenized text editor (typed, always valid, round-trips
+  losslessly: `render(tokenize(text)) === text` and `tokenize(render(doc)) === doc`)
+- `ScriptDocument` → `compileScriptDocument()` → production (deterministic, testable)
+- No heuristic parsing of unscoped prose in the critical path. Sigil-scoped tokens
+  (`@actor`, `>action`, `#scene`) resolve deterministically against closed sets —
+  this is the same closed-set resolution the old Combobox UI performed, just
+  triggered by a sigil character instead of a mouse click into a dropdown.
+- FDX is an interchange format only (import/export adapters).
+
+---
+
+## Data Contract (Locked)
+
+Directionally uses a four-layer authoring model:
+
+1. Treatment layer
+- Human intent documents (`TREATMENT*.md`).
+- Natural language, no strict grammar requirement.
+- Guides authoring and acceptance testing; not executed by the engine directly.
+
+2. Script layer
+- `ScriptDocument` is the structured source of truth — scenes, beats, cast, assignments.
+- The text editor only allows mutations that map to legal `ScriptDocument` changes.
+- Movement verbs (`enter`, `exit`, `move`, `hold`) are structured beat types,
+  not loose text to be pattern-matched post-hoc.
+- Authoring surface is a single sigil-tokenized text buffer (Track SCR): `@actor`,
+  `>action`, `#scene` sigils scope autocomplete before any content is interpreted.
+  No regex parsing of unscoped prose — every token's type is known from its sigil
+  before a single character of its value is typed.
+
+3. Compile layer
+- Script compiles to canonical beats.
+- Beats compile to a playable first-pass production.
+- Compiler emits diagnostics for unresolved or ambiguous intent.
+
+4. Refinement layer
+- Manual timeline/viewport/property edits are stored as overrides.
+- Overrides are applied after compile output to refine presentation.
+
+Source-of-truth split:
+- Intent truth: script + canonical beats.
+- Presentation truth: compiled production + override patch set.
+
+Merge rule:
+- Recompile must preserve manual overrides by default.
+- Overrides are removed only by explicit reset actions at scene/beat granularity.
+
+---
+
+## Track TDA — Treatment-Driven Authoring
+
+> Open items: milestone **TDA** — [TDA-4 #21](https://github.com/boostybaboon/directionally/issues/21).
+
+`ScriptDocument` → `compileScriptDocument()` → production is complete and unchanged by the
+editor rework in Track SCR (see [ROADMAP_ARCHIVE.md](ROADMAP_ARCHIVE.md) for TDA-1/2/3 history).
+One item remains open:
+
+### TDA-4 — FDX Interchange + Override Merge
+
+Goal: FDX import/export adapters; manual refinements survive recompile.
+
+Deliverables:
+- FDX import: FDX XML → `ScriptDocument` (best-effort, lossy for non-dialogue content).
+  Extracted action lines become direction notes. User resolves any ambiguity.
+- FDX export: `ScriptDocument` → Fountain → FDX conversion (consumes the clean
+  `renderFountain()` output described in SCR-5, not the sigil buffer directly).
+- Override layer: manual timeline/viewport edits persist across recompilation.
+- Conflict reporting for upstream ScriptDocument changes.
+
+Exit criteria:
+- Round-trip: import FDX → `ScriptDocument` → compile → export FDX preserves known structure.
+- Manual edits survive recompilation in automated tests.
+
+---
+
+## Track CAP — Capability Continuation (supporting)
+
+> Open items: milestone **CAP** — [#22](https://github.com/boostybaboon/directionally/issues/22) lighting rig,
+> [#23](https://github.com/boostybaboon/directionally/issues/23) audio, [#24](https://github.com/boostybaboon/directionally/issues/24) remote assets,
+> [#25](https://github.com/boostybaboon/directionally/issues/25) video export.
+
+These are still valuable, but subordinate to the SCR/CAT tracks below.
+
+### CAP-1 — Lighting rig completion
+- Finish point-light authoring surface and controls.
+
+### CAP-2 — Audio timeline completion
+- Audio block strip rendering, waveform preview, catalogue integration.
+
+### CAP-3 — Remote asset pipeline
+- Swap local catalogue store for remote asset store via existing abstraction.
+
+### CAP-4 — Video export
+- Off-screen render and encoded output pipeline.
+
+---
+
+## Track CAT — Catalogue Integration & Placeholder Resolution (primary, interleaved with SCR)
+
+> Future direction: name-based resolution is a bootstrap, not a scaling contract — see
+> [ROADMAP_CATALOGUE.md](ROADMAP_CATALOGUE.md) for the identity/resolution model that replaces it
+> as the app moves toward shared, multi-user catalogues. Steps 1–10 of that model have landed; its
+> *Surface reach* table lists what a user or an agent still cannot reach, of which the scene tier is
+> this track's: a venue is resolved and placed (`compileSceneBlock` → one piece), but a scene cannot
+> yet *vary* it — dressing (`NamedScene.set[].overrides`) is expressible in the data and has no
+> script syntax, no panel and no agent verb, and its targets are addressed by name rather than by
+> identity (N8).
+
+Today the script compiler fakes catalogue resolution entirely: every cast member — regardless
+of the typed name — is bound to `CATALOGUE_ENTRIES.find(e => e.kind === 'character')`, i.e.
+always the same first bundled character (currently the Robot). The scene heading's `setting`
+field is captured but never read by the compiler — `compileSceneBlock()` always calls
+`buildStageFloor()` regardless of what was typed. `CataloguePanel.svelte` (a complete
+characters/set-pieces/lights/environments browser with drag-and-drop and "Edit in Sketcher"
+links) is fully built but mounted nowhere — the script view has no reference to it, and no nav
+links to `/character` or `/sketch` exist from the main app. The three surfaces — script,
+sketcher, character creator — are genuinely disconnected islands.
+
+This track makes cast names and scene settings resolve against a real (bundled + user-authored)
+catalogue, and makes the failure mode when nothing matches into a clearly-marked, legible
+placeholder rather than a silent wrong-asset substitution. This is the direct architectural
+prerequisite for "type `Bob (male, 66)` and get a character" — resolution has to exist and be
+honest about when it *hasn't* resolved before typing can feel trustworthy. It is also the
+architectural prerequisite for Track SCR's safety property: sigil typing can only stay
+uninterrupted if an unmatched name safely becomes a placeholder instead of blocking.
+
+### CAT-0 — Bundle a generic default humanoid as a real catalogue asset ✅ COMPLETE
+
+Delivered: `scripts/exportGenericHuman.mjs` drives the real `/character` → Export to Catalogue
+flow headlessly via Playwright (starts the dev server, loads `/character` with zero tuning,
+clicks Export, pulls the resulting GLB out of OPFS) — guarantees the bundled asset matches
+exactly what a fresh session produces, not a reimplementation of the export logic. Output saved
+to `static/models/gltf/generic-human.glb` (2.98 MB). Bundled `CharacterEntry` added in
+`entries.ts` (`id: 'generic-human'`, `defaultAnimation: 'idle'`, `defaultScale: 1`), with 2 new
+tests in `catalogue.test.ts` confirming it resolves via `getCharacters`/`getById` alongside the
+Robot.
+
+
+### CAT-1 — Cast member → catalogue resolution + placeholder indicator ✅ COMPLETE
+
+Delivered: `compileScriptDocument(doc, userEntries?)` now takes an optional merged-catalogue
+argument and resolves each cast name via case-insensitive label match against
+`CATALOGUE_ENTRIES` + any passed-in user (OPFS) entries; unresolved names fall back to the
+CAT-0 `generic-human` id and are flagged `placeholder: true` on the `StoredActor`, with an
+`info`-level diagnostic. `placeholder` threads through `Actor` (domain), `Model.placeholderActors`
+(`src/lib/Model.ts`), and `SceneBridge.sceneToModel()`. `Presenter.svelte` renders a persistent
+amber lozenge sprite (`⚠ NAME`) above each placeholder actor's head for its entire time on
+stage — reuses the `CanvasTexture`/`THREE.Sprite` billboard mechanism already built for speech
+bubbles, but attached at scene-load time instead of per-line. `+page.svelte` loads
+`OPFSCatalogueStore.list()` on mount and passes the merged entries into both
+`compileScriptDocument` and `storedSceneToModel`, so user-authored characters resolve too. 6 new
+tests in `fountainCompiler.test.ts` covering bundled-label match, placeholder fallback,
+two-actors-distinct, and OPFS-entry resolution.
+
+Exit criteria met: two cast members in one scene, one bound to an existing catalogue entry, one
+unbound, render as visually distinct — the unbound one is unmistakably marked as a placeholder,
+not a wrong-but-confident character.
+
+
+### CAT-2 — Setting → scenery resolution + placeholder indicator ✅ COMPLETE
+
+Delivered: `compileSceneBlock()` now resolves the heading's `setting` against the merged
+catalogue (`SetPieceEntry` first, then `EnvironmentEntry`) via case-insensitive label match — the
+compiler no longer calls `buildStageFloor()` unconditionally (that hardcoded stage-and-wings
+builder is removed). A `SetPieceEntry` match stages the real geometry (user-authored OPFS set
+pieces are persisted as `opfs://<id>` gltfPath references resolved by `storedSceneToModel`); an
+`EnvironmentEntry` match sets `StoredScene.environmentMap`; no match synthesises a placeholder
+room — a single floor plane (`placeholder-room`, 6×6, slate blue, visually distinct from the old
+stage-and-wings) with an `info`-level diagnostic. The typed setting name is threaded through
+`StoredScene.placeholderSetting` → `Scene` → `Model.placeholderSetting` (mirroring CAT-1's
+`placeholderActors`), and `Presenter.svelte` draws it as a `CanvasTexture` on the floor plane
+itself (`⚠ NAME`) rather than a floating billboard. 6 new tests in `fountainCompiler.test.ts`
+plus 2 in `storedSceneToModel.test.ts`.
+
+Exit criteria met: typing a setting with no catalogue match produces a placeholder room with the
+setting name legibly written on the floor; typing a setting matching a bundled or
+Sketcher-exported set piece resolves to the real geometry with no placeholder marker.
+
+### CAT-3 — Surface the catalogue and cross-tool navigation in the script view ✅ COMPLETE
+
+Delivered: `+page.svelte` now has a Script/Catalogue tab in the left pane — `CataloguePanel.svelte`
+is mounted with `userEntries` (the live `OPFSCatalogueStore.list()` merge) and wired to
+`onadd`/`onapplyenvironment`. Topbar nav links to `/character` and `/sketch` were added. `onadd`
+became the explicit binding surface: `StoredProduction.castBindings`/`settingBindings` (name-keyed,
+uppercase) override label-match resolution in `resolveCastName`/`resolveSetting` via a new
+`ResolveBindings` argument on `compileScriptDocument`; the inspector's cast list is now selectable
+to choose the cast member a character bind applies to, and a set-piece/environment bind applies to
+the focused scene's setting. Bindings persist on the production and survive recompile.
+
+Exit criteria met: browse the merged catalogue in-place; explicitly bind a cast member or setting
+to a catalogue asset without touching the script; `/character` and `/sketch` are reachable from the
+script view.
+
+### CAT-4 — Bootstrapping bridge: "Create real asset" from a placeholder ✅ COMPLETE
+
+Delivered: `Diagnostic` gained structured `kind` (`unresolved-cast`/`unresolved-setting`) and
+`name` fields, populated by the compiler. `+page.svelte` renders a "Create →" action on those
+diagnostics that opens `/character?prefillName=<name>` or `/sketch?prefillName=<name>` in a new
+tab. `/character` and `/sketch` read `?prefillName=` and pre-seed the design/assembly name (and
+skip the last-used restore so it starts a fresh, pre-named asset). The script view listens on
+`BroadcastChannel('directionally-catalogue')` and, on `catalogue-updated`, re-fetches
+`OPFSCatalogueStore.list()` and re-runs `compileAndApply(false)` — a newly-exported asset whose
+label matches a still-unresolved cast/setting name silently replaces the placeholder.
+
+Exit criteria met: a fresh placeholder name can be authored into a real catalogue asset without
+ever editing the script text.
+
+### CAT-5 — Bundled starter archetypes *(fine-tuning, not a prerequisite)* → [#26](https://github.com/boostybaboon/directionally/issues/26)
+
+A handful of additional bundled humanoid archetypes (age/gender variants on CAT-0's
+generic-human) and generic sceneries (classroom, park, café, living room) so common names
+resolve directly without needing the CAT-4 create flow. Demoted to an enhancement here because
+CAT-0 through CAT-2 already guarantee nothing blocks — an unresolved name always renders
+something legible and clearly marked, so richer bundled defaults are purely a quality-of-life
+improvement on top of a system that already works end-to-end.
+
+### AI-assisted asset generation ✅ Landed
+
+When no catalogue or user-authored match exists for a typed setting (`aircraft cabin`) or
+character descriptor (`schoolteacher, male, 56`), the Roster "Generate" button synthesises a
+starting asset instead of leaving the placeholder as the end state — characters via the
+parametric `CharacterSpec` surface, and scenery via the AI Draft → `SketcherDraft` → GLB path
+(the editable generate path). Tracked in [ROADMAP_AI.md](ROADMAP_AI.md) (provider side) and
+[ROADMAP_API.md](ROADMAP_API.md) (authoring surface); the interactive `/agent/edit` loop is still
+in progress there.
+
+---
+
+## Track SCR — Sigil-Tokenized Script Editor (primary, interleaved with CAT)
+
+> Open item: milestone **SCR** — [SCR-5 #27](https://github.com/boostybaboon/directionally/issues/27).
+
+Highland Pro's writing feel comes from parsing a *prose-shaped* page heuristically (position,
+capitalization, blank lines) into formatting — the parse target is a readable page, and a bad
+guess just looks wrong, it never breaks a running program. Directionally's parse target is
+executable data: an actor name must resolve to an actorId, a verb must resolve to one of four
+enum values with typed args. Heuristic prose-parsing degrades gracefully for a human reading a
+page and catastrophically for a compiler that needs a valid `ActionVerb` — which is exactly why
+the Roadmap Principle bans it. The tension this track resolves: dropdown-driven structured
+fields are safe but slow — every beat needs mouse trips into comboboxes.
+
+The chosen direction — **inline sigils** — wins because the sigil scopes a token's type *before*
+a single character of its value is typed. `@`, `>`, `#` are not heuristics; they are an explicit,
+tiny, unambiguous grammar the user opts into by typing them. The tokenizer never has to guess "is
+this a character name or a verb?" the way loose Fountain text does — that question is already
+answered by which sigil started the line. This keeps every keystroke inside the Roadmap
+Principle's rule while making the buffer read like a screenplay as you type it.
+
+This replaces the previous boxed Combobox editor outright — not an incremental
+keyboard-ification of dropdowns, but a replacement editing surface over the same
+`ScriptDocument`/`compileScriptDocument()` core, which is untouched. (Prior interaction models
+considered and rejected — Combobox-keyboard-only, Emmet-style snippet tab-stops, command-palette
+fuzzy matching, loose-Fountain-with-confirm-diff — are recorded in
+[ROADMAP_ARCHIVE.md](ROADMAP_ARCHIVE.md) for context.)
+
+### Sigil grammar
 
 ```
-Level 5 — External assets            (user-supplied URL or file upload)
-Level 4 — Paid/free third-party GLBs (Sketchfab, Ready Player Me, etc.)
-Level 3 — Bundled GLTF props         (we curate ~15 CC0 items)       ← next
-Level 2 — HDRI environments          ✅ complete
-Level 1 — Parameterised generators   ✅ complete
-Level 0 — Bare primitives            (always available)
+#INT CLASSROOM DAY
+
+>ALPHA enters left
+>BETA enters right
+
+@ALPHA
+We start here. Multiple lines of dialogue
+just keep going until the next sigil line.
+
+>ALPHA moves center
+
+@BETA
+Copy that.
+
+#EXT PARK DAY
+
+>ALPHA exits right
 ```
 
-Each level adds coverage without obsoleting the one below. A production can mix levels freely.
+- `#` — scene heading. Starts a new scene. Tokens after it (INT/EXT, setting, time-of-day)
+  complete against the same closed sets the heading Comboboxes used.
+- `>` — action beat. `>ALPHA enters left` tokenizes actor → verb (enter/exit/move/hold, light
+  synonym normalisation) → verb-specific arg (side/mark/seconds) — the same closed sets
+  `ActionBeat` already has.
+- `@` — speaker cue. `@ALPHA` alone on a line sets "current speaker"; every non-sigil line after
+  it, up to the next sigil line, is dialogue text attributed to that speaker — verbatim, never
+  tokenized. This is Fountain's own character-cue-then-dialogue-block convention, made
+  unambiguous with an explicit sigil instead of Fountain's fragile ALL-CAPS-plus-blank-line
+  heuristic.
+- Blank lines are pure visual separation, ignored by the tokenizer.
+- An unmatched `@BOB` or `#AIRCRAFT CABIN` never blocks or errors — it becomes a placeholder-
+  eligible name that flows straight into **Track CAT**'s resolution pipeline. This combination —
+  sigils removing type ambiguity, CAT placeholders removing the need to stop and resolve — is
+  what makes uninterrupted forward typing safe. See "Interleaving with Track CAT" below.
+
+### SCR-0 — Caret-position autocomplete primitive (spike) ✅ COMPLETE (superseded by SCR-2)
+
+Delivered: `src/core/treatment/sigilAutocomplete.ts` (pure, DOM-free tokenizer:
+`findActiveSigilToken`, `applySigilCompletion`, `filterCastOptions`, 15 tests) +
+`src/lib/script/SigilTextarea.svelte` (plain `<textarea>` with mirror-div caret-position
+popup, wired behind a "@ sigil spike" toggle in `+page.svelte`, not yet connected to
+compile). Validated the `@` actor-completion feel end-to-end before generalising to `>`/`#`
+in SCR-2, which replaced the toggle-gated spike with the primary authoring surface.
+
+
+
+### SCR-1 — Tokenizer + lossless round-trip (core data layer) ✅ COMPLETE
+
+Delivered: `src/core/treatment/sigilScript.ts` — `tokenizeScript(text)` and `renderScript(doc)`,
+the sigil editor's text ↔ `ScriptDocument` mapping, fully independent of the boxed editor's
+`renderFountain()`/`compileScriptDocument()` (both untouched). 28 tests in
+`sigilScript.test.ts`, including golden round-trip tests in both directions
+(`tokenizeScript(renderScript(doc)) === doc` structurally, and
+`renderScript(tokenizeScript(text)) === text` for canonical text) against scene structures
+mirroring both treatment fixtures (dialogue-driven and action-driven styles). Diagnostics are
+emitted (not thrown) for unscoped lines, action beats before any scene heading, and unknown
+verbs — consistent with the "never blocks" principle Track CAT depends on.
+
+
+### SCR-2 — Textarea editing surface with inline autocomplete ✅ COMPLETE
+
+Delivered: `sigilAutocomplete.ts` generalised from the SCR-0 `@`-only spike to all three sigils —
+`findActiveSigilToken()` now returns `tokenIndex`/`priorTokens` so a multi-field line
+(`>ALPHA enters left`) knows which field the caret is in, and `sigilFieldOptions(sigil,
+tokenIndex, priorTokens, cast)` resolves the closed set for that field (cast names for `@`/`>`
+token 0, verbs for `>` token 1, side/mark/open for `>` token 2 depending on the verb already
+typed, INT/EXT for `#` token 0, open free text for setting/time-of-day/dialogue/hold-seconds).
+`VERB_ALIASES`/`SIDE_WORDS`/`MARK_WORDS` moved to exports on `sigilScript.ts` so both modules
+share one closed-set source of truth. 31 tests in `sigilAutocomplete.test.ts` (up from 15),
+covering multi-field token detection and every `sigilFieldOptions` branch.
+
+`SigilTextarea.svelte` is now the primary authoring surface in `+page.svelte`, replacing the
+boxed Combobox beat editor outright (the SCR-0 "spike" toggle is gone — this is no longer
+experimental). It owns its own popup lifecycle: refreshes the active token and closed-set
+options on every input/click/keyup, positions the popup via the existing mirror-div technique,
+and commits a selection with a trailing space when the sigil grammar expects another field to
+follow on the same line (e.g. after an actor name on a `>` line) versus no trailing space on a
+line's final field (dialogue speaker cue, an action beat's last arg) — Enter naturally starts the
+next line there. `+page.svelte` wires the buffer through `tokenizeScript()` → `ScriptDocument` on
+every change, debounced into the existing 500ms `scheduleCompile()` → `compileScriptDocument()`
+path, unchanged. The sigil buffer text itself is persisted as `NamedScene.dslSource` so
+re-opening a production restores the authored text verbatim, not a re-render of compiled data.
+The boxed per-field editor (`Combobox`-driven beat rows, heading fields, cast add/rename UI) and
+the now-redundant SCR-0 toggle were removed from `+page.svelte`; `ScriptEditor.svelte` (the
+separate dialogue-line-list editor) and `Combobox.svelte` are unused by the script view as of
+this change and are left in place as-is pending a follow-up cleanup pass, since nothing else in
+the roadmap currently depends on deleting them.
+
+Exit criteria met: a full scene (heading, two actors entering, a dialogue exchange, an action
+beat) is authorable keyboard-only in the textarea, autocomplete guiding every sigil-scoped token
+via Tab/Enter/arrow-keys, Escape dismissing without committing, and the result compiles via the
+unchanged `compileScriptDocument()` path with no mouse interaction required. 599 tests green,
+`svelte-check` clean.
+
+
+### SCR-3 — Multi-scene authoring via `#` breaks ✅ COMPLETE
+
+Because `#` both starts a heading and marks a scene boundary, a multi-scene document falls out of
+SCR-1/SCR-2 directly — keep typing past one scene into the next, no separate scene-switcher UI
+needed for *authoring*.
+
+Delivered: `tokenizeScript()` now returns `sceneStartLines` (the 1-based line of each `#` heading)
+and `sceneIndexForLine()` maps a caret line to a scene. `SigilTextarea` reports the caret line via
+an `oncaret` callback and exposes `focusLine()` for programmatic jumps. `+page.svelte` renders the
+scene the caret is in (viewport follows the caret), the inspector's scene list is clickable (jumps
+the caret and loads that scene), and `StoredProduction.scriptSource` now holds the whole buffer at
+production level (it was previously bolted onto scene 0's `dslSource`). Cast subsets and per-scene
+set resolution were verified working: each scene stages only the cast that appears in it, and each
+resolves its own setting. Tests cover scene-line mapping, compiler-level multi-scene (cast subsets,
+per-scene sets), and a tokenize → compile → `storedSceneToModel` pipeline
+(`multiScene.integration.test.ts`).
+
+Exit criteria met: both treatment fixtures authored as one buffer compile to N-scene productions;
+viewport switching between scenes works via caret position or the clickable scene list (the SCR-4
+navigator/act-hierarchy and the presentation-mode auto-advance flow remain future work).
+
+### SCR-4 — Scene/act navigation minimap *(polish, not core)* ✅ COMPLETE
+
+Delivered: a read-only scene outline now renders alongside the buffer in the script pane — one
+entry per scene (number + setting), click-to-scroll via the existing `focusScene()` jump + focus.
+The active entry is highlighted and follows the caret (`focusedSceneIndex`), so the minimap doubles
+as a "where am I" indicator. It's a flat list for now: the sigil grammar only has a single `#`
+level, so the scene/act hierarchy (`##`/`###`) is a future grammar question, not part of this step.
+
+### SCR-5 — Sigil visibility toggle + clean export view → [#27](https://github.com/boostybaboon/directionally/issues/27)
+
+- "Hide sigils" toggle — Word's show/hide-formatting-marks pattern — renders the buffer with
+  sigils faded or hidden, showing cast-case names and prose only, closer to a pure screenplay
+  look, without changing the underlying buffer or data.
+- Drop the boxed editor's read-only Fountain `<details>` preview pane entirely — redundant once
+  the primary buffer already reads like a screenplay.
+- `renderFountain()` (today's function, currently used for the live preview) is repurposed as a
+  clean **export/print-preview** renderer — pure Fountain output, no sigils — feeding the future
+  TDA-4 FDX export and any print-preview feature, no longer part of the primary editing surface.
+
+Exit criteria: toggling "hide sigils" changes only visual presentation, never the underlying
+text/data; the FDX/print export path uses `renderFountain()`'s clean output independently of
+whatever sigil-visibility state the editor is in.
+
+### Interleaving with Track CAT
+
+SCR's safety property — typing a new name never interrupts the flow — depends on Track CAT's
+placeholder resolution existing first, otherwise every unmatched name would need a blocking
+disambiguation dialog, defeating the point. Build order:
+
+1. **SCR-0** (spike) and **SCR-1** (tokenizer) — independent of CAT, pure editor/data-layer work.
+2. **CAT-0** (bundled generic-human asset) — needed before CAT-1 can stage a real placeholder body.
+3. **CAT-1** (cast resolution + placeholder) — makes it safe for SCR-2 to accept unmatched `@`
+   names without interrupting.
+4. **SCR-2** (textarea + inline autocomplete) — now safe to ship for `@`/`>`; the `#` setting
+   sigil can land in the same pass or wait one step for CAT-2.
+5. **CAT-2** (setting resolution + placeholder) — makes `#` setting-name typing equally safe.
+6. **SCR-3** (multi-scene via `#`) — falls out once SCR-2 is complete.
+7. **CAT-3** (catalogue panel + nav links) — independent, can land any time after CAT-0–2.
+8. **CAT-4** (create-real-asset bridge) — depends on CAT-1/CAT-2's diagnostics existing.
+9. **SCR-4** (navigation minimap) — the one polish item kept in the active plan.
+10. **SCR-5** (sigil visibility + clean export) and **CAT-5** (bundled starter archetypes) — deferred: SCR-5's toggle is low-value, and CAT-5 is catalogue *content* rather than editor polish.
 
 ---
 
-### Step L1 — HDRI environment maps ✅ COMPLETE
+## Current Focus
 
-*Unlocks all exterior scenes with near-zero code; dramatically improves interior atmosphere.*
+**All planned steps landed (SCR-0→SCR-4, CAT-0→CAT-4).** ⏸ **Paused for review/testing — SCR-5 /
+CAT-5 deferred**, per the plan below.
 
-**Data model changes:**
-- `environmentMap?: string` added to `StoredScene` — a URL to an `.hdr` or `.exr` file, or a catalogue reference key.
-- `EnvironmentEntry` added to the catalogue type union: `{ kind: 'environment'; id: string; label: string; hdriPath: string; thumbnail?: string }`.
-- Initial bundled entries: 2–3 Poly Haven CC0 HDRIs (interior neutral, exterior sky, evening) referenced by path in `entries.ts`.
+| Step | What | Check |
+|------|------|-------|
+| 1 ✅ | SCR-0: caret-autocomplete spike (`@` actor completion in a plain textarea) | Popup follows caret; Tab/Enter commits; Escape dismisses |
+| 2 ✅ | CAT-0: bundle generic-human as a real catalogue `CharacterEntry` | "Generic Human" selectable like "Robot" |
+| 3 ✅ | SCR-1: tokenizer + `renderScript()`, lossless round-trip tests on both treatment fixtures | Round-trip tests green |
+| 4 ✅ | CAT-1: cast resolution + placeholder lozenge sprite + diagnostic | Two cast members, one resolved one placeholder, visually distinct |
+| 5 ✅ | SCR-2: textarea replaces boxed editor; `@`/`>`/`#` sigils live, unmatched names/verbs/settings commit safely | Full scene authored keyboard-only, no dropdowns |
+| 6 ✅ | CAT-2: setting resolution + placeholder room | Unmatched setting → labelled placeholder room |
+| 7 ✅ | SCR-3: `#` sigil scene breaks — multi-scene falls out | One buffer compiles to N scenes; caret/click switches the rendered scene |
+| 8 ✅ | CAT-3: catalogue panel + cross-tool nav links | Browse catalogue and reach `/character`/`/sketch` from the script view |
+| 9 ✅ | CAT-4: "Create real asset" bridge from a placeholder diagnostic | Placeholder → authored asset round-trip with zero script edits |
+| — | **⏸ Pause here for review/testing before continuing** | |
+| 10 ✅ | SCR-4: navigation minimap — flat scene outline alongside the buffer, click-to-scroll | Long script: click a scene to jump + focus it |
 
-**Renderer changes:**
-- `RGBELoader` from `three/addons` loads the HDR; `PMREMGenerator.fromEquirectangular()` produces the environment map.
-- `scene.environment` set for IBL reflections on all materials.
-- `scene.background` set to the same map (or a separate low-res version) for visible sky/backdrop.
-- When `environmentMap` is absent: existing solid `backgroundColor` fallback is unchanged.
 
-**Authoring UI:**
-- "Environment" section in the Staging tab (or a new "Location" tab). Shows current HDRI thumbnail. A picker lists all `EnvironmentEntry` items from the catalogue.
-- `SetEnvironmentCommand(hdriUrl | null)` — full undo/redo.
 
-**Sources:** [Poly Haven](https://polyhaven.com/hdris) — all CC0. Download `.hdr` files; bundle 2–3 in `static/models/`.
 
----
 
-### Step L2 — Textured materials ✅ COMPLETE
-
-*Unlocks painted backdrops, textured floors, brick walls.*
-
-**Data model changes:**
-- `textureUrl?: string` added to `MaterialConfig`.
-- `repeatU?: number; repeatV?: number` for tiling (e.g. a brick texture tiled 4×3 across a wall flat).
-
-**Renderer changes:**
-- `TextureLoader` applied in `buildSceneGraph.ts` when `material.textureUrl` is set. `MeshStandardMaterial.map` receives the loaded texture.
-- `texture.repeat.set(repeatU ?? 1, repeatV ?? 1)` + `texture.wrapS = texture.wrapT = THREE.RepeatWrapping`.
-
-**Authoring UI:**
-- "Texture" field in the set-piece inspector (Phase 9.A). URL input + optional tiling controls.
-- `UpdateSetPieceCommand` already handles `material` patches; no new command needed.
-
-**Sources:** [Poly Haven textures](https://polyhaven.com/textures) — CC0. A few key textures (concrete, wood boards, brick, painted plaster) bundled in `static/models/textures/`.
 
 ---
 
-### Step L3 — Theatre stage generator ✅ COMPLETE
+## Acceptance Fixtures
 
-*The most theatrically specific use case; achievable entirely with existing primitives.*
+- [TREATMENT_DIALOGUE_DRIVEN.md](TREATMENT_DIALOGUE_DRIVEN.md)
+- [TREATMENT_ACTION_DRIVEN.md](TREATMENT_ACTION_DRIVEN.md)
 
-**What it emits:** a call to `generateTheatreStage(config)` returns `SetPiece[]` — a set of box flats arranged as a traditional proscenium or thrust stage configuration. The result is applied via `SetSceneSetCommand` (or an `ApplySetTemplateCommand` if UX2.5 lands first).
-
-**Generator config:**
-```ts
-type TheatreStageConfig = {
-  type: 'proscenium' | 'thrust' | 'traverse';
-  stageWidthM: number;  // default 8
-  stageDepthM: number;  // default 6
-  flatHeightM: number;  // default 3.5
-  legs: number;         // number of wing-flat pairs per side (default 3)
-  deckColor?: number;   // default 0x8b6914 (wood)
-  flatColor?: number;   // default 0x1a1a1a (black masking)
-};
-```
-
-**Output pieces (proscenium example):** stage deck (plane), back wall flat, N × leg flats stage-left, N × leg flats stage-right, border (top masking header), optional tormentor flats framing the proscenium opening. Each piece is a named `SetPiece` with correct position and rotation.
-
-**UI:** "Generate stage…" button in the Staging tab's Set section. Opens a small form (type selector + key dimensions). Submitting replaces the current set with the generated pieces. Undo via the existing command stack.
-
-**Location in codebase:** `src/core/storage/generators/theatreStage.ts` (pure function, no Three.js — same pattern as `sceneBuilder.ts`). Tests alongside it.
-
----
-
-### Step L4 — Drama studio / soundstage generator ✅ COMPLETE
-
-*A box room with configurable dimensions. "Drama studio" and "soundstage" are the same concept — a bare rectangular space with controlled lighting.*
-
-**What it emits:** floor plane + 4 wall pieces + optional ceiling, each a `SetPiece`.
-
-**Generator config:**
-```ts
-type StudioConfig = {
-  widthM: number;   // default 10
-  depthM: number;   // default 8
-  heightM: number;  // default 3
-  wallColor?: number;      // default 0xcccccc
-  floorColor?: number;     // default 0x555555
-  ceiling?: boolean;       // default false
-  floorTextureUrl?: string;
-};
-```
-
-**UI:** "Generate room…" button. Same form pattern as Step L3.
-
-**Location:** `src/core/storage/generators/studioRoom.ts`.
-
-**Note on multi-level sets:** simple raised platforms can be added by extending this config with a `platforms?: Array<{ x, z, widthM, depthM, riseM }>` array, emitting extra box `SetPiece`s. Full multi-level / terrain support (uneven surfaces, slope navigation, stair-climbing actors) is a later advanced feature — see "Future: Multi-level sets" below.
-
----
-
-### Step L5 — GLTF set-piece infrastructure *(next)*
-
-*Enable set pieces to reference external GLTF/GLB files, not only procedural geometry. This is the prerequisite for user-authored assets (L6) to appear as set pieces in productions.*
-
-**Data model change:**
-- `SetPieceEntry` gains an optional `gltfPath?: string` field (mirroring `CharacterEntry.gltfPath`).
-- `BuildSceneGraph.ts` handles a `SetPiece` whose catalogue entry has a `gltfPath`: loads via `GLTFLoader` instead of generating geometry. Falls through to existing geometry path when `gltfPath` is absent.
-- Preview in `PreviewRenderer` already handles arbitrary GLTF paths — no change needed there.
-
-**No assets bundled in this step.** The infrastructure is validated by wiring up one of the existing bundled character GLBs as a set-piece entry in tests. Real assets come in via L6 (user-authored) or the deferred bundled curation step.
-
-**Tests:** `storedSceneToModel` or `buildSceneGraph` test covering a set piece with `gltfPath` set (mock `GLTFLoader`).
-
----
-
-### Step L6 — OPFSCatalogueStore (user-extensible catalogue)
-
-*Let authors bring their own GLB assets without writing code. Sets up the external asset architecture for Phase 13.*
-
-**Concept:** a user can paste a URL (or upload a file) to add a new `CatalogueEntry` stored in the browser's Origin Private File System (OPFS). The entry appears in the Catalogue tab exactly like a bundled asset — it can be previewed, dragged into scenes, and used in productions. Productions reference assets by stable `catalogueId` string; the `gltfPath` is an object URL resolved fresh from OPFS each session.
-
-**Why OPFS, not localStorage:** GLB binaries encoded as `data:` URIs would exhaust the ~5 MB `localStorage` cap after a handful of assets. OPFS stores raw binary files with quota managed by the browser against available disk space — effectively unlimited for practical use. Supported in Chrome/Edge/Firefox/Safari 17+.
-
-**Data model:**
-```ts
-type UserCatalogueEntry = CatalogueEntry & { userAdded: true; addedAt: number };
-```
-`OPFSCatalogueStore` in `src/core/storage/OPFSCatalogueStore.ts` — async interface; GLB files stored under an `assets/` directory in the origin OPFS root. On `list()`, each file produces a fresh `URL.createObjectURL()` — no reload fragility.
-
-**UI:**
-- "Add asset…" button at the bottom of the Catalogue tab.
-- A modal with: file drag/drop or file picker, label, kind selector (Character / Set Piece). Submit → loads the GLTF to validate, writes the blob to OPFS, saves metadata.
-
-**Future path (Phase 13):** `OPFSCatalogueStore` is the local implementation of a `CatalogueStore` interface. Phase 13 replaces it with a server-backed store — callers are unchanged. User assets can be uploaded to the server store at that point.
-
----
-
-### Deferred: Bundled third-party prop curation *(was L5)*
-
-*Curating 10–15 CC0/MIT-licensed GLB props from Kenney.nl, Quaternius, Poly Haven.*
-
-Deferred in favour of author-created assets via the sketcher (Phase S1–S4). When this is revisited:
-- Assets stored in `static/models/gltf/props/`
-- One `SetPieceEntry` per prop in `entries.ts` (L5 infrastructure already supports this)
-- Selection criteria: CC0 or MIT; <2 MB each; low-poly, stylistically neutral
-- Likely sources: Kenney.nl, Quaternius, Poly Haven 3D (all CC0)
-
----
-
-### Future: Multi-level sets & terrain *(deferred — advanced)*
-
-*For productions requiring stage lifts, mezzanine levels, stairways, or outdoor terrain.*
-
-- **Simple raised platforms:** covered by extending the Studio/Theatre generators (see Step L4 note). No character navigation required; actors are manually placed on the upper level.
-- **Stair navigation:** actors walk a path that follows the stair geometry — requires `MovePath` (Phase 7's path primitive) to support vertical displacement and the block compiler to use total path length, not Euclidean distance, for clip duration. Not trivially backward-compatible.
-- **Terrain mesh:** import or generate a height-map mesh as a `SetPiece` with a custom GLTF. Actor Y-position snapping to terrain surface needs a raycaster query extended to arbitrary mesh geometry. Significant additional complexity.
-- **CSG for window/door apertures in walls:** [`three-bvh-csg`](https://github.com/gkjohnson/three-bvh-csg) (BVH-accelerated, preferred over `three-csg-ts` BSP approach) can punch a door or window hole in a wall flat. A future "Wall" generator entry with optional aperture config.
-
-This cluster of features shares a prerequisite: the character positioning system must be aware of walkable surfaces. Design this as a spike before committing.
-
-## Phase UX2.5 — Reusable set templates *(not yet started)*
-
-*Dress a stage once and re-apply it across all scenes in the production.*
-
-- "Save as set template" action in the Set section of the Staging tab — saves the current scene's `set: SetPiece[]` under a user-chosen name.
-- Set templates appear in the Catalogue tab under a new "Set Templates" group.
-- Applying a template copies all its set pieces into the active scene (non-destructive append; name collisions get a numeric suffix).
-- `SetTemplateStore` in `src/core/storage/` — same shape as `ProductionStore`; backed by IndexedDB once Phase I0 lands, `localStorage` until then.
-- No live link between template and scenes — a template is a saved snapshot, not a shared reference.
-
-This lands naturally after Step L3 (theatre stage generator): generate a stage → save as template → apply to each scene.
-
----
-
-## Phase UX3.1 — Main-area tab bar *(not yet started)*
-
-*Make the three primary canvas surfaces (Playback, Edit, Script) explicit tabs rather than implicit modes.*
-
-**Current state:** Playback and Edit modes are toggled by a ✏ / ▶ button; the Script view has its own 3D / Script toggle bar.
-
-**Proposed tab bar** across the top of the main area:
-
-| Tab | Content |
-|---|---|
-| **▶ Playback** | Three.js canvas in playback mode |
-| **✏ Edit** | Same canvas in edit mode |
-| **📄 Script** | `ProductionScriptView` full-width |
-
-`mainTab: 'playback' | 'edit' | 'script'` replaces `editMode` boolean + `mainView` string. The Presenter only renders when `mainTab !== 'script'`. Transport bar hidden/collapsed in script mode.
-
-**Migration:** remove the `✏ / ▶` toggle button; remove the 3D / Script button bar; right panel retains Stage and Scene Script tabs.
-
-**Tear-out:** because the Script view is a pure surface over a `StoredProduction` value, it can be opened via `window.open('/script')` + `BroadcastChannel('directionally')` for two-window authoring.
-
----
-
-## Phase UX3.2 — Script format compliance *(not yet started)*
-
-*Make the Full Script view print-faithful to an industry format.*
-
-**Format selector:** `scriptFormat: 'stage-play' | 'screenplay'` on `StoredProduction`. Toggle in the Script tab toolbar.
-
-**Stage play (British/US):** acts in Roman numerals, character names upper-case centred, dialogue in narrow column, stage directions italicised.
-
-**Screenplay (WGA):** `INT. LOCATION — DAY` scene headings, action lines flush left, character name at column ~42, dialogue ~35 chars wide, parentheticals.
-
-**Implementation:** a `format-screenplay` CSS class switches margins/indents. Small data-model additions: `location?: string` and `timeOfDay?: 'day' | 'night' | 'continuous'` on `NamedScene`.
-
-**Out of scope:** PDF export (deferred to Phase 6.5), revision marks, Fountain/FDX import/export.
-
----
-
-## Phase 6.5 — Screenplay enrichment *(deferred)*
-
-- Scene headings (`INT. WAREHOUSE — DAY`).
-- Industry-standard pagination (55 lines/page, page numbers top-right).
-- Title page (title, author, draft date, contact block).
-- Scene index / breakdown sheet export.
-- PDF export via `jsPDF` or server-side Puppeteer.
-
----
-
-## Phase 10 — Lighting rig *(not yet started)*
-
-- Add lights from catalogue.
-- Fix `point` light gap: scaffolded in domain types, currently skipped with a warning.
-- `LightBlock` (Phase 8.7) is the authoring surface; this phase adds the editor UI to place and configure lights.
-
----
-
-## Phase 11 — Audio *(partially complete)*
-
-- `AudioBlock` type design captured (Phase 8.7); implementation deferred.
-- **Remaining:** timeline strip rendering for audio blocks, waveform preview, audio clip catalogue entries.
-
----
-
-## Phase 12 — Dance choreography *(deferred — needs spike)*
-
-MIDI → keyframe synchronisation shape is unclear. Spike before committing to an approach.
-
----
-
-## Phase 13 — Remote asset store *(deferred)*
-
-`CharacterEntry.gltfPath` is URL-agnostic — a relative path serves the local catalogue, an absolute URL serves remote.
-
-```ts
-interface AssetStore {
-  list(): Promise<CharacterEntry[]>;
-  resolveUrl(entry: CharacterEntry): Promise<string>; // injects signed tokens if needed
-}
-```
-
-`CATALOGUE_ENTRIES` becomes the `BundledAssetStore` implementation; `OPFSCatalogueStore` (Step L6) is the user-local implementation. Callers never change.
-
-Possible directions: self-hosted S3/R2, Sketchfab API, Ready Player Me, Mixamo FBX→GLB pipeline.
-
----
-
-## Phase 14 — Video render export *(deferred — large)*
-
-- **Export dialog** — resolution presets (1080p, 4K; custom WxH), frame rate, format, audio toggle.
-- **Off-screen render pass** — second `THREE.WebGLRenderer` at export resolution; frame-by-frame transport advance.
-- **Encoding pipeline:** (1) `MediaRecorder` fallback; (2) `WebCodecs VideoEncoder` + `webm-muxer` (recommended); (3) FFmpeg.wasm (max coverage).
-- **Audio:** TTS pre-synthesised before the frame loop begins.
-- **Known risks:** audio/video sync timing, eSpeak/Kokoro synthesis latency, memory at 4K/60fps, Safari WebCodecs gap.
-
----
-
-## Phase UX3 — Drag-and-drop cast management *(deferred)*
-
-- Catalogue → Production cast: drag a character card onto the Cast section.
-- Production cast → Scene (design canvas): drag actor card onto 3D ground plane; stages at drop point with ghost preview.
-- Production cast → Scene (tree): drag actor card onto a scene node or Cast-in-this-scene section.
-
-Prerequisites: UX2.3 and UX2.4. Button-based flows remain — this is progressive enhancement.
-
----
-
-## Infrastructure *(deferred)*
-
-### Phase I0 — ProductionStore → IndexedDB *(local users)*
-
-*Removes the ~5 MB `localStorage` ceiling before it becomes a practical constraint.*
-
-**Motivation:** `localStorage` is capped at ~5 MB shared across all keys. A realistic production reaches 100–300 KB of JSON; with dozens of productions this becomes a genuine limit. IndexedDB provides gigabytes of quota-managed storage, survives page reloads, and has a native binary blob API.
-
-**What changes:**
-- `ProductionStore` interface methods become `async` — `list()`, `get()`, `save()`, `delete()` all return `Promise`s.
-- Implementation moves from `localStorage` to IndexedDB (key `directionally_productions`).
-- `SetTemplateStore` (Phase UX2.5) adopts the same async interface and IndexedDB backing when it is built.
-- `ProductionDocument.execute()` returns `Promise<void>`; all call sites in `+page.svelte` `await` it.
-- All `ProductionStore` and `ProductionDocument` tests updated for async.
-
-**What does not change:** `StoredProduction` shape is identical — no data migration needed for the stored JSON.
-
-**One-way migration:** on first load under I0, existing `localStorage` productions are read and written into IndexedDB, then the `localStorage` key is cleared. Silent, automatic.
-
-**Phase I1 readiness:** the async interface produced here maps directly to a `fetch`-backed Cosmos DB adapter — no further interface change required.
-
----
-
-### Phase I1 — Azure deployment + database serialisation
-- **Frontend:** Azure Static Web App (`swa-cli.config.json` already in repo).
-- **API:** SvelteKit `+server.ts` handlers; SWA managed functions proxy `/api/*`.
-- **Database:** Azure Cosmos DB NoSQL. `StoredProduction` maps directly to a Cosmos DB item. Partition key = `userId`.
-- **`ProductionStore` async interface from Phase I0** — swapping the IndexedDB implementation for a `fetch`-backed store touches zero callers.
-
-### Phase I2 — User management
-- **Identity:** Microsoft Entra External ID (GitHub, Google, email/password).
-- **Scoping:** Cosmos DB partition key = `userId` from JWT. No cross-user leakage.
-- **Session:** SvelteKit `cookies` API; HttpOnly, SameSite=Strict.
-- **Guest mode preserved:** unauthenticated users continue to use localStorage.
-
-### Phase I3 — Staged builds
-- **Environments:** local (Vite + emulators), staging (SWA staging slot), production (SWA production slot).
-- **Flow:** PR → CI green → merge → auto-deploy to staging → manual approval → promote to production.
-
-### Phase I4 — GitHub project management
-- Projects board per major phase group; milestones = phases; issues = tasks.
-- Issue templates: `bug.yml`, `feature.yml`, `snag.yml`, `spike.yml`.
-
-### Phase I5 — GitHub CI/CD
-**PR gate:** `yarn check` (0 errors) + `yarn test` (all green). Branch protection enforces it.
-
-**Staging deploy:** trigger `push → main` → `yarn build` → SWA CLI deploy.
-
-**Production release:** manual approval gate → `az staticwebapp environment promote`.
-
----
-
-## Codebase state
-
-| Area | Status |
-|---|---|
-| Domain model — flexible Group/Scene tree | ✅ Complete |
-| Model/renderer layer | ✅ Complete (except point lights) |
-| PlaybackEngine (play/pause/seek/rewind) | ✅ Complete |
-| eSpeak-NG + Kokoro TTS, speech bubbles | ✅ Complete |
-| Production storage + ProductionDocument | ✅ Complete |
-| Transport bar + left/right panels | ✅ Complete |
-| Asset catalogue (bundled) | ✅ Complete |
-| Design/playback canvas split + gizmos | ✅ Complete |
-| Screenplay editor + direction lines + parentheticals | ✅ Complete |
-| Camera tracks UI | ✅ Complete |
-| Ground-zero animation authoring | ✅ Complete (Phase 8) |
-| ActorBlock / LightBlock / CameraBlock / SetPieceBlock | ✅ Complete (8.5–8.7) |
-| Visual timeline strip | ✅ Complete (Phase 8.6) |
-| Catalogue asset defaults (defaultRotation) | ✅ Complete (Phase 8.8) |
-| Tablet support | ✅ Complete (Phase T) |
-| Minimal interaction model | ✅ Complete (Phase UX1) |
-| Production naming, actor add UX, act/scene tree, staging UX | ✅ Complete (UX2.1–2.4) |
-| Spawn indicator as pre-t=0 block | ✅ Complete (Phase UX2.7) |
-| Presentation mode | ✅ Complete (Phase UX2.8) |
-| Speech and Audio panel + per-production speech settings | ✅ Complete (Phase UX2.9) |
-| Set piece dressing + actor tint | ✅ Complete (Phase 9) |
-| Script view in main pane | ✅ Complete |
-| HDRI environment maps | Phase L1 |
-| Textured materials | Phase L2 |
-| Theatre stage generator | Phase L3 |
-| Drama studio / soundstage generator | Phase L4 |
-| GLTF set-piece infrastructure (SetPieceEntry.gltfPath) | Phase L5 |
-| OPFSCatalogueStore (user-extensible catalogue, OPFS-backed) | Phase L6 |
-| Bundled third-party prop curation (~15 CC0 assets) | Deferred |
-| Multi-level sets / terrain | Future advanced |
-| Reusable set templates | Phase UX2.5 |
-| Main-area tab bar | Phase UX3.1 |
-| Script format compliance | Phase UX3.2 |
-| Screenplay enrichment (pagination, PDF, title page) | Phase 6.5 |
-| Lighting rig | Phase 10 |
-| Audio block timeline + waveform | Phase 11 |
-| Dance / MIDI choreography | Phase 12 (needs spike) |
-| Remote asset store | Phase 13 |
-| Video render export | Phase 14 (large) |
-| Drag-and-drop cast management | Phase UX3 |
-| ProductionStore → IndexedDB | Phase I0 |
-| Azure SWA + Cosmos DB | Phase I1 |
-| User management | Phase I2 |
-| Staged builds | Phase I3 |
-| GitHub project management | Phase I4 |
-| GitHub CI/CD | Phase I5 |
+Each milestone must be validated against both fixtures.

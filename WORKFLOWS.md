@@ -130,26 +130,24 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 ---
 
-### Known gaps (do not expect these to work yet)
+### Known gaps
 
-| Item | Status |
-|---|---|
-| Resize / recolour placed set pieces | Not yet — Phase 9.A |
-| Preset-sized environment pieces (wall flat, stage deck) | Not yet — Phase 9.B |
-| Character ground disc markers (tell Alpha from Beta in viewport) | Not yet — Phase 9.C |
-| Drag scenes between acts to reorder | Not yet — Phase UX3 |
-| Full-production scrollable screenplay view | Not yet — Phase UX2.6 |
-| Scene transition fade | Not yet — deferred after UX2.8 |
+Tracked in the [issue tracker](https://github.com/boostybaboon/directionally/issues?q=is%3Aissue+is%3Aopen)
+— this table used to cite phases from a plan that no longer exists, which was worse than having no
+table. The relevant ones for this workflow: editing a placed set piece is the dressing surface (#10),
+and scene-piece transforms are part of the same missing editor.
 
 ---
 
 ## Future workflows (stubs)
 
-- **Workflow 2 — Set Dressing**: resize and recolour primitives, apply a preset environment (Phase 9)
-- **Workflow 3 — Character Animation**: draw blocks, assign clips, walk from A to B (Phase 8 surface)
-- **Workflow 4 — Camera Work**: place camera blocks, cut between angles (Phase 7)
-- **Workflow 5 — Lighting**: fade a spotlight in and out (Phase 10)
-- **Workflow 6 — Print Script**: view full-production screenplay and use browser print (Phase UX2.6)
+> Each stub is tracked as an issue, so writing one is a task rather than a note:
+
+- **Workflow 2 — Set Dressing** → [#35](https://github.com/boostybaboon/directionally/issues/35)
+- **Workflow 3 — Character Animation** → [#36](https://github.com/boostybaboon/directionally/issues/36)
+- **Workflow 4 — Camera Work** → [#37](https://github.com/boostybaboon/directionally/issues/37)
+- **Workflow 5 — Lighting** → [#38](https://github.com/boostybaboon/directionally/issues/38)
+- **Workflow 6 — Print Script** → [#39](https://github.com/boostybaboon/directionally/issues/39)
 
 ---
 

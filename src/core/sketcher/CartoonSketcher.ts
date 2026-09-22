@@ -1,214 +1,133 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { PolygonSketcher } from './PolygonSketcher.js';
-import { ExtrusionHandle, buildExtrusionGeometry } from './ExtrusionHandle.js';
+import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { AttachManager } from './AttachManager.js';
-import type { FaceGroupInfo, PartSnapshot, JointSnapshot, GroupSnapshot, PartDraft, SessionSnapshot, SketcherDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
-
-const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
-
-function withFaceGroups(geo: THREE.BufferGeometry, groups: FaceGroupInfo[]): THREE.BufferGeometry {
-  geo.userData.faceGroups = groups;
-  // Geometries like SphereGeometry and CapsuleGeometry have no built-in draw
-  // groups. THREE.Mesh renders nothing when given a material array but an empty
-  // groups array, so add one covering group here.
-  if (geo.groups.length === 0) {
-    const indexCount = geo.index ? geo.index.count : geo.attributes.position.count;
-    geo.addGroup(0, indexCount, 0);
-  }
-  return geo;
-}
-
-type PrimitivePreset = { name: string; geometry: () => THREE.BufferGeometry };
-
-const PRIMITIVE_PRESETS: PrimitivePreset[] = [
-  {
-    name: 'Box',
-    geometry: () => withFaceGroups(new THREE.BoxGeometry(1, 1, 1), [
-      { normal: V(1, 0, 0),  label: '+X',        materialIndex: 0 },
-      { normal: V(-1, 0, 0), label: '−X',        materialIndex: 1 },
-      { normal: V(0, 1, 0),  label: 'Top',       materialIndex: 2 },
-      { normal: V(0, -1, 0), label: 'Bottom',    materialIndex: 3 },
-      { normal: V(0, 0, 1),  label: '+Z',        materialIndex: 4 },
-      { normal: V(0, 0, -1), label: '−Z',        materialIndex: 5 },
-    ]),
-  },
-  {
-    name: 'Sphere',
-    geometry: () => withFaceGroups(new THREE.SphereGeometry(0.75, 16, 12), [
-      { normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 },
-    ]),
-  },
-  {
-    name: 'Cylinder',
-    geometry: () => withFaceGroups(new THREE.CylinderGeometry(0.3, 0.3, 2, 16), [
-      { normal: V(1, 0, 0),  label: 'Barrel',     materialIndex: 0 },
-      { normal: V(0, 1, 0),  label: 'Top cap',    materialIndex: 1 },
-      { normal: V(0, -1, 0), label: 'Bottom cap', materialIndex: 2 },
-    ]),
-  },
-  {
-    name: 'Capsule',
-    geometry: () => withFaceGroups(new THREE.CapsuleGeometry(0.3, 1, 4, 8), [
-      { normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 },
-    ]),
-  },
-  {
-    name: 'Cone',
-    // ConeGeometry is CylinderGeometry with radiusTop=0. Three.js skips the top
-    // cap group but still assigns materialIndex=2 to the bottom cap, so the
-    // material array must cover indices 0–2 even though index 1 is unused.
-    geometry: () => withFaceGroups(new THREE.ConeGeometry(0.5, 2, 16), [
-      { normal: V(1, 0, 0),  label: 'Barrel',     materialIndex: 0 },
-      { normal: V(0, -1, 0), label: 'Bottom cap', materialIndex: 2 },
-    ]),
-  },
-  {
-    name: 'Torus',
-    geometry: () => withFaceGroups(new THREE.TorusGeometry(0.5, 0.2, 12, 24), [
-      { normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 },
-    ]),
-  },
-];
-
-/** Lookup by lowercase name for the UI insert action. */
-const PRESET_BY_NAME = new Map(PRIMITIVE_PRESETS.map((p) => [p.name.toLowerCase(), p]));
+import { PRIMITIVE_PRESETS, PRESET_BY_NAME, buildLatheGeometry } from './geometry.js';
+import { buildPartMesh, nodePathOf, realiseDocument } from './realise.js';
+import type { RefResolver } from './realise.js';
+import type { JointSnapshot, PartDraft, SketcherPart, SketcherSession, AssemblyGroup, SketchMode } from './types.js';
+import {
+  emptyDocument,
+  cloneDocument,
+  insertPart,
+  insertRef,
+  groupNodes,
+  ungroupNode,
+  mergeIntoGroup,
+  rebuildGroups,
+  addJoint,
+  removeJointsTouching,
+  addGroupBond,
+  removeGroupBondContaining,
+  evictFromGroupBonds,
+  groupMembersOf,
+  collectPartNodes,
+  normalizeDocument,
+  applyOverrides,
+  adoptIntoGroup,
+  releaseFromGroup,
+  childOfGroupHolding,
+  nodeFor,
+  parentTransformOf,
+  dropOverride,
+  upsertOverride,
+  isPartNode,
+  isRefNode,
+  findGroupByPath,
+  findGroupOfPartId,
+  collectPartNodesIn,
+  nodeAt,
+  pathOfPart,
+  pathOfNode,
+  removeTreeNode,
+  extractDefinition,
+  promoteToRoot,
+  removePart as removeTreePart,
+  setPartColor as setTreePartColor,
+  setFaceColor as setTreeFaceColor,
+  setFaceTexture as setTreeFaceTexture,
+  setPartLabel as setTreePartLabel,
+  addLightNode,
+  removeLightNode,
+  collectLights,
+} from './documentTree.js';
+import type { NodeOverride, NodePatch, NodeRef, OrphanedOverride, PartNode, PartSeed, RefSeed, SetDocument, SetNode }
+  from './documentTree.js';
+import { IDENTITY_TRANSFORM, worldToLocal } from './transform.js';
+import type { Transform } from './transform.js';
+import type { GeometryConfig, LightConfig, MaterialConfig, Vec3 } from '../domain/types.js';
+import type { SetPieceEntry } from '../catalogue/types.js';
 
 const DEFAULT_COLOR = 0x8888cc;
 
-/**
- * Build a flat cap polygon for a partial-angle lathe geometry.
- * Profile points are (r, h) 2D coords; phi is the sweep angle where the cap sits.
- * Cap at phi=0: no winding flip — CCW (r,h) winding produces outward normal (-1,0,0).
- * Cap at phi=phiLength: flip winding — produces outward normal (cos φ, 0, −sin φ).
- */
-/** Rewrite the V channel of LatheGeometry UVs so V = (world.y - yMin) / yRange.
- *  LatheGeometry assigns V = profilePointIndex / (numPoints - 1), which flips when the
- *  profile is drawn top-to-bottom. Normalising to world Y makes V always 0 at the bottom
- *  and 1 at the top, matching the cap UV convention. */
-function _normalizeLatheV(geo: THREE.BufferGeometry): void {
-  const pos = geo.attributes.position as THREE.BufferAttribute;
-  const uv = geo.attributes.uv as THREE.BufferAttribute;
-  let yMin = Infinity, yMax = -Infinity;
-  for (let i = 0; i < pos.count; i++) {
-    const y = pos.getY(i);
-    if (y < yMin) yMin = y;
-    if (y > yMax) yMax = y;
-  }
-  const yRange = yMax - yMin || 1;
-  for (let i = 0; i < uv.count; i++) uv.setY(i, (pos.getY(i) - yMin) / yRange);
-  uv.needsUpdate = true;
-}
-
-function buildCapGeometry(profilePts: THREE.Vector2[], phi: number, flipWinding: boolean): THREE.BufferGeometry {
-  const sinPhi = Math.sin(phi);
-  const cosPhi = Math.cos(phi);
-  const positions: number[] = [];
-  for (const p of profilePts) {
-    positions.push(p.x * sinPhi, p.y, p.x * cosPhi);
-  }
-  const indices2d = THREE.ShapeUtils.triangulateShape(profilePts, []);
-  const indexArray: number[] = [];
-  for (const [a, b, c] of indices2d) {
-    if (flipWinding) {
-      indexArray.push(a, c, b);
-    } else {
-      indexArray.push(a, b, c);
+/** Build a raw THREE.Light from a LightConfig (Track SET, N3). Point lights have no
+ *  dedicated model-layer asset yet (see SceneBridge.buildLight) but THREE.PointLight
+ *  itself is generic, so the Sketcher supports it directly. */
+function buildThreeLight(config: LightConfig): THREE.Light | null {
+  switch (config.type) {
+    case 'directional': {
+      const light = new THREE.DirectionalLight(config.color, config.intensity);
+      light.position.set(...config.position);
+      return light;
+    }
+    case 'hemisphere': {
+      const light = new THREE.HemisphereLight(config.skyColor, config.groundColor, config.intensity);
+      if (config.position) light.position.set(...config.position);
+      return light;
+    }
+    case 'spot': {
+      const light = new THREE.SpotLight(
+        config.color, config.intensity, 0, config.angle ?? Math.PI / 4, config.penumbra ?? 0, config.decay ?? 2,
+      );
+      light.position.set(...config.position);
+      if (config.target) light.target.position.set(...config.target);
+      return light;
+    }
+    case 'point': {
+      const light = new THREE.PointLight(config.color, config.intensity, config.distance ?? 0, config.decay ?? 2);
+      light.position.set(...config.position);
+      return light;
     }
   }
-  // Planar UVs: U = radial distance normalised to [0,1], V = height normalised to [0,1].
-  // Both caps use the same profile bounding box so V is consistent with the lathe surface.
-  let xMax = 0, yMin = Infinity, yMax = -Infinity;
-  for (const p of profilePts) {
-    if (p.x > xMax) xMax = p.x;
-    if (p.y < yMin) yMin = p.y;
-    if (p.y > yMax) yMax = p.y;
-  }
-  const xRange = xMax || 1;
-  const yRange = yMax - yMin || 1;
-  const uvArray: number[] = [];
-  for (const p of profilePts) uvArray.push(p.x / xRange, (p.y - yMin) / yRange);
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvArray, 2));
-  geo.setIndex(indexArray);
-  geo.computeVertexNormals();
-  return geo;
 }
 
-/**
- * Build a LatheGeometry from a centroid-relative profile (clamps negative x to 0).
- * The profile is revolved around the Y axis; x=radial distance, y=height along Y.
- * For phiLength < 2π, two flat end caps are merged in as separate draw groups.
- */
-function buildLatheGeometry(profilePoints: [number, number][], phiLength = Math.PI * 2): THREE.BufferGeometry {
-  // Clamp negative radii to 0.
-  let pts = profilePoints.map(([x, y]) => new THREE.Vector2(Math.max(0, x), y));
-  // Remove consecutive duplicates produced by clamping.
-  const deduped: THREE.Vector2[] = [];
-  for (const p of pts) {
-    const prev = deduped[deduped.length - 1];
-    if (!prev || Math.abs(p.x - prev.x) >= 1e-6 || Math.abs(p.y - prev.y) >= 1e-6) deduped.push(p);
-  }
-  if (deduped.length < 2) {
-    return withFaceGroups(new THREE.CylinderGeometry(0.1, 0.1, 1, 32), [
-      { normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 },
-    ]);
-  }
-
-  // Build a separate point list for LatheGeometry that explicitly closes the
-  // profile when both endpoints have positive radius (hollow shape away from the
-  // axis). THREE.Shape.getPoints() never includes a closing duplicate, so without
-  // this LatheGeometry misses the inner-wall segment.
-  // We do NOT mutate `deduped` — caps receive the open profile to avoid passing
-  // a duplicate endpoint to ShapeUtils.triangulateShape (which produces NaN UVs).
-  const lathePts = [...deduped];
-  if (lathePts.length > 1) {
-    const first = lathePts[0], last = lathePts[lathePts.length - 1];
-    const alreadyClosed = Math.abs(first.x - last.x) < 1e-6 && Math.abs(first.y - last.y) < 1e-6;
-    if (!alreadyClosed && first.x > 1e-4 && last.x > 1e-4) {
-      lathePts.push(first.clone());
-    }
-  }
-
-  const latheGeo = new THREE.LatheGeometry(lathePts, 32, 0, phiLength);
-  // Normalise V so it always runs 0 (bottom) → 1 (top) regardless of sketch draw direction.
-  _normalizeLatheV(latheGeo);
-  if (phiLength >= Math.PI * 2 - 1e-6) {
-    // Full 360°: profile segments close the solid; no caps needed.
-    return withFaceGroups(latheGeo, [
-      { normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 },
-    ]);
-  }
-  // Partial sweep: caps use the open profile (deduped, not lathePts) so
-  // ShapeUtils.triangulateShape never receives a duplicate closing vertex.
-  const cap0 = buildCapGeometry(deduped, 0, false);
-  const capEnd = buildCapGeometry(deduped, phiLength, true);
-  latheGeo.addGroup(0, latheGeo.index!.count, 0);
-  const merged = mergeGeometries([latheGeo, cap0, capEnd], true);
-  if (!merged) {
-    return withFaceGroups(latheGeo, [{ normal: V(0, 1, 0), label: 'Surface', materialIndex: 0 }]);
-  }
-  return withFaceGroups(merged, [
-    { normal: V(0, 1, 0),                                     label: 'Surface',   materialIndex: 0 },
-    { normal: V(-1, 0, 0),                                    label: 'Cap start', materialIndex: 1 },
-    { normal: V(Math.cos(phiLength), 0, -Math.sin(phiLength)), label: 'Cap end',  materialIndex: 2 },
-  ]);
+/** Write a plain-data transform onto a live object, as its local transform. */
+function applyTransform(object: THREE.Object3D, t: Transform): void {
+  object.position.set(t.position[0], t.position[1], t.position[2]);
+  object.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
+  object.scale.set(t.scale[0], t.scale[1], t.scale[2]);
 }
 
-/** Create one MeshStandardMaterial per draw group, covering all materialIndex values in geometry.groups. */
-function buildMaterials(geo: THREE.BufferGeometry, color: number, defaultSide: THREE.Side = THREE.FrontSide): THREE.MeshStandardMaterial[] {
-  const holeStart: number = geo.userData.holeWallMaterialStart ?? Infinity;
-  const holeEnd: number = geo.userData.holeWallMaterialEnd ?? -1;
-  const count = geo.groups.length > 0
-    ? Math.max(...geo.groups.map((g) => g.materialIndex ?? 0)) + 1
-    : 1;
-  return Array.from({ length: count }, (_, i) => {
-    const side = (i >= holeStart && i <= holeEnd) ? THREE.DoubleSide : defaultSide;
-    return new THREE.MeshStandardMaterial({ color, side });
-  });
+/** A live object's local transform, in plain data. */
+function transformOf(object: THREE.Object3D): Transform {
+  return {
+    position: [object.position.x, object.position.y, object.position.z],
+    quaternion: [object.quaternion.x, object.quaternion.y, object.quaternion.z, object.quaternion.w],
+    scale: [object.scale.x, object.scale.y, object.scale.z],
+  };
 }
+
+/** Euler XYZ (radians) → quaternion, the transform form a part body stores. */
+function eulerToQuaternion(euler: Vec3): [number, number, number, number] {
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...euler));
+  return [q.x, q.y, q.z, q.w];
+}
+
+/** Plain-data form of a vector, as a document stores it. */
+function toTuple(v: THREE.Vector3): [number, number, number] {
+  return [v.x, v.y, v.z];
+}
+
+/** An override the last sync could not replay, with the instance it was written on. */
+export type OrphanedOverrideReport = {
+  /** Path of the instance node in this document. */
+  instancePath: string;
+  /** The Definition the override was written against. */
+  ref: string;
+  /** The path the override addressed, which its Definition no longer has. */
+  path: string;
+  op: NodeOverride['op'];
+};
 
 type Phase = 'idle' | 'drawing' | 'pending-holes' | 'hole-drawing' | 'extruding' | 'revolve-drawing' | 'pending-revolve';
 
@@ -244,6 +163,32 @@ export class CartoonSketcher {
   private pendingCentroid: THREE.Vector3 | null = null;
   private nextId = 1;
   private readonly attach: AttachManager;
+  /** Lights placed via the catalogue panel (Track SET, N3). */
+  private readonly lights: LightConfig[] = [];
+  private _environmentMap: string | undefined;
+  /** THREE light objects added to the scene, keyed by LightConfig.id, for removeLight/dispose. */
+  private readonly lightObjects = new Map<string, THREE.Light>();
+  /**
+   * The tree document — the set's stored form and the structural source of truth.
+   * Meshes are realised from it and transforms are written back into it, so every
+   * edit is a document edit (see editDocument).
+   */
+  private document: SetDocument = emptyDocument();
+  /** The live object realised for each group or instance node, by node path — rebuilt on
+   *  every sync. A light has none: `placeLight` builds its THREE light. */
+  private readonly nodeObjects = new Map<string, THREE.Group>();
+
+  /**
+   * Definitions the session expands instances from, injected by the caller (the catalogue
+   * is not the Sketcher's to know). Without one, an instance shows nothing.
+   */
+  private refResolver?: RefResolver;
+  /** Instance expansions built by the last sync, so a re-sync can release them. */
+  private instanceRoots: THREE.Object3D[] = [];
+  /** The instance whose insides are being edited (10.4-B), or null for the document itself. */
+  private _focusedInstance: string | null = null;
+  /** What the last sync could not replay: overrides naming nodes their Definition no longer has. */
+  private readonly _orphanedOverrides: OrphanedOverrideReport[] = [];
 
   /** Called whenever the extrusion depth changes during a drag (phase === 'extruding'). */
   onExtrusionDepthChanged?: (depth: number) => void;
@@ -394,32 +339,25 @@ export class CartoonSketcher {
 
     const phiLength = Math.max(1, Math.min(360, phiLengthDeg)) * Math.PI / 180;
     const profilePoints: [number, number][] = shape.getPoints().map((p) => [p.x, p.y]);
-    const geo = buildLatheGeometry(profilePoints, phiLength);
-    // centroid is (0,0,0) for XY-plane profiles; floor-snap on Y only.
-    geo.computeBoundingBox();
-    const minY = geo.boundingBox!.min.y;
-    const materials = buildMaterials(geo, DEFAULT_COLOR, THREE.DoubleSide);
-    const faceColors = Array<number>(geo.groups.length).fill(DEFAULT_COLOR);
-    const faceTextures = Array<null>(geo.groups.length).fill(null);
-    const mesh = new THREE.Mesh(geo, materials);
-    mesh.position.set(centroid.x, -minY, centroid.z);
-    this.scene.add(mesh);
-    const part: SketcherPart = {
-      id: `part-${this.nextId++}`,
-      mesh,
-      depth: 0,
-      centroid: centroid.clone(),
-      name: 'Lathe',
-      color: DEFAULT_COLOR,
-      shapePoints: null,
-      holes: null,
-      lathePoints: profilePoints,
-      lathePhiLength: phiLength,
-      faceColors,
-      faceTextures,
+    // Floor-snap on Y: lowest point sits on y = 0 (centroid is (0,0,0) for XY profiles).
+    const tmpGeo = buildLatheGeometry(profilePoints, phiLength);
+    tmpGeo.computeBoundingBox();
+    const minY = tmpGeo.boundingBox!.min.y;
+    tmpGeo.dispose();
+
+    const id = `part-${this.nextId++}`;
+    const seed: PartSeed = {
+      content: {
+        id,
+        kind: 'lathed',
+        name: 'Lathe',
+        lathePoints: profilePoints,
+        ...(phiLength < Math.PI * 2 - 1e-6 ? { phiLength } : {}),
+        color: DEFAULT_COLOR,
+      },
+      transform: { position: [centroid.x, -minY, centroid.z], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
     };
-    this.parts.push(part);
-    this.allParts.set(part.id, part);
+    this.editDocument((doc) => insertPart(doc, seed));
   }
 
   /**
@@ -451,7 +389,7 @@ export class CartoonSketcher {
     this.phase = 'idle';
   }
 
-  /** Remove all parts, joints, and groups, then reset to idle. */
+  /** Remove all parts, joints, groups, and lights, then reset to idle. */
   clearSession(): void {
     this.attach.dispose();
     for (const part of this.parts) {
@@ -464,6 +402,14 @@ export class CartoonSketcher {
       (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m) => { m.map?.dispose(); m.dispose(); });
     }
     this.allParts.clear();
+    this.nodeObjects.clear();
+    this.document = emptyDocument();
+    for (const light of this.lightObjects.values()) {
+      this.scene.remove(light);
+    }
+    this.lightObjects.clear();
+    this.lights.length = 0;
+    this._environmentMap = undefined;
     this._endCurrentSketch();
     this.phase = 'idle';
   }
@@ -473,32 +419,21 @@ export class CartoonSketcher {
    * Returns the new part so the caller can auto-select it, or null if name is unknown.
    */
   insertPrimitive(name: string): SketcherPart | null {
+    if (this.insideInstance) return null;
     const preset = PRESET_BY_NAME.get(name.toLowerCase());
     if (!preset) return null;
     const geometry = preset.geometry();
-    const materials = buildMaterials(geometry, DEFAULT_COLOR);
-    const mesh = new THREE.Mesh(geometry, materials);
-    // Sit the primitive on the floor (y = 0 ground plane).
     geometry.computeBoundingBox();
-    mesh.position.y = -(geometry.boundingBox!.min.y);
-    const part: SketcherPart = {
-      id: `part-${this.nextId++}`,
-      mesh,
-      depth: 0,
-      centroid: new THREE.Vector3(),
-      name: preset.name,
-      color: DEFAULT_COLOR,
-      shapePoints: null,
-      holes: null,
-      lathePoints: null,
-      lathePhiLength: null,
-      faceColors: materials.map(() => DEFAULT_COLOR),
-      faceTextures: materials.map(() => null),
+    // Sit the primitive on the floor (y = 0 ground plane).
+    const floorY = -(geometry.boundingBox!.min.y);
+    geometry.dispose();
+    const id = `part-${this.nextId++}`;
+    const seed: PartSeed = {
+      content: { id, kind: 'primitive', name: preset.name, color: DEFAULT_COLOR },
+      transform: { position: [0, floorY, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
     };
-    this.scene.add(mesh);
-    this.parts.push(part);
-    this.allParts.set(part.id, part);
-    return part;
+    this.editDocument((doc) => insertPart(doc, seed));
+    return this.parts.find((p) => p.id === id) ?? null;
   }
 
   /** All available preset names, in display order. */
@@ -506,28 +441,355 @@ export class CartoonSketcher {
     return PRIMITIVE_PRESETS.map((p) => p.name);
   }
 
+  /**
+   * The instance a mesh belongs to, walking up from the hit — an instance is one unit, so a
+   * click anywhere inside its expansion addresses the instance itself.
+   */
+  instanceFor(object: THREE.Object3D): { path: string; ref: string; group: THREE.Group } | null {
+    for (let node: THREE.Object3D | null = object; node; node = node.parent) {
+      const path = node.userData?.sketcherInstancePath as string | undefined;
+      if (path === undefined) continue;
+      return { path, ref: node.userData.sketcherInstanceRef as string, group: node as THREE.Group };
+    }
+    return null;
+  }
+
+  /** The expansions' meshes, for hit-testing alongside the session's own parts. */
+  get instanceMeshes(): THREE.Mesh[] {
+    const meshes: THREE.Mesh[] = [];
+    for (const root of this.instanceRoots) {
+      root.traverse((object) => {
+        if ((object as THREE.Mesh).isMesh) meshes.push(object as THREE.Mesh);
+      });
+    }
+    return meshes;
+  }
+
+  /**
+   * Step inside an instance, or back out with `null`. While inside, a hit on the expansion addresses
+   * the node *within the Definition* — which is what an override is written against — and edits are
+   * confined to what an override can express, so adding parts is refused rather than quietly landing
+   * in the host document.
+   */
+  focusInstance(path: string | null): void {
+    this._focusedInstance = path;
+  }
+
+  /** The instance whose insides are being edited, or null when the document itself is the subject. */
+  get focusedInstancePath(): string | null {
+    return this._focusedInstance;
+  }
+
+  /** True while the session is inside an instance, where only what an override expresses is editable. */
+  get insideInstance(): boolean {
+    return this._focusedInstance !== null;
+  }
+
+  /**
+   * The node a hit inside the focused instance addresses: the instance's path in this document, the
+   * Definition it names, and the hit node's path inside that Definition. Null unless the focus is set
+   * and the hit lies inside it.
+   */
+  descendantAt(object: THREE.Object3D): { instancePath: string; ref: string; path: string } | null {
+    const instance = this.instanceFor(object);
+    if (!instance || instance.path !== this._focusedInstance) return null;
+    // A nested instance is a boundary: past one, the hit belongs to *that* instance's Definition, so
+    // the outermost node this instance can vary is the node that names it.
+    let node = object;
+    for (let parent = object.parent; parent && parent !== instance.group; parent = parent.parent) {
+      if (parent.userData?.isRefNode) {
+        node = parent;
+        break;
+      }
+    }
+    const path = nodePathOf(node);
+    return path === undefined ? null : { instancePath: instance.path, ref: instance.ref, path };
+  }
+
+  /** What an instance says about the nodes of its Definition, in list order. */
+  overridesFor(instancePath: string): readonly NodeOverride[] {
+    return nodeAt(this.document, instancePath)?.overrides ?? [];
+  }
+
+  /**
+   * Overrides the last sync could not replay, in tree order: a Definition changed under an instance
+   * leaves entries that name nodes it no longer has, and those are worth showing rather than
+   * dropping.
+   */
+  get orphanedOverrides(): readonly OrphanedOverrideReport[] {
+    return this._orphanedOverrides;
+  }
+
+  /**
+   * Vary one node of an instance's Definition. The patch merges into what the instance already says
+   * about that path, so moving a node leaves it hidden or shown as it was — and it replaces an
+   * earlier `remove`, because the node is back.
+   */
+  setDescendantOverride(instancePath: string, path: string, patch: NodePatch): void {
+    this.editDocument((doc) => {
+      const instance = nodeAt(doc, instancePath);
+      if (!instance?.ref) return;
+      const previous = instance.overrides?.find((o) => o.path === path);
+      const value = previous?.op === 'set' ? { ...previous.value, ...patch } : patch;
+      upsertOverride(instance, { path, op: 'set', value });
+    });
+  }
+
+  /** Drop a node from this instance's copy of the Definition, leaving the Definition itself. */
+  removeDescendant(instancePath: string, path: string): void {
+    this.editDocument((doc) => {
+      const instance = nodeAt(doc, instancePath);
+      if (instance?.ref) upsertOverride(instance, { path, op: 'remove' });
+    });
+  }
+
+  /** Forget what this instance said about a node — Revert, back to the Definition's own state. */
+  revertOverride(instancePath: string, path: string): void {
+    this.editDocument((doc) => {
+      const instance = nodeAt(doc, instancePath);
+      if (instance) dropOverride(instance, path);
+    });
+  }
+
+  /**
+   * The transform a node inside an instance's expansion currently has, read from the live object —
+   * which is Definition-local, since the expansion mirrors the Definition's tree under the
+   * instance's own transform.
+   */
+  descendantTransform(instancePath: string, path: string): Transform | null {
+    const root = this.nodeObjects.get(instancePath);
+    if (!root) return null;
+    // Walk the children, never the instance's own object: its path is the document's, and a
+    // Definition could in principle name a root node the same way.
+    let found: THREE.Object3D | null = null;
+    const visit = (object: THREE.Object3D): void => {
+      if (found) return;
+      if (nodePathOf(object) === path) {
+        found = object;
+        return;
+      }
+      for (const child of object.children) visit(child);
+    };
+    for (const child of root.children) visit(child);
+    return found ? transformOf(found) : null;
+  }
+
+  /**
+   * Inject the resolver an instance is expanded with (see `realiseDocument`). The session re-syncs,
+   * because a new resolver changes what instances expand to: a caller that has just promoted a
+   * selection or stored a new Definition registers it *after* the edit that needs it.
+   */
+  setRefResolver(resolve?: RefResolver): void {
+    this.refResolver = resolve;
+    this.writeBack();
+    this.syncFromDocument(this.document);
+  }
+
+  /**
+   * Add a light (Track SET, N3 — catalogue panel "Add" action). A light is a document
+   * node, so it undoes, saves and round-trips with the rest of the set; the live THREE
+   * light is built from the node on the next sync.
+   */
+  addLight(config: LightConfig): void {
+    this.editDocument((doc) => addLightNode(doc, config));
+  }
+
+  /** Remove a light by its id. No-op if not found; a document node, so it undoes. */
+  removeLight(id: string): void {
+    this.editDocument((doc) => removeLightNode(doc, id));
+  }
+
+  /**
+   * Build the live THREE light for a config and track it (mirrors SceneBridge's
+   * buildLight, kept local so the Sketcher has no dependency on the domain
+   * SceneBridge module).
+   */
+  private placeLight(config: LightConfig): void {
+    const light = buildThreeLight(config);
+    if (!light) return;
+    this.scene.add(light);
+    this.lightObjects.set(config.id, light);
+    this.lights.push(config);
+  }
+
+  /** Currently placed lights, in tree order. */
+  getLights(): readonly LightConfig[] {
+    return this.lights;
+  }
+
+  /**
+   * Record the applied HDRI environment (catalogue EnvironmentEntry id).
+   * The Sketcher itself has no renderer instance, so it does not load the HDRI
+   * texture — the page's onMount effect does that (mirroring Presenter.svelte's
+   * RGBELoader + PMREMGenerator pattern) and calls this only to persist the choice
+   * in the document.
+   */
+  setEnvironmentMap(id: string | undefined): void {
+    this._environmentMap = id;
+  }
+
+  get environmentMap(): string | undefined {
+    return this._environmentMap;
+  }
+
+  /**
+   * Insert one catalogue part — procedural geometry + material — as a tree leaf
+   * (Track SET, N3). The part is a single-material mesh with a single face group so
+   * it stays editable through the same colour/texture/transform paths as a sketched
+   * part, and it keeps the catalogue's own material body (roughness, metalness,
+   * texture repeat) rather than collapsing to a flat colour.
+   */
+  insertCataloguePiece(
+    name: string,
+    geometry: GeometryConfig,
+    material: MaterialConfig,
+    position?: Vec3,
+    rotation?: Vec3,
+    scale?: Vec3,
+  ): SketcherPart | null {
+    if (this.insideInstance) return null;
+    const id = `part-${this.nextId++}`;
+    const seed: PartSeed = {
+      content: {
+        id,
+        kind: 'catalogue',
+        name,
+        geometry,
+        material,
+        color: material.color,
+        faceColors: [material.color],
+        faceTextures: [null],
+      },
+      transform: {
+        position: position ?? [0, 0, 0],
+        quaternion: rotation ? eulerToQuaternion(rotation) : [0, 0, 0, 1],
+        scale: scale ?? [1, 1, 1],
+      },
+    };
+    this.editDocument((doc) => insertPart(doc, seed));
+    return this.parts.find((p) => p.id === id) ?? null;
+  }
+
+  /**
+   * Place a Definition as a new instance (Track SET, N3). The node takes the seed's id when it
+   * has one, so a caller that owns the id — an AI edit re-placing a node it read — keeps the
+   * instance's identity across turns.
+   *
+   * A Definition the Sketcher cannot resolve is still inserted: the reference is the
+   * document's, and the geometry appears as soon as the resolver knows it.
+   */
+  insertInstance(seed: RefSeed): string | null {
+    if (this.insideInstance) return null;
+    let path: string | null = null;
+    this.editDocument((doc) => {
+      path = pathOfNode(doc, insertRef(doc, seed));
+    });
+    return path;
+  }
+
+  /**
+   * Insert a catalogue entry as an instance. The document holds a reference, so the item is
+   * never copied and editing its Definition reaches every place it is used; the session
+   * expands it for display, and the instance is edited as one unit.
+   */
+  insertCatalogueEntry(entry: SetPieceEntry): { path: string | null; object: THREE.Group | null } {
+    const path = this.insertInstance({
+      ref: entry.id,
+      name: entry.label,
+      role: entry.isSetting === true ? 'structure' : 'prop',
+    });
+    if (path === null) return { path: null, object: null };
+    const object = this.nodeObjects.get(path);
+    return { path, object: object instanceof THREE.Group ? object : null };
+  }
+
+  /**
+   * Promote a node's subtree into a Definition and leave an instance of it in place ("Save
+   * selection as Item", N4). Returns the Definition for the caller to store and register with
+   * the resolver — the session cannot resolve what the caller has not handed it.
+   */
+  extractInstance(target: NodeRef, ref: string): SetDocument | null {
+    let definition: SetDocument | null = null;
+    this.editDocument((doc) => {
+      definition = extractDefinition(doc, target, ref);
+    });
+    return definition;
+  }
+
+  /**
+   * Remove a node by path or guid. A part keeps `removePart`'s cleanup; anything else — an
+   * instance, a group — is dropped with its subtree, which is what the AI diff needs to drop
+   * something that was placed (see `applyDraft`).
+   */
+  removeNode(target: NodeRef): void {
+    this.editDocument((doc) => {
+      const node = typeof target === 'string' ? nodeAt(doc, target) : target;
+      if (!node) return;
+      if (isPartNode(node)) {
+        removeJointsTouching(doc, node.content.id);
+        removeTreePart(doc, node.content.id);
+        evictFromGroupBonds(doc, node.content.id);
+        return;
+      }
+      removeTreeNode(doc, node);
+    });
+  }
+
+  /** The live object realised for a node — an instance's expansion, or a group's group. */
+  nodeObject(target: NodeRef): THREE.Object3D | null {
+    const node = typeof target === 'string' ? nodeAt(this.document, target) : target;
+    if (!node) return null;
+    const path = pathOfNode(this.document, node);
+    return path === null ? null : this.nodeObjects.get(path) ?? null;
+  }
+
+  /**
+   * Place a node so that it *stands* at `world` now, whatever it is currently parented to. What the
+   * AI means by a part's transform is where it is, not what its parent's arithmetic says — and the
+   * live object is where a placement has to land, since the next write-back adopts it.
+   */
+  placeNodeAtWorld(ref: NodeRef, world: Transform): void {
+    const node = nodeFor(this.document, ref);
+    if (!node) return;
+    const local = worldToLocal(world, parentTransformOf(this.document, ref) ?? IDENTITY_TRANSFORM);
+    const object = this.nodeObjects.get(pathOfNode(this.document, node) ?? '');
+    if (object) {
+      applyTransform(object, local);
+      return;
+    }
+    const part = isPartNode(node) ? this.allParts.get(node.content.id) : undefined;
+    if (part) {
+      applyTransform(part.mesh, local);
+      return;
+    }
+    node.transform = local;
+  }
+
   /** Update a part's colour, resetting all face colours to a uniform value. */
   setPartColor(id: string, color: number): void {
-    const part = this.parts.find((p) => p.id === id);
-    if (!part) return;
-    part.color = color;
-    part.faceColors.fill(color);
-    // Skip faces with an active texture — their material colour must stay white (colour × map = map).
-    (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m, i) => {
-      if (!part.faceTextures[i]) m.color.setHex(color);
+    this.editDocument((doc) => setTreePartColor(doc, id, color));
+  }
+
+  /** Set (or clear, with undefined) a part's semantic label. No-op for unknown id. */
+  setPartLabel(id: string, label: string | undefined): void {
+    this.editDocument((doc) => setTreePartLabel(doc, id, label));
+  }
+
+  /** Set (or clear, with undefined) a group's semantic name. No-op for unknown group. */
+  setGroupName(groupId: string, name: string | undefined): void {
+    // The mirror's group id is the group node's own id, so it addresses the document directly.
+    if (!this.attach.getAssemblyGroups().some((g) => g.id === groupId)) return;
+    this.editDocument((doc) => {
+      const node = findGroupByPath(doc, groupId);
+      if (!node) return;
+      if (name === undefined) delete node.name;
+      else node.name = name;
     });
   }
 
   /** Update the colour of a single draw group. Does not change part.color. */
   setFaceColor(id: string, materialIndex: number, color: number): void {
-    const part = this.parts.find((p) => p.id === id);
-    if (!part) return;
-    if (materialIndex < 0 || materialIndex >= part.faceColors.length) return;
-    part.faceColors[materialIndex] = color;
-    // Skip if a texture is active on this slot — material colour must stay white.
-    if (!part.faceTextures[materialIndex]) {
-      (part.mesh.material as THREE.MeshStandardMaterial[])[materialIndex].color.setHex(color);
-    }
+    this.editDocument((doc) => setTreeFaceColor(doc, id, materialIndex, color));
   }
 
   /**
@@ -535,22 +797,7 @@ export class CartoonSketcher {
    * texture on that slot. Pass null to clear the texture.
    */
   setFaceTexture(id: string, materialIndex: number, dataUrl: string | null): void {
-    const part = this.parts.find((p) => p.id === id);
-    if (!part) return;
-    if (materialIndex < 0 || materialIndex >= part.faceTextures.length) return;
-    const mat = (part.mesh.material as THREE.MeshStandardMaterial[])[materialIndex];
-    // Dispose the existing texture before replacing it.
-    if (mat.map) { mat.map.dispose(); mat.map = null; }
-    part.faceTextures[materialIndex] = dataUrl;
-    if (dataUrl) {
-      mat.map = new THREE.TextureLoader().load(dataUrl);
-      // Set color to white so the texture displays unmodified (MeshStandardMaterial multiplies color × map).
-      mat.color.set(0xffffff);
-    } else {
-      // Restore the face's solid color when the texture is removed.
-      mat.color.setHex(part.faceColors[materialIndex]);
-    }
-    mat.needsUpdate = true;
+    this.editDocument((doc) => setTreeFaceTexture(doc, id, materialIndex, dataUrl));
   }
 
   /**
@@ -560,55 +807,33 @@ export class CartoonSketcher {
   duplicatePart(id: string): SketcherPart | null {
     const src = this.parts.find((p) => p.id === id);
     if (!src) return null;
-    const geo = src.mesh.geometry.clone();
-    const mats = (src.mesh.material as THREE.MeshStandardMaterial[]).map((m) => m.clone());
-    const mesh = new THREE.Mesh(geo, mats);
-    mesh.position.copy(src.mesh.position);
-    mesh.position.x += 1;
-    mesh.rotation.copy(src.mesh.rotation);
-    mesh.scale.copy(src.mesh.scale);
-    // Create new textures from stored data URLs (do not share Texture instances).
-    mats.forEach((m, i) => {
-      if (m.map) { m.map.dispose(); m.map = null; }
-      const url = src.faceTextures[i];
-      if (url) { m.map = new THREE.TextureLoader().load(url); m.needsUpdate = true; }
-    });
-    const part: SketcherPart = {
-      id: `part-${this.nextId++}`,
-      mesh,
-      depth: src.depth,
-      centroid: src.centroid.clone(),
-      name: src.name,
-      color: src.color,
-      shapePoints: src.shapePoints,
-      holes: src.holes,
-      lathePoints: src.lathePoints,
-      lathePhiLength: src.lathePhiLength,
-      faceColors: [...src.faceColors],
-      faceTextures: [...src.faceTextures],
+    const newId = `part-${this.nextId++}`;
+    const content = this.partToLeaf(src);
+    content.id = newId;
+    // Offset by +1 on local X, mirroring the old mesh-clone behaviour.
+    const transform: Transform = {
+      ...transformOf(src.mesh),
+      position: [src.mesh.position.x + 1, src.mesh.position.y, src.mesh.position.z],
     };
-    this.scene.add(mesh);
-    this.parts.push(part);
-    this.allParts.set(part.id, part);
-    return part;
+    this.editDocument((doc) => insertPart(doc, { content, transform }));
+    return this.parts.find((p) => p.id === newId) ?? null;
   }
 
   /**
-   * Remove a single part by id.
-   * Geometry and material are NOT disposed — the part stays in allParts so
-   * SketcherDocument.undo() can reinsert it via restoreSnapshot() without
-   * recreating GPU resources.
+   * Remove a single part by id. Its joints and group bonds are dropped; if it was
+   * in a group that now has only one member, that group is dissolved.
    */
   removePart(id: string): void {
-    const idx = this.parts.findIndex((p) => p.id === id);
-    if (idx === -1) return;
-    // Detach before removing from the parts list so BFS can still find neighbours.
-    this.attach.detachAll(id, this.parts);
-    // Clean up residual group membership (for groups that stayed connected after detach).
-    this.attach.evictFromGroup(id, this.parts);
-    const [part] = this.parts.splice(idx, 1);
-    part.mesh.removeFromParent();
-    // part remains in allParts for potential undo restoration.
+    this.editDocument((doc) => {
+      removeJointsTouching(doc, id);
+      const group = findGroupOfPartId(doc, id);
+      removeTreePart(doc, id);
+      evictFromGroupBonds(doc, id);
+      const lastChild = group?.children[0];
+      if (group && group.children.length === 1 && lastChild && isPartNode(lastChild)) {
+        ungroupNode(doc, lastChild.content.id);
+      }
+    });
   }
 
   /**
@@ -643,35 +868,140 @@ export class CartoonSketcher {
    * positions. All parts must be standalone (not already in any assembly group).
    * Returns the new AssemblyGroup, or null if the input is invalid.
    */
-  group(partIds: string[]): AssemblyGroup | null {
-    if (partIds.length < 2) return null;
-    // Expand any grouped parts to include all members of their group so that
-    // grouping a standalone D onto an existing A+B group produces an A+B+D group.
-    const expandedIds = [...new Set(
-      partIds.flatMap((id) => {
-        const ag = this.attach.groupForPart(id);
-        return ag ? ag.partIds : [id];
-      })
-    )];
-    const parts = expandedIds
-      .map((id) => this.parts.find((p) => p.id === id))
-      .filter((p): p is SketcherPart => p !== undefined);
-    if (parts.length < 2) return null;
-    return this.attach.createGroup(parts);
+  group(partIds: string[], name?: string): AssemblyGroup | null {
+    if (partIds.length < 2 || this.insideInstance) return null;
+    // Each selected part stands for the group that owns it, when it has one — so grouping a
+    // member of a group brings that whole group, and a group can be grouped into another.
+    const targets = [...new Set(partIds.flatMap((id) => {
+      const ag = this.attach.groupForPart(id);
+      if (ag) return [ag.id];
+      // A part's guid, or the path of a node that has no part of its own — an instance.
+      return pathOfPart(this.document, id) || nodeAt(this.document, id) ? [id] : [];
+    }))];
+    if (targets.length < 2) return null;
+
+    let created: SetNode | null = null;
+    this.editDocument((doc) => {
+      const members = targets.map((target) => nodeAt(doc, target)).filter((n): n is SetNode => n !== null);
+      if (members.length < 2) return;
+      const memberIds = members.flatMap((node) => {
+        const under = collectPartNodesIn(node.children).map((part) => part.content.id);
+        return isPartNode(node) ? [node.content.id, ...under] : under;
+      });
+      // Siblings nest where they stand — that is how a group-of-groups is built…
+      created = groupNodes(doc, members, name);
+      if (!created) {
+        // …and members from different branches come to the document root first, as before.
+        for (const node of members) promoteToRoot(doc, node);
+        created = groupNodes(doc, members, name);
+      }
+      if (created) addGroupBond(doc, memberIds);
+    });
+    if (!created) return null;
+    const path = pathOfNode(this.document, created);
+    return path ? this.attach.getAssemblyGroups().find((ag) => ag.id === path) ?? null : null;
   }
 
   /**
-   * Dissolve the group that contains the given part, returning all members
-   * to the scene root at their current world positions.
-   * No-op if the part is not in a group.
+   * Dissolve a group, returning all its members to the scene root at their current world positions.
+   * `target` is a part's guid or a group node's own id. A group bond holding the part goes too, so a
+   * later detach cannot reform it. No-op when the target is in no group.
    */
-  ungroup(partId: string): void {
-    if (this.attach.isGroup(partId)) {
-      const ag = this.attach.groupForPart(partId);
-      if (ag) this.attach.dissolveGroup(ag.id, this.parts);
-    } else if (this.attach.isInGroupComponent(partId)) {
-      this.attach.dissolveGroupComponent(partId, this.parts);
-    }
+  ungroup(target: string): void {
+    this.editDocument((doc) => {
+      if (nodeAt(doc, target)) ungroupNode(doc, target);
+      removeGroupBondContaining(doc, target);
+    });
+  }
+
+  /**
+   * Wrap nodes in a pure group — no attach bond, no joints — which is what an AI edit's group is:
+   * an idea about arrangement, not a constraint. Returns the group node's path, or null when the
+   * members could not be grouped (fewer than two, or not siblings).
+   */
+  groupPure(members: NodeRef[], name?: string): string | null {
+    let created: SetNode | null = null;
+    this.editDocument((doc) => {
+      const present = members.filter((member) => nodeFor(doc, member) !== null);
+      for (const member of present) {
+        const node = nodeFor(doc, member);
+        if (node) promoteToRoot(doc, node);
+      }
+      created = groupNodes(doc, present, name, true);
+    });
+    return created ? pathOfNode(this.document, created) : null;
+  }
+
+  /** Move nodes into an existing group, preserving where they stand in the world. */
+  moveIntoGroup(group: NodeRef, members: NodeRef[]): void {
+    this.editDocument((doc) => adoptIntoGroup(doc, group, members));
+  }
+
+  /**
+   * Lift nodes out of the group that holds them, into that group's parent — the group stays. What
+   * leaves is the *anchors*: the group's own direct children, so a member nested in a group of its
+   * own travels with it rather than being cut out.
+   */
+  moveOutOfGroup(group: NodeRef, members: NodeRef[]): void {
+    this.editDocument((doc) => {
+      const anchors = members
+        .map((member) => childOfGroupHolding(doc, group, member))
+        .filter((node): node is SetNode => node !== null);
+      releaseFromGroup(doc, anchors);
+    });
+  }
+
+  /**
+   * Attach partB to partA: rotate and translate partB — or its whole group, when the
+   * parts sit in different groups — so partB's contact point and normal meet partA's,
+   * record the joint, then merge every part in the connected component into one
+   * assembly group.
+   *
+   * Neither side is "parent": re-evaluating the recipe repositions whichever side
+   * moved relative to the other. All four vectors are in the respective mesh's LOCAL
+   * space — typically a raycast hit's face.normal and matrixWorldInverse.
+   */
+  commitAttach(
+    partA: SketcherPart,
+    localPointA: THREE.Vector3,
+    localNormalA: THREE.Vector3,
+    partB: SketcherPart,
+    localPointB: THREE.Vector3,
+    localNormalB: THREE.Vector3,
+  ): void {
+    if (this.insideInstance) return;
+    this.attach.applyJoint(partA, localPointA, localNormalA, partB, localPointB, localNormalB);
+    this.editDocument((doc) => {
+      const members = [...new Set([...groupMembersOf(doc, partA.id), ...groupMembersOf(doc, partB.id)])];
+      addJoint(doc, {
+        type: 'snap',
+        partAId: partA.id,
+        localPointA: toTuple(localPointA),
+        localNormalA: toTuple(localNormalA),
+        partBId: partB.id,
+        localPointB: toTuple(localPointB),
+        localNormalB: toTuple(localNormalB),
+      });
+      mergeIntoGroup(doc, members);
+    });
+  }
+
+  /**
+   * Remove every joint touching a part, then rebuild its component's group topology:
+   * parts still connected by joints or by a durable group bond reform as groups, the
+   * rest return to the scene root.
+   */
+  detachAll(partId: string): void {
+    this.editDocument((doc) => {
+      const affected = groupMembersOf(doc, partId);
+      removeJointsTouching(doc, partId);
+      rebuildGroups(doc, affected);
+    });
+  }
+
+  /** Current attach joints, in document order. */
+  getJoints(): readonly JointSnapshot[] {
+    return this.document.joints;
   }
 
   /** Return a snapshot of the current session. */
@@ -680,12 +1010,15 @@ export class CartoonSketcher {
       parts: [...this.parts],
       joints: [...this.attach.getJoints()],
       assemblyGroups: [...this.attach.getAssemblyGroups()],
+      lights: [...this.lights],
+      environmentMap: this._environmentMap,
     };
   }
 
   /**
-   * Expose the AttachManager so the page can call commitAttach, replayJoints,
-   * detach, getConnectedIds, and groupForPart directly.
+   * Expose the AttachManager so the page can read attach topology (groupForPart,
+   * getAssemblyGroups, isGroup, isInGroupComponent, getJoints) and drive the joint
+   * solver (resolveConstraints) directly.
    */
   get attachManager(): AttachManager {
     return this.attach;
@@ -788,237 +1121,321 @@ export class CartoonSketcher {
   }
 
   /**
-   * Capture a plain-data snapshot of the current session.
-   * Uses world-space transforms so positions are correct regardless of group
-   * parentage. Joints are recorded in local space (unchanged by group transforms).
-   * Groups are captured by part-id lists so they can be re-created on restore.
+   * The current session as a plain-data document — a detached copy, so a caller can
+   * persist or diff it without touching live state. Live transforms are written back
+   * first (the gizmo mutates meshes, not the document).
    */
-  takeSnapshot(): SessionSnapshot {
-    const wp = new THREE.Vector3();
-    const wq = new THREE.Quaternion();
-    const ws = new THREE.Vector3();
-    const parts: PartSnapshot[] = this.parts.map((p) => {
-      p.mesh.updateWorldMatrix(true, false);
-      p.mesh.matrixWorld.decompose(wp, wq, ws);
-      return {
-        id: p.id,
-        worldPosition: [wp.x, wp.y, wp.z],
-        worldQuaternionXYZW: [wq.x, wq.y, wq.z, wq.w],
-        worldScale: [ws.x, ws.y, ws.z],
-        color: p.color,
-        faceColors: [...p.faceColors],
-        faceTextures: [...p.faceTextures],
-      };
-    });
-    const joints: JointSnapshot[] = this.attach.getJoints().map((j) => ({
-      partAId: j.partAId,
-      localPointA: [j.localPointA.x, j.localPointA.y, j.localPointA.z],
-      localNormalA: [j.localNormalA.x, j.localNormalA.y, j.localNormalA.z],
-      partBId: j.partBId,
-      localPointB: [j.localPointB.x, j.localPointB.y, j.localPointB.z],
-      localNormalB: [j.localNormalB.x, j.localNormalB.y, j.localNormalB.z],
-    }));
-    // Capture ALL assembly groups (group and attach) so undo/redo restores grouped state.
-    const groups: GroupSnapshot[] = this.attach.getAssemblyGroups()
-      .map((ag) => ({ partIds: [...ag.partIds], isGroup: this.attach.isGroup(ag.partIds[0]) }));
-    return { parts, joints, groups, groupComponents: this.attach.getGroupComponents() };
+  toDocument(): SetDocument {
+    this.writeBack();
+    return cloneDocument(this.document);
+  }
+
+  /** A plain-data snapshot of the current session, for undo/redo and drag bookkeeping. */
+  takeSnapshot(): SetDocument {
+    return this.toDocument();
   }
 
   /**
-   * Rebuild the Three.js scene to match a plain-data snapshot.
-   * All currently-present meshes are removed; the correct subset from allParts
-   * is re-added at their snapshotted world positions; joints are re-registered
-   * (no repositioning — world positions already reflect the attached state).
+   * Replace the session with a snapshot. Every mesh is reused by part id where the
+   * snapshot still holds it, so selection and gizmo identity survive undo/redo;
+   * geometry of parts the snapshot does not know is disposed.
    */
-  restoreSnapshot(snap: SessionSnapshot): void {
-    // Remove all current meshes from their parents (group or scene root).
-    for (const part of this.parts) {
-      part.mesh.removeFromParent();
-    }
-    // Dissolve all groups and clear the joint list.
-    this.attach.dispose();
-    this.parts.length = 0;
+  restoreSnapshot(snapshot: SetDocument): void {
+    this.document = normalizeDocument(cloneDocument(snapshot));
+    this.syncFromDocument(this.document);
+  }
 
-    // Restore part meshes at world-space transforms from the snapshot.
-    for (const ps of snap.parts) {
-      const part = this.allParts.get(ps.id);
-      if (!part) continue;
-      part.mesh.position.set(ps.worldPosition[0], ps.worldPosition[1], ps.worldPosition[2]);
-      part.mesh.quaternion.set(
-        ps.worldQuaternionXYZW[0], ps.worldQuaternionXYZW[1],
-        ps.worldQuaternionXYZW[2], ps.worldQuaternionXYZW[3],
-      );
-      part.mesh.scale.set(ps.worldScale[0], ps.worldScale[1], ps.worldScale[2]);
-      part.mesh.updateWorldMatrix(false, true);
-      part.color = ps.color;
-      part.faceColors = [...ps.faceColors];
-      part.faceTextures = [...ps.faceTextures];
-      (part.mesh.material as THREE.MeshStandardMaterial[]).forEach((m, i) => {
-        if (m.map) { m.map.dispose(); m.map = null; }
-        const url = ps.faceTextures[i] ?? null;
-        if (url) {
-          m.map = new THREE.TextureLoader().load(url);
-          m.color.set(0xffffff);
+  /** Rebuild the Three.js scene from a tree document (the inverse of toDocument). */
+  loadDocument(doc: SetDocument): void {
+    this.document = normalizeDocument(cloneDocument(doc));
+    this.syncFromDocument(this.document);
+  }
+
+  /**
+   * Apply a mutation to the document tree and re-derive the scene from it. Live
+   * transforms are written back first, so a mutation that follows a gizmo drag sees
+   * the dragged positions; the tree — not the mesh — is what the edit changes.
+   */
+  private editDocument(edit: (doc: SetDocument) => void): void {
+    this.writeBack();
+    edit(this.document);
+    this.syncFromDocument(this.document);
+  }
+
+  /**
+   * Adopt live object state into the document: each part leaf's transform and body
+   * from its mesh, each group node's transform from its THREE.Group, and the
+   * environment. Structure — membership, joints, bonds, lights — is already
+   * document-owned and is not re-derived.
+   */
+  private writeBack(): void {
+    const walk = (nodes: SetNode[], parentPath: string) => {
+      for (const node of nodes) {
+        const path = parentPath ? `${parentPath}/${node.id}` : node.id;
+        if (isPartNode(node)) {
+          const live = this.allParts.get(node.content.id);
+          if (live) {
+            node.content = this.partToLeaf(live);
+            node.transform = transformOf(live.mesh);
+          }
         } else {
-          m.color.setHex(ps.faceColors[i] ?? ps.color);
-        }
-        m.needsUpdate = true;
-      });
-      this.scene.add(part.mesh);
-      this.parts.push(part);
-    }
-
-    // Re-register joints (no group creation here — groups are rebuilt below).
-    for (const js of snap.joints) {
-      const partA = this.parts.find((p) => p.id === js.partAId);
-      const partB = this.parts.find((p) => p.id === js.partBId);
-      if (partA && partB) {
-        this.attach.registerJoint(
-          partA,
-          new THREE.Vector3(js.localPointA[0], js.localPointA[1], js.localPointA[2]),
-          new THREE.Vector3(js.localNormalA[0], js.localNormalA[1], js.localNormalA[2]),
-          partB,
-          new THREE.Vector3(js.localPointB[0], js.localPointB[1], js.localPointB[2]),
-          new THREE.Vector3(js.localNormalB[0], js.localNormalB[1], js.localNormalB[2]),
-        );
-      }
-    }
-
-    // Rebuild all assembly groups from snapshot data (preserves group/attach types).
-    this.attach.rebuildGroupsFromSnapshot(snap.groups ?? [], this.parts, snap.groupComponents);
-  }
-
-  /**
-   * Serialise the current session to a plain-data JSON-safe draft.
-   * Call on every mutation (debounced) and write to localStorage to survive page refresh.
-   */
-  toDraft(): SketcherDraft {
-    const wp = new THREE.Vector3();
-    const wq = new THREE.Quaternion();
-    const ws = new THREE.Vector3();
-    const parts: PartDraft[] = this.parts.map((p) => {
-      p.mesh.updateWorldMatrix(true, false);
-      p.mesh.matrixWorld.decompose(wp, wq, ws);
-      const draft: PartDraft = {
-        id: p.id,
-        kind: p.shapePoints !== null ? 'sketch' : (p.lathePoints !== null ? 'lathed' : 'primitive'),
-        name: p.name,
-        position: [wp.x, wp.y, wp.z],
-        quaternion: [wq.x, wq.y, wq.z, wq.w],
-        scale: [ws.x, ws.y, ws.z],
-        color: p.color,
-        faceColors: [...p.faceColors],
-        faceTextures: [...p.faceTextures],
-      };
-      if (p.shapePoints !== null) {
-        draft.shapePoints = p.shapePoints;
-        draft.depth = p.depth;
-        if (p.holes && p.holes.length > 0) draft.holes = p.holes;
-      }
-      if (p.lathePoints !== null) {
-        draft.lathePoints = p.lathePoints;
-        if (p.lathePhiLength !== null && p.lathePhiLength < Math.PI * 2 - 1e-6) {
-          draft.phiLength = p.lathePhiLength;
-        }
-      }
-      return draft;
-    });
-    const joints: JointSnapshot[] = this.attach.getJoints().map((j) => ({
-      partAId: j.partAId,
-      localPointA: [j.localPointA.x, j.localPointA.y, j.localPointA.z],
-      localNormalA: [j.localNormalA.x, j.localNormalA.y, j.localNormalA.z],
-      partBId: j.partBId,
-      localPointB: [j.localPointB.x, j.localPointB.y, j.localPointB.z],
-      localNormalB: [j.localNormalB.x, j.localNormalB.y, j.localNormalB.z],
-    }));
-    const groups: GroupSnapshot[] = this.attach.getAssemblyGroups().map((ag) => ({
-      partIds: [...ag.partIds],
-      isGroup: this.attach.isGroup(ag.partIds[0]),
-    }));
-    return { version: 2, parts, joints, groups };
-  }
-
-  /**
-   * Reconstruct the Three.js scene from a plain-data draft (the inverse of toDraft).
-   * Clears the current session first. Part ids are preserved so the nextId counter
-   * is advanced past the highest restored id to avoid collisions.
-   */
-  loadDraft(draft: SketcherDraft): void {
-    this.clearSession();
-    this.nextId = 1;
-
-    for (const pd of draft.parts) {
-      let geometry: THREE.BufferGeometry;
-      let shapePoints: [number, number][] | null = null;
-      let lathePoints: [number, number][] | null = null;
-      let lathePhiLength: number | null = null;
-      let depth = 0;
-      let centroid = new THREE.Vector3();
-
-      if (pd.kind === 'primitive') {
-        const preset = PRESET_BY_NAME.get(pd.name.toLowerCase());
-        if (!preset) continue;
-        geometry = preset.geometry();
-      } else if (pd.kind === 'lathed') {
-        if (!pd.lathePoints) continue;
-        lathePoints = pd.lathePoints;
-        lathePhiLength = pd.phiLength ?? Math.PI * 2;
-        geometry = buildLatheGeometry(pd.lathePoints, lathePhiLength);
-      } else {
-        if (!pd.shapePoints || !pd.depth) continue;
-        shapePoints = pd.shapePoints;
-        depth = pd.depth;
-        const pts = pd.shapePoints.map(([x, y]) => new THREE.Vector2(x, y));
-        const shape = new THREE.Shape(pts);
-        if (pd.holes) {
-          for (const holePts of pd.holes) {
-            shape.holes.push(new THREE.Path(holePts.map(([x, y]) => new THREE.Vector2(x, y))));
+          const live = this.nodeObjects.get(path);
+          if (live) {
+            live.updateMatrix();
+            node.transform = transformOf(live);
           }
         }
-        geometry = buildExtrusionGeometry(shape, depth);
+        walk(node.children, path);
+      }
+    };
+    walk(this.document.root, '');
+
+    if (this._environmentMap !== undefined) this.document.environmentMap = this._environmentMap;
+    else delete this.document.environmentMap;
+  }
+
+  /**
+   * Expand an instance into one live group at the node's transform. The expansion is the
+   * Definition's own geometry, so it is deliberately *not* registered as session parts: the
+   * instance is edited as a unit, and its internals belong to the Definition (10.4's
+   * overrides are where they become addressable).
+   */
+  private realiseInstance(node: SetNode, path: string): THREE.Group {
+    const t = node.transform;
+    const instance = new THREE.Group();
+    instance.name = path;
+    instance.position.set(t.position[0], t.position[1], t.position[2]);
+    instance.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
+    instance.scale.set(t.scale[0], t.scale[1], t.scale[2]);
+    // Tagged with the node's path, which is how a hit inside it resolves to the instance, and
+    // with its Definition, which is what an edit-source action needs.
+    instance.userData = { sketcherInstancePath: path, sketcherInstanceRef: node.ref };
+
+    const definition = this.refResolver?.(node.ref!);
+    if (definition) {
+      // The Definition is realised as this instance's overrides leave it, so the session shows what
+      // the renderer will. An override its Definition no longer answers to is collected for the
+      // caller to surface rather than ignored.
+      const record = (ref: string, orphan: OrphanedOverride): void => {
+        const known = this._orphanedOverrides.some(
+          (o) => o.instancePath === path && o.ref === ref && o.path === orphan.path && o.op === orphan.op,
+        );
+        if (!known) this._orphanedOverrides.push({ instancePath: path, ref, path: orphan.path, op: orphan.op });
+      };
+      const root = node.overrides && node.overrides.length > 0
+        ? applyOverrides(definition.root, node.overrides, (orphan) => record(node.ref!, orphan))
+        : definition.root;
+      const realised = realiseDocument({ root }, this.refResolver, record);
+      for (const child of [...realised.children]) instance.add(child);
+    }
+    return instance;
+  }
+
+  /** Release an instance expansion: its geometry and materials are not the session's. */
+  private disposeInstance(root: THREE.Object3D): void {
+    root.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.geometry.dispose();
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        (material as THREE.MeshStandardMaterial).map?.dispose();
+        material.dispose();
+      }
+    });
+    root.removeFromParent();
+  }
+
+  /** Serialise one live part into a part body — its transform lives on the node. */
+  private partToLeaf(p: SketcherPart): PartDraft {
+    const leaf: PartDraft = {
+      id: p.id,
+      kind: p.shapePoints !== null
+        ? 'sketch'
+        : p.lathePoints !== null
+          ? 'lathed'
+          : p.geometry
+            ? 'catalogue'
+            : 'primitive',
+      name: p.name,
+      ...(p.label !== undefined ? { label: p.label } : {}),
+      ...(p.geometry !== undefined ? { geometry: p.geometry } : {}),
+      ...(p.material !== undefined ? { material: p.material } : {}),
+      color: p.color,
+      faceColors: [...p.faceColors],
+      faceTextures: [...p.faceTextures],
+    };
+    if (p.shapePoints !== null) {
+      leaf.shapePoints = p.shapePoints;
+      leaf.depth = p.depth;
+      if (p.holes && p.holes.length > 0) leaf.holes = p.holes;
+    }
+    if (p.lathePoints !== null) {
+      leaf.lathePoints = p.lathePoints;
+      if (p.lathePhiLength !== null && p.lathePhiLength < Math.PI * 2 - 1e-6) {
+        leaf.phiLength = p.lathePhiLength;
+      }
+    }
+    return leaf;
+  }
+
+  /**
+   * Rebuild the Three.js scene to match the document. All currently-present meshes are
+   * removed; the subset the document still holds is re-added at their LOCAL transforms,
+   * re-parented into a THREE.Group per group node; joints, groups and bonds are mirrored
+   * into the AttachManager (no repositioning — positions already reflect the attached state).
+   */
+  private syncFromDocument(doc: SetDocument): void {
+    // Read fresh each sync: an instance the focus was set on can be gone (undo, delete, a load),
+    // and stepping back out is the only honest reading of that.
+    this._orphanedOverrides.length = 0;
+    if (this._focusedInstance !== null && nodeAt(doc, this._focusedInstance)?.ref === undefined) {
+      this._focusedInstance = null;
+    }
+
+    // Collect part bodies by guid from the tree.
+    const partLeaves = new Map<string, PartDraft>();
+    for (const node of collectPartNodes(doc)) partLeaves.set(node.content.id, node.content);
+
+    // Release the last instance expansions (their meshes and materials are theirs alone),
+    // then dissolve current groups and clear joint/group state.
+    for (const root of this.instanceRoots) this.disposeInstance(root);
+    this.instanceRoots = [];
+    this.attach.resetGroups();
+    this.nodeObjects.clear();
+
+    // Dispose meshes no longer in the tree.
+    for (let i = this.parts.length - 1; i >= 0; i--) {
+      const p = this.parts[i];
+      if (!partLeaves.has(p.id)) {
+        p.mesh.removeFromParent();
+        p.mesh.geometry.dispose();
+        (p.mesh.material as THREE.MeshStandardMaterial[]).forEach((m) => { m.map?.dispose(); m.dispose(); });
+        this.parts.splice(i, 1);
+        this.allParts.delete(p.id);
+      }
+    }
+
+    // Reuse existing meshes (update transform) + realise new ones, in tree order.
+    const existing = new Map(this.parts.map((p) => [p.id, p]));
+    this.parts.length = 0;
+    this.nextId = 1;
+
+    const buildPart = (node: PartNode): SketcherPart | null => {
+      const pd = node.content;
+      const t = node.transform;
+      const prev = existing.get(pd.id);
+      if (prev) {
+        const mesh = prev.mesh;
+        mesh.position.set(t.position[0], t.position[1], t.position[2]);
+        mesh.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
+        mesh.scale.set(t.scale[0], t.scale[1], t.scale[2]);
+        mesh.updateWorldMatrix(false, true);
+        // Re-apply colour/faces/textures so undo/redo of colour edits is visual too.
+        const mats = mesh.material as THREE.MeshStandardMaterial[];
+        const cols = pd.faceColors ?? mats.map(() => pd.color);
+        const texs = pd.faceTextures ?? mats.map(() => null);
+        mats.forEach((m, i) => {
+          if (m.map) { m.map.dispose(); m.map = null; }
+          const url = texs[i] ?? null;
+          if (url) {
+            m.map = new THREE.TextureLoader().load(url);
+            m.color.set(0xffffff);
+          } else {
+            m.color.setHex(cols[i] ?? pd.color);
+          }
+          m.needsUpdate = true;
+        });
+        // Update the live wrapper in place (preserve object identity for selection/gizmo).
+        prev.depth = pd.kind === 'sketch' ? (pd.depth ?? 0) : 0;
+        prev.name = pd.name;
+        prev.label = pd.label;
+        prev.geometry = pd.geometry;
+        prev.material = pd.material;
+        prev.color = pd.color;
+        prev.shapePoints = pd.kind === 'sketch' ? (pd.shapePoints ?? null) : null;
+        prev.holes = pd.holes ?? null;
+        prev.lathePoints = pd.kind === 'lathed' ? (pd.lathePoints ?? null) : null;
+        prev.lathePhiLength = pd.kind === 'lathed' ? (pd.phiLength ?? Math.PI * 2) : null;
+        prev.faceColors = pd.faceColors ? [...pd.faceColors] : mats.map(() => pd.color);
+        prev.faceTextures = pd.faceTextures ? [...pd.faceTextures] : mats.map(() => null);
+        this.parts.push(prev);
+        this.allParts.set(prev.id, prev);
+        const num = parseInt(pd.id.replace('part-', ''), 10);
+        if (!isNaN(num) && num >= this.nextId) this.nextId = num + 1;
+        return prev;
       }
 
-      const materials = buildMaterials(geometry, pd.color, lathePoints !== null ? THREE.DoubleSide : THREE.FrontSide);
-      const faceColors = pd.faceColors ? [...pd.faceColors] : materials.map(() => pd.color);
-      faceColors.forEach((c, i) => { if (i < materials.length) materials[i].color.setHex(c); });
-      const faceTextures = pd.faceTextures ? [...pd.faceTextures] : materials.map(() => null);
-      faceTextures.forEach((url, i) => {
-        if (url && i < materials.length) {
-          materials[i].map = new THREE.TextureLoader().load(url);
-          materials[i].needsUpdate = true;
-        }
-      });
-      const mesh = new THREE.Mesh(geometry, materials);
-      mesh.position.set(pd.position[0], pd.position[1], pd.position[2]);
-      mesh.quaternion.set(pd.quaternion[0], pd.quaternion[1], pd.quaternion[2], pd.quaternion[3]);
-      mesh.scale.set(pd.scale[0], pd.scale[1], pd.scale[2]);
-      mesh.updateWorldMatrix(false, true);
-
-      const part: SketcherPart = { id: pd.id, mesh, depth, centroid, name: pd.name, color: pd.color, shapePoints, holes: pd.holes ? pd.holes : null, lathePoints, lathePhiLength, faceColors, faceTextures };
-      this.scene.add(mesh);
+      const mesh = buildPartMesh(pd, t);
+      if (!mesh) return null;
+      const mats = mesh.material as THREE.MeshStandardMaterial[];
+      const faceColors = pd.faceColors ? [...pd.faceColors] : mats.map(() => pd.color);
+      const faceTextures = pd.faceTextures ? [...pd.faceTextures] : mats.map(() => null);
+      const part: SketcherPart = {
+        id: pd.id,
+        mesh,
+        depth: pd.kind === 'sketch' ? (pd.depth ?? 0) : 0,
+        centroid: new THREE.Vector3(),
+        name: pd.name,
+        label: pd.label,
+        geometry: pd.geometry,
+        material: pd.material,
+        color: pd.color,
+        shapePoints: pd.kind === 'sketch' ? (pd.shapePoints ?? null) : null,
+        holes: pd.holes ?? null,
+        lathePoints: pd.kind === 'lathed' ? (pd.lathePoints ?? null) : null,
+        lathePhiLength: pd.kind === 'lathed' ? (pd.phiLength ?? Math.PI * 2) : null,
+        faceColors,
+        faceTextures,
+      };
       this.parts.push(part);
       this.allParts.set(part.id, part);
-
       const num = parseInt(pd.id.replace('part-', ''), 10);
       if (!isNaN(num) && num >= this.nextId) this.nextId = num + 1;
-    }
+      return part;
+    };
 
-    for (const js of draft.joints) {
-      const partA = this.parts.find((p) => p.id === js.partAId);
-      const partB = this.parts.find((p) => p.id === js.partBId);
-      if (partA && partB) {
-        this.attach.registerJoint(
-          partA,
-          new THREE.Vector3(js.localPointA[0], js.localPointA[1], js.localPointA[2]),
-          new THREE.Vector3(js.localNormalA[0], js.localNormalA[1], js.localNormalA[2]),
-          partB,
-          new THREE.Vector3(js.localPointB[0], js.localPointB[1], js.localPointB[2]),
-          new THREE.Vector3(js.localNormalB[0], js.localNormalB[1], js.localNormalB[2]),
-        );
+    // Walk the tree, building parts and adopting groups at every depth: a nested group's
+    // THREE.Group is parented into its parent's object, so a group's transform composes with
+    // its children's exactly as the document says.
+    const walkTree = (nodes: SetNode[], parentPath: string, parentObject: THREE.Object3D) => {
+      for (const node of nodes) {
+        const path = parentPath ? `${parentPath}/${node.id}` : node.id;
+        if (isPartNode(node)) {
+          const part = buildPart(node);
+          if (part) parentObject.add(part.mesh);
+        } else if (isRefNode(node)) {
+          const instance = this.realiseInstance(node, path);
+          parentObject.add(instance);
+          this.nodeObjects.set(path, instance);
+          this.instanceRoots.push(instance);
+        } else if (node.role === 'structure') {
+          const t = node.transform;
+          const group = new THREE.Group();
+          group.position.set(t.position[0], t.position[1], t.position[2]);
+          group.quaternion.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]);
+          group.scale.set(t.scale[0], t.scale[1], t.scale[2]);
+          parentObject.add(group);
+          this.nodeObjects.set(path, group);
+          walkTree(node.children, path, group);
+          const memberIds = collectPartNodesIn(node.children).map((part) => part.content.id);
+          this.attach.adoptGroup(path, group, memberIds, node.name, node.isGroup);
+        }
+        // A light node has no scene object of its own: `placeLight` builds its THREE light.
       }
-    }
+    };
+    walkTree(doc.root, '', this.scene);
 
-    this.attach.rebuildGroupsFromSnapshot(draft.groups ?? [], this.parts);
+    // Mirror the attach topology: joints and the durable group bonds.
+    this.attach.setJoints(doc.joints.filter((js) => partLeaves.has(js.partAId) && partLeaves.has(js.partBId)));
+    this.attach.setBonds(doc.groupComponents ?? []);
+
+    // Clear + re-add lights from the tree.
+    for (const light of this.lightObjects.values()) this.scene.remove(light);
+    this.lightObjects.clear();
+    this.lights.length = 0;
+    for (const config of collectLights(doc)) this.placeLight(config);
+    this._environmentMap = doc.environmentMap;
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────
@@ -1061,11 +1478,24 @@ export class CartoonSketcher {
       (this.extrusionHandle.handle.material as THREE.Material).dispose();
       this.extrusionHandle = null;
     }
-    const faceColors = Array<number>(mesh.geometry.groups.length).fill(DEFAULT_COLOR);
-    const faceTextures = Array<null>(mesh.geometry.groups.length).fill(null);
-    this.parts.push({ id: `part-${this.nextId++}`, mesh, depth, centroid: centroid.clone(), name: 'Shape', color: DEFAULT_COLOR, shapePoints, holes: holes.length > 0 ? holes : null, lathePoints: null, lathePhiLength: null, faceColors, faceTextures });
-    const part = this.parts[this.parts.length - 1];
-    this.allParts.set(part.id, part);
+    // Commit the sketch via the tree; the reconcile rebuilds the mesh, so dispose the preview.
+    mesh.removeFromParent();
+    mesh.geometry.dispose();
+    (mesh.material as THREE.MeshStandardMaterial[]).forEach((m) => { m.map?.dispose(); m.dispose(); });
+    const id = `part-${this.nextId++}`;
+    const seed: PartSeed = {
+      content: {
+        id,
+        kind: 'sketch',
+        name: 'Shape',
+        shapePoints,
+        depth,
+        ...(holes.length > 0 ? { holes } : {}),
+        color: DEFAULT_COLOR,
+      },
+      transform: transformOf(mesh),
+    };
+    this.editDocument((doc) => insertPart(doc, seed));
     this.phase = 'idle';
   }
 

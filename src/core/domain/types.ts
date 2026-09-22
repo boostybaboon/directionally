@@ -1,4 +1,5 @@
 // Pure domain config types — no Three.js or Tone.js imports
+import type { NodeOverride } from '../sketcher/documentTree.js';
 
 export type Vec3 = [number, number, number];
 
@@ -23,16 +24,74 @@ export type MaterialConfig = {
 
 // A piece of scenery: static geometry placed in the scene (floor, walls, steps, blocks etc.)
 export type SetPiece = {
+  /**
+   * The label: what a person reads in an outliner, and what the script wrote.
+   */
   name: string;
-  /** When set, load this GLB path instead of using procedural geometry. */
-  gltfPath?: string;
+  /**
+   * The address: what a SetPieceBlock targets, what the resolver builds a child's id from, and what
+   * the renderer names the object after (animation binds by object name, so the name and the address
+   * have to be the same string). Defaults to `name` when absent, which is how a scene stored before
+   * this field existed keeps working: an address only diverges from a label when something renames.
+   */
+  id?: string;
   geometry: GeometryConfig;
   material: MaterialConfig;
   position?: Vec3;
   rotation?: Vec3;   // Euler XYZ in radians
   scale?: Vec3;
-  parent?: string;   // name of another SetPiece or actor to attach to (for hierarchical assemblies)
+  /**
+   * Catalogue SetPieceEntry id this piece is an Instance of (Track SET, N2).
+   * When set, `resolveInstance`/`resolveInstances` (settingSpec.ts) expand this
+   * piece into its rendered children before it reaches the renderer — `geometry`/
+   * `material` on an instance piece are a placeholder only, never rendered directly.
+   */
+  ref?: string;
+  /**
+   * Catalogue SetPieceEntry id this piece is *rendered from* (ROADMAP_CATALOGUE step 5).
+   * Set when the entry carries a tree document: the renderer realises that tree
+   * instead of the placeholder `geometry`/`material` below, so a set never depends on
+   * a baked GLB. `name` stays the scene-local identity; this stays the catalogue
+   * identity, so renaming the piece can't orphan it.
+   */
+  catalogueId?: string;
+  /**
+   * Variation this *scene* applies to the entry's document — the dressing layer
+   * (ROADMAP_CATALOGUE 10.5), path-addressed exactly as an instance's overrides are, and
+   * replayed over the document when the piece is realised. The document is the venue, this is
+   * what a particular scene does to it, and the piece's own transform (or a light block) is
+   * the shot: three layers of one primitive, last write wins.
+   */
+  overrides?: NodeOverride[];
 };
+
+// A placed prop: a reference to a catalogue set piece (`ref`) or an inline
+// procedural primitive, with an optional placement transform. Used by the setting
+// resolver (`SettingSpec.props`).
+export type PropSpec =
+  | { ref: string }
+  | { geometry: GeometryConfig; material: MaterialConfig; name?: string };
+
+export type PlacedProp =
+  | {
+    ref: string;
+    position?: Vec3;
+    rotation?: Vec3;
+    scale?: Vec3;
+    /** Variation this placement applies to the referenced entry's document (dressing). */
+    overrides?: NodeOverride[];
+  }
+  | { geometry: GeometryConfig; material: MaterialConfig; name?: string; position?: Vec3; rotation?: Vec3; scale?: Vec3 };
+
+/** A placement transform (no prop body) — used by `expandEntry` to place an entry. */
+export type Placement = { position?: Vec3; rotation?: Vec3; scale?: Vec3 };
+
+/**
+ * Distributive Omit: removes a key from each *member* of a union, not just from the
+ * union — `Omit<A | B, K>` collapses to the shared keys, which is not what a payload
+ * type wants.
+ */
+export type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
 
 export type ActorAsset =
   | { type: 'gltf'; url: string }

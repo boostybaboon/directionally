@@ -14,6 +14,8 @@ import {
   DeletePartCommand,
   ChangeColorCommand,
   ChangeFaceColorCommand,
+  ChangePartLabelCommand,
+  RenameGroupCommand,
   TransformPartCommand,
   CommitAttachCommand,
   DetachAllCommand,
@@ -46,10 +48,9 @@ function makeStubCmd(label = 'Stub'): SketcherCommand & { executeCalls: number }
 }
 
 function attachAB(sketcher: CartoonSketcher, pA: NonNullable<ReturnType<CartoonSketcher['insertPrimitive']>>, pB: NonNullable<ReturnType<CartoonSketcher['insertPrimitive']>>) {
-  return sketcher.attachManager.commitAttach(
+  sketcher.commitAttach(
     pA, new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 1, 0),
     pB, new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, -1, 0),
-    [pA, pB],
   );
 }
 
@@ -146,7 +147,7 @@ describe('SketcherDocument', () => {
     const { doc } = makeDoc(sketcher);
     sketcher.insertPrimitive('box');
     const snap = doc.captureSnapshot();
-    expect(snap.parts).toHaveLength(1);
+    expect(snap.root).toHaveLength(1);
     expect(snap.joints).toHaveLength(0);
   });
 
@@ -333,6 +334,17 @@ describe('ChangeColorCommand', () => {
     expect(sketcher.getSession().parts[0].color).toBe(original);
   });
 
+  it('doc.undo() restores the mesh material colour too', () => {
+    const { sketcher } = makeSketcher();
+    const { doc } = makeDoc(sketcher);
+    const part = sketcher.insertPrimitive('box')!;
+    const original = part.color;
+    doc.execute(new ChangeColorCommand(part.id, 0xff0000, sketcher));
+    doc.undo();
+    const material = sketcher.getSession().parts[0].mesh.material as THREE.MeshStandardMaterial[];
+    expect(material[0].color.getHex()).toBe(original);
+  });
+
   it('doc.redo() re-applies the new colour', () => {
     const { sketcher } = makeSketcher();
     const { doc } = makeDoc(sketcher);
@@ -341,6 +353,72 @@ describe('ChangeColorCommand', () => {
     doc.undo();
     doc.redo();
     expect(sketcher.getSession().parts[0].color).toBe(0xff0000);
+  });
+});
+
+// ── ChangePartLabelCommand ────────────────────────────────────────────────────
+
+describe('ChangePartLabelCommand', () => {
+  it('execute() sets the part label', () => {
+    const { sketcher } = makeSketcher();
+    const part = sketcher.insertPrimitive('box')!;
+    new ChangePartLabelCommand(part.id, 'tabletop', sketcher).execute();
+    expect(sketcher.getSession().parts[0].label).toBe('tabletop');
+  });
+
+  it('doc.undo() restores the previous label', () => {
+    const { sketcher } = makeSketcher();
+    const { doc } = makeDoc(sketcher);
+    const part = sketcher.insertPrimitive('box')!;
+    doc.execute(new ChangePartLabelCommand(part.id, 'tabletop', sketcher));
+    doc.undo();
+    expect(sketcher.getSession().parts[0].label).toBeUndefined();
+  });
+
+  it('doc.redo() re-applies the new label', () => {
+    const { sketcher } = makeSketcher();
+    const { doc } = makeDoc(sketcher);
+    const part = sketcher.insertPrimitive('box')!;
+    doc.execute(new ChangePartLabelCommand(part.id, 'tabletop', sketcher));
+    doc.undo();
+    doc.redo();
+    expect(sketcher.getSession().parts[0].label).toBe('tabletop');
+  });
+});
+
+// ── RenameGroupCommand ────────────────────────────────────────────────────────
+
+describe('RenameGroupCommand', () => {
+  it('execute() sets the group name', () => {
+    const { sketcher } = makeSketcher();
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    const ag = sketcher.group([a.id, b.id], 'leg')!;
+    new RenameGroupCommand(ag.id, 'table-leg', sketcher).execute();
+    expect(sketcher.attachManager.groupForPart(a.id)!.name).toBe('table-leg');
+  });
+
+  it('doc.undo() restores the previous group name', () => {
+    const { sketcher } = makeSketcher();
+    const { doc } = makeDoc(sketcher);
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    const ag = sketcher.group([a.id, b.id], 'leg')!;
+    doc.execute(new RenameGroupCommand(ag.id, 'table-leg', sketcher));
+    doc.undo();
+    expect(sketcher.attachManager.getAssemblyGroups()[0].name).toBe('leg');
+  });
+
+  it('doc.redo() re-applies the new group name', () => {
+    const { sketcher } = makeSketcher();
+    const { doc } = makeDoc(sketcher);
+    const a = sketcher.insertPrimitive('box')!;
+    const b = sketcher.insertPrimitive('box')!;
+    const ag = sketcher.group([a.id, b.id], 'leg')!;
+    doc.execute(new RenameGroupCommand(ag.id, 'table-leg', sketcher));
+    doc.undo();
+    doc.redo();
+    expect(sketcher.attachManager.getAssemblyGroups()[0].name).toBe('table-leg');
   });
 });
 

@@ -27,7 +27,14 @@ export type StoredActor = {
   voice?: ActorVoice;
   /** Emissive tint as a 24-bit RGB integer (e.g. 0x4a9eff). Auto-assigned from the ACTOR_COLORS palette at AddActorCommand time. */
   tint?: number;
+  /**
+   * Set when this cast member's typed name did not resolve to a real catalogue
+   * entry (Track CAT, CAT-1) — staged with the generic-human placeholder body
+   * and a persistent lozenge label instead of a silent wrong-asset substitution.
+   */
+  placeholder?: boolean;
 };
+
 
 /**
  * Serialisable representation of a single scene's full composition.
@@ -47,6 +54,13 @@ export type StoredScene = {
   /** Catalogue entry id of an EnvironmentEntry, or a bare URL to a .hdr file. When set,
    *  the renderer loads it as an IBL environment map and visible background. */
   environmentMap?: string;
+  /**
+   * Set when the scene heading's `setting` did not resolve to a catalogue
+   * SetPieceEntry/EnvironmentEntry (Track CAT, CAT-2). The compiler staged a
+   * placeholder room instead; this is the typed setting name, which the renderer
+   * draws onto the room floor.
+   */
+  placeholderSetting?: string;
 };
 
 /**
@@ -66,6 +80,14 @@ export type NamedScene = {
    * script view (e.g. "LIGHTS FADE TO BLACK."). Not part of the scene's scripted content.
    */
   transition?: string;
+  /**
+   * Raw source text for the script-first minimal DSL, when this scene was authored
+   * (or last edited) via the script-first flow. This is the authoring source of truth —
+   * `scene.stagedActors` / `scene.blocks` / `scene.actions` and `script` (ScriptLine[])
+   * are derived from it by the compiler. Absent for scenes authored via direct
+   * manipulation only.
+   */
+  dslSource?: string;
 };
 
 /**
@@ -128,4 +150,18 @@ export type StoredProduction = {
   speechSettings?: ProductionSpeechSettings;
   /** Dialogue lines. Populated on legacy productions; cleared after migration to the scene path. */
   script?: ScriptLine[];
+  /**
+   * The whole-production sigil-tokenized buffer (Track SCR). The single source of
+   * truth for the script-first flow — contains every scene, separated by `#`
+   * headings. Stored at production level because the buffer is the entire script,
+   * not a single scene's fragment.
+   */
+  scriptSource?: string;
+  /**
+   * Explicit asset bindings set via the catalogue panel (Track CAT, CAT-3).
+   * Keyed by role name (cast) / setting name (setting) — both uppercase — and
+   * applied ahead of label-match resolution during compile.
+   */
+  castBindings?: Record<string, string>;
+  settingBindings?: Record<string, string>;
 };

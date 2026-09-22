@@ -3,6 +3,7 @@
   import * as THREE from 'three';
   import { onMount } from 'svelte';
   import type { Model } from './Model';
+  import { PLACEHOLDER_ROOM_MESH_NAME } from '../core/treatment/fountainCompiler.js';
   import type { AnimationDict } from './model/Action';
   import { PlaybackEngine } from '../core/scene/PlaybackEngine';
   import { buildSceneGraph } from './scene/buildSceneGraph.js';
@@ -431,6 +432,17 @@
     cameraHelper = new THREE.CameraHelper(camera);
     cameraHelper.layers.set(1);
     scene.add(cameraHelper);
+
+    // Track CAT, CAT-1: persistent lozenge labels for placeholder actors —
+    // visible for the actor's entire time on stage, not just while speaking.
+    model.placeholderActors.forEach((p) => createPlaceholderLabel(p.actorId, p.label));
+
+    // Track CAT, CAT-2: draw the typed setting name onto the placeholder room
+    // floor (a texture on the floor plane, not a floating billboard).
+    if (model.placeholderSetting) {
+      applyPlaceholderFloorLabel(model.placeholderSetting.label);
+    }
+
 
     // Re-add the TC helper to the new scene.
     if (tcHelper) {
@@ -1101,7 +1113,147 @@
     activeSpeechBubbles.delete(actorId);
   }
 
+  // Track CAT, CAT-1: persistent lozenge label above a placeholder actor's head —
+  // reuses the speech-bubble CanvasTexture/Sprite mechanism, but stays visible for
+  // the actor's entire time on stage rather than being added/removed per line.
+  function createPlaceholderLabel(actorId: string, label: string) {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) return;
+
+    const fontSize = 28;
+    const font = `700 ${fontSize}px Arial, sans-serif`;
+    const paddingX = 20;
+    const paddingY = 12;
+    const iconGap = 10;
+    const warningGlyph = '\u26A0'; // ⚠
+
+    context.font = font;
+    const labelWidth = context.measureText(label.toUpperCase()).width;
+    const iconWidth = context.measureText(warningGlyph).width;
+    const contentWidth = iconWidth + iconGap + labelWidth;
+    const lozengeH = Math.ceil(fontSize + paddingY * 2);
+    const lozengeW = Math.ceil(contentWidth + paddingX * 2);
+
+    canvas.width = lozengeW;
+    canvas.height = lozengeH;
+    context.font = font; // reapply after resize clears context state
+
+    // Lozenge body: fully rounded (pill) rectangle, amber/warning tint.
+    const r = lozengeH / 2;
+    context.beginPath();
+    context.moveTo(r, 0);
+    context.lineTo(lozengeW - r, 0);
+    context.arcTo(lozengeW, 0, lozengeW, r, r);
+    context.lineTo(lozengeW, lozengeH - r);
+    context.arcTo(lozengeW, lozengeH, lozengeW - r, lozengeH, r);
+    context.lineTo(r, lozengeH);
+    context.arcTo(0, lozengeH, 0, lozengeH - r, r);
+    context.lineTo(0, r);
+    context.arcTo(0, 0, r, 0, r);
+    context.closePath();
+    context.fillStyle = 'rgba(58, 42, 10, 0.92)';
+    context.fill();
+    context.strokeStyle = 'rgba(255, 190, 60, 0.9)';
+    context.lineWidth = 2.5;
+    context.stroke();
+
+    context.fillStyle = '#ffcf6b';
+    context.textBaseline = 'middle';
+    context.textAlign = 'left';
+    const textY = lozengeH / 2;
+    const startX = (lozengeW - contentWidth) / 2;
+    context.fillText(warningGlyph, startX, textY);
+    context.fillText(label.toUpperCase(), startX + iconWidth + iconGap, textY);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+
+    const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    sprite.renderOrder = 998;
+
+    const actor = scene.getObjectByName(actorId);
+    if (!actor) return;
+
+    const box = new THREE.Box3().setFromObject(actor);
+    const actorHeight = Math.max(0.5, box.max.y - box.min.y);
+    const actorWorldScale = actor.getWorldScale(new THREE.Vector3());
+
+    // Fixed world-space height (not screen-invariant like speech bubbles — the
+    // lozenge should read as "attached to this actor" even off-camera-centre,
+    // and doesn't need to dodge viewport edges the way a two-line bubble does).
+    const targetWorldH = 0.22;
+    const spriteScale = targetWorldH / canvas.height;
+    const localScale = spriteScale / actorWorldScale.y;
+    sprite.scale.set(canvas.width * localScale, canvas.height * localScale, 1);
+
+    const gap = actorHeight * 0.06 + targetWorldH / 2;
+    sprite.position.set(0, (box.max.y - actor.getWorldPosition(new THREE.Vector3()).y) / actorWorldScale.y + gap / actorWorldScale.y, 0);
+
+    actor.add(sprite);
+    activePlaceholderLabels.set(actorId, sprite);
+  }
+
+  /**
+   * Draws the placeholder setting name as an opaque canvas texture, using the
+   * floor's own material colour as the background so the room colour stays a
+   * single source of truth in the compiler.
+   */
+  function createPlaceholderFloorTexture(label: string, backgroundColor: string): THREE.CanvasTexture {
+    const size = 1024;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Failed to create placeholder floor label canvas');
+
+    ctx.fillStyle = backgroundColor;
+    ctx.fillRect(0, 0, size, size);
+
+    const text = `\u26A0 ${label.toUpperCase()}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Shrink the font until the full label fits within the floor.
+    let fontSize = 128;
+    const maxWidth = size * 0.8;
+    ctx.font = `700 ${fontSize}px Arial, sans-serif`;
+    while (fontSize > 24 && ctx.measureText(text).width > maxWidth) {
+      fontSize -= 4;
+      ctx.font = `700 ${fontSize}px Arial, sans-serif`;
+    }
+
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(20, 16, 8, 0.9)';
+    ctx.lineWidth = fontSize / 8;
+    ctx.strokeText(text, size / 2, size / 2);
+    ctx.fillStyle = '#ffcf6b';
+    ctx.fillText(text, size / 2, size / 2);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.minFilter = THREE.LinearFilter;
+    return texture;
+  }
+
+  /** Applies the placeholder room label to the floor plane mesh. */
+  function applyPlaceholderFloorLabel(label: string) {
+    const floor = scene.getObjectByName(PLACEHOLDER_ROOM_MESH_NAME) as THREE.Mesh | undefined;
+    if (!floor) return;
+    const material = floor.material as THREE.MeshStandardMaterial;
+    const backgroundColor = `#${material.color.getHexString()}`;
+    material.map = createPlaceholderFloorTexture(label, backgroundColor);
+    material.color.setHex(0xffffff);
+    material.needsUpdate = true;
+  }
+
+  const activePlaceholderLabels = new Map<string, THREE.Sprite>();
+
 </script>
+
 
 <style>
   #c {

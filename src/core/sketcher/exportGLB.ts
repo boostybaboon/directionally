@@ -6,7 +6,8 @@ import type { SketcherSession } from './types.js';
  * Exports a SketcherSession as a binary GLB file.
  *
  * All parts are merged into a single THREE.Group so the resulting GLB is
- * self-contained and importable into any standard 3D tool.
+ * self-contained and importable into any standard 3D tool. GLB is export-only:
+ * a set's stored form is its tree document.
  */
 export async function exportGLB(session: SketcherSession): Promise<{ blob: Blob; filename: string }> {
   const group = new THREE.Group();

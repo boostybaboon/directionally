@@ -1,0 +1,31 @@
+name: Bug
+description: Something it does that it should not, or does not do that it should.
+title: "[bug] "
+labels: ["gap:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        How you got there is the most valuable part. The last three bugs here were found by using the
+        app, and each was fixed because the report named what the screen showed.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what should have happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to get there
+      description: The steps, and anything the console said.
+    validations:
+      required: true
+  - type: input
+    id: anchor
+    attributes:
+      label: Where it lives
+      description: File, function or symptom area, if you know it.
+    validations:
+      required: false

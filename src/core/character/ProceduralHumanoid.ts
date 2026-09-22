@@ -1,4 +1,42 @@
 import * as THREE from 'three';
+import { buildRingGraph, ringWorldPoints, buildRingLoft, splitRingArcs, seamEdgePoints, splitKnuckleRing, thumbPortCuts, thumbBracketRings, bracketRingsAround } from './ringGraph.js';
+import {
+  DEFAULT_RING_PARAMS,
+  SHOULDER_PORT_BRACKET_COUNT,
+  SHOULDER_PORT_MIDDLE_WIDTH,
+  SHOULDER_PORT_WIDTH,
+  THUMB_PORT_END_WIDTH,
+  THUMB_PORT_MIDDLE_WIDTH,
+} from './ringSurface.js';
+import type { RingParamMap } from './ringSurface.js';
+import { DEFAULT_OUTFIT, GROUP_REGION, resolveOutfitColor } from './clothing.js';
+import type { ClothingRegion, Outfit } from './clothing.js';
+import type { BodyRing } from './ringGraph.js';
+
+/** Checkerboard UV-visualisation texture (DOM-free, so it also works under Node). */
+let _uvChecker: THREE.DataTexture | null = null;
+function uvCheckerTexture(): THREE.DataTexture {
+  if (_uvChecker) return _uvChecker;
+  const size = 256;
+  const cells = 8;
+  const a = [0xff, 0x88, 0x00]; // orange
+  const b = [0x22, 0x66, 0xcc]; // blue
+  const data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    const cy = Math.floor((y / size) * cells);
+    for (let x = 0; x < size; x++) {
+      const cx = Math.floor((x / size) * cells);
+      const c = (cx + cy) % 2 === 0 ? a : b;
+      const i = (y * size + x) * 4;
+      data[i] = c[0]; data[i + 1] = c[1]; data[i + 2] = c[2]; data[i + 3] = 255;
+    }
+  }
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  tex.needsUpdate = true;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  _uvChecker = tex;
+  return tex;
+}
 
 /**
  * Colour palette for body regions.
@@ -359,6 +397,77 @@ export class ProceduralHumanoid {
   private _neckTiltDeg = 0;
   /** Atlas joint sphere parented to the neck bone, repositioned each frame to the tube top. */
   private _atlasJointMesh: THREE.Mesh | null = null;
+  /** HP-6 loft ring overlay (line loops); built in `_attachLoftBody`, hidden by default. */
+  private _ringDebug: THREE.Group | null = null;
+  /** Per-ring line loops + their owning bones, re-projected each frame when visible. */
+  private _ringDebugLines: Array<{ ring: BodyRing; bone: THREE.Bone; line: THREE.LineLoop }> = [];
+  /** Girdle-bottom split visualisation: left/right hemi-arcs + shared seam points. */
+  private _ringSplitDebug: {
+    bone: THREE.Bone;
+    ring: BodyRing;
+    posIdx: number[];
+    negIdx: number[];
+    seamsIdx: [number, number];
+    segs: number;
+    posLine: THREE.Line;
+    negLine: THREE.Line;
+    seamEdgeLine: THREE.Line;
+    seamInterior: number;
+  } | null = null;
+  /** Front-facing wireframe overlay for the loft body (depth-tested against the filled body). */
+  private _wireMesh: THREE.SkinnedMesh | null = null;
+  /** Loft body material, for the UV-check visualisation toggle. */
+  private _loftMaterial: THREE.MeshToonMaterial | null = null;
+  /** Shoulder-junction visualisation: chest ring + arm top rings, re-projected each frame. */
+  private _shoulderDebug: Array<{ ring: BodyRing; bone: THREE.Bone; line: THREE.LineLoop }> = [];
+  /** Shoulder girdle visualisation: the arm's exit point + a proposed deep torso ring. */
+  private _shoulderGirdleDebug: Array<{
+    spine2Bone: THREE.Bone;
+    armBone: THREE.Bone;
+    boneIndex: number;
+    segs: number;
+    rx: number;
+    fwd: number;
+    jointLine: THREE.LineLoop;
+    girdleLine: THREE.LineLoop;
+  }> = [];
+  /** Shoulder port visualisation: girdle cut arcs + seam chains + arm ring. */
+  private _shoulderPortDebug: Array<{
+    spine2Bone: THREE.Bone;
+    armBone: THREE.Bone;
+    bracketRings: BodyRing[];
+    armRing: BodyRing;
+    segs: number;
+    bottomLine: THREE.Line;
+    topLine: THREE.Line;
+    seamALine: THREE.Line;
+    seamBLine: THREE.Line;
+    armLoop: THREE.LineLoop;
+  }> = [];
+  /** Hand-junction visualisation: palm knuckle ring + finger start rings, re-projected each frame. */
+  private _handDebug: Array<{ ring: BodyRing; bone: THREE.Bone; line: THREE.LineLoop }> = [];
+  /** Hand-junction split visualisation: web chords + per-finger region arcs on the knuckle ring. */
+  private _handSplitDebug: Array<{
+    knuckleBone: THREE.Bone;
+    knuckleRing: BodyRing;
+    fingerRings: Array<{ bone: THREE.Bone; ring: BodyRing }>;
+    segs: number;
+    webLines: THREE.Line[];
+    regionSegs: THREE.LineSegments[];
+  }> = [];
+  /** Thumb side-port visualisation: bracket-ring cut arcs + seams + thumb base ring. */
+  private _thumbPortDebug: Array<{
+    handBone: THREE.Bone;
+    thumbBone: THREE.Bone;
+    bracketRings: BodyRing[];
+    thumbRing: BodyRing;
+    segs: number;
+    bottomLine: THREE.Line;
+    topLine: THREE.Line;
+    seamALine: THREE.Line;
+    seamBLine: THREE.Line;
+    thumbLoop: THREE.LineLoop;
+  }> = [];
   constructor(
     gltfScene: THREE.Group,
     clips: THREE.AnimationClip[],
@@ -368,6 +477,8 @@ export class ProceduralHumanoid {
     insetFactor: number = 0,
     faceParams: FaceParams = DEFAULT_FACE_PARAMS,
     neckTiltDeg: number = -20,
+    ringParamMap: RingParamMap = DEFAULT_RING_PARAMS,
+    outfit: Outfit = DEFAULT_OUTFIT,
   ) {
     this.root = gltfScene;
     this.clips = clips;
@@ -375,7 +486,11 @@ export class ProceduralHumanoid {
     this._neckTiltDeg = neckTiltDeg;
 
     this._hideSkinnedMeshes();
-    this._attachBodyGeom(colors, style, boneParamMap, insetFactor);
+    if (style === 'organic') {
+      this._attachLoftBody(colors, boneParamMap, ringParamMap, outfit);
+    } else {
+      this._attachBodyGeom(colors, style, boneParamMap, insetFactor);
+    }
     this._attachFaceGeom(style, colors, boneParamMap, faceParams);
     this._attachSkeletonGeom();
     this.setSkeletonVisible(false);
@@ -475,6 +590,9 @@ export class ProceduralHumanoid {
       const childBone = obj.children.find((c) => c instanceof THREE.Bone) as THREE.Bone | undefined;
       if (!childBone || childBone.position.length() < 1e-5) return;
 
+      const inset = bp.jointRadius * insetFactor;
+      const forwardOffset = bp.tubeOffsetForward ?? 0;
+
       // Unit geometry (radius 1, height 1).
       // scale.x / scale.z set the elliptical cross-section and are fixed per-frame.
       // scale.y carries the actual tube length and is updated every frame by _syncBodyLinks.
@@ -482,8 +600,6 @@ export class ProceduralHumanoid {
       const tubeMesh = new THREE.Mesh(tubeGeom, m);
       tubeMesh.scale.x = bp.tubeRadiusX;
       tubeMesh.scale.z = bp.tubeRadiusZ;
-      const inset = bp.jointRadius * insetFactor;
-      const forwardOffset = bp.tubeOffsetForward ?? 0;
       tubeMesh.userData.boneName = obj.name;
       this._applyBoneLink(tubeMesh, childBone.position, inset);
       tubeMesh.position.z += forwardOffset;
@@ -492,6 +608,375 @@ export class ProceduralHumanoid {
       this.bodyLinks.push({ child: childBone, mesh: tubeMesh, inset, forwardOffset });
       if (obj.name === 'mixamorigNeck') this._neckTube = tubeMesh;
     });
+  }
+
+  /**
+   * HP-7.5: collect the rig skeleton (bones + region mapping + cm scale) shared
+   * by the loft body. The SDF field builder that used to live here is retired
+   * with the SDF body.
+   */
+  private _buildSkeleton(): {
+    skeleton: THREE.Skeleton;
+    bones: THREE.Bone[];
+    boneIndex: Map<string, number>;
+    cmToWorld: number;
+    regionByBone: Map<number, ClothingRegion>;
+  } {
+    this.root.updateMatrixWorld(true);
+
+    const bones: THREE.Bone[] = [];
+    this.root.traverse((o) => { if (o instanceof THREE.Bone) bones.push(o); });
+    const boneIndex = new Map<string, number>(bones.map((b, i) => [b.name, i]));
+    const skeleton = new THREE.Skeleton(bones);
+
+    // The Mixamo rig is authored in cm but its Armature carries a 0.01 scale
+    // (metres). Derive that uniform scale so cm radii can be kept while the
+    // loft is built in the skeleton's world space.
+    const cmToWorld = bones.find((b) => b.name === 'mixamorigHips')?.matrixWorld.getMaxScaleOnAxis() ?? 1;
+
+    const regionByBone = new Map<number, ClothingRegion>();
+    for (const obj of bones) {
+      const spec = BONE_SPECS[obj.name];
+      if (!spec) continue;
+      const bi = boneIndex.get(obj.name);
+      if (bi === undefined) continue;
+      regionByBone.set(bi, GROUP_REGION[spec.group]);
+    }
+
+    return { skeleton, bones, boneIndex, cmToWorld, regionByBone };
+  }
+
+  /**
+   * HP-7 (Part 6): loft the shared-ring graph into one watertight tube for the
+   * 1-D chains, plus a wide shoulder plate overlapping the Spine2/arm region.
+   */
+  private _attachLoftBody(colors: BodyColors, boneParamMap: BoneParamMap, ringParamMap: RingParamMap, outfit: Outfit): void {
+    const f = this._buildSkeleton();
+    if (f.bones.length === 0) return;
+
+    // The head stays an ellipsoid (BoneParams joint fields), so it keeps its own fallback.
+    const fallback: BoneParams = { tubeRadiusX: 2, tubeRadiusZ: 2, jointRadius: 2 };
+    // 32 segments: the shoulder girdle ring (rx ≈ 16 cm) needs the extra
+    // resolution for the arm port to span more than one vertex.
+    const segments = 32;
+    const ringsPerBone = 5;
+    // Resolve each region's clothing colour once, then stamp the per-vertex colour.
+    const skinVec = new THREE.Color(colors.skin);
+    const regionColors = new Map<ClothingRegion, THREE.Color>();
+    const colorFor = (region: ClothingRegion | undefined): THREE.Color => {
+      if (!region) return skinVec;
+      let c = regionColors.get(region);
+      if (!c) {
+        c = new THREE.Color(resolveOutfitColor(outfit, region, colors.skin));
+        regionColors.set(region, c);
+      }
+      return c;
+    };
+
+    const positions: number[] = [];
+    const colorsArr: number[] = [];
+    const skinIndex: number[] = [];
+    const skinWeight: number[] = [];
+    const indices: number[] = [];
+
+    this._ringDebug = new THREE.Group();
+    this._ringDebug.name = 'ring-debug';
+    this._ringDebug.visible = false;
+    this.root.add(this._ringDebug);
+    const ringMat = new THREE.LineBasicMaterial({ color: 0x00e0e0 });
+
+    // Ring graph: the shared-ring skeleton (one ring per joint, ramping radii).
+    // Widen the Spine2 ring to the shoulder span so the single loft forms a
+    // shoulder plate (no separate mesh).
+    const armR = ringParamMap['arm'] ?? DEFAULT_RING_PARAMS['arm'];
+    let shoulderHalfCm: number | null = null;
+    {
+      const la = f.bones.find((b) => b.name === 'mixamorigLeftArm');
+      const ra = f.bones.find((b) => b.name === 'mixamorigRightArm');
+      if (la && ra) {
+        const l = new THREE.Vector3();
+        const r = new THREE.Vector3();
+        la.getWorldPosition(l);
+        ra.getWorldPosition(r);
+        shoulderHalfCm = Math.max(Math.abs(l.x), Math.abs(r.x)) / f.cmToWorld * 1.08;
+      }
+    }
+    // Resolve each bone's ring cross-section from the ring parameter surface,
+    // overriding the two geometry-derived cases (Spine2 span, absorbed shoulder).
+    const ringParams = (name: string) => {
+      const spec = BONE_SPECS[name];
+      if (!spec) return null;
+      const group = spec.group;
+      if (group === 'head') return null;
+      const rp = ringParamMap[group] ?? DEFAULT_RING_PARAMS[group];
+      let rx = rp.rx;
+      let rz = rp.rz;
+      if (group === 'spine2' && shoulderHalfCm !== null) rx = shoulderHalfCm;
+      if (group === 'shoulder') { rx = armR.rx; rz = armR.rz; }
+      return { tubeRadiusX: rx, tubeRadiusZ: rz, tubeOffsetForward: rp.fwd, bust: rp.bust, group };
+    };
+    const graph = buildRingGraph(f.bones, f.boneIndex, ringParams, 5);
+    this._ringDebugLines = [];
+    for (const ring of graph.rings) {
+      const bone = f.bones[ring.boneIndex];
+      const line = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(ringWorldPoints(ring, bone, segments)), ringMat);
+      this._ringDebug.add(line);
+      this._ringDebugLines.push({ ring, bone, line });
+    }
+
+    // Visualise the girdle-bottom split (the source of the leg fan): left/right
+    // hemi-arcs in distinct colours, plus the two shared seam points.
+    const hipsBone = f.bones.find((b) => b.name === 'mixamorigHips');
+    const hipsRings = graph.rings.filter((r) => r.boneName === 'mixamorigHips');
+    const splitRing = hipsRings.length ? hipsRings.reduce((a, b) => (b.y < a.y ? b : a)) : undefined;
+    const lu = f.bones.find((b) => b.name === 'mixamorigLeftUpLeg');
+    const ru = f.bones.find((b) => b.name === 'mixamorigRightUpLeg');
+    if (hipsBone && splitRing && lu && ru) {
+      const l = new THREE.Vector3();
+      const r = new THREE.Vector3();
+      lu.getWorldPosition(l);
+      ru.getWorldPosition(r);
+      const axis = r.clone().sub(l).normalize();
+      const pts = ringWorldPoints(splitRing, hipsBone, segments);
+      const center = new THREE.Vector3();
+      for (const p of pts) center.add(p);
+      center.multiplyScalar(1 / pts.length);
+      const split = splitRingArcs(pts, center, axis);
+
+      const arcGeom = (idxs: number[]) =>
+        new THREE.BufferGeometry().setFromPoints(idxs.map((j) => pts[j]));
+      const posLine = new THREE.Line(arcGeom(split.pos), new THREE.LineBasicMaterial({ color: 0xff5555 }));
+      const negLine = new THREE.Line(arcGeom(split.neg), new THREE.LineBasicMaterial({ color: 0x55ff55 }));
+      // Straight seam chord: closes each hemi-disk into a D-shape whose loop
+      // carries `segments` verts (curved arc + chord), matching the leg ring.
+      const seamInterior = segments / 2 - 1;
+      const seamEdge = seamEdgePoints(pts[split.seams[0]], pts[split.seams[1]], seamInterior);
+      const seamEdgeLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(seamEdge),
+        new THREE.LineBasicMaterial({ color: 0x5599ff }),
+      );
+      this._ringDebug.add(posLine, negLine, seamEdgeLine);
+      this._ringSplitDebug = {
+        bone: hipsBone, ring: splitRing,
+        posIdx: split.pos, negIdx: split.neg, seamsIdx: split.seams,
+        segs: segments, posLine, negLine, seamEdgeLine, seamInterior,
+      };
+
+    }
+
+    // Shoulder junction visualisation: the chest (Spine2) ring + the two arm
+    // (humerus) top rings, so the side-port geometry can be inspected before the
+    // cut/bridge. Chest = orange, arms = purple.
+    this._shoulderDebug = [];
+    for (const ring of graph.rings) {
+      if (ring.t !== 0) continue;
+      if (ring.boneName !== 'mixamorigSpine2' && ring.boneName !== 'mixamorigLeftArm' && ring.boneName !== 'mixamorigRightArm') continue;
+      const bone = f.bones[ring.boneIndex];
+      const color = ring.boneName === 'mixamorigSpine2' ? 0xff8800 : 0xff44ff;
+      const line = new THREE.LineLoop(
+        new THREE.BufferGeometry().setFromPoints(ringWorldPoints(ring, bone, segments)),
+        new THREE.LineBasicMaterial({ color }),
+      );
+      this._ringDebug.add(line);
+      this._shoulderDebug.push({ ring, bone, line });
+    }
+
+    // Shoulder girdle visualisation: the arm's exit point (green) and the deep
+    // torso ring (blue) that would reach it, so the girdle cross-section can be
+    // tuned before the port is cut. The ring's rz is derived to pass through the
+    // joint at the current arm position.
+    this._shoulderGirdleDebug = [];
+    const spine2Bone = f.bones.find((b) => b.name === 'mixamorigSpine2');
+    if (spine2Bone && shoulderHalfCm !== null) {
+      const spine2Bp = ringParams('mixamorigSpine2');
+      const fwd = spine2Bp?.tubeOffsetForward ?? 2.5;
+      const rx = shoulderHalfCm;
+      const boneIndex = f.boneIndex.get('mixamorigSpine2') ?? 0;
+      const inv = spine2Bone.matrixWorld.clone().invert();
+      for (const armName of ['mixamorigLeftArm', 'mixamorigRightArm']) {
+        const armBone = f.bones.find((b) => b.name === armName);
+        if (!armBone) continue;
+        const jointLocal = armBone.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv);
+
+        const jointLine = new THREE.LineLoop(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x00ff00 }));
+        const girdleLine = new THREE.LineLoop(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x3399ff }));
+        this._ringDebug.add(jointLine, girdleLine);
+        this._shoulderGirdleDebug.push({
+          spine2Bone, armBone, boneIndex, segs: segments, rx, fwd, jointLine, girdleLine,
+        });
+      }
+    }
+
+    // Shoulder port visualisation: the girdle bracket rings' cut arcs (yellow
+    // bottom, cyan top), the two side seam chains (orange), and the arm start
+    // ring (green). Re-computed each frame so the cut tracks the arm.
+    this._shoulderPortDebug = [];
+    if (spine2Bone) {
+      const spine2Rings = graph.rings.filter((r) => r.boneName === 'mixamorigSpine2').sort((a, b) => a.y - b.y);
+      const inv = spine2Bone.matrixWorld.clone().invert();
+      for (const armName of ['mixamorigLeftArm', 'mixamorigRightArm']) {
+        const armBone = f.bones.find((b) => b.name === armName);
+        const armRing = graph.rings.find((r) => r.boneName === armName && r.t === 0);
+        if (!armBone || !armRing) continue;
+        const jointY = armBone.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv).y;
+        const run = bracketRingsAround(spine2Rings.map((r) => r.y), jointY, SHOULDER_PORT_BRACKET_COUNT).map((i) => spine2Rings[i]);
+        if (run.length < 2) continue;
+
+        const bottomLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffff00 }));
+        const topLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x00ffff }));
+        const seamALine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xff8800 }));
+        const seamBLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xff8800 }));
+        const armLoop = new THREE.LineLoop(
+          new THREE.BufferGeometry().setFromPoints(ringWorldPoints(armRing, armBone, segments)),
+          new THREE.LineBasicMaterial({ color: 0x00ff00 }),
+        );
+        this._ringDebug.add(bottomLine, topLine, seamALine, seamBLine, armLoop);
+        this._shoulderPortDebug.push({
+          spine2Bone, armBone, bracketRings: run, armRing, segs: segments,
+          bottomLine, topLine, seamALine, seamBLine, armLoop,
+        });
+      }
+    }
+
+    // Hand-junction visualisation: finger start rings (magenta) plus the
+    // knuckle-ring split — three web chords (orange) and the ring edges
+    // colourised per finger region (index red, middle green, ring blue, pinky
+    // magenta), the hand analogue of the hip girdle split.
+    this._handDebug = [];
+    this._handSplitDebug = [];
+    for (const ring of graph.rings) {
+      if (ring.t !== 0 || !/Hand(Index|Middle|Ring|Pinky)1$/.test(ring.boneName)) continue;
+      const bone = f.bones[ring.boneIndex];
+      const line = new THREE.LineLoop(
+        new THREE.BufferGeometry().setFromPoints(ringWorldPoints(ring, bone, segments)),
+        new THREE.LineBasicMaterial({ color: 0xff00ff }),
+      );
+      this._ringDebug.add(line);
+      this._handDebug.push({ ring, bone, line });
+    }
+    const fingerRegionColors = [0xff4444, 0x44ff44, 0x4488ff, 0xff44ff]; // index, middle, ring, pinky
+    for (const handName of ['mixamorigLeftHand', 'mixamorigRightHand']) {
+      const handRings = graph.rings.filter((r) => r.boneName === handName);
+      if (handRings.length === 0) continue;
+      const knuckle = handRings.reduce((a, b) => (b.y > a.y ? b : a));
+      const knuckleBone = f.bones[knuckle.boneIndex];
+      const fingerRings = ['Index1', 'Middle1', 'Ring1', 'Pinky1']
+        .map((s) => {
+          const ring = graph.rings.find((r) => r.boneName === handName + s && r.t === 0);
+          return ring ? { bone: f.bones[ring.boneIndex], ring } : null;
+        })
+        .filter((x): x is { bone: THREE.Bone; ring: BodyRing } => x !== null);
+      if (fingerRings.length < 2) continue;
+
+      const webLines = [0, 1, 2].map(() => new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+        new THREE.LineBasicMaterial({ color: 0xff8800 }),
+      ));
+      const regionSegs = fingerRegionColors.map((c) => new THREE.LineSegments(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({ color: c }),
+      ));
+      this._ringDebug.add(...webLines, ...regionSegs);
+      this._handSplitDebug.push({ knuckleBone, knuckleRing: knuckle, fingerRings, segs: segments, webLines, regionSegs });
+    }
+
+    // Thumb side-port visualisation: the port's bottom/top cut arcs (yellow /
+    // cyan), the two side seam chains (orange), and the thumb base ring (green).
+    // Re-computed each frame so the cut tracks the thumb through poses.
+    this._thumbPortDebug = [];
+    for (const handName of ['mixamorigLeftHand', 'mixamorigRightHand']) {
+      const handBone = f.bones.find((b) => b.name === handName);
+      const thumbBone = f.bones.find((b) => b.name === handName + 'Thumb1');
+      if (!handBone || !thumbBone) continue;
+      const handRings = graph.rings.filter((r) => r.boneName === handName).sort((a, b) => a.y - b.y);
+      const thumbRing = graph.rings.find((r) => r.boneName === handName + 'Thumb1' && r.t === 0);
+      if (handRings.length < 2 || !thumbRing) continue;
+
+      const inv = handBone.matrixWorld.clone().invert();
+      const thumbLocalY = thumbBone.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv).y;
+      const localYs = handRings.map((r) => {
+        const pts = ringWorldPoints(r, handBone, segments);
+        const c = new THREE.Vector3();
+        for (const p of pts) c.add(p);
+        return c.multiplyScalar(1 / pts.length).applyMatrix4(inv).y;
+      });
+      const bracketRings = thumbBracketRings(localYs, thumbLocalY).map((i) => handRings[i]);
+
+      const bottomLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffff00 }));
+      const topLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x00ffff }));
+      const seamALine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xff8800 }));
+      const seamBLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xff8800 }));
+      const thumbLoop = new THREE.LineLoop(
+        new THREE.BufferGeometry().setFromPoints(ringWorldPoints(thumbRing, thumbBone, segments)),
+        new THREE.LineBasicMaterial({ color: 0x00ff00 }),
+      );
+      this._ringDebug.add(bottomLine, topLine, seamALine, seamBLine, thumbLoop);
+      this._thumbPortDebug.push({
+        handBone, thumbBone, bracketRings, thumbRing,
+        segs: segments, bottomLine, topLine, seamALine, seamBLine, thumbLoop,
+      });
+    }
+
+    // Loft the shared-ring graph into a single watertight tube for the 1-D chains.
+    const loft = buildRingLoft(f.bones, f.boneIndex, ringParams, segments, ringsPerBone);
+    const loftBase = positions.length / 3;
+    for (let i = 0; i < loft.positions.length; i++) positions.push(loft.positions[i]);
+    for (let i = 0; i < loft.skinIndex.length; i++) skinIndex.push(loft.skinIndex[i]);
+    for (let i = 0; i < loft.skinWeight.length; i++) skinWeight.push(loft.skinWeight[i]);
+    for (let v = 0; v < loft.skinIndex.length / 4; v++) {
+      const col = colorFor(f.regionByBone.get(loft.skinIndex[v * 4]));
+      colorsArr.push(col.r, col.g, col.b);
+    }
+    for (const idx of loft.indices) indices.push(loftBase + idx);
+
+    // Head stays an ellipsoid; hands are now lofted palms (see buildBoneRings).
+    for (const obj of f.bones) {
+      const spec = BONE_SPECS[obj.name];
+      if (!spec) continue;
+      const group = spec.group;
+      if (group !== 'head') continue;
+      const bp = boneParamMap[group] ?? DEFAULT_BONE_PARAMS[group] ?? fallback;
+      const mesh = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 24, 18),
+        new THREE.MeshToonMaterial({ color: colors[spec.region] }),
+      );
+      mesh.scale.set(bp.jointRadius, bp.jointRadiusY ?? bp.jointRadius, bp.jointRadiusZ ?? bp.jointRadius);
+      mesh.position.set(0, bp.jointOffsetY ?? 0, bp.jointOffsetZ ?? 0);
+      mesh.userData.boneName = obj.name;
+      obj.add(mesh);
+      this.bodyMeshes.push(mesh);
+    }
+
+    if (indices.length === 0) return;
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colorsArr, 3));
+    geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(new Uint16Array(skinIndex), 4));
+    geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeight, 4));
+    // UVs come from the ring graph's natural per-ring U / per-bone V mapping.
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(loft.uv, 2));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+
+    const material = new THREE.MeshToonMaterial({ vertexColors: true });
+    this._loftMaterial = material;
+    const meshObj = new THREE.SkinnedMesh(geo, material);
+    meshObj.name = 'loft-body';
+    meshObj.bind(f.skeleton);
+    this.root.add(meshObj);
+    this.bodyMeshes.push(meshObj);
+
+    // Wireframe overlay: renders the loft body's edges with depth-testing against
+    // the filled body (depth-only occluder when wireframe is on), so only the
+    // front-facing edges are visible.
+    const wireMesh = new THREE.SkinnedMesh(geo, new THREE.MeshBasicMaterial({ color: 0x00e0e0, wireframe: true, depthWrite: false }));
+    wireMesh.name = 'loft-wire';
+    wireMesh.bind(f.skeleton);
+    wireMesh.renderOrder = 1;
+    wireMesh.visible = false;
+    this.root.add(wireMesh);
+    this._wireMesh = wireMesh;
   }
 
   private _attachFaceGeom(
@@ -577,6 +1062,7 @@ export class ProceduralHumanoid {
               new THREE.SphereGeometry(lidR, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2),
               lidMat,
             );
+            upperLid.name = isLeft ? 'eyeLidUpperL' : 'eyeLidUpperR';
             upperLid.rotation.x = openRx;
             eyePivot.add(upperLid);
             this.bodyMeshes.push(upperLid);
@@ -592,6 +1078,7 @@ export class ProceduralHumanoid {
               new THREE.SphereGeometry(lidR, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2),
               lidMat,
             );
+            lowerLid.name = isLeft ? 'eyeLidLowerL' : 'eyeLidLowerR';
             lowerLid.rotation.x = openRx;
             lidWrapper.add(lowerLid);
             this.bodyMeshes.push(lowerLid);
@@ -916,6 +1403,165 @@ export class ProceduralHumanoid {
     }
   }
 
+  private _syncRingDebug(): void {
+    if (!this._ringDebug || !this._ringDebug.visible || this._ringDebugLines.length === 0) return;
+    this.root.updateMatrixWorld(true);
+    for (const { ring, bone, line } of this._ringDebugLines) {
+      const attr = line.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const pts = ringWorldPoints(ring, bone, attr.count);
+      for (let i = 0; i < pts.length; i++) {
+        attr.setXYZ(i, pts[i].x, pts[i].y, pts[i].z);
+      }
+      attr.needsUpdate = true;
+    }
+
+    for (const { ring, bone, line } of this._shoulderDebug) {
+      const attr = line.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const pts = ringWorldPoints(ring, bone, attr.count);
+      for (let i = 0; i < pts.length; i++) {
+        attr.setXYZ(i, pts[i].x, pts[i].y, pts[i].z);
+      }
+      attr.needsUpdate = true;
+    }
+
+    for (const sd of this._shoulderGirdleDebug) {
+      const inv = sd.spine2Bone.matrixWorld.clone().invert();
+      const jointLocal = sd.armBone.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv);
+      const dx = Math.abs(jointLocal.x);
+      const dz = Math.abs(jointLocal.z - sd.fwd);
+      const inside = 1 - (dx / sd.rx) ** 2;
+      const rz = inside > 1e-6 ? dz / Math.sqrt(inside) : 11;
+
+      const marker: THREE.Vector3[] = [];
+      for (let k = 0; k <= 8; k++) {
+        const a = (k / 8) * Math.PI * 2;
+        marker.push(new THREE.Vector3(jointLocal.x + 1.2 * Math.cos(a), jointLocal.y, jointLocal.z + 1.2 * Math.sin(a)).applyMatrix4(sd.spine2Bone.matrixWorld));
+      }
+      sd.jointLine.geometry.dispose();
+      sd.jointLine.geometry = new THREE.BufferGeometry().setFromPoints(marker);
+
+      const girdleRing: BodyRing = {
+        boneIndex: sd.boneIndex, boneName: 'mixamorigSpine2', group: 'spine2',
+        y: jointLocal.y, fwd: sd.fwd, rx: sd.rx, rz, t: 0,
+      };
+      sd.girdleLine.geometry.dispose();
+      sd.girdleLine.geometry = new THREE.BufferGeometry().setFromPoints(ringWorldPoints(girdleRing, sd.spine2Bone, sd.segs));
+    }
+
+    for (const sd of this._shoulderPortDebug) {
+      const rings = sd.bracketRings.map((r) => ringWorldPoints(r, sd.spine2Bone, sd.segs));
+      const inv = sd.spine2Bone.matrixWorld.clone().invert();
+      const jointLocal = sd.armBone.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv);
+      const armR = Math.max(sd.armRing.rx, sd.armRing.rz);
+      const halfWidths = rings.map((_, k) => armR * (k === 1 && rings.length > 2 ? SHOULDER_PORT_MIDDLE_WIDTH : SHOULDER_PORT_WIDTH));
+      const port = thumbPortCuts(rings, inv, jointLocal, halfWidths);
+      const last = rings.length - 1;
+
+      sd.bottomLine.geometry.dispose();
+      sd.bottomLine.geometry = new THREE.BufferGeometry().setFromPoints(port.cuts[0].map((j) => rings[0][j]));
+      sd.topLine.geometry.dispose();
+      sd.topLine.geometry = new THREE.BufferGeometry().setFromPoints(port.cuts[last].map((j) => rings[last][j]));
+
+      sd.seamALine.geometry.dispose();
+      sd.seamALine.geometry = new THREE.BufferGeometry().setFromPoints(rings.map((_, k) => rings[k][port.starts[k]]));
+      sd.seamBLine.geometry.dispose();
+      sd.seamBLine.geometry = new THREE.BufferGeometry().setFromPoints(rings.map((_, k) => rings[k][port.ends[k]]));
+
+      sd.armLoop.geometry.dispose();
+      sd.armLoop.geometry = new THREE.BufferGeometry().setFromPoints(ringWorldPoints(sd.armRing, sd.armBone, sd.segs));
+    }
+
+    for (const { ring, bone, line } of this._handDebug) {
+      const attr = line.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const pts = ringWorldPoints(ring, bone, attr.count);
+      for (let i = 0; i < pts.length; i++) {
+        attr.setXYZ(i, pts[i].x, pts[i].y, pts[i].z);
+      }
+      attr.needsUpdate = true;
+    }
+
+    for (const hd of this._handSplitDebug) {
+      const pts = ringWorldPoints(hd.knuckleRing, hd.knuckleBone, hd.segs);
+      const centers = hd.fingerRings.map((fr) => {
+        const fp = ringWorldPoints(fr.ring, fr.bone, hd.segs);
+        const c = new THREE.Vector3();
+        for (const p of fp) c.add(p);
+        return c.multiplyScalar(1 / fp.length);
+      });
+      const split = splitKnuckleRing(pts, centers);
+
+      for (let k = 0; k < split.webs.length && k < hd.webLines.length; k++) {
+        const attr = hd.webLines[k].geometry.getAttribute('position') as THREE.BufferAttribute;
+        const front = pts[split.webs[k].front];
+        const back = pts[split.webs[k].back];
+        attr.setXYZ(0, front.x, front.y, front.z);
+        attr.setXYZ(1, back.x, back.y, back.z);
+        attr.needsUpdate = true;
+      }
+
+      const webXs = split.webs.map((w) => pts[w.front].clone().sub(split.center).dot(split.xAxis));
+      const edgePts: number[][] = [[], [], [], []];
+      for (let j = 0; j < hd.segs; j++) {
+        const mid = pts[j].clone().add(pts[(j + 1) % hd.segs]).multiplyScalar(0.5);
+        const x = mid.clone().sub(split.center).dot(split.xAxis);
+        let region = 0;
+        for (let k = 0; k < webXs.length; k++) if (x >= webXs[k]) region = k + 1;
+        const a = pts[j];
+        const b = pts[(j + 1) % hd.segs];
+        edgePts[region].push(a.x, a.y, a.z, b.x, b.y, b.z);
+      }
+      for (let k = 0; k < 4; k++) {
+        hd.regionSegs[k].geometry.dispose();
+        hd.regionSegs[k].geometry = new THREE.BufferGeometry();
+        hd.regionSegs[k].geometry.setAttribute('position', new THREE.Float32BufferAttribute(edgePts[k], 3));
+      }
+    }
+
+    for (const td of this._thumbPortDebug) {
+      const rings = td.bracketRings.map((r) => ringWorldPoints(r, td.handBone, td.segs));
+      const inv = td.handBone.matrixWorld.clone().invert();
+      const thumbLocal = td.thumbBone.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv);
+      const thumbR = Math.max(td.thumbRing.rx, td.thumbRing.rz);
+      const halfWidths = rings.map((_, k) => thumbR * (k === 0 || k === rings.length - 1 ? THUMB_PORT_END_WIDTH : THUMB_PORT_MIDDLE_WIDTH));
+      const port = thumbPortCuts(rings, inv, thumbLocal, halfWidths);
+      const last = rings.length - 1;
+
+      td.bottomLine.geometry.dispose();
+      td.bottomLine.geometry = new THREE.BufferGeometry().setFromPoints(port.cuts[0].map((j) => rings[0][j]));
+      td.topLine.geometry.dispose();
+      td.topLine.geometry = new THREE.BufferGeometry().setFromPoints(port.cuts[last].map((j) => rings[last][j]));
+
+      td.seamALine.geometry.dispose();
+      td.seamALine.geometry = new THREE.BufferGeometry().setFromPoints(rings.map((_, k) => rings[k][port.starts[k]]));
+      td.seamBLine.geometry.dispose();
+      td.seamBLine.geometry = new THREE.BufferGeometry().setFromPoints(rings.map((_, k) => rings[k][port.ends[k]]));
+
+      td.thumbLoop.geometry.dispose();
+      td.thumbLoop.geometry = new THREE.BufferGeometry().setFromPoints(ringWorldPoints(td.thumbRing, td.thumbBone, td.segs));
+    }
+
+    const sd = this._ringSplitDebug;
+    if (sd) {
+      const pts = ringWorldPoints(sd.ring, sd.bone, sd.segs);
+      const setPts = (line: THREE.Line, idxs: number[]) => {
+        const attr = line.geometry.getAttribute('position') as THREE.BufferAttribute;
+        for (let k = 0; k < idxs.length; k++) {
+          const p = pts[idxs[k]];
+          attr.setXYZ(k, p.x, p.y, p.z);
+        }
+        attr.needsUpdate = true;
+      };
+      setPts(sd.posLine, sd.posIdx);
+      setPts(sd.negLine, sd.negIdx);
+      const seamEdge = seamEdgePoints(pts[sd.seamsIdx[0]], pts[sd.seamsIdx[1]], sd.seamInterior);
+      const edgeAttr = sd.seamEdgeLine.geometry.getAttribute('position') as THREE.BufferAttribute;
+      for (let k = 0; k < seamEdge.length; k++) {
+        edgeAttr.setXYZ(k, seamEdge[k].x, seamEdge[k].y, seamEdge[k].z);
+      }
+      edgeAttr.needsUpdate = true;
+    }
+  }
+
   /** Advance animations and sync geometry to the skeleton's current pose. */
   update(delta: number): void {
     this.mixer.update(delta);
@@ -929,6 +1575,7 @@ export class ProceduralHumanoid {
     }
     this._syncSkeletonLinks();
     this._syncBodyLinks();
+    this._syncRingDebug();
 
     // Autonomous blink — suppressed when no clip is playing (T-pose / static preview).
     if (this._upperLids.length > 0) {
@@ -980,6 +1627,32 @@ export class ProceduralHumanoid {
     this.skeletonMeshes = [];
     this.bodyLinks = [];
     this.skeletonLinks = [];
+    if (this._ringDebug) {
+      this._ringDebug.traverse((o) => {
+        if (o instanceof THREE.Line) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      });
+      this._ringDebug.parent?.remove(this._ringDebug);
+      this._ringDebug = null;
+      this._ringDebugLines = [];
+      this._ringSplitDebug = null;
+      this._shoulderDebug = [];
+      this._shoulderGirdleDebug = [];
+      this._shoulderPortDebug = [];
+      this._handDebug = [];
+      this._handSplitDebug = [];
+      this._thumbPortDebug = [];
+    }
+    if (this._wireMesh) {
+      const mat = this._wireMesh.material;
+      if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+      else mat.dispose();
+      this._wireMesh.parent?.remove(this._wireMesh);
+      this._wireMesh = null;
+    }
+    this._loftMaterial = null;
     this.mixer.stopAllAction();
   }
 
@@ -995,12 +1668,45 @@ export class ProceduralHumanoid {
 
   /** Append additional clips to the internal list (used after async GLB loads). */
   addClips(clips: THREE.AnimationClip[]): void {
+    for (const clip of clips) {
+      // Retargeted anim-*.glb clips carry constant translation tracks that pin
+      // bones to the source rig's proportions. Keep only the hips translation
+      // (walk bounce); every other bone is rotation-only, so stripping its
+      // position track preserves xbot-rig's bind-pose proportions and keeps the
+      // Loft welds (crotch, hand fan) intact.
+      clip.tracks = clip.tracks.filter((t) => {
+        const m = /^([^.]+)\.position$/.exec(t.name);
+        return !m || m[1] === 'mixamorigHips';
+      });
+    }
     this.clips.push(...clips);
   }
 
   /** Show or hide the body geometry layer. */
   setBodyVisible(visible: boolean): void {
     this.bodyMeshes.forEach((m) => (m.visible = visible));
+  }
+
+  /** Show the loft body as a front-facing-only wireframe (rear edges hidden). */
+  setWireframe(wireframe: boolean): void {
+    for (const m of this.bodyMeshes) {
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats) mat.colorWrite = !wireframe;
+    }
+    if (this._wireMesh) this._wireMesh.visible = wireframe;
+  }
+
+  /** Overlay a checkerboard on the loft body to visualise its cylindrical UVs. */
+  setUVCheck(on: boolean): void {
+    if (!this._loftMaterial) return;
+    this._loftMaterial.map = on ? uvCheckerTexture() : null;
+    this._loftMaterial.vertexColors = !on;
+    this._loftMaterial.needsUpdate = true;
+  }
+
+  /** Show or hide the loft ring overlay (only populated in `loft` mode). */
+  setRingDebugVisible(visible: boolean): void {
+    if (this._ringDebug) this._ringDebug.visible = visible;
   }
 
   /**

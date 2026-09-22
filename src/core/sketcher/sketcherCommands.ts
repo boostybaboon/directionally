@@ -108,6 +108,38 @@ export class ApplyTextureCommand implements SketcherCommand {
   }
 }
 
+// ── ChangePartLabelCommand ────────────────────────────────────────────────────
+
+export class ChangePartLabelCommand implements SketcherCommand {
+  readonly label = 'Rename part';
+
+  constructor(
+    private readonly partId: string,
+    private readonly newLabel: string | undefined,
+    private readonly sketcher: CartoonSketcher,
+  ) {}
+
+  execute(): void {
+    this.sketcher.setPartLabel(this.partId, this.newLabel);
+  }
+}
+
+// ── RenameGroupCommand ────────────────────────────────────────────────────────
+
+export class RenameGroupCommand implements SketcherCommand {
+  readonly label = 'Rename group';
+
+  constructor(
+    private readonly groupId: string,
+    private readonly newName: string | undefined,
+    private readonly sketcher: CartoonSketcher,
+  ) {}
+
+  execute(): void {
+    this.sketcher.setGroupName(this.groupId, this.newName);
+  }
+}
+
 // ── TransformPartCommand ──────────────────────────────────────────────────────
 
 /**
@@ -116,7 +148,7 @@ export class ApplyTextureCommand implements SketcherCommand {
  * The TC gizmo applies the transform to the Three.js object directly, before
  * this command is constructed. execute() only needs to replay attach joints so
  * attached partners stay flush. The actual undo/redo of the transform is handled
- * by SketcherDocument restoring the before/after SessionSnapshot (which uses
+ * by SketcherDocument restoring the before/after SetSnapshot (which uses
  * world-space transforms and is immune to stale object references).
  *
  * mode 'group': the whole group moved — pass all group member ids so intra-group
@@ -166,11 +198,9 @@ export class CommitAttachCommand implements SketcherCommand {
   ) {}
 
   execute(): void {
-    const allParts = this.sketcher.getSession().parts;
-    this.sketcher.attachManager.commitAttach(
+    this.sketcher.commitAttach(
       this.partA, this.localPointA, this.localNormalA,
       this.partB, this.localPointB, this.localNormalB,
-      allParts,
     );
   }
 }
@@ -186,7 +216,7 @@ export class DetachAllCommand implements SketcherCommand {
   ) {}
 
   execute(): void {
-    this.sketcher.attachManager.detachAll(this.partId, this.sketcher.getSession().parts);
+    this.sketcher.detachAll(this.partId);
   }
 }
 
@@ -234,6 +264,61 @@ export class UngroupCommand implements SketcherCommand {
 
   execute(): void {
     this.sketcher.ungroup(this.partId);
+  }
+}
+
+// ── OverrideCommand ───────────────────────────────────────────────────────────
+
+/** What a user did inside an instance; each maps to one override the node then carries. */
+export type OverrideAction = 'transform' | 'hide' | 'show' | 'remove' | 'revert';
+
+const OVERRIDE_LABELS: Record<OverrideAction, string> = {
+  transform: 'Vary instance',
+  hide: 'Hide in instance',
+  show: 'Show in instance',
+  remove: 'Remove from instance',
+  revert: 'Revert variation',
+};
+
+/**
+ * Vary one node of an instance's Definition, or take the variation back. The override lives on the
+ * instance's node in the document, so the snapshot pair around the command is what undo restores.
+ *
+ * A drag reads the live transform at execute() time: the gizmo moves the expansion's object, and the
+ * document never saw it.
+ */
+export class OverrideCommand implements SketcherCommand {
+  readonly label: string;
+
+  constructor(
+    private readonly sketcher: CartoonSketcher,
+    private readonly instancePath: string,
+    private readonly nodePath: string,
+    private readonly action: OverrideAction,
+  ) {
+    this.label = OVERRIDE_LABELS[action];
+  }
+
+  execute(): void {
+    switch (this.action) {
+      case 'transform': {
+        const transform = this.sketcher.descendantTransform(this.instancePath, this.nodePath);
+        if (transform) this.sketcher.setDescendantOverride(this.instancePath, this.nodePath, { transform });
+        return;
+      }
+      case 'hide':
+        this.sketcher.setDescendantOverride(this.instancePath, this.nodePath, { hidden: true });
+        return;
+      case 'show':
+        this.sketcher.setDescendantOverride(this.instancePath, this.nodePath, { hidden: false });
+        return;
+      case 'remove':
+        this.sketcher.removeDescendant(this.instancePath, this.nodePath);
+        return;
+      case 'revert':
+        this.sketcher.revertOverride(this.instancePath, this.nodePath);
+        return;
+    }
   }
 }
 

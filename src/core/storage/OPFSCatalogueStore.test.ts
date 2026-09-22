@@ -3,11 +3,19 @@ import {
   _setDirectoryProvider,
   _resetDirectoryProvider,
   list,
+  listDocuments,
   add,
   remove,
   update,
-  findByAssemblyId,
+  findBySourceDesignId,
+  findByLabel,
+  createSetPieceDocument,
+  getDocument,
+  saveDocument,
+  updateSetPieceMeta,
 } from './OPFSCatalogueStore';
+import type { SetDocument } from '../sketcher/documentTree.js';
+import type { UserCatalogueEntry } from './OPFSCatalogueStore.js';
 
 // ── In-memory OPFS mock ───────────────────────────────────────────────────────
 
@@ -34,6 +42,11 @@ function createMockDir() {
   } as unknown as FileSystemDirectoryHandle;
 
   return { handle, files };
+}
+
+/** gltfPath is character-only: a set-piece is document-backed (step 8). */
+function characterGltfPath(entry: UserCatalogueEntry): string | undefined {
+  return entry.kind === 'character' ? entry.gltfPath : undefined;
 }
 
 // ── Test setup ────────────────────────────────────────────────────────────────
@@ -72,7 +85,7 @@ describe('OPFSCatalogueStore – add + list', () => {
 
     expect(entry.kind).toBe('character');
     expect(entry.label).toBe('My Robot');
-    expect(entry.gltfPath).toBe('blob:test-url');
+    expect(characterGltfPath(entry)).toBe('blob:test-url');
     expect(entry.userAdded).toBe(true);
     expect(typeof entry.id).toBe('string');
     expect(entry.id.length).toBeGreaterThan(0);
@@ -87,20 +100,37 @@ describe('OPFSCatalogueStore – add + list', () => {
     expect(listed[0].id).toBe(entry.id);
     expect(listed[0].kind).toBe('character');
     expect(listed[0].label).toBe('Bob');
-    expect(listed[0].gltfPath).toBe('blob:test-url');
+    expect(characterGltfPath(listed[0])).toBe('blob:test-url');
     expect(listed[0].userAdded).toBe(true);
   });
 
-  it('add() a set-piece → list() returns it with geometry', async () => {
-    const entry = await add(new Blob(['data']), { kind: 'set-piece', label: 'Chair' });
+  it('a set-piece is created from its document and joins the catalogue straight away', async () => {
+    const entry = await createSetPieceDocument('Chair');
 
     expect(entry.kind).toBe('set-piece');
     expect(entry.label).toBe('Chair');
+    expect(entry.hasDocument).toBe(true);
+    // The document *is* the artefact: no bake, no publish step.
+    expect(mockDir.files.has(`${entry.id}.glb`)).toBe(false);
     const listed = await list();
     expect(listed).toHaveLength(1);
     expect(listed[0].kind).toBe('set-piece');
-    // geometry placeholder is populated when caller omits it
-    expect((listed[0] as Extract<typeof listed[0], { kind: 'set-piece' }>).geometry).toBeDefined();
+    expect(listed[0].label).toBe('Chair');
+  });
+
+  it('createSetPieceDocument() captures the metadata the entry owns', async () => {
+    const entry = await createSetPieceDocument('Classroom', { isSetting: true, partCount: 4 });
+
+    expect(entry.kind).toBe('set-piece');
+    const piece = entry as Extract<typeof entry, { kind: 'set-piece' }>;
+    expect(piece.isSetting).toBe(true);
+    expect(piece.partCount).toBe(4);
+
+    const listed = await list();
+    expect(listed).toHaveLength(1);
+    const listedPiece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
+    expect(listedPiece.isSetting).toBe(true);
+    expect(listedPiece.partCount).toBe(4);
   });
 
   it('add() preserves optional character fields', async () => {
@@ -168,62 +198,161 @@ describe('OPFSCatalogueStore – metadata persistence', () => {
   });
 });
 
-describe('OPFSCatalogueStore – sourceAssemblyId', () => {
-  it('add() with sourceAssemblyId round-trips through list()', async () => {
-    await add(new Blob(['data']), { kind: 'set-piece', label: 'Chair' }, 'asm-001');
+describe('OPFSCatalogueStore – sourceDesignId', () => {
+  it('add() with sourceDesignId round-trips through list()', async () => {
+    await add(new Blob(['data']), { kind: 'character', label: 'Bernard' }, 'design-001');
     const listed = await list();
-    expect(listed[0].sourceAssemblyId).toBe('asm-001');
+    expect(listed[0].sourceDesignId).toBe('design-001');
   });
 
-  it('findByAssemblyId() returns the matching entry', async () => {
-    await add(new Blob(['data']), { kind: 'set-piece', label: 'Lamp' }, 'asm-002');
-    const found = await findByAssemblyId('asm-002');
+  it('findBySourceDesignId() returns the matching entry', async () => {
+    await add(new Blob(['data']), { kind: 'character', label: 'Sonny' }, 'design-002');
+    const found = await findBySourceDesignId('design-002');
     expect(found).not.toBeNull();
-    expect(found!.label).toBe('Lamp');
-    expect(found!.sourceAssemblyId).toBe('asm-002');
+    expect(found!.label).toBe('Sonny');
+    expect(found!.sourceDesignId).toBe('design-002');
   });
 
-  it('findByAssemblyId() returns null when no entry matches', async () => {
-    await add(new Blob(['data']), { kind: 'set-piece', label: 'Table' }, 'asm-003');
-    expect(await findByAssemblyId('asm-unknown')).toBeNull();
+  it('findBySourceDesignId() returns null when no entry matches', async () => {
+    await add(new Blob(['data']), { kind: 'character', label: 'C3PO' }, 'design-003');
+    expect(await findBySourceDesignId('design-unknown')).toBeNull();
   });
 
-  it('add() without sourceAssemblyId leaves sourceAssemblyId undefined', async () => {
-    await add(new Blob(['data']), { kind: 'set-piece', label: 'Box' });
+  it('add() without sourceDesignId leaves sourceDesignId undefined', async () => {
+    await add(new Blob(['data']), { kind: 'character', label: 'Anonymous' });
     const listed = await list();
-    expect(listed[0].sourceAssemblyId).toBeUndefined();
+    expect(listed[0].sourceDesignId).toBeUndefined();
   });
 });
 
-describe('OPFSCatalogueStore – update', () => {
+describe('OPFSCatalogueStore – update (character bake)', () => {
   it('update() overwrites the GLB and returns the updated entry', async () => {
-    const entry = await add(new Blob(['v1']), { kind: 'set-piece', label: 'Chair' }, 'asm-004');
+    const entry = await add(new Blob(['v1']), { kind: 'character', label: 'Chair' });
     vi.mocked(URL.createObjectURL).mockReturnValue('blob:updated-url');
 
     const updated = await update(entry.id, new Blob(['v2']));
     expect(updated).not.toBeNull();
-    expect(updated!.gltfPath).toBe('blob:updated-url');
+    expect(characterGltfPath(updated!)).toBe('blob:updated-url');
     expect(updated!.label).toBe('Chair'); // label unchanged when not provided
   });
 
   it('update() with a new label updates it in metadata', async () => {
-    const entry = await add(new Blob(['v1']), { kind: 'set-piece', label: 'Old Name' });
+    const entry = await add(new Blob(['v1']), { kind: 'character', label: 'Old Name' });
     await update(entry.id, new Blob(['v2']), 'New Name');
     const listed = await list();
     expect(listed[0].label).toBe('New Name');
   });
 
-  it('update() preserves sourceAssemblyId', async () => {
-    const entry = await add(new Blob(['v1']), { kind: 'set-piece', label: 'Chair' }, 'asm-005');
+  it('update() preserves sourceDesignId', async () => {
+    const entry = await add(new Blob(['v1']), { kind: 'character', label: 'Bernard' }, 'design-005');
     await update(entry.id, new Blob(['v2']));
     const listed = await list();
-    expect(listed[0].sourceAssemblyId).toBe('asm-005');
+    expect(listed[0].sourceDesignId).toBe('design-005');
   });
 
   it('update() with unknown id returns null without changing the store', async () => {
-    await add(new Blob(['data']), { kind: 'set-piece', label: 'Keep' });
+    await add(new Blob(['data']), { kind: 'character', label: 'Keep' });
     const result = await update('non-existent-id', new Blob(['new']));
     expect(result).toBeNull();
     expect(await list()).toHaveLength(1);
+  });
+
+  it('saveDocument() writes metadata with the document in one pass', async () => {
+    const entry = await createSetPieceDocument('AI Chair');
+    const document: SetDocument = { root: [], joints: [] };
+
+    const updated = await saveDocument(entry.id, document, { partCount: 1 });
+    expect(updated).not.toBeNull();
+    expect(updated!.hasDocument).toBe(true);
+    expect(updated!.partCount).toBe(1);
+
+    const listed = await list();
+    const piece = listed[0] as Extract<(typeof listed)[0], { kind: 'set-piece' }>;
+    expect(piece.id).toBe(entry.id);
+    expect(piece.label).toBe('AI Chair');
+    expect(await getDocument(entry.id)).toEqual(document);
+  });
+});
+
+describe('OPFSCatalogueStore – updateSetPieceMeta', () => {
+  it('renames a set without touching its document', async () => {
+    const document: SetDocument = { root: [], joints: [] };
+    const entry = await createSetPieceDocument('Draft');
+    await saveDocument(entry.id, document);
+
+    const renamed = await updateSetPieceMeta(entry.id, { label: '  Renamed  ' });
+    expect(renamed).not.toBeNull();
+    expect(renamed!.label).toBe('Renamed');
+    expect(await getDocument(entry.id)).toEqual(document);
+    // The document is what keeps a set in the catalogue: a rename can't drop it.
+    const listed = await list();
+    expect(listed).toHaveLength(1);
+    expect(listed[0].label).toBe('Renamed');
+  });
+
+  it('flips the scenery/prop classification in place', async () => {
+    const entry = await createSetPieceDocument('Chair', { isSetting: true });
+
+    await updateSetPieceMeta(entry.id, { isSetting: false });
+    const asProp = (await listDocuments())[0] as Extract<(typeof entry), { kind: 'set-piece' }>;
+    expect(asProp.isSetting).toBe(false);
+
+    await updateSetPieceMeta(entry.id, { isSetting: true });
+    const asScenery = (await listDocuments())[0] as Extract<(typeof entry), { kind: 'set-piece' }>;
+    expect(asScenery.isSetting).toBe(true);
+  });
+
+  it('leaves fields the caller omits alone', async () => {
+    const entry = await createSetPieceDocument('Garden', { isSetting: true, partCount: 3 });
+
+    await updateSetPieceMeta(entry.id, { label: 'Yard' });
+    const piece = (await listDocuments())[0] as Extract<(typeof entry), { kind: 'set-piece' }>;
+    expect(piece.label).toBe('Yard');
+    expect(piece.isSetting).toBe(true);
+    expect(piece.partCount).toBe(3);
+  });
+
+  it('marks the entry modified so a renamed set floats to the top of the column', async () => {
+    vi.useFakeTimers();
+    try {
+      const older = await createSetPieceDocument('Older');
+      vi.advanceTimersByTime(1000);
+      const newer = await createSetPieceDocument('Newer');
+      expect((await listDocuments())[0].id).toBe(newer.id);
+
+      vi.advanceTimersByTime(1000);
+      await updateSetPieceMeta(older.id, { label: 'Older set' });
+      expect((await listDocuments())[0].id).toBe(older.id);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns null for a character entry and for an unknown id', async () => {
+    const character = await add(new Blob(['data']), { kind: 'character', label: 'Nan' });
+    expect(await updateSetPieceMeta(character.id, { label: 'Nope' })).toBeNull();
+    expect((await list())[0].label).toBe('Nan');
+    expect(await updateSetPieceMeta('non-existent-id', { label: 'Nope' })).toBeNull();
+  });
+});
+
+describe('OPFSCatalogueStore – findByLabel', () => {
+  it('findByLabel() returns an unpublished set case-insensitively', async () => {
+    await createSetPieceDocument('Classroom');
+    const found = await findByLabel('classroom');
+    expect(found).not.toBeNull();
+    expect(found!.label).toBe('Classroom');
+  });
+
+  it('findByLabel() returns null when no entry matches', async () => {
+    expect(await findByLabel('missing')).toBeNull();
+  });
+
+  it('findByLabel() returns a GLB-backed character too', async () => {
+    await add(new Blob(['data']), { kind: 'character', label: 'Baked' });
+    const found = await findByLabel('baked');
+    expect(found).not.toBeNull();
+    expect(found!.label).toBe('Baked');
+    expect('gltfPath' in found!).toBe(true);
   });
 });

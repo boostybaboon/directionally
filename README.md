@@ -2,11 +2,13 @@
 
 A browser-based 3D scene presentation engine built with SvelteKit, Three.js, and Tone.js.
 
+[![CI](https://github.com/boostybaboon/directionally/actions/workflows/ci.yml/badge.svg)](https://github.com/boostybaboon/directionally/actions/workflows/ci.yml)
+
 ## Commands
 
 ```bash
 yarn dev --open       # http://localhost:5173
-yarn check            # svelte-check type checking
+yarn run check        # svelte-check type checking (plain `yarn check` is yarn's own)
 yarn test             # run tests once
 yarn test:watch       # interactive watch mode
 yarn build

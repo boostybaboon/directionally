@@ -1,4 +1,5 @@
 import type { CatalogueEntry } from './types.js';
+import { BUNDLED_SET_PIECES } from './bundledSets.js';
 
 /**
  * Bundled asset catalogue — characters and set pieces shipped with the application.
@@ -12,108 +13,27 @@ export const CATALOGUE_ENTRIES: CatalogueEntry[] = [
     label: 'Robot',
     gltfPath: '/models/gltf/RobotExpressive.glb',
     defaultAnimation: 'Idle',
+    walkAnimation: 'Walking',
+    // Native GLB height ~4.77 units; 0.35 ≈ 1.67m (human scale)
+    defaultScale: 0.35,
+  },
+  {
+    kind: 'character',
+    id: 'generic-human',
+    label: 'Generic Human',
+    // Exported via scripts/exportGenericHuman.mjs, which drives the real
+    // /character → Export to Catalogue flow with zero tuning (default
+    // ProceduralHumanoid params) — this is what a fresh session produces.
+    gltfPath: '/models/gltf/generic-human.glb',
+    defaultAnimation: 'idle',
+    walkAnimation: 'walk',
     defaultScale: 1,
   },
-  // ── Set pieces ────────────────────────────────────────────────────────────
-  {
-    kind: 'set-piece',
-    id: 'floor-plane',
-    label: 'Floor (plane)',
-    geometry: { type: 'plane', width: 10, height: 10 },
-    material: { color: 0x444444, roughness: 0.8, metalness: 0.1 },
-    // THREE.PlaneGeometry is in the XY plane; rotate to lie flat on XZ ground.
-    defaultRotation: [-Math.PI / 2, 0, 0],
-  },
-  {
-    kind: 'set-piece',
-    id: 'box',
-    label: 'Box',
-    geometry: { type: 'box', width: 1, height: 1, depth: 1 },
-    material: { color: 0x8844aa, roughness: 0.5, metalness: 0.2 },
-  },
-  {
-    kind: 'set-piece',
-    id: 'sphere',
-    label: 'Sphere',
-    geometry: { type: 'sphere', radius: 0.5 },
-    material: { color: 0x4488cc, roughness: 0.5, metalness: 0.2 },
-  },
-  {
-    kind: 'set-piece',
-    id: 'cylinder',
-    label: 'Cylinder',
-    geometry: { type: 'cylinder', radiusTop: 0.5, radiusBottom: 0.5, height: 1 },
-    material: { color: 0xaa6644, roughness: 0.5, metalness: 0.2 },
-  },
-  {
-    kind: 'set-piece',
-    id: 'wall-flat',
-    label: 'Wall Flat',
-    geometry: { type: 'box', width: 4, height: 3, depth: 0.15 },
-    material: { color: 0xddd8c4, roughness: 0.9, metalness: 0.0 },
-  },
-  {
-    kind: 'set-piece',
-    id: 'stage-deck',
-    label: 'Stage Deck',
-    geometry: { type: 'plane', width: 8, height: 8 },
-    material: { color: 0x8b6914, roughness: 0.85, metalness: 0.05 },
-    // THREE.PlaneGeometry is in the XY plane; rotate to lie flat on XZ ground.
-    defaultRotation: [-Math.PI / 2, 0, 0],
-  },
-  {
-    kind: 'set-piece',
-    id: 'studio-backdrop',
-    label: 'Studio Backdrop',
-    geometry: { type: 'box', width: 6, height: 4, depth: 0.1 },
-    material: { color: 0x1a2a4a, roughness: 0.95, metalness: 0.0 },
-  },
-  {
-    kind: 'set-piece',
-    id: 'table',
-    label: 'Table',
-    geometry: { type: 'box', width: 1.5, height: 0.75, depth: 0.5 },
-    material: { color: 0x4a3728, roughness: 0.7, metalness: 0.1 },
-  },
-  {
-    kind: 'set-piece',
-    id: 'step',
-    label: 'Step',
-    geometry: { type: 'box', width: 1, height: 0.2, depth: 0.6 },
-    material: { color: 0x555555, roughness: 0.8, metalness: 0.1 },
-  },
 
-  // ── Textured set pieces ───────────────────────────────────────────────────
-  {
-    kind: 'set-piece',
-    id: 'brick-wall',
-    label: 'Brick Wall',
-    geometry: { type: 'box', width: 4, height: 3, depth: 0.15 },
-    material: { color: 0xffffff, roughness: 0.9, metalness: 0.0, textureUrl: '/textures/brick.jpg', repeatU: 2.5, repeatV: 1.5 },
-  },
-  {
-    kind: 'set-piece',
-    id: 'concrete-floor',
-    label: 'Concrete Floor',
-    geometry: { type: 'plane', width: 10, height: 10 },
-    material: { color: 0xffffff, roughness: 0.95, metalness: 0.0, textureUrl: '/textures/concrete.jpg', repeatU: 4, repeatV: 4 },
-    defaultRotation: [-Math.PI / 2, 0, 0],
-  },
-  {
-    kind: 'set-piece',
-    id: 'wood-floor',
-    label: 'Wood Floor',
-    geometry: { type: 'plane', width: 8, height: 8 },
-    material: { color: 0xffffff, roughness: 0.7, metalness: 0.05, textureUrl: '/textures/wood-boards.jpg', repeatU: 3, repeatV: 3 },
-    defaultRotation: [-Math.PI / 2, 0, 0],
-  },
-  {
-    kind: 'set-piece',
-    id: 'plaster-wall',
-    label: 'Plaster Wall',
-    geometry: { type: 'box', width: 4, height: 3, depth: 0.15 },
-    material: { color: 0xffffff, roughness: 0.85, metalness: 0.0, textureUrl: '/textures/plaster.jpg', repeatU: 2, repeatV: 1.5 },
-  },
+  // ── Set pieces ────────────────────────────────────────────────────────────
+  // Authored as tree documents (bundledSets.ts), so a bundled set piece and a
+  // sketcher-authored one share one representation.
+  ...BUNDLED_SET_PIECES,
 
   // ── Lights ────────────────────────────────────────────────────────────────
   {

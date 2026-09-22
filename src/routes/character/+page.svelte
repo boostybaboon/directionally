@@ -5,6 +5,11 @@
   import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
   import { ProceduralHumanoid, C3PO_COLORS, SONNY_COLORS, DEFAULT_COLORS, DEFAULT_BONE_PARAMS, BONE_GROUPS, DEFAULT_FACE_PARAMS } from '../../core/character/ProceduralHumanoid.js';
   import type { RobotStyle, BoneParamMap, FaceParams } from '../../core/character/ProceduralHumanoid.js';
+  import { semanticToBoneParams, semanticToRingParams, semanticHeightScale, DEFAULT_SEMANTIC } from '../../core/character/semanticParams.js';
+  import { RIG_GLB_PATH, ANIM_GLB_PATHS } from '../../core/character/animationClips.js';
+  import type { SemanticCharacter } from '../../core/character/semanticParams.js';
+  import { OUTFIT_PRESETS, SKIN_TONES, HAIR_COLORS, EYE_COLORS } from '../../core/character/clothing.js';
+  import type { Outfit } from '../../core/character/clothing.js';
   import { exportCharacterGLB } from '../../core/character/exportCharacterGLB.js';
   import * as CharacterDesignStore from '../../core/storage/CharacterDesignStore.js';
   import type { DesignMeta } from '../../core/storage/CharacterDesignStore.js';
@@ -12,22 +17,7 @@
 
   let canvas: HTMLCanvasElement;
 
-  // Animation GLBs to load. Each filename becomes the clip label.
-  const ANIM_GLBS = [
-    '/models/gltf/anim-tpose.glb',
-    '/models/gltf/anim-idle.glb',
-    '/models/gltf/anim-walk.glb',
-    '/models/gltf/anim-run.glb',
-    '/models/gltf/anim-jump.glb',
-    '/models/gltf/anim-turn-left.glb',
-    '/models/gltf/anim-turn-right.glb',
-    '/models/gltf/anim-turn-left-90.glb',
-    '/models/gltf/anim-turn-right-90.glb',
-    '/models/gltf/anim-strafe-left.glb',
-    '/models/gltf/anim-strafe-right.glb',
-    '/models/gltf/anim-strafe-left-walk.glb',
-    '/models/gltf/anim-strafe-right-walk.glb',
-  ];
+  // Animation GLBs to load. Each filename becomes the clip label (shared list).
 
   // Clip display name: capitalise each hyphen-separated word.
   function clipLabel(name: string): string {
@@ -38,11 +28,17 @@
   let activeClip = $state<string | null>(null);
   let bodyVisible = $state(true);
   let skeletonVisible = $state(false);
+  let ringDebug = $state(false);
+  let wireframe = $state(false);
+  let uvCheck = $state(false);
   let inPlace = $state(true);
   let robotStyle = $state<RobotStyle>('organic');
+  let outfit = $state<Outfit>(OUTFIT_PRESETS.casual);
+  let skinTone = $state<number>(SKIN_TONES[1].color); // Light
   let boneParams = $state<BoneParamMap>({ ...DEFAULT_BONE_PARAMS });
   let selectedGroup = $state<string>(BONE_GROUPS[0].key);
   let faceParams = $state<FaceParams>({ ...DEFAULT_FACE_PARAMS });
+  let semantic = $state<SemanticCharacter>({ ...DEFAULT_SEMANTIC });
   const ALL_GROUPS = [...BONE_GROUPS, { label: 'Face', key: 'face' }];
   let insetFactor = $state(0);
   let neckTiltDeg = $state(-20);
@@ -76,12 +72,18 @@
       scene.remove(humanoid.root);
       humanoid.dispose();
     }
-    const colors = style === 'c3po' ? C3PO_COLORS : style === 'sonny' ? SONNY_COLORS : DEFAULT_COLORS;
-    humanoid = new ProceduralHumanoid(rigGltfScene, [...allLoadedClips], colors, style, boneParams, insetFactor, faceParams, neckTiltDeg);
+    const baseColors = style === 'c3po' ? C3PO_COLORS : style === 'sonny' ? SONNY_COLORS : DEFAULT_COLORS;
+    const colors = { ...baseColors, skin: skinTone };
+    const ringParams = semanticToRingParams(semantic);
+    humanoid = new ProceduralHumanoid(rigGltfScene, [...allLoadedClips], colors, style, boneParams, insetFactor, faceParams, neckTiltDeg, ringParams, outfit);
     humanoid.setInPlace(inPlace);
     humanoid.setBodyVisible(bodyVisible);
     humanoid.setSkeletonVisible(skeletonVisible);
+    humanoid.setRingDebugVisible(ringDebug);
+    humanoid.setWireframe(wireframe);
+    humanoid.setUVCheck(uvCheck);
     scene.add(humanoid.root);
+    humanoid.root.scale.setScalar(semanticHeightScale(semantic));
     if (activeClip) humanoid.playClip(activeClip, inPlace);
     // Re-apply the current expression after a rebuild since pivots are recreated.
     reapplyFace();
@@ -102,6 +104,12 @@
       statusMessage = `Saved "${designName}".`;
       designSaveTimer = null;
     }, 500);
+  }
+
+  function applySemantic(next: SemanticCharacter) {
+    semantic = next;
+    boneParams = semanticToBoneParams(next);
+    buildHumanoid(robotStyle);
   }
 
   function selectClip(name: string): void {
@@ -230,7 +238,7 @@
 
     // Load xbot-rig (skeleton only, no mesh), then load all animation GLBs in parallel.
     const loader = new GLTFLoader();
-    loader.loadAsync('/models/gltf/xbot-rig.glb').then(async (rigGltf) => {
+    loader.loadAsync(RIG_GLB_PATH).then(async (rigGltf) => {
       rigGltfScene = rigGltf.scene;
       humanoid = new ProceduralHumanoid(rigGltfScene, []);
       scene.add(humanoid.root);
@@ -239,7 +247,7 @@
       // Derive the clip name from the filename ("anim-walk.glb" → "walk") —
       // immune to whatever Blender puts in the animation.name field.
       const animResults = await Promise.allSettled(
-        ANIM_GLBS.map(async (path) => {
+        ANIM_GLB_PATHS.map(async (path) => {
           const gltf = await loader.loadAsync(path);
           const label = path.split('/').pop()!.replace(/^anim-/, '').replace(/\.glb$/, '');
           for (const clip of gltf.animations) clip.name = label;
@@ -261,15 +269,18 @@
       }
 
       // Restore last-used design (URL param ?id=<id> takes priority over localStorage).
+      // CAT-4: ?prefillName starts a fresh, pre-named design instead of restoring.
       savedDesigns = await CharacterDesignStore.list();
+      const prefill = new URLSearchParams(window.location.search).get('prefillName');
       const urlId = new URLSearchParams(window.location.search).get('id');
-      const lastId = urlId ?? localStorage.getItem('character-design-id');
+      const lastId = prefill ? null : (urlId ?? localStorage.getItem('character-design-id'));
       if (lastId) {
         const design = await CharacterDesignStore.get(lastId);
         const meta = savedDesigns.find((d) => d.id === lastId);
         if (design && meta) {
           boneParams = design.boneParams;
           faceParams = { ...DEFAULT_FACE_PARAMS, ...design.faceParams };
+          semantic = { ...DEFAULT_SEMANTIC };
           neckTiltDeg = design.neckTiltDeg;
           insetFactor = design.insetFactor;
           robotStyle = design.style;
@@ -278,6 +289,10 @@
           localStorage.setItem('character-design-id', lastId);
           buildHumanoid(design.style);
         }
+      }
+
+      if (prefill) {
+        designName = prefill.trim() || 'Untitled';
       }
 
       loading = false;
@@ -310,6 +325,7 @@
     }
     boneParams = { ...DEFAULT_BONE_PARAMS };
     faceParams = { ...DEFAULT_FACE_PARAMS };
+    semantic = { ...DEFAULT_SEMANTIC };
     neckTiltDeg = -20;
     insetFactor = 0;
     robotStyle = 'organic';
@@ -332,6 +348,7 @@
     if (design && meta) {
       boneParams = design.boneParams;
       faceParams = { ...DEFAULT_FACE_PARAMS, ...design.faceParams };
+      semantic = { ...DEFAULT_SEMANTIC };
       neckTiltDeg = design.neckTiltDeg;
       insetFactor = design.insetFactor;
       robotStyle = design.style;
@@ -376,7 +393,7 @@
 
     // Re-export path: update the existing catalogue entry in place.
     if (currentDesignId) {
-      const existing = await OPFSCatalogueStore.findByAssemblyId(currentDesignId);
+      const existing = await OPFSCatalogueStore.findBySourceDesignId(currentDesignId);
       if (existing) {
         await OPFSCatalogueStore.update(existing.id, blob, label);
         new BroadcastChannel('directionally-catalogue').postMessage({ type: 'catalogue-updated' });
@@ -434,6 +451,21 @@
         class:active={skeletonVisible}
         onclick={() => { skeletonVisible = !skeletonVisible; humanoid?.setSkeletonVisible(skeletonVisible); }}
       >Skeleton</button>
+      <button
+        class="layer-btn"
+        class:active={ringDebug}
+        onclick={() => { ringDebug = !ringDebug; humanoid?.setRingDebugVisible(ringDebug); }}
+      >Rings</button>
+      <button
+        class="layer-btn"
+        class:active={wireframe}
+        onclick={() => { wireframe = !wireframe; humanoid?.setWireframe(wireframe); }}
+      >Wire</button>
+      <button
+        class="layer-btn"
+        class:active={uvCheck}
+        onclick={() => { uvCheck = !uvCheck; humanoid?.setUVCheck(uvCheck); }}
+      >UV</button>
       <span class="style-label">Style:</span>
       {#each (['organic', 'c3po', 'sonny'] as RobotStyle[]) as s}
         <button
@@ -441,6 +473,38 @@
           class:active={robotStyle === s}
           onclick={() => { robotStyle = s; buildHumanoid(s); }}
         >{s === 'organic' ? 'Organic' : s === 'c3po' ? 'C-3PO' : 'Sonny'}</button>
+      {/each}
+      <span class="style-label">Outfit:</span>
+      {#each [['casual', 'Casual'], ['teeShorts', 'Tee & Shorts'], ['layered', 'Vest over Shirt'], ['bare', 'Bare']] as [key, label]}
+        <button
+          class="layer-btn style-btn"
+          class:active={outfit === OUTFIT_PRESETS[key]}
+          onclick={() => { outfit = OUTFIT_PRESETS[key]; buildHumanoid(robotStyle); }}
+        >{label}</button>
+      {/each}
+      <span class="style-label">Skin:</span>
+      {#each SKIN_TONES as t}
+        <button
+          class="layer-btn style-btn"
+          class:active={skinTone === t.color}
+          onclick={() => { skinTone = t.color; buildHumanoid(robotStyle); }}
+        >{t.label}</button>
+      {/each}
+      <span class="style-label">Hair:</span>
+      {#each HAIR_COLORS as t}
+        <button
+          class="layer-btn style-btn"
+          class:active={faceParams.hairColor === t.color}
+          onclick={() => { faceParams = { ...faceParams, hairColor: t.color }; buildHumanoid(robotStyle); }}
+        >{t.label}</button>
+      {/each}
+      <span class="style-label">Eyes:</span>
+      {#each EYE_COLORS as t}
+        <button
+          class="layer-btn style-btn"
+          class:active={faceParams.irisColor === t.color}
+          onclick={() => { faceParams = { ...faceParams, irisColor: t.color }; buildHumanoid(robotStyle); }}
+        >{t.label}</button>
       {/each}
     </div>
     {#if clipNames.length > 0}
@@ -490,6 +554,49 @@
 
   {#if !loading}
     <div class="params-bar">
+      <label class="param-label">
+        Height
+        <span class="param-val">{Math.round(semanticHeightScale(semantic) * 100)}%</span>
+        <input type="range" min="0" max="1" step="0.01"
+          value={semantic.height}
+          oninput={(e) => applySemantic({ ...semantic, height: +e.currentTarget.value })}
+        />
+      </label>
+      <label class="param-label">
+        Build
+        <span class="param-val">{Math.round((semantic.build + 1) * 50)}%</span>
+        <input type="range" min="-1" max="1" step="0.01"
+          value={semantic.build}
+          oninput={(e) => applySemantic({ ...semantic, build: +e.currentTarget.value })}
+        />
+      </label>
+      <label class="param-label">
+        Muscularity
+        <span class="param-val">{Math.round(semantic.muscularity * 100)}%</span>
+        <input type="range" min="0" max="1" step="0.01"
+          value={semantic.muscularity}
+          oninput={(e) => applySemantic({ ...semantic, muscularity: +e.currentTarget.value })}
+        />
+      </label>
+      <label class="param-label">
+        Age
+        <span class="param-val">{Math.round(semantic.age * 100)}%</span>
+        <input type="range" min="0" max="1" step="0.01"
+          value={semantic.age}
+          oninput={(e) => applySemantic({ ...semantic, age: +e.currentTarget.value })}
+        />
+      </label>
+      <label class="param-label">
+        Feminine ↔ Masculine
+        <span class="param-val">{Math.round((semantic.feminineMasculine + 1) * 50)}%</span>
+        <input type="range" min="-1" max="1" step="0.01"
+          value={semantic.feminineMasculine}
+          oninput={(e) => applySemantic({ ...semantic, feminineMasculine: +e.currentTarget.value })}
+        />
+      </label>
+      <span class="param-sep">|</span>
+      <details class="advanced-params">
+        <summary>Advanced</summary>
       <label class="param-label">
         <select
           class="group-select"
@@ -893,6 +1000,7 @@
           oninput={(e) => { insetFactor = +e.currentTarget.value; buildHumanoid(robotStyle); }}
         />
       </label>
+      </details>
     </div>
   {/if}
 
@@ -957,6 +1065,17 @@
 
   .export-btn { color: #8fc; border-color: #4a8; }
   .export-btn:hover { background: #1a3a2a; border-color: #6ca; }
+
+  .advanced-params summary {
+    cursor: pointer;
+    color: #8a9bb0;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 0;
+    user-select: none;
+  }
+  .advanced-params summary:hover { color: #ccc; }
+  .advanced-params[open] summary { margin-bottom: 6px; }
 
   .status-msg {
     font-size: 11px;

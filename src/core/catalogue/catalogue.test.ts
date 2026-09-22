@@ -1,10 +1,35 @@
 import { describe, it, expect } from 'vitest';
-import { getCharacters, getSetPieces, getById } from './catalogue';
+import { getCharacters, getSetPieces, getById, isSettingEntry } from './catalogue';
 import { CATALOGUE_ENTRIES } from './entries';
+import { documentFromParts, collectPartNodes, collectParts, isPartNode } from '../sketcher/documentTree';
 import type { CatalogueEntry, CharacterEntry, SetPieceEntry } from './types';
+import type { PlacedPart } from '../sketcher/documentTree';
+import type { GeometryConfig } from '../domain/types';
+
+/** First part of a bundled set-piece entry's document. */
+function bundledPart(id: string): PlacedPart {
+  const entry = getById(id, CATALOGUE_ENTRIES) as SetPieceEntry | undefined;
+  const node = collectPartNodes(entry?.document ?? { root: [], joints: [] })[0];
+  return { content: node.content, transform: node.transform };
+}
 
 // Controlled fixture — tests must not depend on real seed data so they
 // remain green even when entries.ts changes.
+/** A one-part set-piece entry, as the bundled library defines them. */
+function solidEntry(id: string, label: string, geometry: GeometryConfig, color: number): SetPieceEntry {
+  return {
+    kind: 'set-piece',
+    id,
+    label,
+    document: documentFromParts([
+      {
+        content: { id: 'body', kind: 'catalogue', name: label, geometry, material: { color }, color },
+        transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+      },
+    ]),
+  };
+}
+
 const robot: CharacterEntry = {
   kind: 'character',
   id: 'robot-a',
@@ -12,29 +37,9 @@ const robot: CharacterEntry = {
   gltfPath: '/models/gltf/RobotExpressive.glb',
 };
 
-const box: SetPieceEntry = {
-  kind: 'set-piece',
-  id: 'box-1',
-  label: 'Box',
-  geometry: { type: 'box', width: 1, height: 1, depth: 1 },
-  material: { color: 0x888888 },
-};
-
-const sphere: SetPieceEntry = {
-  kind: 'set-piece',
-  id: 'sphere-1',
-  label: 'Sphere',
-  geometry: { type: 'sphere', radius: 0.5 },
-  material: { color: 0x4488cc },
-};
-
-const cylinder: SetPieceEntry = {
-  kind: 'set-piece',
-  id: 'cylinder-1',
-  label: 'Cylinder',
-  geometry: { type: 'cylinder', radiusTop: 0.5, radiusBottom: 0.5, height: 1 },
-  material: { color: 0xaa6644 },
-};
+const box: SetPieceEntry = solidEntry('box-1', 'Box', { type: 'box', width: 1, height: 1, depth: 1 }, 0x888888);
+const sphere: SetPieceEntry = solidEntry('sphere-1', 'Sphere', { type: 'sphere', radius: 0.5 }, 0x4488cc);
+const cylinder: SetPieceEntry = solidEntry('cylinder-1', 'Cylinder', { type: 'cylinder', radiusTop: 0.5, radiusBottom: 0.5, height: 1 }, 0xaa6644);
 
 const fixture: CatalogueEntry[] = [robot, box, sphere, cylinder];
 
@@ -83,6 +88,41 @@ describe('getById', () => {
   });
 });
 
+describe('isSettingEntry', () => {
+  const environment: CatalogueEntry = { kind: 'environment', id: 'studio', label: 'Studio', hdriPath: '/env/studio.hdr' };
+  const light: CatalogueEntry = { kind: 'light', id: 'sun', label: 'Sun', config: { type: 'directional', color: 0xffffff, intensity: 1, position: [0, 10, 5] } };
+
+  it('treats environments as settings', () => {
+    expect(isSettingEntry(environment)).toBe(true);
+  });
+
+  it('treats a bare set-piece as a component by default', () => {
+    expect(isSettingEntry(box)).toBe(false);
+  });
+
+  it('ignores leftover lighting metadata when classifying', () => {
+    // A lighting/environment field is no longer part of an entry — a stale file carrying
+    // one must not flip a prop into a setting.
+    const stale = {
+      ...box,
+      id: 'stale',
+      environmentId: 'studio',
+      lights: [{ type: 'hemisphere', id: 'sky', skyColor: 0xffffff, groundColor: 0x444444, intensity: 1 }],
+    } as CatalogueEntry;
+    expect(isSettingEntry(stale)).toBe(false);
+  });
+
+  it('honours an explicit isSetting flag over the default', () => {
+    expect(isSettingEntry({ ...box, id: 'explicit-venue', isSetting: true })).toBe(true);
+    expect(isSettingEntry({ ...box, id: 'explicit-prop', isSetting: false })).toBe(false);
+  });
+
+  it('returns false for characters and lights', () => {
+    expect(isSettingEntry(robot)).toBe(false);
+    expect(isSettingEntry(light)).toBe(false);
+  });
+});
+
 describe('CATALOGUE_ENTRIES seed data — Phase 9.B set pieces', () => {
   const pieces = getSetPieces(CATALOGUE_ENTRIES);
   const ids = pieces.map((p) => p.id);
@@ -93,12 +133,52 @@ describe('CATALOGUE_ENTRIES seed data — Phase 9.B set pieces', () => {
   );
 
   it('wall-flat is a box with correct proportions', () => {
-    const p = getById('wall-flat', CATALOGUE_ENTRIES) as SetPieceEntry | undefined;
-    expect(p?.geometry).toMatchObject({ type: 'box', width: 4, height: 3, depth: 0.15 });
+    expect(bundledPart('wall-flat').content.geometry).toMatchObject({ type: 'box', width: 4, height: 3, depth: 0.15 });
   });
 
   it('stage-deck is a plane', () => {
-    const p = getById('stage-deck', CATALOGUE_ENTRIES) as SetPieceEntry | undefined;
-    expect(p?.geometry.type).toBe('plane');
+    expect(bundledPart('stage-deck').content.geometry?.type).toBe('plane');
+  });
+
+  it('a plane-bodied set piece lies flat on the ground', () => {
+    // The orientation belongs to the document (a part-local rotation), not to a
+    // placement convention: inserted or realised, the floor lies flat either way.
+    const [x, y, z, w] = bundledPart('concrete-floor').transform.quaternion;
+    expect(x).toBeCloseTo(-Math.SQRT1_2);
+    expect(y).toBeCloseTo(0);
+    expect(z).toBeCloseTo(0);
+    expect(w).toBeCloseTo(Math.SQRT1_2);
+  });
+
+  it('every set piece carries its body as a tree document', () => {
+    for (const p of pieces) {
+      expect(p.document, p.id).toBeDefined();
+      expect(collectParts(p.document!).length).toBeGreaterThan(0);
+      expect(p.document!.root.every(isPartNode)).toBe(true);
+    }
   });
 });
+
+describe('CATALOGUE_ENTRIES seed data — CAT-0 generic-human character', () => {
+  it('includes a generic-human character entry alongside the robot', () => {
+    const characters = getCharacters(CATALOGUE_ENTRIES);
+    const ids = characters.map((c) => c.id);
+    expect(ids).toContain('robot-expressive');
+    expect(ids).toContain('generic-human');
+  });
+
+  it('generic-human resolves via getById and has a real gltfPath + idle animation', () => {
+    const entry = getById('generic-human', CATALOGUE_ENTRIES) as CharacterEntry | undefined;
+    expect(entry?.kind).toBe('character');
+    expect(entry?.gltfPath).toBe('/models/gltf/generic-human.glb');
+    expect(entry?.defaultAnimation).toBeTruthy();
+  });
+
+  it('declares per-character locomotion clips (walkAnimation)', () => {
+    const robot = getById('robot-expressive', CATALOGUE_ENTRIES) as CharacterEntry | undefined;
+    const human = getById('generic-human', CATALOGUE_ENTRIES) as CharacterEntry | undefined;
+    expect(robot?.walkAnimation).toBe('Walking');
+    expect(human?.walkAnimation).toBe('walk');
+  });
+});
+
