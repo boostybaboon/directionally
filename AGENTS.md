@@ -76,6 +76,10 @@ nothing calls it), `gap:bug`, `gap:deferred` (waiting for a consumer), `gap:stal
 `TDA`, `CAP`, `CAT`, `SCR`, `AI`, `Humanoid`, `Workflows`. Priority lives in the project's `Priority`
 field, which is where the backlog order is read from — custom fields do not appear in the issue list.
 
+A coherent feature is an `epic`: a parent issue with the work attached as sub-issues, so the board can
+be read at epic level and nothing is hidden. Milestones stay the schedule (which track, which release),
+the epic is the grouping (what it belongs to together), and the two are not duplicates of each other.
+
 - A commit that closes an item says so (`closes #12`), which is what makes the tracker verifiable from
   git history rather than from memory.
 - A comment marking real debt names its issue (`TODO(#12): …`), so the gap and its tracking are one
