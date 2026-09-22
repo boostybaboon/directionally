@@ -1,7 +1,7 @@
 import type { CartoonSketcher } from './CartoonSketcher.js';
 import type { LightConfig } from '../domain/types.js';
 import type { SketcherCommand } from './SketcherCommand.js';
-import { collectLights, isPartNode, isRefNode } from './documentTree.js';
+import { collectLights, isPartNode, isRefNode, sameOrder } from './documentTree.js';
 import { fromAIDraft } from './aiDraft.js';
 import type { AIDraft } from './aiDraft.js';
 import type { PlacedPart, RefNode, RefSeed, SetDocument, SetNode } from './documentTree.js';
@@ -43,6 +43,11 @@ export type DocumentDiff = {
   lights: { add: LightConfig[]; remove: string[]; update: LightConfig[] };
   /** The environment, present only when the edit changes it — `id` undefined means cleared. */
   environment?: { id?: string };
+  /**
+   * Whether the edit rearranges nodes within their parents. Order was the one thing the diff ignored,
+   * which meant a reordered draft was reported as no change at all and then dropped on apply.
+   */
+  orderChanged: boolean;
 };
 
 /** Whether two light configs say the same thing, key by key (position compared as a value). */
@@ -199,7 +204,7 @@ function instances(doc: SetDocument): Map<string, { node: RefNode; world: Transf
 /** Diff two documents by stable id — part leaves by part id, instances by node id.
  *  Pure — no Three.js runtime. */
 /** The tree diff: everything except the lights and the environment, which diff by identity below. */
-function diffParts(current: SetDocument, target: SetDocument): Omit<DocumentDiff, 'lights' | 'environment'> {
+function diffParts(current: SetDocument, target: SetDocument): Omit<DocumentDiff, 'lights' | 'environment' | 'orderChanged'> {
   const currentById = new Map(placedParts(current).map((p) => [p.content.id, p]));
   const targetById = new Map(placedParts(target).map((p) => [p.content.id, p]));
   const add: PlacedPart[] = [];
@@ -268,7 +273,11 @@ function lightDiff(current: SetDocument, target: SetDocument): { add: LightConfi
  * exists to hide from everything downstream.
  */
 export function diffDocument(current: SetDocument, target: SetDocument): DocumentDiff {
-  const diff: DocumentDiff = { ...diffParts(current, target), lights: lightDiff(current, target) };
+  const diff: DocumentDiff = {
+    ...diffParts(current, target),
+    lights: lightDiff(current, target),
+    orderChanged: !sameOrder(current, target),
+  };
   return current.environmentMap === target.environmentMap
     ? diff
     : { ...diff, environment: { id: target.environmentMap } };
@@ -355,6 +364,10 @@ export function applyDocumentCommand(sketcher: CartoonSketcher, target: SetDocum
       for (const config of diff.lights.add) sketcher.addLight(config);
       for (const id of diff.lights.remove) sketcher.removeLight(id);
       if (diff.environment !== undefined) sketcher.setEnvironmentMap(diff.environment.id);
+
+      // ── Order last, once every node exists: a released or re-added member takes the slot the draft
+      //    gives it rather than the slot a removal left behind.
+      if (diff.orderChanged) sketcher.reorderToMatch(target);
     },
   };
 }

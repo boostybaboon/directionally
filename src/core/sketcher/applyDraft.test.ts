@@ -325,6 +325,44 @@ describe('applyDocumentCommand', () => {
   });
 });
 
+describe('node order', () => {
+  const leaf = (id: string) => ({
+    content: { id, label: id.toUpperCase(), kind: 'primitive' as const, name: 'Box', color: 0xffffff },
+    transform: { position: [0, 0, 0] as [number, number, number], quaternion: [0, 0, 0, 1] as [number, number, number, number], scale: [1, 1, 1] as [number, number, number] },
+  });
+
+  it('reports a reordering as a change, and puts the session in the draft order', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    const doc = new SketcherDocument(sketcher);
+    sketcher.loadDocument(documentFromParts([leaf('a'), leaf('b'), leaf('c')]));
+
+    const target = documentFromParts([leaf('c'), leaf('a'), leaf('b')]);
+    const diff = diffDocument(sketcher.toDocument(), target);
+    expect(diff.orderChanged).toBe(true);
+    // Nothing else about the three parts changed, which is exactly why the diff used to be empty.
+    expect(diff.add).toHaveLength(0);
+    expect(diff.remove).toHaveLength(0);
+    expect(diff.update).toHaveLength(0);
+
+    doc.execute(applyDocumentCommand(sketcher, target));
+    expect(sketcher.toDocument().root.map((n) => n.id)).toEqual(['c', 'a', 'b']);
+
+    doc.undo();
+    expect(sketcher.toDocument().root.map((n) => n.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('says the order did not change when only the tree did', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    sketcher.loadDocument(documentFromParts([leaf('a'), leaf('b')]));
+
+    const target = documentFromParts([leaf('a'), leaf('b'), leaf('c')]);
+    const diff = diffDocument(sketcher.toDocument(), target);
+
+    expect(diff.add).toHaveLength(1);
+    expect(diff.orderChanged).toBe(false);
+  });
+});
+
 describe('lights through an edit', () => {
   const lamp = (id: string, intensity: number): LightConfig => ({
     type: 'point', id, color: 0xffffff, intensity, position: [0, 2, 0],

@@ -49,6 +49,7 @@ import {
   setPartLabel as setTreePartLabel,
   addLightNode,
   setLightNode,
+  reorderToMatch,
   removeLightNode,
   collectLights,
 } from './documentTree.js';
@@ -603,6 +604,15 @@ export class CartoonSketcher {
   /** Change a light in place — same node, same position in the list — as a document edit, so it undoes. */
   setLight(config: LightConfig): void {
     this.editDocument((doc) => setLightNode(doc, config));
+  }
+
+  /**
+   * Put this session's nodes in `target`'s order, as a document edit. Order is what the outliner reads
+   * and what a draft expresses arrangement with, so it reconciles like everything else rather than
+   * being dropped.
+   */
+  reorderToMatch(target: SetDocument): void {
+    this.editDocument((doc) => reorderToMatch(doc, target));
   }
 
   /**

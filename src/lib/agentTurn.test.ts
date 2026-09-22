@@ -11,6 +11,7 @@ const EMPTY_DIFF: DocumentDiff = {
   add: [], remove: [], update: [], addRefs: [], removeRefs: [], moveRefs: [],
   groups: { create: [], dissolve: [], join: [], leave: [] },
   lights: { add: [], remove: [], update: [] },
+  orderChanged: false,
 };
 
 function session() {

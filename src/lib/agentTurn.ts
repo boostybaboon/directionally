@@ -61,6 +61,7 @@ export function summariseDiff(diff: DocumentDiff): string[] {
   if (diff.lights.add.length > 0) lines.push(`Add the light ${namesOf(diff.lights.add.map((l) => l.id))}`);
   if (diff.lights.update.length > 0) lines.push(`Change the light ${namesOf(diff.lights.update.map((l) => l.id))}`);
   if (diff.lights.remove.length > 0) lines.push(`Remove ${diff.lights.remove.length} light${diff.lights.remove.length === 1 ? '' : 's'}`);
+  if (diff.orderChanged) lines.push('Reorder the nodes');
   if (diff.environment !== undefined) {
     lines.push(diff.environment.id !== undefined ? `Set the environment to ${diff.environment.id}` : 'Clear the environment');
   }
@@ -82,7 +83,8 @@ export function isEmptyDiff(diff: DocumentDiff): boolean {
     && diff.lights.add.length === 0
     && diff.lights.remove.length === 0
     && diff.lights.update.length === 0
-    && diff.environment === undefined;
+    && diff.environment === undefined
+    && !diff.orderChanged;
 }
 
 /**
