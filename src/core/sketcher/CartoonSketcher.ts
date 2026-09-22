@@ -744,6 +744,29 @@ export class CartoonSketcher {
   }
 
   /**
+   * The path of the node a scene object belongs to: the part, instance or group that was selected.
+   *
+   * A selection is a set of meshes and what a person meant may be a part or the body of an instance —
+   * for the latter the thing they selected is the instance, not each member it happens to be drawn
+   * from. A part is recognised by the mesh the session holds for it; anything else walks up to the
+   * nearest ancestor the document knows, which instances identify by name (their path) and groups by
+   * the object the tree registered for them.
+   */
+  nodePathForObject(object: THREE.Object3D): string | null {
+    const part = this.parts.find((p) => p.mesh === object);
+    if (part) return pathOfPart(this.document, part.id);
+
+    const pathOfObject = new Map<THREE.Object3D, string>();
+    for (const [path, nodeObject] of this.nodeObjects) pathOfObject.set(nodeObject, path);
+
+    for (let o: THREE.Object3D | null = object; o !== null; o = o.parent) {
+      const candidate = o.name !== '' ? o.name : pathOfObject.get(o);
+      if (candidate !== undefined && nodeAt(this.document, candidate) !== null) return candidate;
+    }
+    return null;
+  }
+
+  /**
    * Place a node so that it *stands* at `world` now, whatever it is currently parented to. What the
    * AI means by a part's transform is where it is, not what its parent's arithmetic says — and the
    * live object is where a placement has to land, since the next write-back adopts it.

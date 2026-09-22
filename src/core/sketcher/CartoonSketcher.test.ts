@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import * as THREE from 'three';
 import { CartoonSketcher } from './CartoonSketcher.js';
-import { OverrideCommand } from './sketcherCommands.js';
+import { GroupNodesCommand, OverrideCommand } from './sketcherCommands.js';
+import { SketcherDocument } from './SketcherDocument.js';
 import { PolygonSketcher } from './PolygonSketcher.js';
 import { ExtrusionHandle } from './ExtrusionHandle.js';
 import { exportGLB } from './exportGLB.js';
 import type { SketcherSession } from './types.js';
-import { collectLights, documentFromParts, isPartNode } from './documentTree.js';
+import { collectLights, documentFromParts, isPartNode, nodeAt } from './documentTree.js';
 import type { NodeOverride, PartNode, PartSeed, SetDocument } from './documentTree.js';
 import type { Transform } from './transform.js';
 import type { SetPieceEntry } from '../catalogue/types.js';
@@ -685,6 +686,58 @@ describe('CartoonSketcher', () => {
 // ---------------------------------------------------------------------------
 // exportGLB tests
 // ---------------------------------------------------------------------------
+
+describe('nodePathForObject', () => {
+  const chairDocument = () => documentFromParts([
+    { content: { id: 'seat', kind: 'primitive', name: 'Box', label: 'Seat', color: 0x663311 },
+      transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] } },
+  ]);
+
+  it('resolves a part mesh to the part node', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    const box = sketcher.insertPrimitive('Box')!;
+
+    const path = sketcher.nodePathForObject(box.mesh);
+
+    expect(path).toBe('box');
+  });
+
+  it('resolves a mesh inside an instance to the instance, not to its member', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    // The resolver hands back the Definition's document, which is what an instance is drawn from.
+    sketcher.setRefResolver((ref) => (ref === 'chair' ? chairDocument() : null));
+    const path = sketcher.insertInstance({ ref: 'chair', name: 'Chair' })!;
+    const instance = sketcher.nodeObject(path)!;
+    const memberMesh = instance.children[0] as THREE.Mesh;
+
+    const memberPath = sketcher.nodePathForObject(memberMesh);
+
+    // What the person selected is the chair, not the seat it is drawn from.
+    expect(memberPath).toBe('chair');
+    expect(nodeAt(sketcher.toDocument(), memberPath!)).not.toBeNull();
+  });
+
+  it('groups an instance with a part, as one arrangement, undoably', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    // The resolver hands back the Definition's document, which is what an instance is drawn from.
+    sketcher.setRefResolver((ref) => (ref === 'chair' ? chairDocument() : null));
+    const doc = new SketcherDocument(sketcher);
+    const box = sketcher.insertPrimitive('Box')!;
+    const path = sketcher.insertInstance({ ref: 'chair', name: 'Chair' })!;
+    const instance = sketcher.nodeObject(path)!;
+
+    const refs = [sketcher.nodePathForObject(box.mesh), sketcher.nodePathForObject(instance.children[0] as THREE.Mesh)];
+    doc.execute(new GroupNodesCommand(refs.filter((r): r is string => r !== null), sketcher));
+
+    const group = sketcher.toDocument().root.find((n) => n.role === 'structure');
+    expect(group).toBeDefined();
+    expect(group!.children).toHaveLength(2);
+
+    doc.undo();
+    expect(sketcher.toDocument().root.some((n) => n.role === 'structure')).toBe(false);
+    expect(sketcher.toDocument().root).toHaveLength(2);
+  });
+});
 
 describe('exportGLB', () => {
   it('returns a non-empty Blob for a session with parts', async () => {

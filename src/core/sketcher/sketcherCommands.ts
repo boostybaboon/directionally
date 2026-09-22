@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { CartoonSketcher } from './CartoonSketcher.js';
 import type { SketcherPart } from './types.js';
 import type { SketcherCommand } from './SketcherCommand.js';
+import type { NodeRef } from './documentTree.js';
 
 // ── InsertPartCommand ─────────────────────────────────────────────────────────
 
@@ -249,6 +250,26 @@ export class GroupCommand implements SketcherCommand {
 
   execute(): void {
     this.sketcher.group(this.partIds);
+  }
+}
+
+// ── GroupNodesCommand ───────────────────────────────────────────────────────────────
+
+/**
+ * Group nodes as one arrangement, without bonding them: the pass that takes any node by reference,
+ * including an instance, which has no mesh of its own to join a rigid unit with.
+ */
+export class GroupNodesCommand implements SketcherCommand {
+  readonly label = 'Group nodes';
+
+  constructor(
+    private readonly refs: NodeRef[],
+    private readonly sketcher: CartoonSketcher,
+    private readonly name?: string,
+  ) {}
+
+  execute(): void {
+    this.sketcher.groupPure(this.refs, this.name);
   }
 }
 

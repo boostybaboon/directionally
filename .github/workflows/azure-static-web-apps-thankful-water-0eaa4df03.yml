@@ -1,5 +1,10 @@
 name: Azure Static Web Apps CI/CD
 
+# The default token is read-only, which is why the preview URL never reached the pull request:
+# the deploy action comments it, and commenting is a write.
+permissions:
+  pull-requests: write
+
 on:
   push:
     branches:
