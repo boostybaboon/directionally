@@ -1,0 +1,39 @@
+name: Gap
+description: A capability a surface cannot reach, something built that nothing calls, or work not started.
+title: "[gap] "
+body:
+  - type: dropdown
+    id: class
+    attributes:
+      label: Which kind
+      description: |
+        An issue form cannot set a label from an answer, so add the matching one after creating this:
+        gap:reach, gap:unreachable, gap:deferred, gap:stale-doc, gap:planned.
+      options:
+        - gap:reach - a surface cannot get at the capability
+        - gap:unreachable - built, and nothing calls it
+        - gap:deferred - waiting for a consumer
+        - gap:stale-doc - a document disagrees with the code
+        - gap:planned - work that has not started
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What is missing
+    validations:
+      required: true
+  - type: input
+    id: anchor
+    attributes:
+      label: Anchor
+      description: The file, function or document that shows it.
+    validations:
+      required: false
+  - type: textarea
+    id: closes
+    attributes:
+      label: Closes with
+      description: What would have to be true for this to be done.
+    validations:
+      required: true
