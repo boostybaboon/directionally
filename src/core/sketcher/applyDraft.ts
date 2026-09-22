@@ -1,6 +1,7 @@
 import type { CartoonSketcher } from './CartoonSketcher.js';
+import type { LightConfig } from '../domain/types.js';
 import type { SketcherCommand } from './SketcherCommand.js';
-import { isPartNode, isRefNode } from './documentTree.js';
+import { collectLights, isPartNode, isRefNode, sameOrder } from './documentTree.js';
 import { fromAIDraft } from './aiDraft.js';
 import type { AIDraft } from './aiDraft.js';
 import type { PlacedPart, RefNode, RefSeed, SetDocument, SetNode } from './documentTree.js';
@@ -35,7 +36,30 @@ export type DocumentDiff = {
   moveRefs: { id: string; transform: Transform }[];
   /** How the edit rearranges groups, which is a separate pass from what it adds or moves. */
   groups: GroupStructureDiff;
+  /**
+   * Lights, which a draft carries flat and a document holds as nodes: the diff compares them by id so
+   * a light that only changed intensity is updated rather than replaced, keeping its place in the list.
+   */
+  lights: { add: LightConfig[]; remove: string[]; update: LightConfig[] };
+  /** The environment, present only when the edit changes it — `id` undefined means cleared. */
+  environment?: { id?: string };
+  /**
+   * Whether the edit rearranges nodes within their parents. Order was the one thing the diff ignored,
+   * which meant a reordered draft was reported as no change at all and then dropped on apply.
+   */
+  orderChanged: boolean;
 };
+
+/** Whether two light configs say the same thing, key by key (position compared as a value). */
+function sameLight(a: LightConfig, b: LightConfig): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    const av = (a as Record<string, unknown>)[key];
+    const bv = (b as Record<string, unknown>)[key];
+    if (JSON.stringify(av) !== JSON.stringify(bv)) return false;
+  }
+  return true;
+}
 
 /**
  * A group the edit adds, and the nodes that go into it — members the document does not hold yet are
@@ -179,7 +203,8 @@ function instances(doc: SetDocument): Map<string, { node: RefNode; world: Transf
 
 /** Diff two documents by stable id — part leaves by part id, instances by node id.
  *  Pure — no Three.js runtime. */
-export function diffDocument(current: SetDocument, target: SetDocument): DocumentDiff {
+/** The tree diff: everything except the lights and the environment, which diff by identity below. */
+function diffParts(current: SetDocument, target: SetDocument): Omit<DocumentDiff, 'lights' | 'environment' | 'orderChanged'> {
   const currentById = new Map(placedParts(current).map((p) => [p.content.id, p]));
   const targetById = new Map(placedParts(target).map((p) => [p.content.id, p]));
   const add: PlacedPart[] = [];
@@ -220,6 +245,45 @@ export function diffDocument(current: SetDocument, target: SetDocument): Documen
 }
 
 /**
+ * Lights and the environment, diffed the way the rest is: by identity, so a light that changed only its
+ * intensity is an update rather than a removal and an addition — which is what keeps its place in the
+ * list a person reads, and what lets one instruction change one number.
+ */
+function lightDiff(current: SetDocument, target: SetDocument): { add: LightConfig[]; remove: string[]; update: LightConfig[] } {
+  const before = new Map(collectLights(current).map((l) => [l.id, l]));
+  const after = new Map(collectLights(target).map((l) => [l.id, l]));
+  const add: LightConfig[] = [];
+  const update: LightConfig[] = [];
+  const remove: string[] = [];
+
+  for (const [id, config] of after) {
+    const previous = before.get(id);
+    if (!previous) add.push(config);
+    else if (!sameLight(previous, config)) update.push(config);
+  }
+  for (const id of before.keys()) {
+    if (!after.has(id)) remove.push(id);
+  }
+  return { add, remove, update };
+}
+
+/**
+ * Everything one edit changes: the tree, the lights, and the environment when it moved. A draft carries
+ * lights flat and documents hold them as nodes, which is exactly the kind of shape difference the diff
+ * exists to hide from everything downstream.
+ */
+export function diffDocument(current: SetDocument, target: SetDocument): DocumentDiff {
+  const diff: DocumentDiff = {
+    ...diffParts(current, target),
+    lights: lightDiff(current, target),
+    orderChanged: !sameOrder(current, target),
+  };
+  return current.environmentMap === target.environmentMap
+    ? diff
+    : { ...diff, environment: { id: target.environmentMap } };
+}
+
+/**
  * Build a command that reconciles the live session with `target`. Execute it via
  * `SketcherDocument.execute()` so the whole AI turn is one undoable step.
  */
@@ -230,8 +294,10 @@ export function applyDocumentCommand(sketcher: CartoonSketcher, target: SetDocum
   const removes = diff.remove.length + diff.removeRefs.length;
   const groups = diff.groups.create.length + diff.groups.dissolve.length
     + diff.groups.join.length + diff.groups.leave.length;
+  const lights = diff.lights.add.length + diff.lights.remove.length + diff.lights.update.length;
+  const environment = diff.environment !== undefined ? 1 : 0;
   return {
-    label: `AI edit (${adds} add, ${updates} update, ${removes} remove${groups > 0 ? `, ${groups} group` : ''})`,
+    label: `AI edit (${adds} add, ${updates} update, ${removes} remove${groups > 0 ? `, ${groups} group` : ''}${lights > 0 ? `, ${lights} light` : ''}${environment > 0 ? ', environment' : ''})`,
     execute() {
       for (const id of diff.remove) sketcher.removePart(id);
       for (const id of diff.removeRefs) sketcher.removeNode(id);
@@ -291,6 +357,17 @@ export function applyDocumentCommand(sketcher: CartoonSketcher, target: SetDocum
       for (const { group, members } of diff.groups.leave) sketcher.moveOutOfGroup(resolve(group), members.map(resolve));
       for (const { group, members } of diff.groups.join) sketcher.moveIntoGroup(resolve(group), members.map(resolve));
       for (const group of diff.groups.create) sketcher.groupPure(group.members.map(resolve), group.name);
+
+      // ── Lights last, and the environment with them: a light is a document node like any other, so it
+      //    undoes with the turn, and an update keeps the light exactly where it was in the list.
+      for (const config of diff.lights.update) sketcher.setLight(config);
+      for (const config of diff.lights.add) sketcher.addLight(config);
+      for (const id of diff.lights.remove) sketcher.removeLight(id);
+      if (diff.environment !== undefined) sketcher.setEnvironmentMap(diff.environment.id);
+
+      // ── Order last, once every node exists: a released or re-added member takes the slot the draft
+      //    gives it rather than the slot a removal left behind.
+      if (diff.orderChanged) sketcher.reorderToMatch(target);
     },
   };
 }

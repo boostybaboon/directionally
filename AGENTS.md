@@ -60,6 +60,11 @@ Preserve:
 
 ## Git Workflow (Style Aspect)
 
+Work lands on a short-lived branch off `main`, one epic's worth at most, and goes in through a pull
+request: `main` requires the CI check, the PR gets a preview environment, and the branch deletes
+itself on merge. The epic is the review boundary — a branch that outgrows one epic is a branch
+nobody will read.
+
 Follow conventional commits for clarity:
 `feat:`, `fix:`, `refactor:`, `test:`, `chore:`, `docs:`.
 Behavioral change and test addition may be separate commits; prefer clarity over compression.

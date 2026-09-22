@@ -32,6 +32,7 @@ import type { NodeOverride, SetDocument } from '../../core/sketcher/documentTree
     DetachAllCommand,
     SnapToFloorCommand,
     GroupCommand,
+    GroupNodesCommand,
     UngroupCommand,
     OverrideCommand,
   } from '../../core/sketcher/sketcherCommands.js';
@@ -2013,10 +2014,30 @@ import type { NodeOverride, SetDocument } from '../../core/sketcher/documentTree
     }
   }
 
-  function groupSelected() {    if (!sketcher || !selectedPartId) return;
+  function groupSelected() {
+    if (!sketcher) return;
     const meshes = selection.selectedMeshes;
     if (meshes.length < 2) return;
     const session = sketcher.getSession();
+    const partOf = (mesh: THREE.Mesh) => session.parts.find((p) => p.mesh === mesh);
+
+    // A selection of parts becomes one rigid unit (an assembly group, bonded). A selection holding an
+    // instance's body cannot: there is no mesh of its own to bond, and what the person selected is the
+    // instance rather than the members it is drawn from — so it goes through the document's group
+    // pass, which takes any node by reference.
+    if (!meshes.every((mesh) => partOf(mesh) !== undefined)) {
+      const refs = meshes
+        .map((mesh) => sketcher.nodePathForObject(mesh))
+        .filter((ref): ref is NonNullable<typeof ref> => ref !== null);
+      if (refs.length < 2) return;
+      selection.clearMultiSelection();
+      selection.deselect();
+      multiSelectedCount = 0;
+      sketcherDoc.execute(new GroupNodesCommand(refs, sketcher));
+      statusMessage = 'Grouped. Nodes joined as one arrangement.';
+      return;
+    }
+
     // Expand each selected mesh to cover all members of its assembly group (if any),
     // so shift-clicking a group handle brings the whole group into the group.
     const partIds = [...new Set(

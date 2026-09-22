@@ -48,6 +48,8 @@ import {
   setFaceTexture as setTreeFaceTexture,
   setPartLabel as setTreePartLabel,
   addLightNode,
+  setLightNode,
+  reorderToMatch,
   removeLightNode,
   collectLights,
 } from './documentTree.js';
@@ -599,6 +601,20 @@ export class CartoonSketcher {
     this.editDocument((doc) => removeLightNode(doc, id));
   }
 
+  /** Change a light in place — same node, same position in the list — as a document edit, so it undoes. */
+  setLight(config: LightConfig): void {
+    this.editDocument((doc) => setLightNode(doc, config));
+  }
+
+  /**
+   * Put this session's nodes in `target`'s order, as a document edit. Order is what the outliner reads
+   * and what a draft expresses arrangement with, so it reconciles like everything else rather than
+   * being dropped.
+   */
+  reorderToMatch(target: SetDocument): void {
+    this.editDocument((doc) => reorderToMatch(doc, target));
+  }
+
   /**
    * Build the live THREE light for a config and track it (mirrors SceneBridge's
    * buildLight, kept local so the Sketcher has no dependency on the domain
@@ -741,6 +757,29 @@ export class CartoonSketcher {
     if (!node) return null;
     const path = pathOfNode(this.document, node);
     return path === null ? null : this.nodeObjects.get(path) ?? null;
+  }
+
+  /**
+   * The path of the node a scene object belongs to: the part, instance or group that was selected.
+   *
+   * A selection is a set of meshes and what a person meant may be a part or the body of an instance —
+   * for the latter the thing they selected is the instance, not each member it happens to be drawn
+   * from. A part is recognised by the mesh the session holds for it; anything else walks up to the
+   * nearest ancestor the document knows, which instances identify by name (their path) and groups by
+   * the object the tree registered for them.
+   */
+  nodePathForObject(object: THREE.Object3D): string | null {
+    const part = this.parts.find((p) => p.mesh === object);
+    if (part) return pathOfPart(this.document, part.id);
+
+    const pathOfObject = new Map<THREE.Object3D, string>();
+    for (const [path, nodeObject] of this.nodeObjects) pathOfObject.set(nodeObject, path);
+
+    for (let o: THREE.Object3D | null = object; o !== null; o = o.parent) {
+      const candidate = o.name !== '' ? o.name : pathOfObject.get(o);
+      if (candidate !== undefined && nodeAt(this.document, candidate) !== null) return candidate;
+    }
+    return null;
   }
 
   /**

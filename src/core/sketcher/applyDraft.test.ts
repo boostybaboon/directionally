@@ -7,6 +7,7 @@ import { documentFromParts, emptyDocument, insertRef } from './documentTree.js';
 import { AI_CONVENTION, fromAIDraft, toAIDraft } from './aiDraft.js';
 import type { AIDraft } from './aiDraft.js';
 import type { PartSeed, SetDocument } from './documentTree.js';
+import type { LightConfig } from '../domain/types.js';
 import type { PartDraft } from './types.js';
 import type { Transform } from './transform.js';
 
@@ -321,6 +322,111 @@ describe('applyDocumentCommand', () => {
     // The instance is gone; the group it sat in is the AI's business, not the instance's.
     expect(sketcher.nodeObject('chair-1')).toBeNull();
     expect(sketcher.toDocument().root.map((node) => node.id)).toEqual(['row']);
+  });
+});
+
+describe('node order', () => {
+  const leaf = (id: string) => ({
+    content: { id, label: id.toUpperCase(), kind: 'primitive' as const, name: 'Box', color: 0xffffff },
+    transform: { position: [0, 0, 0] as [number, number, number], quaternion: [0, 0, 0, 1] as [number, number, number, number], scale: [1, 1, 1] as [number, number, number] },
+  });
+
+  it('reports a reordering as a change, and puts the session in the draft order', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    const doc = new SketcherDocument(sketcher);
+    sketcher.loadDocument(documentFromParts([leaf('a'), leaf('b'), leaf('c')]));
+
+    const target = documentFromParts([leaf('c'), leaf('a'), leaf('b')]);
+    const diff = diffDocument(sketcher.toDocument(), target);
+    expect(diff.orderChanged).toBe(true);
+    // Nothing else about the three parts changed, which is exactly why the diff used to be empty.
+    expect(diff.add).toHaveLength(0);
+    expect(diff.remove).toHaveLength(0);
+    expect(diff.update).toHaveLength(0);
+
+    doc.execute(applyDocumentCommand(sketcher, target));
+    expect(sketcher.toDocument().root.map((n) => n.id)).toEqual(['c', 'a', 'b']);
+
+    doc.undo();
+    expect(sketcher.toDocument().root.map((n) => n.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('says the order did not change when only the tree did', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    sketcher.loadDocument(documentFromParts([leaf('a'), leaf('b')]));
+
+    const target = documentFromParts([leaf('a'), leaf('b'), leaf('c')]);
+    const diff = diffDocument(sketcher.toDocument(), target);
+
+    expect(diff.add).toHaveLength(1);
+    expect(diff.orderChanged).toBe(false);
+  });
+});
+
+describe('lights through an edit', () => {
+  const lamp = (id: string, intensity: number): LightConfig => ({
+    type: 'point', id, color: 0xffffff, intensity, position: [0, 2, 0],
+  });
+  const draftWith = (lights: LightConfig[], environmentMap?: string): AIDraft => ({
+    convention: AI_CONVENTION,
+    parts: [],
+    groups: [],
+    lights,
+    ...(environmentMap !== undefined ? { environmentMap } : {}),
+  });
+
+  it('changes a light in place, keeping its place in the list', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    const doc = new SketcherDocument(sketcher);
+    sketcher.addLight(lamp('key', 1));
+    sketcher.addLight(lamp('fill', 1));
+
+    const target = fromAIDraft(draftWith([lamp('key', 5), lamp('fill', 1)]));
+    const diff = diffDocument(sketcher.toDocument(), target);
+    expect(diff.lights.update.map((l) => l.id)).toEqual(['key']);
+    expect(diff.lights.add).toHaveLength(0);
+    expect(diff.lights.remove).toHaveLength(0);
+
+    doc.execute(applyDocumentCommand(sketcher, target));
+
+    // Same light, same position in the list: a brighter key is not a new key.
+    expect(sketcher.getLights().map((l) => l.id)).toEqual(['key', 'fill']);
+    expect((sketcher.getLights()[0] as { intensity: number }).intensity).toBe(5);
+
+    doc.undo();
+    expect((sketcher.getLights()[0] as { intensity: number }).intensity).toBe(1);
+  });
+
+  it('adds and removes the lights the draft asks for', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    const doc = new SketcherDocument(sketcher);
+    sketcher.addLight(lamp('key', 1));
+
+    const target = fromAIDraft(draftWith([lamp('fill', 2)]));
+    const diff = diffDocument(sketcher.toDocument(), target);
+    expect(diff.lights.add.map((l) => l.id)).toEqual(['fill']);
+    expect(diff.lights.remove).toEqual(['key']);
+
+    doc.execute(applyDocumentCommand(sketcher, target));
+    expect(sketcher.getLights().map((l) => l.id)).toEqual(['fill']);
+
+    doc.undo();
+    expect(sketcher.getLights().map((l) => l.id)).toEqual(['key']);
+  });
+
+  it('changes the environment, and says so only when it moved', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    const doc = new SketcherDocument(sketcher);
+    const target = fromAIDraft(draftWith([], 'interior-night'));
+
+    const unchanged = diffDocument(sketcher.toDocument(), sketcher.toDocument());
+    expect(unchanged.environment).toBeUndefined();
+
+    const diff = diffDocument(sketcher.toDocument(), target);
+    expect(diff.environment).toEqual({ id: 'interior-night' });
+
+    doc.execute(applyDocumentCommand(sketcher, target));
+    expect(sketcher.environmentMap).toBe('interior-night');
   });
 });
 

@@ -850,6 +850,71 @@ export function removeLightNode(doc: SetDocument, id: string): boolean {
 }
 
 /**
+ * Replace a light's config and position in place, keeping its place in the tree: a light that changes
+ * intensity is the same light, and re-adding it would move it to the end of the list a person reads.
+ * Returns false when the document has no such light.
+ */
+export function setLightNode(doc: SetDocument, config: LightConfig): boolean {
+  const loc = findLightLocation(doc.root, config.id);
+  if (!loc) return false;
+  const node = loc.nodes[loc.index];
+  const { id: _id, position, ...light } = config;
+  node.light = light;
+  if (position) node.transform = { ...node.transform, position };
+  return true;
+}
+
+/**
+ * Put a document's nodes in the order `target` has them, level by level, matching by id.
+ *
+ * Order is how the outliner reads a set and how a draft expresses arrangement, and until now the diff
+ * was order-blind: a reordered draft produced an empty diff, so the change was silently dropped. Nodes
+ * the target does not hold keep their relative order at the end, which is where a node the edit created
+ * but the draft cannot address belongs. Returns whether anything actually moved.
+ */
+export function reorderToMatch(doc: SetDocument, target: SetDocument): boolean {
+  let moved = false;
+
+  const level = (current: SetNode[], wanted: SetNode[]): void => {
+    const rank = new Map(wanted.map((node, index) => [node.id, index]));
+    const before = current.map((node) => node.id).join('\u0000');
+    current.sort((a, b) =>
+      (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+    if (current.map((node) => node.id).join('\u0000') !== before) moved = true;
+
+    for (const node of current) {
+      const counterpart = wanted.find((candidate) => candidate.id === node.id);
+      if (counterpart) level(node.children, counterpart.children);
+    }
+  };
+
+  level(doc.root, target.root);
+  return moved;
+}
+
+/**
+ * Whether two documents list their common nodes in the same order, level by level. Nodes held by only
+ * one side are ignored: an addition is the add pass's business, and only a genuine reordering should
+ * make the diff say the arrangement changed.
+ */
+export function sameOrder(doc: SetDocument, target: SetDocument): boolean {
+  const level = (current: SetNode[], wanted: SetNode[]): boolean => {
+    const wantedIds = new Set(wanted.map((node) => node.id));
+    const currentCommon = current.filter((node) => wantedIds.has(node.id)).map((node) => node.id).join('\u0000');
+    const currentIds = new Set(current.map((node) => node.id));
+    const wantedCommon = wanted.filter((node) => currentIds.has(node.id)).map((node) => node.id).join('\u0000');
+    if (currentCommon !== wantedCommon) return false;
+
+    for (const node of current) {
+      const counterpart = wanted.find((candidate) => candidate.id === node.id);
+      if (counterpart && !level(node.children, counterpart.children)) return false;
+    }
+    return true;
+  };
+  return level(doc.root, target.root);
+}
+
+/**
  * The document's lights in the renderer's shape, in tree order. Identity and position
  * come back from the node, which owns them.
  */

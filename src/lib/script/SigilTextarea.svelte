@@ -24,6 +24,8 @@
   interface Props {
     value?: string;
     cast: string[];
+    /** Venue names this production can resolve, offered for a scene heading's setting. */
+    settings?: string[];
     placeholder?: string;
     onchange?: (value: string) => void;
     /** Reports the caret's 1-based line whenever the caret moves. */
@@ -33,6 +35,7 @@
   let {
     value = $bindable(''),
     cast,
+    settings = [],
     placeholder = '',
     onchange,
     oncaret,
@@ -68,7 +71,7 @@
     currentToken = token;
 
     if (token) {
-      const field = sigilFieldOptions(token.sigil, token.tokenIndex, token.priorTokens, cast);
+      const field = sigilFieldOptions(token.sigil, token.tokenIndex, token.priorTokens, cast, settings);
       if (field.kind === 'closed') {
         popupOptions = filterOptions(field.options, token.query);
         activeIdx = 0;

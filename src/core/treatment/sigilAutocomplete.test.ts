@@ -194,11 +194,23 @@ describe('sigilFieldOptions', () => {
     expect(sigilFieldOptions('#', 0, [], cast)).toEqual({ kind: 'closed', options: ['INT', 'EXT'] });
   });
 
-  it('# token 1 (setting) is open', () => {
+  it('# token 1 offers the settings this production can resolve', () => {
+    expect(sigilFieldOptions('#', 1, ['INT'], cast, ['KITCHEN', 'HALL'])).toEqual(
+      { kind: 'closed', options: ['KITCHEN', 'HALL'] },
+    );
+  });
+
+  it('# token 1 stays open when there is nothing to offer', () => {
     expect(sigilFieldOptions('#', 1, ['INT'], cast)).toEqual({ kind: 'open' });
   });
 
-  it('# token 2 (time of day) is open', () => {
-    expect(sigilFieldOptions('#', 2, ['INT', 'STAGE'], cast)).toEqual({ kind: 'open' });
+  it('# token 2 offers times of day, and the settings too, since a venue may be two words', () => {
+    const result = sigilFieldOptions('#', 2, ['INT', 'LIVING'], cast, ['KITCHEN', 'LIVING ROOM']);
+
+    expect(result.kind).toBe('closed');
+    if (result.kind !== 'closed') return;
+    expect(result.options).toContain('DAY');
+    expect(result.options).toContain('NIGHT');
+    expect(result.options).toContain('KITCHEN');
   });
 });

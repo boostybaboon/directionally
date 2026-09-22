@@ -9,6 +9,7 @@
   import { starterSceneShell } from '../core/storage/sceneBuilder.js';
   import * as OPFSCatalogueStore from '../core/storage/OPFSCatalogueStore.js';
   import { CATALOGUE_ENTRIES } from '../core/catalogue/entries.js';
+  import { isSettingEntry } from '../core/catalogue/catalogue.js';
 
   import { ProductionStore } from '../core/storage/ProductionStore.js';
   import { getScenes } from '../core/storage/types.js';
@@ -78,6 +79,13 @@
   // Track CAT: user-authored catalogue entries (Sketcher + Character creator exports),
   // merged with the bundled catalogue for cast/setting resolution during compile.
   let userCatalogueEntries = $state<Awaited<ReturnType<typeof OPFSCatalogueStore.list>>>([]);
+  // What a scene heading's setting field can complete to: the venues this production can
+  // resolve, whether they came from the script's own names or the catalogue.
+  const settingNames = $derived([...new Set([
+    ...Object.keys(settingBindings),
+    ...CATALOGUE_ENTRIES.filter(isSettingEntry).map((e) => e.label.toUpperCase()),
+    ...userCatalogueEntries.filter(isSettingEntry).map((e) => e.label.toUpperCase()),
+  ])].sort());
 
 
   // Derived blocks for timeline / compiled inspector — read-only
@@ -523,6 +531,7 @@
               bind:this={sigilEditor}
               value={sigilText}
               cast={scriptDoc.cast}
+              settings={settingNames}
               placeholder={'Type a scene using #scene, >action, @actor sigils…'}
               onchange={handleSigilChange}
               oncaret={handleCaretMove}

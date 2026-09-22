@@ -94,6 +94,9 @@ export function filterCastOptions(cast: string[], query: string): string[] {
 }
 
 const INTERIOR_WORDS = ['INT', 'EXT'];
+
+/** The times of day Fountain recognises, as the one-word forms this grammar can tokenise. */
+const TIME_OF_DAY_WORDS = ['DAY', 'NIGHT', 'MORNING', 'AFTERNOON', 'EVENING', 'DAWN', 'DUSK', 'CONTINUOUS'];
 const VERB_WORDS = Object.keys(VERB_ALIASES).filter((w) => VERB_ALIASES[w] === w);
 const SIDE_OPTIONS = [...SIDE_WORDS];
 const MARK_OPTIONS = [...MARK_WORDS];
@@ -115,6 +118,7 @@ export function sigilFieldOptions(
   tokenIndex: number,
   priorTokens: string[],
   cast: string[],
+  settings: string[] = [],
 ): SigilFieldOptions {
   if (sigil === '@') {
     return tokenIndex === 0 ? { kind: 'closed', options: cast } : { kind: 'open' };
@@ -134,5 +138,12 @@ export function sigilFieldOptions(
 
   // '#'
   if (tokenIndex === 0) return { kind: 'closed', options: INTERIOR_WORDS };
-  return { kind: 'open' }; // setting / time-of-day: free text until Track CAT's CAT-2 scopes settings
+  // A scene heading reads INTERIOR SETTING TIME-OF-DAY, with the setting possibly more than one
+  // word, so from the second token on a token could be either: the completion offers both rather
+  // than guessing. The settings are the ones this production can actually resolve, which is what
+  // makes the field worth completing at all.
+  if (tokenIndex === 1) {
+    return settings.length > 0 ? { kind: 'closed', options: settings } : { kind: 'open' };
+  }
+  return { kind: 'closed', options: [...new Set([...settings, ...TIME_OF_DAY_WORDS])] };
 }
