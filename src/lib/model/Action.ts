@@ -4,8 +4,10 @@ import type { PathKeyframe } from '../../core/domain/types.js';
 export enum LoopStyle {
   LoopRepeat,
   LoopOnce,
-  // TODO(#40): LoopPingPong by reversing the KeyframeTrack data, not by using the THREE.LoopPingPong constant
-  //as it's hard to correctly set a pingponged animation to time t and have it start correctly
+  // LoopPingPong is deliberately absent, and the constant is not used here: nothing sets it, the only
+  // loop control at authoring level is once-or-repeat, and it is hard to correctly set a ping-ponged
+  // animation to time t and have it start correctly. The recipe on #40 bakes the reversal into the
+  // clip instead - a doubled clip that loops - so seeking stays a matter of time within one clip.
 }
 
 export enum KeyframeTrackType {
