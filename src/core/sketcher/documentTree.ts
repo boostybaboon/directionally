@@ -530,6 +530,23 @@ export function pathOfNode(doc: SetDocument, node: SetNode): string | null {
   return findNodeLocationOf(doc, node)?.path ?? null;
 }
 
+/**
+ * Every node path in a document, depth-first — what a dressing line can address. Paths and
+ * not ids: a node id is only parent-unique, so a nested part is named by its whole path.
+ */
+export function collectNodePaths(doc: SetDocument): string[] {
+  const paths: string[] = [];
+  const walk = (nodes: SetNode[], prefix: string) => {
+    for (const node of nodes) {
+      const path = prefix ? `${prefix}/${node.id}` : node.id;
+      paths.push(path);
+      walk(node.children, path);
+    }
+  };
+  walk(doc.root, '');
+  return paths;
+}
+
 /** The node a path or part guid names, or null. */
 export function nodeAt(doc: SetDocument, target: string): SetNode | null {
   return findNodeLocation(doc, target)?.node ?? null;

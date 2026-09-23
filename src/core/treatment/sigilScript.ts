@@ -7,6 +7,8 @@
  * Grammar (one sigil per line, sigil declares the line's type before any
  * content is interpreted — never a heuristic, always a deterministic switch):
  *   #INT SETTING TOD    — scene heading, starts a new scene
+ *   ##OP NODE [x y z]   — dressing: this scene's venue, with these modifications
+ *                         (hide/show/remove/move), addressable by node path
  *   >ACTOR verb arg     — action beat (enter/exit/move/hold)
  *   @ACTOR              — speaker cue; every following non-sigil line is
  *                         dialogue text for that actor, until the next sigil
@@ -16,7 +18,7 @@
  * sigil before a single character of its value is read.
  */
 
-import type { ActionBeat, ActionVerb, Diagnostic, ScriptDocument, SceneBlock, StageMark, StageSide } from './fountain.js';
+import type { ActionBeat, ActionVerb, Diagnostic, DressingBeat, DressingOp, ScriptDocument, SceneBlock, StageMark, StageSide } from './fountain.js';
 
 
 // ── Tokenizer ────────────────────────────────────────────────────────────────
@@ -30,6 +32,8 @@ export const VERB_ALIASES: Record<string, ActionVerb> = {
 
 export const SIDE_WORDS = new Set(['left', 'right']);
 export const MARK_WORDS = new Set(['left', 'center', 'right']);
+
+export const DRESSING_OPS: DressingOp[] = ['hide', 'show', 'remove', 'move'];
 
 
 function parseSceneHeadingLine(rest: string, lineNo: number, diagnostics: Diagnostic[]): SceneBlock {
@@ -107,6 +111,40 @@ function parseActionLine(rest: string, lineNo: number, diagnostics: Diagnostic[]
 }
 
 /**
+ * A dressing line names a node path inside the setting's document, so the node is
+ * lower-cased the way ids are minted — a line typed `## hide Sofa` addresses `sofa`.
+ */
+function parseDressingLine(rest: string, lineNo: number, diagnostics: Diagnostic[]): DressingBeat | null {
+  const tokens = rest.split(/\s+/).filter(Boolean);
+  const word = tokens[0] ?? '';
+  const op = word.toLowerCase() as DressingOp;
+  if (!DRESSING_OPS.includes(op)) {
+    diagnostics.push({ line: lineNo, level: 'error', message: `Unknown dressing op "${word}" in "##${rest}" — expected ${DRESSING_OPS.join(', ')}.` });
+    return null;
+  }
+
+  const node = tokens[1]?.toLowerCase();
+  if (!node) {
+    diagnostics.push({ line: lineNo, level: 'error', message: `Dressing line "##${rest}" needs a node to ${op}.` });
+    return null;
+  }
+
+  if (op !== 'move') {
+    if (tokens.length > 2) {
+      diagnostics.push({ line: lineNo, level: 'warning', message: `Dressing line "##${rest}" ignores ${tokens.length - 2} extra token(s) — "${op}" takes only a node.` });
+    }
+    return { type: 'dressing', op, node };
+  }
+
+  const position = tokens.slice(2, 5).map((t) => parseFloat(t));
+  if (position.length < 3 || position.some((n) => isNaN(n))) {
+    diagnostics.push({ line: lineNo, level: 'error', message: `Dressing line "##${rest}" needs three numbers after the node.` });
+    return null;
+  }
+  return { type: 'dressing', op, node, position: [position[0], position[1], position[2]] };
+}
+
+/**
  * Tokenizes sigil-scoped script text into a `ScriptDocument`. Never parses
  * unscoped prose — every line's type is determined by its leading sigil
  * character (`#`, `>`, `@`) before any of its content is read. Dialogue text
@@ -144,6 +182,18 @@ export function tokenizeScript(text: string): { doc: ScriptDocument; diagnostics
     const lineNo = i + 1;
 
     if (trimmed === '') continue;
+
+    if (trimmed.startsWith('##')) {
+      flushDialogue();
+      currentSpeaker = null;
+      if (!currentScene) {
+        diagnostics.push({ line: lineNo, level: 'error', message: `Dressing line "${trimmed}" appears before any scene heading (#).` });
+        continue;
+      }
+      const beat = parseDressingLine(trimmed.slice(2).trim(), lineNo, diagnostics);
+      if (beat) currentScene.beats.push(beat);
+      continue;
+    }
 
     if (trimmed.startsWith('#')) {
       flushDialogue();
@@ -221,6 +271,11 @@ function renderActionSigil(beat: ActionBeat): string {
   }
 }
 
+function renderDressingSigil(beat: DressingBeat): string {
+  const args = beat.op === 'move' ? ` ${(beat.position ?? [0, 0, 0]).join(' ')}` : '';
+  return `## ${beat.op} ${beat.node}${args}`;
+}
+
 /**
  * Renders a `ScriptDocument` back to sigil-tokenized text. Canonical form:
  * no prepositions ("from"/"to") on action args, uppercase cast/setting/time
@@ -236,7 +291,7 @@ export function renderScript(doc: ScriptDocument): string {
     parts.push('');
 
     let lastSpeaker: string | null = null;
-    let lastBeatType: 'action' | 'dialogue' | 'other' | null = null;
+    let lastBeatType: 'action' | 'dialogue' | 'dressing' | 'other' | null = null;
     for (const beat of scene.beats) {
       if (beat.type === 'action') {
         // Blank-line-separate a run of actions from whatever came before,
@@ -254,6 +309,13 @@ export function renderScript(doc: ScriptDocument): string {
         }
         parts.push(...beat.text.split('\n'));
         lastBeatType = 'dialogue';
+      } else if (beat.type === 'dressing') {
+        // A run of dressing lines stays together under the heading; a blank separates it
+        // from prose, because it is not a beat in the scene's time.
+        if (lastBeatType && lastBeatType !== 'dressing') parts.push('');
+        parts.push(renderDressingSigil(beat));
+        lastSpeaker = null;
+        lastBeatType = 'dressing';
       } else {
         // Transitions are not part of the sigil grammar (v1) — rendered as
         // plain text so nothing is silently dropped.
@@ -292,6 +354,9 @@ export function retypeAlias(
   return text.split('\n').map((line) => {
     const ws = line.match(/^\s*/)?.[0] ?? '';
     const body = line.slice(ws.length);
+    // A dressing line names nodes inside the setting's document — never a cast role or a
+    // setting name, so a rename has nothing to retype here.
+    if (body.startsWith('##')) return line;
     const sigil = body[0];
 
     if (kind === 'cast') {

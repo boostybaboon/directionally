@@ -18,6 +18,7 @@
   import { renderFountain, createDefaultScriptDocument } from '../core/treatment/fountain.js';
   import type { Diagnostic, ScriptDocument } from '../core/treatment/fountain.js';
   import { compileScriptDocument, resolveSetting } from '../core/treatment/fountainCompiler.js';
+  import { collectNodePaths } from '../core/sketcher/documentTree.js';
   import { tokenizeScript, renderScript, sceneIndexForLine, retypeAlias } from '../core/treatment/sigilScript.js';
   import SigilTextarea from '$lib/script/SigilTextarea.svelte';
   import RosterPanel from '$lib/script/RosterPanel.svelte';
@@ -123,6 +124,18 @@
       return { id: resolved.entry.id, label: resolved.entry.label, kind: resolved.kind, sameLabel };
     })(),
   );
+  // Node paths the focused venue offers a `##` dressing line. A bundled venue carries its
+  // document inline; a user-authored one keeps it in its own OPFS file, read on demand
+  // elsewhere, so its field stays open rather than offering paths the venue may not have.
+  const dressingNodes = $derived<string[]>(
+    (() => {
+      const resolved = resolveSetting(scriptDoc.scenes[focusedSceneIndex]?.setting, userCatalogueEntries, settingBindings);
+      return resolved.kind === 'set-piece' && resolved.entry.document
+        ? collectNodePaths(resolved.entry.document)
+        : [];
+    })(),
+  );
+
   const compiledActorBlocks = $derived<{ block: ActorBlock; index: number }[]>(
     (compiledScene?.blocks ?? [])
       .map((b, i) => ({ block: b, index: i }))
@@ -532,7 +545,8 @@
               value={sigilText}
               cast={scriptDoc.cast}
               settings={settingNames}
-              placeholder={'Type a scene using #scene, >action, @actor sigils…'}
+              nodes={dressingNodes}
+              placeholder={'Type a scene using #scene, >action, @actor, ##dressing sigils…'}
               onchange={handleSigilChange}
               oncaret={handleCaretMove}
             />
@@ -626,8 +640,8 @@
               {#if scene.timeOfDay}<div class="inspector-meta">Time: {scene.timeOfDay}</div>{/if}
               <div class="inspector-beats">{scene.beats.length} beats</div>
               {#each scene.beats as beat, bi}
-                <div class="inspector-beat" class:inspector-beat-dialogue={beat.type === 'dialogue'} class:inspector-beat-action={beat.type === 'action'} class:inspector-beat-transition={beat.type === 'transition'}>
-                  <span class="inspector-beat-kind">{beat.type}</span>
+                <div class="inspector-beat" class:inspector-beat-dialogue={beat.type === 'dialogue'} class:inspector-beat-action={beat.type === 'action'} class:inspector-beat-transition={beat.type === 'transition'} class:inspector-beat-dressing={beat.type === 'dressing'}>
+                  <span class="inspector-beat-kind">{beat.type === 'dressing' ? '##' : beat.type}</span>
                   {#if beat.type === 'dialogue'}
                     <span class="inspector-beat-actor">{beat.character}</span>
                     {#if beat.parenthetical}
@@ -645,6 +659,12 @@
                     {/if}
                     {#if beat.seconds !== undefined}
                       <span class="inspector-beat-meta">{beat.seconds}s</span>
+                    {/if}
+                  {:else if beat.type === 'dressing'}
+                    <span class="inspector-beat-verb">{beat.op}</span>
+                    <span class="inspector-beat-text">{beat.node}</span>
+                    {#if beat.position}
+                      <span class="inspector-beat-meta">{beat.position.join(' ')}</span>
                     {/if}
                   {:else}
                     <span class="inspector-beat-text">{beat.text}</span>
@@ -1134,6 +1154,10 @@
 
   .inspector-beat-transition {
     color: #999;
+  }
+
+  .inspector-beat-dressing {
+    color: #9db4c8;
   }
 
   .inspector-beat-actor {

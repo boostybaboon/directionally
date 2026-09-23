@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { tokenizeScript, renderScript, sceneIndexForLine, retypeAlias } from './sigilScript';
-import type { ScriptDocument, Beat, ActionBeat, SceneBlock } from './fountain';
+import type { ScriptDocument, Beat, ActionBeat, DressingBeat, SceneBlock } from './fountain';
 
 // ── Programmatic fixture builders (mirrors fountainCompiler.test.ts) ────────
 
@@ -10,6 +10,10 @@ function act(character: string, verb: ActionBeat['verb'], opts: { side?: 'left' 
 
 function say(character: string, text: string): Beat {
   return { type: 'dialogue', character, text };
+}
+
+function dress(op: DressingBeat['op'], node: string, position?: [number, number, number]): DressingBeat {
+  return { type: 'dressing', op, node, ...(position ? { position } : {}) };
 }
 
 function scene(setting: string, timeOfDay: string, interior: boolean, beats: Beat[]): SceneBlock {
@@ -368,3 +372,102 @@ describe('retypeAlias', () => {
     expect(retypeAlias(text, 'BOB', 'BOB', 'cast')).toBe(text);
   });
 });
+
+// ── Dressing lines (#10) ─────────────────────────────────────────────────────
+
+describe('tokenizeScript (dressing)', () => {
+  it('parses a hide line into a dressing beat on the current scene', () => {
+    const { doc } = tokenizeScript('#INT KITCHEN DAY\n## hide sofa');
+    expect(doc.scenes[0].beats).toEqual([{ type: 'dressing', op: 'hide', node: 'sofa' }]);
+  });
+
+  it('parses a move line into three coordinates', () => {
+    const { doc } = tokenizeScript('#INT KITCHEN DAY\n## move counter 0 0.9 -2');
+    expect(doc.scenes[0].beats).toEqual([
+      { type: 'dressing', op: 'move', node: 'counter', position: [0, 0.9, -2] },
+    ]);
+  });
+
+  it('addresses the node the way ids are minted, whatever case was typed', () => {
+    const { doc } = tokenizeScript('#INT KITCHEN DAY\n## HIDE Sofa');
+    expect(doc.scenes[0].beats).toEqual([{ type: 'dressing', op: 'hide', node: 'sofa' }]);
+  });
+
+  it('keeps each scene\'s dressing with that scene, in line order', () => {
+    const { doc } = tokenizeScript('#INT KITCHEN DAY\n## hide sofa\n## remove rug\n\n#EXT STREET NIGHT\n## show lamp');
+    const nodes = (i: number) => doc.scenes[i].beats.map((b) => (b.type === 'dressing' ? b.node : null));
+    expect(nodes(0)).toEqual(['sofa', 'rug']);
+    expect(nodes(1)).toEqual(['lamp']);
+  });
+
+  it('ends a speaker\'s dialogue rather than becoming dialogue text', () => {
+    const { doc } = tokenizeScript('#INT KITCHEN DAY\n@ALICE\nHello.\n## hide sofa');
+    expect(doc.scenes[0].beats).toEqual([
+      { type: 'dialogue', character: 'ALICE', text: 'Hello.' },
+      { type: 'dressing', op: 'hide', node: 'sofa' },
+    ]);
+  });
+
+  it('emits an error for an unknown op', () => {
+    const { doc, diagnostics } = tokenizeScript('#INT KITCHEN DAY\n## vanish sofa');
+    expect(doc.scenes[0].beats).toEqual([]);
+    expect(diagnostics[0].level).toBe('error');
+    expect(diagnostics[0].message).toContain('Unknown dressing op');
+  });
+
+  it('emits an error for a dressing line before any scene heading', () => {
+    const { diagnostics } = tokenizeScript('## hide sofa\n#INT KITCHEN DAY');
+    expect(diagnostics[0].message).toContain('before any scene heading');
+  });
+
+  it('emits an error for a move line without three coordinates', () => {
+    const { doc, diagnostics } = tokenizeScript('#INT KITCHEN DAY\n## move counter 0 2');
+    expect(doc.scenes[0].beats).toEqual([]);
+    expect(diagnostics[0].message).toContain('three numbers');
+  });
+
+  it('warns but keeps the line when an op that takes a node carries more', () => {
+    const { doc, diagnostics } = tokenizeScript('#INT KITCHEN DAY\n## hide sofa please');
+    expect(doc.scenes[0].beats).toHaveLength(1);
+    expect(diagnostics[0].level).toBe('warning');
+  });
+});
+
+describe('renderScript (dressing)', () => {
+  it('renders a run under the heading, blank-separated from prose', () => {
+    const original = doc([
+      scene('KITCHEN', 'DAY', true, [
+        dress('hide', 'sofa'),
+        dress('move', 'counter', [0, 0.9, 2]),
+        act('ALICE', 'enter', { side: 'left' }),
+      ]),
+    ], ['ALICE']);
+
+    expect(renderScript(original)).toBe(
+      '#INT KITCHEN DAY\n\n## hide sofa\n## move counter 0 0.9 2\n\n>ALICE enters left',
+    );
+  });
+
+  it('round-trips a dressed scene', () => {
+    const original = doc([
+      scene('KITCHEN', 'DAY', true, [
+        dress('hide', 'sofa'),
+        dress('remove', 'rug'),
+        act('ALICE', 'enter', { side: 'left' }),
+        say('ALICE', 'Quiet.'),
+      ]),
+    ], ['ALICE']);
+
+    const { doc: reparsed } = tokenizeScript(renderScript(original));
+    expect({ scenes: reparsed.scenes, cast: reparsed.cast }).toEqual({ scenes: original.scenes, cast: original.cast });
+  });
+
+  it('leaves a dressing line alone when a cast or setting alias is retyped', () => {
+    // The setting is deliberately named like the node the dressing addresses: the rename
+    // retypes the heading, and the dressing keeps its own words.
+    const text = '#INT SOFA DAY\n## hide sofa';
+    expect(retypeAlias(text, 'SOFA', 'BENCH', 'setting')).toBe('#INT BENCH DAY\n## hide sofa');
+    expect(retypeAlias(text, 'SOFA', 'BENCH', 'cast')).toBe(text);
+  });
+});
+
