@@ -16,11 +16,13 @@
   import type { StoredProduction, NamedScene } from '../core/storage/types.js';
   import type { ActorBlock } from '../core/domain/types.js';
   import { renderFountain, createDefaultScriptDocument } from '../core/treatment/fountain.js';
-  import type { Diagnostic, ScriptDocument } from '../core/treatment/fountain.js';
+  import type { Diagnostic, ScriptDocument, DressingBeat } from '../core/treatment/fountain.js';
   import { compileScriptDocument, resolveSetting } from '../core/treatment/fountainCompiler.js';
   import { collectNodePaths } from '../core/sketcher/documentTree.js';
-  import { tokenizeScript, renderScript, sceneIndexForLine, retypeAlias } from '../core/treatment/sigilScript.js';
+  import { tokenizeScript, renderScript, sceneIndexForLine, retypeAlias, setDressing } from '../core/treatment/sigilScript.js';
+  import type { DressingChange } from '../core/treatment/sigilScript.js';
   import SigilTextarea from '$lib/script/SigilTextarea.svelte';
+  import DressingPanel from '$lib/DressingPanel.svelte';
   import RosterPanel from '$lib/script/RosterPanel.svelte';
   import { generateAsset } from '$lib/agentClient.js';
 
@@ -57,7 +59,7 @@
   let castBindings = $state<Record<string, string>>({});
   let settingBindings = $state<Record<string, string>>({});
   let selectedCastName = $state<string | null>(null);
-  let leftTab = $state<'script' | 'catalogue' | 'roster'>('script');
+  let leftTab = $state<'script' | 'roster' | 'set' | 'catalogue'>('script');
   let fountainSource = $derived(renderFountain(scriptDoc));
   let diagnostics = $state<Diagnostic[]>([]);
   let statusMessage = $state('');
@@ -124,17 +126,53 @@
       return { id: resolved.entry.id, label: resolved.entry.label, kind: resolved.kind, sameLabel };
     })(),
   );
-  // Node paths the focused venue offers a `##` dressing line. A bundled venue carries its
-  // document inline; a user-authored one keeps it in its own OPFS file, read on demand
-  // elsewhere, so its field stays open rather than offering paths the venue may not have.
-  const dressingNodes = $derived<string[]>(
-    (() => {
-      const resolved = resolveSetting(scriptDoc.scenes[focusedSceneIndex]?.setting, userCatalogueEntries, settingBindings);
-      return resolved.kind === 'set-piece' && resolved.entry.document
-        ? collectNodePaths(resolved.entry.document)
-        : [];
-    })(),
+  // The venue the focused scene stands in: the node paths a dressing can address, read from its
+  // document. A bundled venue carries that document inline; a user-authored one keeps it in its
+  // own OPFS file and is read on demand. Until it is in hand the field stays open and the panel
+  // says why, rather than offering paths the venue may not have.
+  let focusedVenueNodes = $state<string[]>([]);
+  let focusedVenueNote = $state<string | undefined>(undefined);
+
+  $effect(() => {
+    const label = scriptDoc.scenes[focusedSceneIndex]?.setting;
+    const resolved = resolveSetting(label, userCatalogueEntries, settingBindings);
+    focusedVenueNodes = [];
+    focusedVenueNote = undefined;
+
+    if (resolved.kind !== 'set-piece') {
+      if (label) focusedVenueNote = `${label} has no set-piece document to dress.`;
+      return;
+    }
+    if (resolved.entry.document) {
+      focusedVenueNodes = collectNodePaths(resolved.entry.document);
+      return;
+    }
+    if (!resolved.entry.hasDocument) {
+      focusedVenueNote = `${resolved.entry.label} carries no document to read nodes from.`;
+      return;
+    }
+
+    let cancelled = false;
+    OPFSCatalogueStore.getDocument(resolved.entry.id).then((document) => {
+      if (cancelled) return;
+      if (document) focusedVenueNodes = collectNodePaths(document);
+      else focusedVenueNote = `${resolved.entry.label}'s document is missing.`;
+    });
+    return () => { cancelled = true; };
+  });
+
+  // What the focused scene says about its venue, in script order — the panel and the compiler
+  // read the same lines, so what the panel shows is what the set will stand in.
+  const focusedDressing = $derived<DressingBeat[]>(
+    (scriptDoc.scenes[focusedSceneIndex]?.beats ?? []).filter((b): b is DressingBeat => b.type === 'dressing'),
   );
+
+  /** A panel change becomes a `##` line in the script: the panel is another way of typing it. */
+  function applyDressing(change: DressingChange) {
+    const line = sceneStartLines[focusedSceneIndex];
+    if (!line) return;
+    handleSigilChange(setDressing(sigilText, line, change));
+  }
 
   const compiledActorBlocks = $derived<{ block: ActorBlock; index: number }[]>(
     (compiledScene?.blocks ?? [])
@@ -521,6 +559,7 @@
       <div class="script-tabs">
         <button class:active={leftTab === 'script'} onclick={() => (leftTab = 'script')}>Script</button>
         <button class:active={leftTab === 'roster'} onclick={() => (leftTab = 'roster')}>Roster</button>
+        <button class:active={leftTab === 'set'} onclick={() => (leftTab = 'set')}>Set</button>
         <button class:active={leftTab === 'catalogue'} onclick={() => (leftTab = 'catalogue')}>Catalogue</button>
       </div>
 
@@ -545,7 +584,7 @@
               value={sigilText}
               cast={scriptDoc.cast}
               settings={settingNames}
-              nodes={dressingNodes}
+              nodes={focusedVenueNodes}
               placeholder={'Type a scene using #scene, >action, @actor, ##dressing sigils…'}
               onchange={handleSigilChange}
               oncaret={handleCaretMove}
@@ -581,6 +620,14 @@
             {/each}
           </ul>
         {/if}
+      {:else if leftTab === 'set'}
+        <DressingPanel
+          setting={scriptDoc.scenes[focusedSceneIndex]?.setting}
+          nodes={focusedVenueNodes}
+          dressing={focusedDressing}
+          unavailable={focusedVenueNote}
+          onchange={applyDressing}
+        />
       {:else if leftTab === 'catalogue'}
         <div class="catalogue-wrap">
           <CataloguePanel

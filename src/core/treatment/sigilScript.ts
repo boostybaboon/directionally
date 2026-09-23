@@ -276,8 +276,73 @@ function renderDressingSigil(beat: DressingBeat): string {
   return `## ${beat.op} ${beat.node}${args}`;
 }
 
+// ── Dressing edits ──────────────────────────────────────────────────────────
+
 /**
- * Renders a `ScriptDocument` back to sigil-tokenized text. Canonical form:
+ * Which line a dressing change owns. A node is hidden or shown, gone, or placed — one slot
+ * each — so a later change replaces the line it supersedes instead of piling up beside it,
+ * while a different slot is kept: "hide it, then take it away" reads in that order.
+ */
+export type DressingSlot = 'visibility' | 'gone' | 'position';
+
+function slotOf(op: string): DressingSlot | null {
+  if (op === 'hide' || op === 'show') return 'visibility';
+  if (op === 'remove') return 'gone';
+  if (op === 'move') return 'position';
+  return null;
+}
+
+export type DressingChange =
+  | { op: DressingOp; node: string; position?: [number, number, number] }
+  | { clear: DressingSlot; node: string };
+
+/**
+ * Sets or clears what one scene says about one node, as the `##` line that carries it. This is
+ * the edit a dressing panel makes rather than mutating a compiled scene, because the script is
+ * the source of truth and a scene's overrides are derived from it — an edit that bypassed the
+ * script would be overwritten by the next compile.
+ *
+ * `sceneStartLine` is the 1-based heading line of the scene to edit (`sceneStartLines` from the
+ * tokenizer); the scene runs to the line before the next heading. Lines are inserted after the
+ * heading or after the scene's existing dressing run, whichever is later, so the canonical form
+ * is what a panel edit produces.
+ */
+export function setDressing(text: string, sceneStartLine: number, change: DressingChange): string {
+  const lines = text.split('\n');
+  const start = Math.max(0, Math.min(sceneStartLine - 1, lines.length - 1));
+
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    // A heading, not a dressing line — `##` opens with the same character.
+    const body = lines[i].trim();
+    if (body.startsWith('#') && !body.startsWith('##')) { end = i; break; }
+  }
+
+  const slot = 'clear' in change ? change.clear : slotOf(change.op);
+  const node = change.node.toLowerCase();
+
+  const kept: string[] = [];
+  for (let i = start; i < end; i++) {
+    const line = lines[i];
+    const body = line.trim();
+    if (!body.startsWith('##')) { kept.push(line); continue; }
+    const [op, lineNode] = body.slice(2).trim().split(/\s+/);
+    if (slotOf((op ?? '').toLowerCase()) === slot && lineNode?.toLowerCase() === node) continue;
+    kept.push(line);
+  }
+
+  if (!('clear' in change)) {
+    let insertAt = 1; // kept[0] is the heading, so this is "directly under it"
+    for (let i = 0; i < kept.length; i++) {
+      if (kept[i].trim().startsWith('##')) insertAt = i + 1;
+    }
+    kept.splice(insertAt, 0, renderDressingSigil({ type: 'dressing', op: change.op, node, ...(change.position ? { position: change.position } : {}) }));
+  }
+
+  return [...lines.slice(0, start), ...kept, ...lines.slice(end)].join('\n');
+}
+
+/** Renders a `ScriptDocument` back to sigil-tokenized text. Canonical form:
  * no prepositions ("from"/"to") on action args, uppercase cast/setting/time
  * tokens — the tokenizer's light synonym normalisation exists to accept
  * variation on the way in, not to require it on the way out.

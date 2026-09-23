@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tokenizeScript, renderScript, sceneIndexForLine, retypeAlias } from './sigilScript';
+import { tokenizeScript, renderScript, sceneIndexForLine, retypeAlias, setDressing } from './sigilScript';
 import type { ScriptDocument, Beat, ActionBeat, DressingBeat, SceneBlock } from './fountain';
 
 // ── Programmatic fixture builders (mirrors fountainCompiler.test.ts) ────────
@@ -471,3 +471,64 @@ describe('renderScript (dressing)', () => {
   });
 });
 
+
+
+// ── setDressing (the panel's edit) ────────────────────────────────────────────
+
+describe('setDressing', () => {
+  it('puts a line under the heading when the scene has none', () => {
+    const text = '#INT KITCHEN DAY\n\n>ALICE enters left';
+    expect(setDressing(text, 1, { op: 'hide', node: 'sofa' }))
+      .toBe('#INT KITCHEN DAY\n## hide sofa\n\n>ALICE enters left');
+  });
+
+  it('joins the scene\'s existing dressing run', () => {
+    const text = '#INT KITCHEN DAY\n## hide sofa\n\n>ALICE enters left';
+    expect(setDressing(text, 1, { op: 'remove', node: 'rug' }))
+      .toBe('#INT KITCHEN DAY\n## hide sofa\n## remove rug\n\n>ALICE enters left');
+  });
+
+  it('replaces the line it supersedes rather than piling up beside it', () => {
+    expect(setDressing('#INT KITCHEN DAY\n## hide sofa', 1, { op: 'show', node: 'sofa' }))
+      .toBe('#INT KITCHEN DAY\n## show sofa');
+  });
+
+  it('keeps a different slot for the same node', () => {
+    expect(setDressing('#INT KITCHEN DAY\n## hide sofa', 1, { op: 'remove', node: 'sofa' }))
+      .toBe('#INT KITCHEN DAY\n## hide sofa\n## remove sofa');
+  });
+
+  it('clears one slot and leaves the others', () => {
+    expect(setDressing('#INT KITCHEN DAY\n## hide sofa\n## remove sofa', 1, { clear: 'visibility', node: 'sofa' }))
+      .toBe('#INT KITCHEN DAY\n## remove sofa');
+  });
+
+  it('edits only the scene it was given', () => {
+    const text = '#INT KITCHEN DAY\n## hide sofa\n\n#EXT STREET NIGHT\n## hide sofa';
+    expect(setDressing(text, 4, { op: 'show', node: 'sofa' }))
+      .toBe('#INT KITCHEN DAY\n## hide sofa\n\n#EXT STREET NIGHT\n## show sofa');
+  });
+
+  it('echoes the coordinates it is given', () => {
+    expect(setDressing('#INT KITCHEN DAY', 1, { op: 'move', node: 'counter', position: [0, 0.9, 2] }))
+      .toBe('#INT KITCHEN DAY\n## move counter 0 0.9 2');
+  });
+
+  it('is idempotent', () => {
+    const once = setDressing('#INT KITCHEN DAY', 1, { op: 'hide', node: 'sofa' });
+    expect(setDressing(once, 1, { op: 'hide', node: 'sofa' })).toBe(once);
+  });
+
+  it('produces text the tokenizer reads back as that dressing', () => {
+    const text = setDressing(
+      setDressing('#INT KITCHEN DAY', 1, { op: 'hide', node: 'sofa' }),
+      1,
+      { op: 'move', node: 'counter', position: [0, 0.9, 2] },
+    );
+    const { doc } = tokenizeScript(text);
+    expect(doc.scenes[0].beats).toEqual([
+      { type: 'dressing', op: 'hide', node: 'sofa' },
+      { type: 'dressing', op: 'move', node: 'counter', position: [0, 0.9, 2] },
+    ]);
+  });
+});
