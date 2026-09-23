@@ -2,7 +2,7 @@
   import * as THREE from 'three';
   import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
   import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
 
   interface Props {
     gltfPath: string;
@@ -14,7 +14,8 @@
   let canvasEl: HTMLCanvasElement;
   /** Clip names discovered from the loaded GLTF — drives the button bar. */
   let loadedClipNames = $state<string[]>([]);
-  let selectedClip = $state<string | null>(animationClips[0] ?? null);
+  // The first clip is where the player starts; the effect below re-clamps when the clips change.
+  let selectedClip = $state<string | null>(untrack(() => animationClips[0] ?? null));
   let loading = $state(true);
   let loadError = $state(false);
 

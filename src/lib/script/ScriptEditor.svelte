@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { ScriptLine, DialogueLine } from './types.js';
   import { isDialogueLine, isDirectionLine } from './types.js';
 
@@ -19,10 +20,10 @@
   const castActors = $derived(actors ?? []);
 
   // Local copy for smooth in-progress editing. Synced from prop on undo/redo.
-  let localScript = $state<ScriptLine[]>([...script]);
+  let localScript = $state<ScriptLine[]>(untrack(() => [...script]));
   $effect(() => { localScript = [...script]; });
 
-  let localTransition = $state(transition ?? '');
+  let localTransition = $state(untrack(() => transition ?? ''));
   $effect(() => { localTransition = transition ?? ''; });
 
   // Index of the line currently open for editing (-1 = none).
