@@ -86,4 +86,97 @@ describe('DeepSeekProvider', () => {
     await expect(new DeepSeekProvider({ apiKey: 'sk-test', fetchFn }).generate('s', 'u', {}))
       .rejects.toThrow(/non-JSON content/);
   });
+/**
+ * Responses in order, one per call, so a retry is observable: `'network'` rejects the way a dropped
+ * connection does, and the last step repeats if more calls arrive than were scripted.
+ */
+function scriptedFetch(steps: Array<{ status: number; body?: unknown; retryAfter?: string } | 'network'>): {
+  fetch: typeof fetch;
+  count: () => number;
+} {
+  let calls = 0;
+  const fetchFn = (async () => {
+    const step = steps[Math.min(calls, steps.length - 1)];
+    calls += 1;
+    if (step === 'network') throw new TypeError('fetch failed');
+    const headers = new Map<string, string>();
+    if (step.retryAfter) headers.set('retry-after', step.retryAfter);
+    return {
+      ok: step.status >= 200 && step.status < 300,
+      status: step.status,
+      headers: { get: (name: string) => headers.get(name.toLowerCase()) ?? null },
+      json: async () => step.body ?? {},
+      text: async () => JSON.stringify(step.body ?? {}),
+    } as Response;
+  }) as typeof fetch;
+  return { fetch: fetchFn, count: () => calls };
+}
+
+function recordingSleep(): { sleepFn: (ms: number) => Promise<void>; delays: number[] } {
+  const delays: number[] = [];
+  return { sleepFn: async (ms) => { delays.push(ms); }, delays };
+}
+
+const OK_REPLY = { status: 200, body: { choices: [{ message: { content: '{"build":0.6}' } }] } };
+
+describe('DeepSeekProvider retries', () => {
+  it('retries a rate limit and returns the answer that finally arrives', async () => {
+    const { fetch: fetchFn, count } = scriptedFetch([{ status: 429, retryAfter: '1' }, OK_REPLY]);
+    const { sleepFn, delays } = recordingSleep();
+
+    await expect(new DeepSeekProvider({ apiKey: 'sk-test', fetchFn, sleepFn }).generate('s', 'u', {}))
+      .resolves.toEqual({ build: 0.6 });
+
+    expect(count()).toBe(2);
+    expect(delays).toEqual([1000]);   // the server's own Retry-After, not the backoff
+  });
+
+  it('retries a server error on a growing backoff', async () => {
+    const { fetch: fetchFn, count } = scriptedFetch([{ status: 502 }, { status: 503 }, OK_REPLY]);
+    const { sleepFn, delays } = recordingSleep();
+
+    await new DeepSeekProvider({ apiKey: 'sk-test', fetchFn, sleepFn, backoffMs: 100 }).generate('s', 'u', {});
+
+    expect(count()).toBe(3);
+    expect(delays).toEqual([100, 200]);
+  });
+
+  it('retries a dropped connection', async () => {
+    const { fetch: fetchFn, count } = scriptedFetch(['network', OK_REPLY]);
+    const { sleepFn } = recordingSleep();
+
+    await expect(new DeepSeekProvider({ apiKey: 'sk-test', fetchFn, sleepFn }).generate('s', 'u', {}))
+      .resolves.toEqual({ build: 0.6 });
+    expect(count()).toBe(2);
+  });
+
+  it('does not retry a rejected key — the same answer would cost the same money', async () => {
+    const { fetch: fetchFn, count } = scriptedFetch([{ status: 401, body: { error: 'unauthorized' } }]);
+    const { sleepFn } = recordingSleep();
+
+    await expect(new DeepSeekProvider({ apiKey: 'sk-test', fetchFn, sleepFn }).generate('s', 'u', {}))
+      .rejects.toThrow(/DeepSeek request failed \(401\)/);
+    expect(count()).toBe(1);
+  });
+
+  it('gives up after the configured attempts, reporting the last failure', async () => {
+    const { fetch: fetchFn, count } = scriptedFetch([{ status: 500 }, { status: 500 }]);
+    const { sleepFn, delays } = recordingSleep();
+
+    await expect(new DeepSeekProvider({ apiKey: 'sk-test', fetchFn, sleepFn, attempts: 2, backoffMs: 10 }).generate('s', 'u', {}))
+      .rejects.toThrow(/DeepSeek request failed \(500\)/);
+    expect(count()).toBe(2);
+    expect(delays).toEqual([10]);
+  });
+
+  it('caps an unreasonable Retry-After rather than stalling the user behind it', async () => {
+    const { fetch: fetchFn } = scriptedFetch([{ status: 429, retryAfter: '600' }, OK_REPLY]);
+    const { sleepFn, delays } = recordingSleep();
+
+    await new DeepSeekProvider({ apiKey: 'sk-test', fetchFn, sleepFn }).generate('s', 'u', {});
+
+    expect(delays).toEqual([30_000]);
+  });
+});
+
 });
