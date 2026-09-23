@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { realiseDocument } from './realise.js';
 import type { RefResolver } from './realise.js';
-import { collectPartNodes, documentFromParts, insertPart, groupNodes } from './documentTree.js';
+import { collectPartNodes, documentFromParts, insertPart, groupNodes, setPartLabel } from './documentTree.js';
 import type { NodeOverride, PartNode, PartSeed, SetDocument } from './documentTree.js';
 import type { PartDraft } from './types.js';
 import type { Transform } from './transform.js';
@@ -225,5 +225,22 @@ describe('instance overrides', () => {
     // Two instances of one Definition vary independently because the replay works on a copy.
     expect(collectPartNodes(definition)).toHaveLength(3);
     expect(definition.root).toHaveLength(2);
+  });
+
+  it("keeps an override pointing at the node it was written for when that node is relabelled", () => {
+    const definition = chair();
+    const reported: string[] = [];
+    const resolveRelabelled: RefResolver = (ref) => {
+      if (ref !== 'chair') return null;
+      // Rename a node the dressing addresses. A path is a node id, so the address does not move.
+      const leg = collectPartNodes(definition).find((node) => node.id === 'legleft')!;
+      setPartLabel(definition, leg.content.id, 'Rear Left Leg');
+      return definition;
+    };
+    const overrides: NodeOverride[] = [{ path: 'legs/legleft', op: 'remove' }];
+
+    realiseDocument(host(overrides), resolveRelabelled, (ref, orphan) => reported.push(orphan.path));
+
+    expect(reported).toEqual([]);
   });
 });

@@ -806,7 +806,20 @@ export function setPartLabel(doc: SetDocument, partId: string, label: string | u
 
 // ── Lights ───────────────────────────────────────────────────────────────────
 
-/** `wanted` if free among `nodes`, else `wanted-2`, `wanted-3`, … */
+/**
+ * `wanted` if free among `nodes`, else `wanted-2`, `wanted-3`, …
+ *
+ * A node's id is minted once, here, and never re-derived from its label afterwards: relabelling a part
+ * or renaming a group writes the label and leaves the id alone, so a path written into an override, a
+ * block target or a dressing record keeps addressing the node it was written for. That is the rule this
+ * project follows when a name changes - the label is what a person edits, the id is what everything
+ * else holds on to - and it is pinned by tests, because a future refactor that re-slugged on rename
+ * would silently orphan every path that pointed at the old name.
+ *
+ * A scene piece is the same idea one level up: its address is the catalogue entry's id, and the script's
+ * words are resolved *to* that entry by name. Changing the words in a script points at a different
+ * venue rather than renaming one, which is why a block aimed at the old venue says so out loud.
+ */
 function uniqueNodeId(wanted: string, nodes: SetNode[]): string {
   const taken = segmentsOf(nodes);
   if (!taken.has(wanted)) return wanted;
