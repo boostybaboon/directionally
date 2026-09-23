@@ -11,6 +11,7 @@ const EMPTY_DIFF: DocumentDiff = {
   add: [], remove: [], update: [], addRefs: [], removeRefs: [], moveRefs: [],
   groups: { create: [], dissolve: [], join: [], leave: [] },
   lights: { add: [], remove: [], update: [] },
+  overrideRefs: [],
   orderChanged: false,
 };
 
@@ -36,12 +37,14 @@ describe('summariseDiff', () => {
       moveRefs: [{ id: 'lamp', transform: { position: [1, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] } }],
       groups: { create: [{ name: 'row', members: ['a', 'b'] }], dissolve: [], join: [], leave: [] },
       lights: { add: [], remove: [], update: [{ type: 'point', id: 'key', color: 0, intensity: 5, position: [0, 2, 0] }] },
+      overrideRefs: [{ id: 'chair-1', overrides: [{ path: 'seat', op: 'remove' }] }],
       environment: { id: 'interior-night' },
     };
 
     expect(summariseDiff(diff)).toEqual([
       'Add Desk, Chair',
       'Move 1 instance',
+      'Change the dressing on 1 instance',
       'Group 2 nodes as "row"',
       'Change the light key',
       'Set the environment to interior-night',

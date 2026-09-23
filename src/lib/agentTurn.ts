@@ -46,6 +46,9 @@ export function summariseDiff(diff: DocumentDiff): string[] {
   if (diff.addRefs.length > 0) lines.push(`Add ${namesOf(diff.addRefs.map((r) => r.name ?? r.ref ?? 'an instance'))}`);
   if (diff.update.length > 0) lines.push(`Change ${namesOf(diff.update.map(label))}`);
   if (diff.moveRefs.length > 0) lines.push(`Move ${diff.moveRefs.length} instance${diff.moveRefs.length === 1 ? '' : 's'}`);
+  if (diff.overrideRefs.length > 0) {
+    lines.push(`Change the dressing on ${diff.overrideRefs.length} instance${diff.overrideRefs.length === 1 ? '' : 's'}`);
+  }
   const removed = diff.remove.length + diff.removeRefs.length;
   if (removed > 0) lines.push(`Remove ${removed} node${removed === 1 ? '' : 's'}`);
   for (const group of diff.groups.create) {
@@ -80,6 +83,7 @@ export function isEmptyDiff(diff: DocumentDiff): boolean {
     && diff.groups.dissolve.length === 0
     && diff.groups.join.length === 0
     && diff.groups.leave.length === 0
+    && diff.overrideRefs.length === 0
     && diff.lights.add.length === 0
     && diff.lights.remove.length === 0
     && diff.lights.update.length === 0

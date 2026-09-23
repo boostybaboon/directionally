@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { CartoonSketcher } from './CartoonSketcher.js';
 import { SketcherDocument } from './SketcherDocument.js';
 import { diffDocument, applyDocumentCommand, applyDraftCommand } from './applyDraft.js';
-import { documentFromParts, emptyDocument, insertRef } from './documentTree.js';
+import { documentFromParts, emptyDocument, insertRef, nodeAt, setNodeOverrides } from './documentTree.js';
+import type { NodeOverride } from './documentTree.js';
 import { AI_CONVENTION, fromAIDraft, toAIDraft } from './aiDraft.js';
 import type { AIDraft } from './aiDraft.js';
 import type { PartSeed, SetDocument } from './documentTree.js';
@@ -322,6 +323,55 @@ describe('applyDocumentCommand', () => {
     // The instance is gone; the group it sat in is the AI's business, not the instance's.
     expect(sketcher.nodeObject('chair-1')).toBeNull();
     expect(sketcher.toDocument().root.map((node) => node.id)).toEqual(['row']);
+  });
+});
+
+describe('dressing through an edit', () => {
+  const dressed = (overrides: NodeOverride[] | undefined): SetDocument => {
+    const doc: SetDocument = { root: [], joints: [] };
+    insertRef(doc, { id: 'chair-1', ref: 'chair', name: 'Chair' });
+    if (overrides) setNodeOverrides(doc, 'chair-1', overrides);
+    return doc;
+  };
+
+  it('reports a changed dressing instead of dropping it', () => {
+    const current = dressed([{ path: 'seat', op: 'remove' }]);
+    const target = dressed([{ path: 'seat', op: 'set', value: { hidden: true } }]);
+
+    const diff = diffDocument(current, target);
+
+    // The whole point: nothing else about the instance changed, so this used to be an empty diff.
+    expect(diff.overrideRefs.map((r) => r.id)).toEqual(['chair-1']);
+    expect(diff.addRefs).toHaveLength(0);
+    expect(diff.moveRefs).toHaveLength(0);
+  });
+
+  it('applies the dressing, and clears it when the edit says nothing is varied', () => {
+    const sketcher = new CartoonSketcher(new THREE.Scene(), new THREE.PerspectiveCamera());
+    const doc = new SketcherDocument(sketcher);
+    sketcher.setRefResolver((ref) => (ref === 'chair' ? CHAIR : null));
+    sketcher.loadDocument(dressed([{ path: 'seat', op: 'remove' }]));
+
+    doc.execute(applyDocumentCommand(sketcher, dressed([{ path: 'seat', op: 'set', value: { hidden: true } }])));
+    expect(nodeAt(sketcher.toDocument(), 'chair-1')?.overrides).toEqual([{ path: 'seat', op: 'set', value: { hidden: true } }]);
+
+    doc.execute(applyDocumentCommand(sketcher, dressed([])));
+    expect(nodeAt(sketcher.toDocument(), 'chair-1')?.overrides).toBeUndefined();
+
+    doc.undo();
+    expect(nodeAt(sketcher.toDocument(), 'chair-1')?.overrides).toEqual([{ path: 'seat', op: 'set', value: { hidden: true } }]);
+  });
+
+  it('keeps the dressing on an instance the edit adds, so an AI-placed instance arrives dressed', () => {
+    const draft = {
+      convention: AI_CONVENTION,
+      parts: [{ id: 'chair-1', name: 'Chair', ref: 'chair', position: [0, 0, 0], rotation: [0, 0, 0], overrides: [{ path: 'seat', op: 'remove' }] }],
+      groups: [],
+    } as unknown as AIDraft;
+
+    const doc = fromAIDraft(draft);
+
+    expect(doc.root[0].overrides).toEqual([{ path: 'seat', op: 'remove' }]);
   });
 });
 

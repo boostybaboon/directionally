@@ -395,6 +395,18 @@ export function upsertOverride(node: SetNode, override: NodeOverride): void {
   node.overrides = list;
 }
 
+/**
+ * Replace everything an instance says about its Definition. An edit arrives with the dressing it wants
+ * rather than a sequence of per-path changes, so this is what the diff and the executor speak.
+ */
+export function setNodeOverrides(doc: SetDocument, ref: NodeRef, overrides: NodeOverride[]): boolean {
+  const node = nodeFor(doc, ref);
+  if (!node || !isRefNode(node)) return false;
+  if (overrides.length > 0) node.overrides = overrides;
+  else delete node.overrides;
+  return true;
+}
+
 /** Drop what an instance says about one path — Revert, back to the Definition's own state. */
 export function dropOverride(node: SetNode, path: string): void {
   if (!node.overrides) return;
