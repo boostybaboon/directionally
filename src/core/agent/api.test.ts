@@ -126,6 +126,36 @@ describe('describeSession', () => {
 });
 
 describe('editToDocument', () => {
+  const part = (id: string, position: [number, number, number] = [0, 0.5, 0]) => ({
+    id,
+    name: 'Box',
+    kind: 'primitive' as const,
+    shape: 'box',
+    size: [1, 1, 1] as [number, number, number],
+    position,
+    rotation: [0, 0, 0] as [number, number, number],
+    color: 0xffffff,
+  });
+  const draftWith = (parts: ReturnType<typeof part>[]) => ({ convention: AI_CONVENTION, parts, groups: [] });
+
+  /** Answers with the given replies in order — an `Error` is thrown — and records the prompts it was sent. */
+  function answering(...replies: unknown[]): { provider: AIProvider; prompts: string[] } {
+    const prompts: string[] = [];
+    let call = 0;
+    return {
+      prompts,
+      provider: {
+        generate: async (_systemPrompt, userPrompt) => {
+          prompts.push(userPrompt);
+          const reply = replies[Math.min(call, replies.length - 1)];
+          call += 1;
+          if (reply instanceof Error) throw reply;
+          return reply;
+        },
+      },
+    };
+  }
+
   it('sends the whole draft and the instruction, and asks for the draft grammar back', async () => {
     let system = '';
     let user = '';
@@ -135,23 +165,61 @@ describe('editToDocument', () => {
         system = systemPrompt;
         user = userPrompt;
         schema = jsonSchema;
-        return { convention: AI_CONVENTION, parts: [], groups: [] };
+        return { convention: AI_CONVENTION, parts: [part('box')], groups: [] };
       },
     };
-    const draft = {
-      convention: AI_CONVENTION,
-      parts: [{ id: 'box', name: 'Box', kind: 'primitive' as const, shape: 'box', size: [1, 1, 1], position: [0, 0.5, 0] as [number, number, number], rotation: [0, 0, 0] as [number, number, number], color: 0xffffff }],
-      groups: [],
-    };
+    const draft = draftWith([part('box')]);
 
     const answer = await editToDocument(provider, draft, 'raise the box', ['make it wider']);
 
-    expect(answer).toEqual({ convention: AI_CONVENTION, parts: [], groups: [] });
+    expect(answer.parts.map((p) => p.id)).toEqual(['box']);
+    expect(answer.convention).toBe(AI_CONVENTION);
     expect(user).toContain('raise the box');
     expect(user).toContain('make it wider');
     expect(user).toContain('"shape":"box"');
     expect(system).toContain('whole draft');
     expect(schema).toBe(AI_DRAFT_JSON_SCHEMA);
+  });
+
+  it('asks once when the first reply is a draft', async () => {
+    const { provider, prompts } = answering(draftWith([part('box')]));
+
+    const answer = await editToDocument(provider, draftWith([part('box')]), 'raise the box');
+
+    expect(answer.parts.map((p) => p.id)).toEqual(['box']);
+    expect(prompts).toHaveLength(1);
+  });
+
+  it('retries once, telling the model what was wrong with the first reply', async () => {
+    const { provider, prompts } = answering(
+      { convention: AI_CONVENTION, parts: [], groups: [] },   // a draft with nothing to apply
+      draftWith([part('box', [0, 2, 0])]),
+    );
+
+    const answer = await editToDocument(provider, draftWith([part('box')]), 'raise the box');
+
+    expect(answer.parts[0].position).toEqual([0, 2, 0]);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toContain('previousReplyRejected');
+    expect(prompts[1]).toContain('parts must be a non-empty array');
+  });
+
+  it('retries a provider that failed outright, and returns the draft when it recovers', async () => {
+    const { provider, prompts } = answering(new Error('DeepSeek returned non-JSON content (12 chars): hello'), draftWith([part('box')]));
+
+    const answer = await editToDocument(provider, draftWith([part('box')]), 'raise the box');
+
+    expect(answer.parts.map((p) => p.id)).toEqual(['box']);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain('non-JSON content');
+  });
+
+  it('gives up after two attempts, reporting the last failure', async () => {
+    const { provider, prompts } = answering({ parts: [] }, { parts: [] });
+
+    await expect(editToDocument(provider, draftWith([part('box')]), 'raise the box'))
+      .rejects.toThrow(/parts must be a non-empty array/);
+    expect(prompts).toHaveLength(2);
   });
 });
 

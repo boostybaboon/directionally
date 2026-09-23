@@ -32,8 +32,14 @@ import type { ResolveBindings } from '../treatment/fountainCompiler.js';
 import type { ScriptDocument } from '../treatment/fountain.js';
 import { createSetPiece as createSetting } from '../setting/authoringApi.js';
 import { createCharacter, CHARACTER_JSON_SCHEMA } from '../character/authoringApi.js';
-import { AI_DRAFT_JSON_SCHEMA } from '../sketcher/aiDraftSchema.js';
+import { AI_DRAFT_JSON_SCHEMA, normalizeAIDraft } from '../sketcher/aiDraftSchema.js';
 import type { AIProvider } from './provider.js';
+
+/**
+ * How many times one AI step may ask. Two: a rejected reply is worth one more attempt, and the
+ * second is told what was wrong, so a third would pay again for the same mistake.
+ */
+export const AI_ATTEMPTS = 2;
 
 export type CatalogueSummary = {
   id: string;
@@ -171,15 +177,18 @@ export function describeSession(document: SetDocument): AIDraftProjection {
  * reliably than it invents diffs, and the app-side id-diff is what turns the difference into edits —
  * which is the property that keeps an AI turn one undoable step.
  *
- * Not validated here, deliberately: an untrusted draft is clamped where it is applied, the same shape
- * describeToDocument has.
+ * The answer is checked against the draft grammar before it leaves this layer, and a reply that is not a
+ * draft gets exactly one more attempt carrying the reason the first was rejected: a model that emitted
+ * a stray field usually fixes it when told, and a third attempt would pay again for the same failure.
+ * `normalizeAIDraft` is the contract the renderer and the create verb both rely on, so a draft that
+ * fails it is not worth applying.
  */
 export async function editToDocument(
   provider: AIProvider,
   draft: AIDraft,
   instruction: string,
   history: string[] = [],
-): Promise<unknown> {
+): Promise<AIDraft> {
   const systemPrompt = 'You edit one JSON scene draft for a 3D animation app. '
     + 'Return the whole draft, changed only where the instruction asks: keep every id, name, group '
     + 'and placement you are not asked to change, and keep every part you do not need to touch. '
@@ -188,8 +197,22 @@ export async function editToDocument(
     + 'and optional lights and environment. A part with a ref places a catalogue item instead of '
     + 'describing a body. Coordinate convention: units are metres; up is +Y with the ground at '
     + 'Y=0; forward is -Z. Respond with JSON only.';
-  const userPrompt = JSON.stringify({ instruction, draft, history });
-  return provider.generate(systemPrompt, userPrompt, AI_DRAFT_JSON_SCHEMA);
+
+  let rejection: string | undefined;
+  for (let attempt = 1; ; attempt++) {
+    const userPrompt = JSON.stringify({
+      instruction,
+      draft,
+      history,
+      ...(rejection ? { previousReplyRejected: rejection } : {}),
+    });
+    try {
+      return normalizeAIDraft(await provider.generate(systemPrompt, userPrompt, AI_DRAFT_JSON_SCHEMA));
+    } catch (error) {
+      if (attempt >= AI_ATTEMPTS) throw error;
+      rejection = error instanceof Error ? error.message : String(error);
+    }
+  }
 }
 
 function merged(userEntries: CatalogueEntry[]): CatalogueEntry[] {
