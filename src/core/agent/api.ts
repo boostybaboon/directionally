@@ -5,9 +5,9 @@
  *
  * This is the **client-side core**. The state these verbs read/write — the user
  * catalogue (OPFS), productions (IndexedDB), and cast/setting bindings — lives
- * in the browser, so the stateful verbs are functions, not HTTP routes. The
- * stateless *preview* verbs already exist as server routes (`/agent/character`,
- * `/agent/setting`).
+ * in the browser, so the stateful verbs are functions, not HTTP routes. The only
+ * server routes are the ones that must hold the provider key: `/agent/make` for
+ * generation and `/agent/edit` for a draft edit.
  *
  * Implemented: describe_catalogue, describe_script, bind, create_setting,
  * create_character (with spec-backed render via storedSceneToModelAsync), make
