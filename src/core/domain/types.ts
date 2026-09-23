@@ -223,22 +223,6 @@ export type SpeakAction = {
   voice?: ActorVoice;
 };
 
-// Bring an offstage actor into the scene at a position
-export type EnterAction = {
-  type: 'enter';
-  actorId: string;
-  startTime: number;
-  position: Vec3;
-  rotation?: Vec3;
-};
-
-// Remove an actor from the visible scene
-export type ExitAction = {
-  type: 'exit';
-  actorId: string;
-  startTime: number;
-};
-
 // Keyframe a light property over time
 export type LightingTrack = {
   type: 'lighting';
@@ -275,8 +259,6 @@ export type SceneAction =
   | TransformTrack
   | ClipTrack
   | SpeakAction
-  | EnterAction
-  | ExitAction
   | LightingTrack
   | CameraAction
   | CameraTrackAction;

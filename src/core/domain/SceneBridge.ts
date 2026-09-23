@@ -124,8 +124,8 @@ function trackTypeToDomain(trackType: TrackType): KeyframeTrackType {
  * (ROADMAP_CATALOGUE step 5), keyed by piece name; pieces without an entry there
  * fall back to their `gltfPath`/procedural geometry.
  *
- * Not all SceneAction types have renderer support yet:
- *   - SpeakAction, EnterAction, ExitAction are logged and skipped.
+ * Every SceneAction type has renderer support: an entrance or an exit is expressed by the compiler as
+ * an actor block walking in from or out to offstage, so it arrives here as movement like any other.
  */
 export function sceneToModel(
   scene: Scene,
@@ -288,10 +288,6 @@ export function sceneToModel(
           // Per-line voice overrides the actor's default voice.
           voice: action.voice ?? actorMap.get(action.actorId)?.voice,
         });
-        break;
-      case 'enter':
-      case 'exit':
-        console.warn(`SceneBridge: action type "${action.type}" has no renderer support yet — skipped`);
         break;
     }
   }
