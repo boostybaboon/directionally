@@ -1,17 +1,49 @@
 # Directionally — Workflows
 
-Standard authoring workflows for manual testing and onboarding.
-Each workflow is written as a step-by-step sequence that can be followed top-to-bottom to verify the feature works end-to-end.
+Step-by-step walks through the app, each following the path a person would actually take, so a
+feature can be verified end to end and the gaps it leaves can be named. Two families so far: the
+script-era walks (W1, W2) and the sketcher’s (S1–S4).
+
+Read **Recording a walkthrough** first: it fixes the status key, where the notes go, and what a
+finished walkthrough closes with.
 
 ---
 
-## Workflow 1 — Happy Path: Full Multi-Scene Production
+## Recording a walkthrough
 
-**Goal:** Create a production with 2+ acts, 2+ scenes per act, and 2+ characters; author dialogue and basic staging for every scene; play back the whole production in presentation mode.
+A walkthrough is walked once as a person would walk it, and what comes back is the table filled in, not
+a prose report. Workflow 1 is a filled example; S1 is the shape a fresh one starts in.
 
-**Preconditions:** App running (`yarn dev --open`). No existing productions required — start from scratch.
+**Where the notes go:** a comment on the walkthrough's issue, one comment per run. The issue's own
+close criterion is the document, so the comment is the raw record and the table above is where it ends
+up once the walkthrough settles — which is what makes it re-runnable later.
 
-**Status key:** `—` not yet tested · `OK` works as described · `Partial` works with workaround (see Issues) · `Fail` step not achievable as written
+```
+Walkthrough: W1 — script to a watched scene
+Run: 2026-09-24, preview <url> | local yarn dev, commit <sha>
+Verdict: one sentence — is the thing this workflow is for actually possible?
+
+| Step | Status | Note | Snag |
+|:----:|:------:|------|------|
+| 4 | OK | | |
+| 5 | Partial | had to resize the window before the popup was visible | #72 |
+| 7 | Fail | nothing appeared after the click | #73 |
+| ✓ | OK | humanoids stand in the setting; proportions are wrong | #74 |
+
+Friction that did not fail a step:
+- ...
+
+Snags filed: #72 #73 #74
+Not walked: Part D — needs #27
+```
+
+**Two conventions the columns assume.**
+
+- **One snag, one issue.** File it as it happens, quote the step number, and link the walkthrough in it.
+  The Issues cell then carries the number, and the table becomes the index of what this workflow owes.
+- **Friction is a finding even when the step passes.** A step that works awkwardly is `OK` in the Status
+  column and still goes in the list underneath: the Status key has no value for "works, but I would not
+  want to do that again", and that is exactly what the walkthroughs are being run to find.
 
 ---
 
@@ -134,20 +166,158 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 Tracked in the [issue tracker](https://github.com/boostybaboon/directionally/issues?q=is%3Aissue+is%3Aopen)
 — this table used to cite phases from a plan that no longer exists, which was worse than having no
-table. The relevant ones for this workflow: editing a placed set piece is the dressing surface (#10),
-and scene-piece transforms are part of the same missing editor.
+table. The dressing surface it named as missing (#10) has since landed, syntax and panel both; a re-run
+of this workflow is what would say whether anything else now stands in its way.
 
 ---
 
-## Future workflows (stubs)
+## Workflow W1 — Script to a Watched Scene
 
-> Each stub is tracked as an issue, so writing one is a task rather than a note:
+**Goal:** Write a scene in sigils — a venue and two characters — settle whatever the Roster calls unresolved, and watch it play: both actors enter the setting, speak their lines and move in it.
 
-- **Workflow 2 — Set Dressing** → [#35](https://github.com/boostybaboon/directionally/issues/35)
-- **Workflow 3 — Character Animation** → [#36](https://github.com/boostybaboon/directionally/issues/36)
-- **Workflow 4 — Camera Work** → [#37](https://github.com/boostybaboon/directionally/issues/37)
-- **Workflow 5 — Lighting** → [#38](https://github.com/boostybaboon/directionally/issues/38)
-- **Workflow 6 — Print Script** → [#39](https://github.com/boostybaboon/directionally/issues/39)
+**Preconditions:** App running (`yarn dev --open`, or a preview URL from a pull request). No existing production needed.
+
+**Status key:** `—` not yet tested · `OK` works as described · `Partial` works with workaround (see Issues) · `Fail` step not achievable as written
+
+---
+
+### Part A — A production to write in
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 1 | Open the app. The topbar shows `☰`, a name field and the `Character` / `Set` links; the left panel's tabs read Script / Roster / Set / Catalogue, and it is on **Script** | — | |
+| 2 | Click `☰`; the picker lists the existing productions, with `+ New production` and `Example scene` | — | |
+| 3 | Click **+ New production**; the picker closes and the name field reads "Untitled Production" | — | |
+| ✓ | A production exists with an empty script | — | |
+
+---
+
+### Part B — Write the scene
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 4 | Type `#INT KITCHEN DAY` as the first line; a scene appears in the minimap on the left, numbered 1 and reading `KITCHEN` | — | |
+| 5 | On the next line, type `>ALICE enters left` | — | |
+| 6 | Type `@ALICE`, then a line of dialogue such as `Where is everybody?` | — | |
+| 7 | Type `>BOB enters right`, then `@BOB` and a line of his own | — | |
+| ✓ | One scene, two characters, four sigil lines, a line of dialogue each | — | |
+
+---
+
+### Part C — Settle the Roster
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 8 | Click **Roster**. **Cast** lists `ALICE` and `BOB`; with no catalogue entry carrying those names, each row reads `unmatched` | — | |
+| 9 | Choose **Robot** in ALICE's row; the row's status becomes `→ Robot` | — | |
+| 10 | Do the same for BOB | — | |
+| 11 | In **Scenery**, `KITCHEN` is listed with the same chooser. Pick **Studio (neutral)** — an environment resolves a setting too, and no venue is bundled (see Known gaps) | — | |
+| 12 | Back on **Script**, the warnings under the editor are gone, and the `Set → …` line above the diagnostics names what the setting resolved to | — | |
+| ✓ | Every name the script uses resolves, and the Roster says so | — | |
+
+---
+
+### Part D — Watch it
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 13 | The viewport shows the focused scene: the environment, with ALICE and BOB standing on the ground | — | |
+| 14 | Press **▶** in the transport bar (it stays disabled until the audio backend reports ready) | — | |
+| 15 | Both actors walk in from their sides, then speak, each line in turn | — | |
+| 16 | Playback reaches the end of the scene and stops | — | |
+| ✓ | A written scene is watchable: humanoids in a setting, saying the lines the script gave them | — | |
+
+---
+
+### Part E — It survived
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 17 | Reload the page (`Cmd/Ctrl+R`); the production is still listed, with the same script and the same bindings | — | |
+| ✓ | The production persists across a reload | — | |
+
+---
+
+### Known gaps
+
+Not yet walked, so nothing here is known from experience. One thing is known from the code: **no venue is
+bundled**. `bundledSets.ts` ships props — Chair, Desk, Bench, Whiteboard, Blackboard, Window, Door,
+Bookshelf, Cabin Seat — and none is marked scenery, so a setting resolves to an environment, or to a
+venue authored in the Set editor. Bundled starter archetypes are
+[#26](https://github.com/boostybaboon/directionally/issues/26).
+
+---
+
+## Workflow W2 — Dressing a Scene
+
+**Goal:** Vary a venue for one scene without editing the venue itself — hide a piece, place it, take it out — and have the variation live in the script, visible to that scene alone.
+
+**Preconditions:** A production whose focused scene has a setting resolving to a set-piece with a document. W1 leaves you next to this, minus the venue: author one in the Set editor (`/sketch`, save as item, marked scenery), or walk this against a venue you already have.
+
+**Status key:** `—` not yet tested · `OK` works as described · `Partial` works with workaround (see Issues) · `Fail` step not achievable as written
+
+---
+
+### Part A — See what the venue is made of
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 1 | Click **Set**; the panel names the focused scene's setting and lists its node paths, children indented under their parent | — | |
+| 2 | The header shows no line count: this scene says nothing yet | — | |
+| ✓ | The venue's nodes are listed | — | |
+
+---
+
+### Part B — Hide one, and see the script change
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 3 | Press **hide** beside a node; the row gains a `hidden` flag | — | |
+| 4 | Click **Script**; `## hide <node>` sits under that scene's heading | — | |
+| 5 | The viewport shows the piece gone from the scene | — | |
+| 6 | Back on **Set**, press ✕ on the row; the line goes and the piece returns | — | |
+| ✓ | Hiding is legible in both the script and the scene | — | |
+
+---
+
+### Part C — Place one
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 7 | Click the node's name; a detail strip opens with `At` and three number fields | — | |
+| 8 | Enter x/y/z and press **place**; `## move <node> x y z` is written under the heading and the piece moves | — | |
+| 9 | The piece keeps its own rotation and size, having only moved | — | |
+| 10 | Press ✕ beside the strip; the placement is cleared and the piece returns to where the venue puts it | — | |
+
+---
+
+### Part D — Take one out
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 11 | Press **remove** on another node; `## remove <node>` is written and the piece is gone | — | |
+| 12 | Click the scene in the minimap, then back; the dressing is unchanged | — | |
+| ✓ | A venue can be varied without editing the venue | — | |
+
+---
+
+### Part E — Only this scene
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 13 | Add `#EXT STREET NIGHT` at the end of the script and give it the same setting | — | |
+| 14 | Put the caret in the new scene: the **Set** tab shows no lines, and every node is present | — | |
+| 15 | Type `##` on a line of the new scene; the completion offers hide / show / remove / move, then the venue's node paths once an op is chosen | — | |
+| 16 | Type `## hide <node>` by hand and click away: the panel shows it, so text and panel agree | — | |
+| ✓ | One scene varies its venue, the other does not, and the variation is legible in the script | — | |
+
+---
+
+### Known gaps
+
+Not yet walked. Known from the code: the panel writes `##` lines into the script rather than into the
+compiled scene, so the script is the record and undo travels with it; and the node field completes from
+the venue's document, which a bundled venue carries inline and a user-authored one is read on demand.
 
 ---
 
@@ -464,3 +634,30 @@ and scene-piece transforms are part of the same missing editor.
 | 37 | Click **Attach…** → **Detach** then re-attach at the same face pair to re-solve the joint with the new size | — | |
 | 38 | Click **⬇ Floor** to settle the re-attached assembly back onto the ground plane | — | |
 | ✓ | Assembly size updated and re-snapped to floor | — | |
+
+## Future workflows (stubs)
+
+> Each stub is tracked as an issue, so writing one is a task rather than a note. W1 and W2 are written
+> above, and stay open until they have been walked.
+
+- **Workflow 3 — Character Animation** → [#36](https://github.com/boostybaboon/directionally/issues/36)
+- **Workflow 4 — Camera Work** → [#37](https://github.com/boostybaboon/directionally/issues/37)
+- **Workflow 5 — Lighting** → [#38](https://github.com/boostybaboon/directionally/issues/38)
+- **Workflow 6 — Print Script** → [#39](https://github.com/boostybaboon/directionally/issues/39)
+
+---
+
+## Legacy — Workflow 1: Happy Path (the pre-script UI)
+
+> Superseded by Workflow W1. This walk was written for the UI before the script became the source
+> of truth — a productions tree with a Cast section and a scene list — and its labels no longer
+> match an app that is script-first and tabbed Script / Roster / Set / Catalogue. Kept as the record
+> of what was walked in that era.
+
+**Goal:** Create a production with 2+ acts, 2+ scenes per act, and 2+ characters; author dialogue and basic staging for every scene; play back the whole production in presentation mode.
+
+**Preconditions:** App running (`yarn dev --open`). No existing productions required — start from scratch.
+
+**Status key:** `—` not yet tested · `OK` works as described · `Partial` works with workaround (see Issues) · `Fail` step not achievable as written
+
+---
