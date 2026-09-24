@@ -383,7 +383,140 @@ Read from the code before the walk, which is why Parts A and B should pass and P
 - **Filed as [#73](https://github.com/boostybaboon/directionally/issues/73)** — the inert controls above, and the reason Parts C and D are expected to Fail.
 - **Blocks come from the script's verbs.** `enter` / `exit` / `move` compile to a walk-clip block each; the walk clip itself is the character's own (`walkAnimation`, `Walking` for the Robot), which is why step 11's chooser has nothing behind it either.
 
+## Workflow W4 — Camera Work
+
+**Goal:** Cut between angles: the scene opens on one view, and at a point in the scene it moves to another.
+
+**Preconditions:** A production with a scene that plays — W1 leaves you there.
+
+**Status key:** `—` not yet tested · `OK` works as described · `Partial` works with workaround (see Issues) · `Fail` step not achievable as written
+
+---
+
+### Part A — What the camera does today
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 1 | Play a scene and note the view it opens on: the compiled scene carries a camera, and that is what the viewport shows | — | |
+| 2 | Look down the timeline for a camera track, beside the actors' | — | |
+| 3 | Press the ⊕ beside it — "Set scene opening camera view" | — | |
+| 4 | Drag across the camera track to place an angle change at a point in the scene | — | |
+| 5 | Play from the start: the view holds the opening angle, then cuts or moves at the block's time | — | |
+| ✓ | A scene can be shot from more than one angle, decided in the app | — | |
+
+---
+
+### Known gaps
+
+Read from the code before the walk, and it is a short walk: **no camera block ever reaches the
+timeline.** `CameraBlock` exists in the model and `TimelinePanel` renders a camera row with a ⊕ for the
+opening view, but the page passes the panel `actorBlocks` only, alongside the duration, the playhead and
+the discovered clips. So step 2 has no row to find, and steps 3 to 5 have nothing behind them — the same
+unwired-panel gap as [#73](https://github.com/boostybaboon/directionally/issues/73), except that actor
+blocks at least have the script's verbs as a way in and camera blocks have no authoring surface at all.
+
+Step 1 should pass, and is worth confirming: it is the one part of this workflow the app can do.
+
+---
+
+## Workflow W5 — Lighting
+
+**Goal:** Light a scene with intent: a lamp that is off at the top of the scene comes up, holds, and goes down again — and its colour and brightness can be set before anything moves.
+
+**Preconditions:** A production with a scene that plays — W1 leaves you there.
+
+**Status key:** `—` not yet tested · `OK` works as described · `Partial` works with workaround (see Issues) · `Fail` step not achievable as written
+
+---
+
+### Part A — What lights the scene today
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 1 | Play a scene: it is lit by what the venue’s own document carries, plus the starter rig a scene begins with | — | |
+| 2 | Look down the timeline for a row per light | — | |
+| 3 | Press the ⊕ beside a light — "Edit *light* initial properties" — and set its colour or intensity before the scene starts | — | |
+| 4 | Drag across a light’s track to draw a block: off at 0s, up to full by 2s | — | |
+| 5 | Play from the start and watch the light come up at that point, not before | — | |
+| ✓ | A light can be set before a scene and changed during it | — | |
+
+---
+
+### Part B — The one place lighting is authorable
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 6 | Open the Set editor (`/sketch`) on the venue this scene uses | — | |
+| 7 | Add a light node, position it, set its colour and intensity, save the venue | — | |
+| 8 | Back in the production, the scene is lit by it — and so is **every** scene set in that venue, since this is the venue’s own document | — | |
+| ✓ | A light added to a venue lights every scene set in it | — | |
+
+---
+
+### Known gaps
+
+Read from the code before the walk. **Initial lighting lives in the venue’s document** — the Set editor’s
+light nodes, which is Part B and should pass — and **timed lighting has no surface**: `LightBlock` exists
+in the model, `TimelinePanel` would draw a row per light with an ⊕ for its initial properties, and the
+page passes it neither lights nor blocks. Part A therefore fails from step 2, the same unwired panel as
+[#73](https://github.com/boostybaboon/directionally/issues/73) — with the same consequence, that lighting
+a *moment* is not currently something the app can be asked to do.
+
+Part B is worth walking anyway: it is the honest answer to "how do I light this scene today", and it is
+where the difference between a venue’s light and a scene’s light becomes visible.
+
+---
+
+## Workflow W6 — Print Script
+
+**Goal:** Read the whole production as a screenplay and get it onto paper: clean prose, no sigils, no app around it.
+
+**Preconditions:** A production with a scene or more — W1 leaves you there. Depends on [#27](https://github.com/boostybaboon/directionally/issues/27) (SCR-5) for the clean view.
+
+**Status key:** `—` not yet tested · `OK` works as described · `Partial` works with workaround (see Issues) · `Fail` step not achievable as written
+
+---
+
+### Part A — Read it
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 1 | On the Script tab, open the **Fountain render** details under the editor | — | |
+| 2 | The whole production is there as screenplay prose: scene headings, action lines, and characters above their dialogue | — | |
+| 3 | Add a line of dialogue and watch the render follow it | — | |
+| ✓ | The screenplay of the whole production can be read in the app | — | |
+
+---
+
+### Part B — Print it
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 4 | With the render open, use the browser’s print (Cmd/Ctrl+P) | — | |
+| 5 | The printed page is the screenplay: no editor, no timeline, no topbar | — | |
+| 6 | Hide the sigil syntax in the editor and read the script as prose (SCR-5) | — | |
+| 7 | Send someone the script as a file they can open | — | |
+| ✓ | A script prints as a script | — | |
+
+---
+
+### Known gaps
+
+Read from the code before the walk. Part A should pass: `renderFountain` runs over the parsed document,
+and the render is a `<details>` of that text. Part B should fail from step 5 — the app *has* print
+stylesheets, and they are in `ProductionScriptView.svelte` and `ScriptEditor.svelte`, neither of which
+anything imports ([#75](https://github.com/boostybaboon/directionally/issues/75)) — so printing today
+carries the topbar, the panels and the timeline along with the script. Step 6 is
+[#27](https://github.com/boostybaboon/directionally/issues/27) (SCR-5): the sigil visibility toggle and
+the clean export view, which is what this walkthrough has been waiting on.
+
+---
+
 ## Workflow S1 — Sketcher: Precise Positioning, Sizing, and All-Axis Scaling
+
+
+
+
 
 **Goal:** Create a part, then use the numeric transform inspector to place it at an exact world position, set a precise rotation, and apply non-uniform scale — then re-lock to uniform scale.
 
@@ -697,14 +830,14 @@ Read from the code before the walk, which is why Parts A and B should pass and P
 | 38 | Click **⬇ Floor** to settle the re-attached assembly back onto the ground plane | — | |
 | ✓ | Assembly size updated and re-snapped to floor | — | |
 
-## Future workflows (stubs)
+## Walkthroughs still to walk
 
-> Each stub is tracked as an issue, so writing one is a task rather than a note. W1-W3 are written
-> above, and stay open until they have been walked.
+All six walks are written above: W1 to W6, covering the script through to the printed page. Each stays
+open until it has been walked — the issue behind it carries the notes, and the table in its section is
+where they settle.
 
-- **Workflow 4 — Camera Work** → [#37](https://github.com/boostybaboon/directionally/issues/37)
-- **Workflow 5 — Lighting** → [#38](https://github.com/boostybaboon/directionally/issues/38)
-- **Workflow 6 — Print Script** → [#39](https://github.com/boostybaboon/directionally/issues/39)
+Nothing is queued here now. The next walkthrough, if there is one, will be chosen by what these six
+find rather than guessed at in advance.
 
 ---
 
