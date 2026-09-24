@@ -1,17 +1,11 @@
 # Directionally — Workflows
 
-Standard authoring workflows for manual testing and onboarding.
-Each workflow is written as a step-by-step sequence that can be followed top-to-bottom to verify the feature works end-to-end.
+Step-by-step walks through the app, each following the path a person would actually take, so a
+feature can be verified end to end and the gaps it leaves can be named. Two families so far: the
+script-era walks (W1, W2) and the sketcher’s (S1–S4).
 
----
-
-## Workflow 1 — Happy Path: Full Multi-Scene Production
-
-**Goal:** Create a production with 2+ acts, 2+ scenes per act, and 2+ characters; author dialogue and basic staging for every scene; play back the whole production in presentation mode.
-
-**Preconditions:** App running (`yarn dev --open`). No existing productions required — start from scratch.
-
-**Status key:** `—` not yet tested · `OK` works as described · `Partial` works with workaround (see Issues) · `Fail` step not achievable as written
+Read **Recording a walkthrough** first: it fixes the status key, where the notes go, and what a
+finished walkthrough closes with.
 
 ---
 
@@ -324,18 +318,6 @@ venue authored in the Set editor. Bundled starter archetypes are
 Not yet walked. Known from the code: the panel writes `##` lines into the script rather than into the
 compiled scene, so the script is the record and undo travels with it; and the node field completes from
 the venue's document, which a bundled venue carries inline and a user-authored one is read on demand.
-
----
-
-## Future workflows (stubs)
-
-> Each stub is tracked as an issue, so writing one is a task rather than a note. W1 and W2 are written
-> above, and stay open until they have been walked.
-
-- **Workflow 3 — Character Animation** → [#36](https://github.com/boostybaboon/directionally/issues/36)
-- **Workflow 4 — Camera Work** → [#37](https://github.com/boostybaboon/directionally/issues/37)
-- **Workflow 5 — Lighting** → [#38](https://github.com/boostybaboon/directionally/issues/38)
-- **Workflow 6 — Print Script** → [#39](https://github.com/boostybaboon/directionally/issues/39)
 
 ---
 
@@ -652,3 +634,30 @@ the venue's document, which a bundled venue carries inline and a user-authored o
 | 37 | Click **Attach…** → **Detach** then re-attach at the same face pair to re-solve the joint with the new size | — | |
 | 38 | Click **⬇ Floor** to settle the re-attached assembly back onto the ground plane | — | |
 | ✓ | Assembly size updated and re-snapped to floor | — | |
+
+## Future workflows (stubs)
+
+> Each stub is tracked as an issue, so writing one is a task rather than a note. W1 and W2 are written
+> above, and stay open until they have been walked.
+
+- **Workflow 3 — Character Animation** → [#36](https://github.com/boostybaboon/directionally/issues/36)
+- **Workflow 4 — Camera Work** → [#37](https://github.com/boostybaboon/directionally/issues/37)
+- **Workflow 5 — Lighting** → [#38](https://github.com/boostybaboon/directionally/issues/38)
+- **Workflow 6 — Print Script** → [#39](https://github.com/boostybaboon/directionally/issues/39)
+
+---
+
+## Legacy — Workflow 1: Happy Path (the pre-script UI)
+
+> Superseded by Workflow W1. This walk was written for the UI before the script became the source
+> of truth — a productions tree with a Cast section and a scene list — and its labels no longer
+> match an app that is script-first and tabbed Script / Roster / Set / Catalogue. Kept as the record
+> of what was walked in that era.
+
+**Goal:** Create a production with 2+ acts, 2+ scenes per act, and 2+ characters; author dialogue and basic staging for every scene; play back the whole production in presentation mode.
+
+**Preconditions:** App running (`yarn dev --open`). No existing productions required — start from scratch.
+
+**Status key:** `—` not yet tested · `OK` works as described · `Partial` works with workaround (see Issues) · `Fail` step not achievable as written
+
+---
