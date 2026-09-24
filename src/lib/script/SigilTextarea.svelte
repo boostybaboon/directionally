@@ -2,10 +2,10 @@
   /**
    * SCR-2: the primary authoring surface — a plain <textarea> over sigil-
    * tokenized script text (see sigilScript.ts), with inline caret-positioned
-   * autocomplete for every closed-set field across all three sigils (`@`
-   * actor, `>` actor/verb/side-or-mark, `#` INT/EXT). Open fields (dialogue
-   * text, scene setting, time-of-day, hold duration) get no popup — they are
-   * free text by design, never blocked.
+   * autocomplete for every closed-set field across all four sigils (`@`
+   * actor, `>` actor/verb/side-or-mark, `#` INT/EXT, `##` dressing op/node).
+   * Open fields (dialogue text, scene setting, time-of-day, hold duration,
+   * move coordinates) get no popup — they are free text by design, never blocked.
    *
    * Caret position is computed via the "mirror div" technique: an offscreen
    * div replicates the textarea's font/padding/wrapping exactly, holds the
@@ -26,6 +26,8 @@
     cast: string[];
     /** Venue names this production can resolve, offered for a scene heading's setting. */
     settings?: string[];
+    /** Node paths of the venue the scene stands in, offered for a dressing line's node. */
+    nodes?: string[];
     placeholder?: string;
     onchange?: (value: string) => void;
     /** Reports the caret's 1-based line whenever the caret moves. */
@@ -36,6 +38,7 @@
     value = $bindable(''),
     cast,
     settings = [],
+    nodes = [],
     placeholder = '',
     onchange,
     oncaret,
@@ -61,6 +64,7 @@
   function appendSpaceAfter(sigil: SigilChar, tokenIndex: number): boolean {
     if (sigil === '>') return tokenIndex === 0 || tokenIndex === 1;
     if (sigil === '#') return tokenIndex === 0;
+    if (sigil === '##') return tokenIndex === 0;
     return false;
   }
 
@@ -71,7 +75,7 @@
     currentToken = token;
 
     if (token) {
-      const field = sigilFieldOptions(token.sigil, token.tokenIndex, token.priorTokens, cast, settings);
+      const field = sigilFieldOptions(token.sigil, token.tokenIndex, token.priorTokens, cast, settings, nodes);
       if (field.kind === 'closed') {
         popupOptions = filterOptions(field.options, token.query);
         activeIdx = 0;

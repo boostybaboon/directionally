@@ -214,3 +214,48 @@ describe('sigilFieldOptions', () => {
     expect(result.options).toContain('KITCHEN');
   });
 });
+
+describe('the ## dressing sigil', () => {
+  it('is one sigil, not # followed by a token', () => {
+    const text = '## hid';
+    const token = findActiveSigilToken(text, text.length);
+    expect(token).toEqual({ sigil: '##', query: 'hid', sigilStart: 0, queryStart: 3, cursor: 6, tokenIndex: 0, priorTokens: [] });
+  });
+
+  it('finds the node token after an op', () => {
+    const text = '## hide so';
+    const token = findActiveSigilToken(text, text.length);
+    expect(token?.sigil).toBe('##');
+    expect(token?.query).toBe('so');
+    expect(token?.tokenIndex).toBe(1);
+    expect(token?.priorTokens).toEqual(['hide']);
+  });
+
+  it('offers the ops once the sigil is open', () => {
+    const token = findActiveSigilToken('##', 2)!;
+    expect(sigilFieldOptions(token.sigil, token.tokenIndex, token.priorTokens, [])).toEqual({
+      kind: 'closed',
+      options: ['hide', 'show', 'remove', 'move'],
+    });
+  });
+
+  it('offers the venue\'s node paths for the node field', () => {
+    const token = findActiveSigilToken('## hide so', 10)!;
+    expect(sigilFieldOptions(token.sigil, token.tokenIndex, token.priorTokens, [], [], ['sofa', 'rug'])).toEqual({
+      kind: 'closed',
+      options: ['sofa', 'rug'],
+    });
+  });
+
+  it('stays open when no venue paths are known', () => {
+    const token = findActiveSigilToken('## hide so', 10)!;
+    expect(sigilFieldOptions(token.sigil, token.tokenIndex, token.priorTokens, [], [], [])).toEqual({ kind: 'open' });
+  });
+
+  it('declines to complete move coordinates', () => {
+    const token = findActiveSigilToken('## move counter 0', 17)!;
+    expect(token.tokenIndex).toBe(2);
+    expect(sigilFieldOptions(token.sigil, token.tokenIndex, token.priorTokens, [], [], [])).toEqual({ kind: 'open' });
+  });
+});
+

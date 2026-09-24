@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   insertPart,
+  setPartLabel,
   removePart,
   groupNodes,
   ungroupNode,
@@ -791,3 +792,35 @@ describe('applyOverrides', () => {
   });
 });
 
+describe('relabelling', () => {
+  it('keeps the node id a path was minted from, so the address survives a rename', () => {
+    const doc: SetDocument = { root: [], joints: [] };
+    insertPart(doc, {
+      content: { id: 'guid-1', kind: 'primitive', name: 'Box', label: 'Front Door', color: 0xffffff },
+      transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+    });
+    expect(doc.root[0].id).toBe('front-door');
+
+    setPartLabel(doc, 'guid-1', 'Back Door');
+
+    // The label is what a person edits; the id is what an override, a block target or a dressing record
+    // holds on to. Re-slugging on rename would orphan every path written against the old name.
+    expect(doc.root[0].id).toBe('front-door');
+    const named = nodeAt(doc, 'front-door');
+    expect(named).not.toBeNull();
+    expect(isPartNode(named!) && named!.content.label).toBe('Back Door');
+    expect(pathOfPart(doc, 'guid-1')).toBe('front-door');
+  });
+
+  it('keeps a group id when its semantic name changes', () => {
+    const doc: SetDocument = { root: [], joints: [] };
+    insertPart(doc, { content: { id: 'a', kind: 'primitive', name: 'Box', color: 1 }, transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] } });
+    insertPart(doc, { content: { id: 'b', kind: 'primitive', name: 'Box', color: 1 }, transform: { position: [0, 0, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] } });
+    const group = groupNodes(doc, ['a', 'b'], 'row', true)!;
+
+    group.name = 'bench';
+
+    expect(group.id).toBe('row');
+    expect(nodeAt(doc, group.id)).toBe(group);
+  });
+});

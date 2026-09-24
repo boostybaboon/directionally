@@ -1,18 +1,18 @@
 /**
  * Pure tokenizing logic for the sigil-scoped autocomplete primitive (Track SCR).
  *
- * A sigil (`@`, `>`, `#`) is only recognised at the start of a line (optionally
+ * A sigil (`@`, `>`, `#`, `##`) is only recognised at the start of a line (optionally
  * indented) — this matches the sigil grammar in ROADMAP.md, where `@ACTOR`,
- * `>ACTOR verb arg`, and `#INT SETTING TOD` always begin their own line. Once a
+ * `>ACTOR verb arg`, `#INT SETTING TOD` and `##OP NODE` always begin their own line. Once a
  * sigil opens a line, every space-separated token after it is itself a
  * candidate for closed-set completion — which closed set depends on the sigil
  * and the token's position (`sigilFieldOptions` below). No DOM dependency;
  * fully unit-testable.
  */
 
-import { VERB_ALIASES, SIDE_WORDS, MARK_WORDS } from './sigilScript.js';
+import { VERB_ALIASES, SIDE_WORDS, MARK_WORDS, DRESSING_OPS } from './sigilScript.js';
 
-export type SigilChar = '@' | '>' | '#';
+export type SigilChar = '@' | '>' | '#' | '##';
 
 export type ActiveSigilToken = {
   sigil: SigilChar;
@@ -30,7 +30,7 @@ export type ActiveSigilToken = {
   priorTokens: string[];
 };
 
-const SIGIL_LINE_PATTERN = /^(\s*)([@>#])(.*)$/;
+const SIGIL_LINE_PATTERN = /^(\s*)(##?|[@>])(.*)$/;
 
 /**
  * Finds the sigil-scoped token surrounding the cursor, if any. Returns null
@@ -48,7 +48,7 @@ export function findActiveSigilToken(text: string, cursor: number): ActiveSigilT
   const sigilStart = lineStart + leadingWs.length;
 
   if (afterSigil === '') {
-    return { sigil: sigil as SigilChar, query: '', sigilStart, queryStart: sigilStart + 1, cursor, tokenIndex: 0, priorTokens: [] };
+    return { sigil: sigil as SigilChar, query: '', sigilStart, queryStart: sigilStart + sigil.length, cursor, tokenIndex: 0, priorTokens: [] };
   }
   if (/\s$/.test(afterSigil)) return null;
 
@@ -109,9 +109,11 @@ export type SigilFieldOptions =
  * Resolves which closed set (if any) completes the token at `tokenIndex` for
  * a given sigil line, using `priorTokens` to disambiguate the conditional
  * third field of an action beat (side/mark/none, depending on the verb typed
- * in `priorTokens[1]`). Returns `{ kind: 'open' }` for free-text fields
- * (dialogue, scene setting, time-of-day, hold duration) — never blocks, just
- * declines to offer a popup.
+ * in `priorTokens[1]`). `settings` and `nodes` are the venue facts a line completes against:
+ * the setting names a heading can resolve, and the node paths of the venue that heading
+ * stands in. Returns `{ kind: 'open' }` for free-text fields (dialogue, scene setting,
+ * time-of-day, hold duration, move coordinates) — never blocks, just declines to offer a
+ * popup.
  */
 export function sigilFieldOptions(
   sigil: SigilChar,
@@ -119,6 +121,7 @@ export function sigilFieldOptions(
   priorTokens: string[],
   cast: string[],
   settings: string[] = [],
+  nodes: string[] = [],
 ): SigilFieldOptions {
   if (sigil === '@') {
     return tokenIndex === 0 ? { kind: 'closed', options: cast } : { kind: 'open' };
@@ -134,6 +137,15 @@ export function sigilFieldOptions(
       return { kind: 'open' }; // hold: numeric seconds, no closed set
     }
     return { kind: 'open' };
+  }
+
+  // '##' — a dressing line: an op, then the node inside the venue it acts on. The node
+  // field completes to the paths of the setting the scene stands in, which is why they are
+  // passed in: what a dressing can address is the venue's business, not the grammar's.
+  if (sigil === '##') {
+    if (tokenIndex === 0) return { kind: 'closed', options: DRESSING_OPS };
+    if (tokenIndex === 1) return nodes.length > 0 ? { kind: 'closed', options: nodes } : { kind: 'open' };
+    return { kind: 'open' }; // move: three numbers, no closed set
   }
 
   // '#'

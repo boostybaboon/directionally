@@ -4,7 +4,7 @@ import type { SketcherCommand } from './SketcherCommand.js';
 import { collectLights, isPartNode, isRefNode, sameOrder } from './documentTree.js';
 import { fromAIDraft } from './aiDraft.js';
 import type { AIDraft } from './aiDraft.js';
-import type { PlacedPart, RefNode, RefSeed, SetDocument, SetNode } from './documentTree.js';
+import type { NodeOverride, PlacedPart, RefNode, RefSeed, SetDocument, SetNode } from './documentTree.js';
 import { IDENTITY_TRANSFORM, localToWorld } from './transform.js';
 import type { Transform } from './transform.js';
 
@@ -34,6 +34,11 @@ export type DocumentDiff = {
   removeRefs: string[];
   /** Instances the edit moves, by node id — a placement the AI changed. */
   moveRefs: { id: string; transform: Transform }[];
+  /**
+   * Instances whose dressing changed, whole rather than per path: a set override is what the edit wants
+   * the instance to say, and an empty list means the instance now varies nothing.
+   */
+  overrideRefs: { id: string; overrides: NodeOverride[] }[];
   /** How the edit rearranges groups, which is a separate pass from what it adds or moves. */
   groups: GroupStructureDiff;
   /**
@@ -49,6 +54,18 @@ export type DocumentDiff = {
    */
   orderChanged: boolean;
 };
+
+/** Whether two dressing lists say the same thing: same paths, same ops, same values. */
+function sameOverrides(a: NodeOverride[], b: NodeOverride[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((left, i) => {
+    const right = b[i];
+    if (left.path !== right.path || left.op !== right.op) return false;
+    const leftValue = left.op === 'set' ? left.value : null;
+    const rightValue = right.op === 'set' ? right.value : null;
+    return JSON.stringify(leftValue) === JSON.stringify(rightValue);
+  });
+}
 
 /** Whether two light configs say the same thing, key by key (position compared as a value). */
 function sameLight(a: LightConfig, b: LightConfig): boolean {
@@ -225,6 +242,7 @@ function diffParts(current: SetDocument, target: SetDocument): Omit<DocumentDiff
   const addRefs: RefSeed[] = [];
   const removeRefs: string[] = [];
   const moveRefs: { id: string; transform: Transform }[] = [];
+  const overrideRefs: { id: string; overrides: NodeOverride[] }[] = [];
 
   for (const [id, { node, world }] of targetRefs) {
     const before = currentRefs.get(id);
@@ -232,16 +250,24 @@ function diffParts(current: SetDocument, target: SetDocument): Omit<DocumentDiff
     // one. Keeping the id is deliberate — it is one node in the tree either way.
     if (!before || before.node.ref !== node.ref) {
       if (before) removeRefs.push(id);
-      addRefs.push({ id, ref: node.ref, name: node.name, transform: world });
+      addRefs.push({
+        id, ref: node.ref, name: node.name, transform: world,
+        ...(node.overrides && node.overrides.length > 0 ? { overrides: node.overrides } : {}),
+      });
       continue;
     }
     if (!transformEquals(before.world, world)) moveRefs.push({ id, transform: world });
+    // A dressing is part of what an instance is, so a change to it is an edit like any other — which
+    // it was not, and an instruction about dressing produced no diff at all because of it.
+    if (!sameOverrides(before.node.overrides ?? [], node.overrides ?? [])) {
+      overrideRefs.push({ id, overrides: node.overrides ?? [] });
+    }
   }
   for (const id of currentRefs.keys()) {
     if (!targetRefs.has(id)) removeRefs.push(id);
   }
 
-  return { add, remove, update, addRefs, removeRefs, moveRefs, groups: groupStructure(current, target) };
+  return { add, remove, update, addRefs, removeRefs, moveRefs, overrideRefs, groups: groupStructure(current, target) };
 }
 
 /**
@@ -295,9 +321,10 @@ export function applyDocumentCommand(sketcher: CartoonSketcher, target: SetDocum
   const groups = diff.groups.create.length + diff.groups.dissolve.length
     + diff.groups.join.length + diff.groups.leave.length;
   const lights = diff.lights.add.length + diff.lights.remove.length + diff.lights.update.length;
+  const dresses = diff.overrideRefs.length;
   const environment = diff.environment !== undefined ? 1 : 0;
   return {
-    label: `AI edit (${adds} add, ${updates} update, ${removes} remove${groups > 0 ? `, ${groups} group` : ''}${lights > 0 ? `, ${lights} light` : ''}${environment > 0 ? ', environment' : ''})`,
+    label: `AI edit (${adds} add, ${updates} update, ${removes} remove${groups > 0 ? `, ${groups} group` : ''}${lights > 0 ? `, ${lights} light` : ''}${dresses > 0 ? `, ${dresses} dress` : ''}${environment > 0 ? ', environment' : ''})`,
     execute() {
       for (const id of diff.remove) sketcher.removePart(id);
       for (const id of diff.removeRefs) sketcher.removeNode(id);
@@ -364,6 +391,9 @@ export function applyDocumentCommand(sketcher: CartoonSketcher, target: SetDocum
       for (const config of diff.lights.add) sketcher.addLight(config);
       for (const id of diff.lights.remove) sketcher.removeLight(id);
       if (diff.environment !== undefined) sketcher.setEnvironmentMap(diff.environment.id);
+
+      // ── Dressing, whole: an instance says what it varies, and saying nothing is a valid answer.
+      for (const { id, overrides } of diff.overrideRefs) sketcher.setInstanceOverrides(id, overrides);
 
       // ── Order last, once every node exists: a released or re-added member takes the slot the draft
       //    gives it rather than the slot a removal left behind.

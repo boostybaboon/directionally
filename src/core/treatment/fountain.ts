@@ -36,9 +36,26 @@ export type ActionBeat = {
   seconds?: number;
 };
 
+export type DressingOp = 'hide' | 'show' | 'remove' | 'move';
+
+/**
+ * A scene's venue, with these modifications — the `##` line, read as a subheading of the
+ * heading above it. It carries no time: a dressing is how the scene stands, not an event in
+ * it, so the compiler gives it no duration (`LightBlock` is the timed one).
+ */
+export type DressingBeat = {
+  type: 'dressing';
+  op: DressingOp;
+  /** Node path inside the setting's document — `seat`, or `chair-legs/left`. */
+  node: string;
+  /** Where the node stands in this scene. `move` only. */
+  position?: [number, number, number];
+};
+
 export type Beat =
   | { type: 'dialogue'; character: string; text: string; parenthetical?: string }
   | ActionBeat
+  | DressingBeat
   | { type: 'transition'; text: string };
 
 export type SceneBlock = {
@@ -140,6 +157,10 @@ export function renderFountain(doc: ScriptDocument): string {
         case 'action':
           parts.push(renderActionBeat(beat));
           parts.push('');
+          break;
+        case 'dressing':
+          // Production direction, not screenplay text: the dressing lives in the script
+          // document and reaches the set through the compiler, so the page stays a screenplay.
           break;
         case 'transition':
           parts.push(beat.text);

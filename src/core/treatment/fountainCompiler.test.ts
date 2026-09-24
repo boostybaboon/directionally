@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { renderFountain, createDefaultScriptDocument } from './fountain';
 import { compileScriptDocument, resolveSetting } from './fountainCompiler';
-import type { ScriptDocument, Beat, ActionBeat, StageSide, StageMark } from './fountain';
+import type { ScriptDocument, Beat, ActionBeat, DressingBeat, StageSide, StageMark } from './fountain';
 import { documentFromParts } from '../sketcher/documentTree.js';
 import type { CatalogueEntry } from '../catalogue/types.js';
-import type { PartSeed } from '../sketcher/documentTree.js';
+import type { PartSeed, SetDocument } from '../sketcher/documentTree.js';
 import type { GeometryConfig, MaterialConfig, Vec3 } from '../domain/types.js';
 
 /** A catalogue part, as a bundled set-piece document holds them. */
@@ -500,6 +500,91 @@ describe('compileScriptDocument (ambiguity + auto-bind)', () => {
     const result = compileScriptDocument(doc, [setPiece('garden-id', 'GARDEN')]);
     expect(result.scenes[0].scene.set[0].name).toBe('garden-id');
     expect(result.resolvedBindings.setting.GARDEN).toBe('garden-id');
+  });
+});
+
+// ── Dressing lines (#10) ─────────────────────────────────────────────────────
+
+describe('compileScriptDocument (dressing)', () => {
+  /** A venue whose document holds one node, so a `##` line has something to address. */
+  function venueDocument(nodeId: string, scale: Vec3 = [1, 1, 1]): SetDocument {
+    const seed = cataloguePart('part-1', { type: 'box', width: 1, height: 1, depth: 1 }, { color: 0x223344 }, [0, 0.5, 0]);
+    seed.content.label = nodeId;   // insertPart mints the node id from the label
+    seed.transform = { position: [0, 0.5, 0], quaternion: [0, 0, 0, 1], scale };
+    return documentFromParts([seed]);
+  }
+
+  const venue = (nodeId = 'counter', scale: Vec3 = [1, 1, 1]): CatalogueEntry => ({
+    kind: 'set-piece',
+    id: 'kitchen',
+    label: 'KITCHEN',
+    isSetting: true,
+    document: venueDocument(nodeId, scale),
+  });
+
+  function dress(op: DressingBeat['op'], node: string, position?: [number, number, number]): DressingBeat {
+    return { type: 'dressing', op, node, ...(position ? { position } : {}) };
+  }
+
+  it('turns a scene\'s dressing into overrides on its venue piece', () => {
+    const doc = buildDoc([sceneWithSetting('KITCHEN', [
+      dress('hide', 'counter'),
+      dress('remove', 'rug'),
+      say('Robot', 'Hi.'),
+    ])], ['Robot']);
+
+    const result = compileScriptDocument(doc, [venue()]);
+
+    expect(result.scenes[0].scene.set[0].overrides).toEqual([
+      { path: 'counter', op: 'set', value: { hidden: true } },
+      { path: 'rug', op: 'remove' },
+    ]);
+  });
+
+  it('applies `show` as the unhiding of a Definition that hides the node', () => {
+    const doc = buildDoc([sceneWithSetting('KITCHEN', [dress('show', 'counter'), say('Robot', 'Hi.')])], ['Robot']);
+    const result = compileScriptDocument(doc, [venue()]);
+    expect(result.scenes[0].scene.set[0].overrides).toEqual([
+      { path: 'counter', op: 'set', value: { hidden: false } },
+    ]);
+  });
+
+  it('carries the node\'s own rotation and scale into a move', () => {
+    const doc = buildDoc([sceneWithSetting('KITCHEN', [dress('move', 'counter', [1, 0, -2]), say('Robot', 'Hi.')])], ['Robot']);
+    const result = compileScriptDocument(doc, [venue('counter', [2, 2, 2])]);
+
+    expect(result.scenes[0].scene.set[0].overrides?.[0]).toEqual({
+      path: 'counter',
+      op: 'set',
+      value: { transform: { position: [1, 0, -2], quaternion: [0, 0, 0, 1], scale: [2, 2, 2] } },
+    });
+  });
+
+  it('gives a dressing line no time in the scene', () => {
+    const dressed = buildDoc([sceneWithSetting('KITCHEN', [
+      dress('hide', 'counter'),
+      act('Robot', 'enter', { side: 'left' }),
+      say('Robot', 'Hi.'),
+    ])], ['Robot']);
+    const plain = buildDoc([sceneWithSetting('KITCHEN', [
+      act('Robot', 'enter', { side: 'left' }),
+      say('Robot', 'Hi.'),
+    ])], ['Robot']);
+
+    expect(actorBlocks(compileScriptDocument(dressed, [venue()])).map((b) => ({ ...b, actorId: '' })))
+      .toEqual(actorBlocks(compileScriptDocument(plain, [venue()])).map((b) => ({ ...b, actorId: '' })));
+  });
+
+  it('warns about a node the venue does not have', () => {
+    const doc = buildDoc([sceneWithSetting('KITCHEN', [dress('hide', 'sofa'), say('Robot', 'Hi.')])], ['Robot']);
+    const result = compileScriptDocument(doc, [venue()]);
+    expect(result.diagnostics.some((d) => d.message.includes('"sofa" is not in KITCHEN'))).toBe(true);
+  });
+
+  it('warns when the setting has no set-piece document to dress', () => {
+    const doc = buildDoc([sceneWithSetting('NOWHERE', [dress('hide', 'sofa'), say('Robot', 'Hi.')])], ['Robot']);
+    const result = compileScriptDocument(doc);
+    expect(result.diagnostics.some((d) => d.message.includes('no set-piece document'))).toBe(true);
   });
 });
 

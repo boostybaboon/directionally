@@ -9,12 +9,15 @@
 import { CATALOGUE_ENTRIES } from '../catalogue/entries.js';
 import { getCharacters, getEnvironments, getSetPieces } from '../catalogue/catalogue.js';
 import { expandEntry, matchesByLabel } from '../setting/settingSpec.js';
+import { applyOverrides, nodeAt } from '../sketcher/documentTree.js';
+import { IDENTITY_TRANSFORM } from '../sketcher/transform.js';
 import { estimateDuration, starterSceneShell } from '../storage/sceneBuilder.js';
+import type { NodeOverride } from '../sketcher/documentTree.js';
 import type { StoredActor, NamedScene } from '../storage/types.js';
 import type { CatalogueEntry, EnvironmentEntry, SetPieceEntry } from '../catalogue/types.js';
 import type { DialogueLine } from '../../lib/script/types.js';
 import type { ActorBlock, SceneAction, SetPiece, StagedActor, Vec3 } from '../domain/types.js';
-import type { ScriptDocument, SceneBlock, ActionBeat, Diagnostic, StageSide, StageMark } from './fountain.js';
+import type { ScriptDocument, SceneBlock, ActionBeat, Diagnostic, DressingBeat, StageSide, StageMark } from './fountain.js';
 
 // Fallback catalogue id used when a cast name has no catalogue match (Track CAT, CAT-1).
 // A real bundled asset (not a blanket copy of some other character) so the placeholder
@@ -232,7 +235,7 @@ export function compileScriptDocument(
   const actorIdByName = new Map(actors.map((a) => [a.role, a.id]));
 
   const scenes: NamedScene[] = doc.scenes.map((sceneBlock, i) =>
-    compileSceneBlock(sceneBlock, actors, actorIdByName, i, userEntries, bindings),
+    compileSceneBlock(sceneBlock, actors, actorIdByName, i, userEntries, bindings, diagnostics),
   );
 
   // Track CAT, CAT-2: report each unresolved/ambiguous setting once per unique
@@ -283,6 +286,52 @@ const ENTER_PREROLL = 0.25;
 const MOVE_DURATION = 2.0;
 const EXIT_DURATION = 0.6;
 
+/**
+ * Turns a scene's `##` lines into overrides on its venue piece, reporting every line that
+ * addresses nothing: a node path is checked by replaying the list against the Definition's
+ * own document, the same replay the renderer performs, so validation and reality cannot
+ * disagree about what a dressing does. A set-piece whose document lives in OPFS is not
+ * loaded here, so its lines are carried unvalidated rather than guessed at.
+ */
+function buildDressingOverrides(
+  beats: DressingBeat[],
+  entry: SetPieceEntry,
+  diagnostics: Diagnostic[],
+): NodeOverride[] {
+  const document = entry.document;
+  const overrides = beats.map((beat): NodeOverride => {
+    if (beat.op === 'remove') return { path: beat.node, op: 'remove' };
+    if (beat.op === 'hide' || beat.op === 'show') {
+      return { path: beat.node, op: 'set', value: { hidden: beat.op === 'hide' } };
+    }
+    // A patch replaces a transform rather than merging into it, so a `move` carries the
+    // node's own rotation and scale over — the line says where it stands, not what shape it is.
+    const own = document ? nodeAt(document, beat.node)?.transform : undefined;
+    return {
+      path: beat.node,
+      op: 'set',
+      value: {
+        transform: {
+          position: beat.position ?? IDENTITY_TRANSFORM.position,
+          quaternion: own?.quaternion ?? IDENTITY_TRANSFORM.quaternion,
+          scale: own?.scale ?? IDENTITY_TRANSFORM.scale,
+        },
+      },
+    };
+  });
+
+  if (document) {
+    applyOverrides(document.root, overrides, (orphan) => {
+      diagnostics.push({
+        line: 0,
+        level: 'warning',
+        message: `"${orphan.path}" is not in ${entry.label} — the dressing line has no effect on this scene.`,
+      });
+    });
+  }
+  return overrides;
+}
+
 function compileSceneBlock(
   block: SceneBlock,
   actors: StoredActor[],
@@ -290,7 +339,10 @@ function compileSceneBlock(
   sceneIdx: number,
   userEntries: CatalogueEntry[],
   bindings: ResolveBindings,
+  diagnostics: Diagnostic[],
 ): NamedScene {
+  const dressing = block.beats.filter((beat): beat is DressingBeat => beat.type === 'dressing');
+
   // Gather actors referenced in this scene
   const inScene = new Map<string, StageSide>();
   let count = 0;
@@ -331,6 +383,9 @@ function compileSceneBlock(
   }
 
   for (const beat of block.beats) {
+    // A dressing beat is how the scene stands, not an event in it: it reaches the set as
+    // an override on the venue above, and takes no time here.
+    if (beat.type === 'dressing') continue;
     if (beat.type === 'transition') { t += 0.5; continue; }
 
     const actorId = actorIdByName.get(beat.character);
@@ -435,14 +490,26 @@ function compileSceneBlock(
   if (setting.kind === 'set-piece') {
     // A setting is a reference: its geometry, lighting and environment all travel in
     // its document, which the renderer resolves. The scene keeps only what the scene
-    // itself declares.
-    scene.set = expandEntry(setting.entry);
+    // itself declares — its dressing included.
+    scene.set = expandEntry(
+      setting.entry,
+      undefined,
+      dressing.length > 0 ? buildDressingOverrides(dressing, setting.entry, diagnostics) : undefined,
+    );
   } else if (setting.kind === 'environment') {
     scene.environmentMap = setting.entry.id;
     // Keep the starter ground plane so actors stand on something under the HDRI.
   } else {
     scene.set = buildPlaceholderRoom();
     if (setting.label) scene.placeholderSetting = setting.label;
+  }
+
+  if (dressing.length > 0 && setting.kind !== 'set-piece') {
+    diagnostics.push({
+      line: 0,
+      level: 'warning',
+      message: `${sceneName} dresses ${dressing.length} node(s), but its setting has no set-piece document to address.`,
+    });
   }
 
   return {

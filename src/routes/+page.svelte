@@ -16,10 +16,13 @@
   import type { StoredProduction, NamedScene } from '../core/storage/types.js';
   import type { ActorBlock } from '../core/domain/types.js';
   import { renderFountain, createDefaultScriptDocument } from '../core/treatment/fountain.js';
-  import type { Diagnostic, ScriptDocument } from '../core/treatment/fountain.js';
+  import type { Diagnostic, ScriptDocument, DressingBeat } from '../core/treatment/fountain.js';
   import { compileScriptDocument, resolveSetting } from '../core/treatment/fountainCompiler.js';
-  import { tokenizeScript, renderScript, sceneIndexForLine, retypeAlias } from '../core/treatment/sigilScript.js';
+  import { collectNodePaths } from '../core/sketcher/documentTree.js';
+  import { tokenizeScript, renderScript, sceneIndexForLine, retypeAlias, setDressing } from '../core/treatment/sigilScript.js';
+  import type { DressingChange } from '../core/treatment/sigilScript.js';
   import SigilTextarea from '$lib/script/SigilTextarea.svelte';
+  import DressingPanel from '$lib/DressingPanel.svelte';
   import RosterPanel from '$lib/script/RosterPanel.svelte';
   import { generateAsset } from '$lib/agentClient.js';
 
@@ -56,7 +59,7 @@
   let castBindings = $state<Record<string, string>>({});
   let settingBindings = $state<Record<string, string>>({});
   let selectedCastName = $state<string | null>(null);
-  let leftTab = $state<'script' | 'catalogue' | 'roster'>('script');
+  let leftTab = $state<'script' | 'roster' | 'set' | 'catalogue'>('script');
   let fountainSource = $derived(renderFountain(scriptDoc));
   let diagnostics = $state<Diagnostic[]>([]);
   let statusMessage = $state('');
@@ -123,6 +126,54 @@
       return { id: resolved.entry.id, label: resolved.entry.label, kind: resolved.kind, sameLabel };
     })(),
   );
+  // The venue the focused scene stands in: the node paths a dressing can address, read from its
+  // document. A bundled venue carries that document inline; a user-authored one keeps it in its
+  // own OPFS file and is read on demand. Until it is in hand the field stays open and the panel
+  // says why, rather than offering paths the venue may not have.
+  let focusedVenueNodes = $state<string[]>([]);
+  let focusedVenueNote = $state<string | undefined>(undefined);
+
+  $effect(() => {
+    const label = scriptDoc.scenes[focusedSceneIndex]?.setting;
+    const resolved = resolveSetting(label, userCatalogueEntries, settingBindings);
+    focusedVenueNodes = [];
+    focusedVenueNote = undefined;
+
+    if (resolved.kind !== 'set-piece') {
+      if (label) focusedVenueNote = `${label} has no set-piece document to dress.`;
+      return;
+    }
+    if (resolved.entry.document) {
+      focusedVenueNodes = collectNodePaths(resolved.entry.document);
+      return;
+    }
+    if (!resolved.entry.hasDocument) {
+      focusedVenueNote = `${resolved.entry.label} carries no document to read nodes from.`;
+      return;
+    }
+
+    let cancelled = false;
+    OPFSCatalogueStore.getDocument(resolved.entry.id).then((document) => {
+      if (cancelled) return;
+      if (document) focusedVenueNodes = collectNodePaths(document);
+      else focusedVenueNote = `${resolved.entry.label}'s document is missing.`;
+    });
+    return () => { cancelled = true; };
+  });
+
+  // What the focused scene says about its venue, in script order — the panel and the compiler
+  // read the same lines, so what the panel shows is what the set will stand in.
+  const focusedDressing = $derived<DressingBeat[]>(
+    (scriptDoc.scenes[focusedSceneIndex]?.beats ?? []).filter((b): b is DressingBeat => b.type === 'dressing'),
+  );
+
+  /** A panel change becomes a `##` line in the script: the panel is another way of typing it. */
+  function applyDressing(change: DressingChange) {
+    const line = sceneStartLines[focusedSceneIndex];
+    if (!line) return;
+    handleSigilChange(setDressing(sigilText, line, change));
+  }
+
   const compiledActorBlocks = $derived<{ block: ActorBlock; index: number }[]>(
     (compiledScene?.blocks ?? [])
       .map((b, i) => ({ block: b, index: i }))
@@ -508,6 +559,7 @@
       <div class="script-tabs">
         <button class:active={leftTab === 'script'} onclick={() => (leftTab = 'script')}>Script</button>
         <button class:active={leftTab === 'roster'} onclick={() => (leftTab = 'roster')}>Roster</button>
+        <button class:active={leftTab === 'set'} onclick={() => (leftTab = 'set')}>Set</button>
         <button class:active={leftTab === 'catalogue'} onclick={() => (leftTab = 'catalogue')}>Catalogue</button>
       </div>
 
@@ -532,7 +584,8 @@
               value={sigilText}
               cast={scriptDoc.cast}
               settings={settingNames}
-              placeholder={'Type a scene using #scene, >action, @actor sigils…'}
+              nodes={focusedVenueNodes}
+              placeholder={'Type a scene using #scene, >action, @actor, ##dressing sigils…'}
               onchange={handleSigilChange}
               oncaret={handleCaretMove}
             />
@@ -567,6 +620,14 @@
             {/each}
           </ul>
         {/if}
+      {:else if leftTab === 'set'}
+        <DressingPanel
+          setting={scriptDoc.scenes[focusedSceneIndex]?.setting}
+          nodes={focusedVenueNodes}
+          dressing={focusedDressing}
+          unavailable={focusedVenueNote}
+          onchange={applyDressing}
+        />
       {:else if leftTab === 'catalogue'}
         <div class="catalogue-wrap">
           <CataloguePanel
@@ -626,8 +687,8 @@
               {#if scene.timeOfDay}<div class="inspector-meta">Time: {scene.timeOfDay}</div>{/if}
               <div class="inspector-beats">{scene.beats.length} beats</div>
               {#each scene.beats as beat, bi}
-                <div class="inspector-beat" class:inspector-beat-dialogue={beat.type === 'dialogue'} class:inspector-beat-action={beat.type === 'action'} class:inspector-beat-transition={beat.type === 'transition'}>
-                  <span class="inspector-beat-kind">{beat.type}</span>
+                <div class="inspector-beat" class:inspector-beat-dialogue={beat.type === 'dialogue'} class:inspector-beat-action={beat.type === 'action'} class:inspector-beat-transition={beat.type === 'transition'} class:inspector-beat-dressing={beat.type === 'dressing'}>
+                  <span class="inspector-beat-kind">{beat.type === 'dressing' ? '##' : beat.type}</span>
                   {#if beat.type === 'dialogue'}
                     <span class="inspector-beat-actor">{beat.character}</span>
                     {#if beat.parenthetical}
@@ -645,6 +706,12 @@
                     {/if}
                     {#if beat.seconds !== undefined}
                       <span class="inspector-beat-meta">{beat.seconds}s</span>
+                    {/if}
+                  {:else if beat.type === 'dressing'}
+                    <span class="inspector-beat-verb">{beat.op}</span>
+                    <span class="inspector-beat-text">{beat.node}</span>
+                    {#if beat.position}
+                      <span class="inspector-beat-meta">{beat.position.join(' ')}</span>
                     {/if}
                   {:else}
                     <span class="inspector-beat-text">{beat.text}</span>
@@ -1134,6 +1201,10 @@
 
   .inspector-beat-transition {
     color: #999;
+  }
+
+  .inspector-beat-dressing {
+    color: #9db4c8;
   }
 
   .inspector-beat-actor {

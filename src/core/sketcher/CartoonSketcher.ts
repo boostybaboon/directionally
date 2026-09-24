@@ -24,6 +24,7 @@ import {
   collectPartNodes,
   normalizeDocument,
   applyOverrides,
+  setNodeOverrides,
   adoptIntoGroup,
   releaseFromGroup,
   childOfGroupHolding,
@@ -599,6 +600,14 @@ export class CartoonSketcher {
   /** Remove a light by its id. No-op if not found; a document node, so it undoes. */
   removeLight(id: string): void {
     this.editDocument((doc) => removeLightNode(doc, id));
+  }
+
+  /**
+   * Set an instance's dressing to exactly this, as a document edit: what a diff speaks, since a
+   * replayed dressing arrives whole rather than as a run of per-path changes.
+   */
+  setInstanceOverrides(ref: NodeRef, overrides: NodeOverride[]): void {
+    this.editDocument((doc) => setNodeOverrides(doc, ref, overrides));
   }
 
   /** Change a light in place — same node, same position in the list — as a document edit, so it undoes. */
