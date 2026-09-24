@@ -15,6 +15,44 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 ---
 
+## Recording a walkthrough
+
+A walkthrough is walked once as a person would walk it, and what comes back is the table filled in, not
+a prose report. Workflow 1 is a filled example; S1 is the shape a fresh one starts in.
+
+**Where the notes go:** a comment on the walkthrough's issue, one comment per run. The issue's own
+close criterion is the document, so the comment is the raw record and the table above is where it ends
+up once the walkthrough settles — which is what makes it re-runnable later.
+
+```
+Walkthrough: W1 — script to a watched scene
+Run: 2026-09-24, preview <url> | local yarn dev, commit <sha>
+Verdict: one sentence — is the thing this workflow is for actually possible?
+
+| Step | Status | Note | Snag |
+|:----:|:------:|------|------|
+| 4 | OK | | |
+| 5 | Partial | had to resize the window before the popup was visible | #72 |
+| 7 | Fail | nothing appeared after the click | #73 |
+| ✓ | OK | humanoids stand in the setting; proportions are wrong | #74 |
+
+Friction that did not fail a step:
+- ...
+
+Snags filed: #72 #73 #74
+Not walked: Part D — needs #27
+```
+
+**Two conventions the columns assume.**
+
+- **One snag, one issue.** File it as it happens, quote the step number, and link the walkthrough in it.
+  The Issues cell then carries the number, and the table becomes the index of what this workflow owes.
+- **Friction is a finding even when the step passes.** A step that works awkwardly is `OK` in the Status
+  column and still goes in the list underneath: the Status key has no value for "works, but I would not
+  want to do that again", and that is exactly what the walkthroughs are being run to find.
+
+---
+
 ### Part A — Create the production
 
 | Step | Description | Status | Issues |
@@ -134,8 +172,8 @@ Each workflow is written as a step-by-step sequence that can be followed top-to-
 
 Tracked in the [issue tracker](https://github.com/boostybaboon/directionally/issues?q=is%3Aissue+is%3Aopen)
 — this table used to cite phases from a plan that no longer exists, which was worse than having no
-table. The relevant ones for this workflow: editing a placed set piece is the dressing surface (#10),
-and scene-piece transforms are part of the same missing editor.
+table. The dressing surface it named as missing (#10) has since landed, syntax and panel both; a re-run
+of this workflow is what would say whether anything else now stands in its way.
 
 ---
 
@@ -143,6 +181,7 @@ and scene-piece transforms are part of the same missing editor.
 
 > Each stub is tracked as an issue, so writing one is a task rather than a note:
 
+- **Workflow W1 — Script to a Watched Scene** → [#71](https://github.com/boostybaboon/directionally/issues/71)
 - **Workflow 2 — Set Dressing** → [#35](https://github.com/boostybaboon/directionally/issues/35)
 - **Workflow 3 — Character Animation** → [#36](https://github.com/boostybaboon/directionally/issues/36)
 - **Workflow 4 — Camera Work** → [#37](https://github.com/boostybaboon/directionally/issues/37)
