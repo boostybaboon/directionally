@@ -321,6 +321,68 @@ the venue's document, which a bundled venue carries inline and a user-authored o
 
 ---
 
+## Workflow W3 — Character Animation
+
+**Goal:** A character walks from one side of the scene to the other because the script says so: the clip is the walk, the motion is a block, and the block is visible on the actor's track.
+
+**Preconditions:** A production whose Roster resolves a cast name to a character - **Robot** is bundled - in a scene they appear in. W1 leaves you there.
+
+**Status key:** `—` not yet tested · `OK` works as described · `Partial` works with workaround (see Issues) · `Fail` step not achievable as written
+
+---
+
+### Part A — The script puts them on stage
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 1 | In the script write `>ALICE enters left`, then below it `>ALICE moves center` | — | |
+| 2 | The timeline shows a row for ALICE, with one block per beat, each labelled with the clip it plays (`walk`, or `Walking` for the Robot) | — | |
+| 3 | Add `>ALICE holds 2`: a third block appears, spanning two seconds and labelled `—` - a hold is a pause, not a movement | — | |
+| ✓ | Every movement the script asks for is a block on that actor's track | — | |
+
+---
+
+### Part B — Watch the walk
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 4 | Press **▶** in the transport bar | — | |
+| 5 | ALICE walks in from the left, then walks on to the centre mark | — | |
+| 6 | The playhead crosses each block as its animation runs | — | |
+| ✓ | A character walks from A to B, from script to screen | — | |
+
+---
+
+### Part C — Draw a block by hand
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 7 | Drag across ALICE's track in the timeline; a ghost block follows the pointer | — | |
+| 8 | On release, a block exists for that span | — | |
+| 9 | Drag the block's left or right edge to change when it starts and ends | — | |
+| 10 | With a block selected, press **Delete**; it is removed | — | |
+| ✓ | A block can be drawn, resized and removed without touching the script | — | |
+
+---
+
+### Part D — Choose what a block plays
+
+| Step | Description | Status | Issues |
+|:----:|-------------|:------:|--------|
+| 11 | Select a block; its label names the clip it plays, and the clips the model actually carries are available to choose from | — | |
+| 12 | Change that clip and watch the block play the other animation | — | |
+| ✓ | A block's animation is a choice, not a consequence of the verb | — | |
+
+---
+
+### Known gaps
+
+Read from the code before the walk, which is why Parts A and B should pass and Parts C and D should not:
+
+- **The timeline is wired as a view.** `+page.svelte` passes it actors, blocks, scene duration, playhead position and the discovered clips - and no handlers at all. The ⊕ buttons, drawing on a track, edge dragging, deleting and speech dragging are all inert as wired today.
+- **Filed as [#73](https://github.com/boostybaboon/directionally/issues/73)** — the inert controls above, and the reason Parts C and D are expected to Fail.
+- **Blocks come from the script's verbs.** `enter` / `exit` / `move` compile to a walk-clip block each; the walk clip itself is the character's own (`walkAnimation`, `Walking` for the Robot), which is why step 11's chooser has nothing behind it either.
+
 ## Workflow S1 — Sketcher: Precise Positioning, Sizing, and All-Axis Scaling
 
 **Goal:** Create a part, then use the numeric transform inspector to place it at an exact world position, set a precise rotation, and apply non-uniform scale — then re-lock to uniform scale.
@@ -637,10 +699,9 @@ the venue's document, which a bundled venue carries inline and a user-authored o
 
 ## Future workflows (stubs)
 
-> Each stub is tracked as an issue, so writing one is a task rather than a note. W1 and W2 are written
+> Each stub is tracked as an issue, so writing one is a task rather than a note. W1-W3 are written
 > above, and stay open until they have been walked.
 
-- **Workflow 3 — Character Animation** → [#36](https://github.com/boostybaboon/directionally/issues/36)
 - **Workflow 4 — Camera Work** → [#37](https://github.com/boostybaboon/directionally/issues/37)
 - **Workflow 5 — Lighting** → [#38](https://github.com/boostybaboon/directionally/issues/38)
 - **Workflow 6 — Print Script** → [#39](https://github.com/boostybaboon/directionally/issues/39)
