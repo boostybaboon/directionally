@@ -185,10 +185,10 @@ of this workflow is what would say whether anything else now stands in its way.
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 1 | Open the app. The topbar shows `☰`, a name field and the `Character` / `Set` links; the left panel's tabs read Script / Roster / Set / Catalogue, and it is on **Script** | — | |
-| 2 | Click `☰`; the picker lists the existing productions, with `+ New production` and `Example scene` | — | |
-| 3 | Click **+ New production**; the picker closes and the name field reads "Untitled Production" | — | |
-| ✓ | A production exists with an empty script | — | |
+| 1 | Open the app. The topbar shows `☰`, a name field and the `Character` / `Set` links; the left panel's tabs read Script / Roster / Set / Catalogue, and it is on **Script** | OK | |
+| 2 | Click `☰`; the picker lists the existing productions, with `+ New production` and `Example scene` | OK | |
+| 3 | Click **+ New production**; the picker closes and the name field reads "Untitled Production" | OK | |
+| ✓ | A production exists with an empty script | OK | |
 
 ---
 
@@ -196,11 +196,11 @@ of this workflow is what would say whether anything else now stands in its way.
 
 | Step | Description | Status | Issues |
 |:----:|-------------|:------:|--------|
-| 4 | Type `#INT KITCHEN DAY` as the first line; a scene appears in the minimap on the left, numbered 1 and reading `KITCHEN` | — | |
-| 5 | On the next line, type `>ALICE enters left` | — | |
-| 6 | Type `@ALICE`, then a line of dialogue such as `Where is everybody?` | — | |
-| 7 | Type `>BOB enters right`, then `@BOB` and a line of his own | — | |
-| ✓ | One scene, two characters, four sigil lines, a line of dialogue each | — | |
+| 4 | Type `#INT KITCHEN DAY` as the first line; a scene appears in the minimap on the left, numbered 1 and reading `KITCHEN` | OK | |
+| 5 | On the next line, type `>ALICE enters left` | OK | |
+| 6 | Type `@ALICE`, then a line of dialogue such as `Where is everybody?` | OK | |
+| 7 | Type `>BOB enters right`, then `@BOB` and a line of his own | OK | |
+| ✓ | One scene, two characters, four sigil lines, a line of dialogue each | OK | |
 
 ---
 
